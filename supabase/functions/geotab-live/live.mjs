@@ -83,7 +83,8 @@ export async function handle(req, deps) {
     if (vr.status === 401) return json(401, { error: 'Connexion requise' });
     if (!vr.ok) return json(502, { error: 'Base : HTTP ' + vr.status });
     const veh = (await vr.json()).filter(v => String(v.active).toUpperCase() !== 'NON' && v.active !== false);
-    if (!veh.length) return json(200, { at: new Date().toISOString(), vehicles: [] });
+    const nowIso = new Date(deps.now ? deps.now() : Date.now()).toISOString();
+    if (!veh.length) return json(200, { at: nowIso, vehicles: [], events: [] });
     const f = await fleet(deps, veh.map(v => v.geotab_id));
     const vehicles = veh.map(v => {
       const x = f[v.geotab_id] || {}, d = x.dsi, ignOn = x.ign ? +x.ign.data >= 1 : null;
@@ -97,7 +98,7 @@ export async function handle(req, deps) {
     veh.forEach(v => ((f[v.geotab_id] || {}).evts || []).forEach(e => events.push({ id: String(e.id), key: v.key, plate: v.plate,
       rule: e.rule && e.rule.id ? String(e.rule.id) : '', at: e.activeFrom, end: e.activeTo || null, dur_min: durMin(e.duration), km: e.distance != null ? +e.distance : null })));
     events.sort((a, b) => String(b.at).localeCompare(String(a.at)));
-    return json(200, { at: new Date().toISOString(), vehicles, events });
+    return json(200, { at: nowIso, vehicles, events });
   } catch (e) {
     return json(e.status || 502, { error: 'Geotab : ' + e.message });
   }

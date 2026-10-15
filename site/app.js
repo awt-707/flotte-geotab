@@ -188,7 +188,8 @@ function processLive(j) {
       LIVE.fast[v.key] = a.id; LIVE.alerts.push(a); fresh.push(a);
     } else delete LIVE.fast[v.key];
   });
-  const cut = now - 30 * MIN; LIVE.alerts = LIVE.alerts.filter(a => new Date(a.at).getTime() >= cut).sort((x, y) => String(y.at).localeCompare(String(x.at)));
+  const cut = (Date.parse(j.at) || now) - 30 * MIN;   // 30 dernières minutes à l'heure du relais
+  LIVE.alerts = LIVE.alerts.filter(a => new Date(a.at).getTime() >= cut).sort((x, y) => String(y.at).localeCompare(String(x.at)));
   // à l'ouverture de la page : les alertes des 30 dernières minutes sont listées sans notification
   if (LIVE.primed) fresh.forEach(a => onNewAlert(Object.assign({ time: fmtHMS(a.at).slice(6), link: '#/vehicule?k=' + encodeURIComponent(a.vehicle_key) }, a)));
   LIVE.primed = true;
