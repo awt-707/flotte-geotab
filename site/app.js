@@ -162,31 +162,93 @@ async function health() {
 
 // ---------- EN DIRECT ----------
 let MAP = null;
-async function pageDirect() {
-  const ok = inAgency(), rows = (await all('live_status', '*', null, ['plate'])).filter(r => ok(r.vehicle_key));
-  const n = s => rows.filter(r => r.state === s).length, last = rows.reduce((m, r) => Math.max(m, new Date(r.updated_at || 0).getTime()), 0);
-  const order = { 'En route': 0, 'Arrêté, contact mis': 1, 'Garé': 2, 'Boîtier hors ligne': 3 };
-  rows.sort((a, b) => (order[a.state] ?? 9) - (order[b.state] ?? 9) || String(a.plate).localeCompare(String(b.plate)));
-  $('#page').innerHTML = `
-    <div class="head"><h1>En direct</h1><div class="sub">${last ? 'Mis à jour le ' + fmtDTY(last) + ', automatiquement toutes les ' + (S.P.liveMin || 5) + ' min.' : 'Aucune donnée pour l\'instant : le collecteur n\'a pas encore tourné.'}
-      Les totaux du jour comptent les trajets terminés (contact coupé).</div>
-      ${canEdit() ? '<button id="syncnow">Mettre à jour maintenant</button>' : ''}</div>
-    ${cards([['En route', n('En route'), 'ok'], ['Arrêtés contact mis', n('Arrêté, contact mis'), n('Arrêté, contact mis') ? 'warn' : ''], ['Garés', n('Garé')],
-      ['Boîtiers hors ligne', n('Boîtier hors ligne') + n('Pas de réponse Geotab'), n('Boîtier hors ligne') ? 'crit' : '']])}
-    <div id="map"></div>
-    ${table('tlive', [
+// En direct : état calculé par le collecteur (totaux du jour) + position, vitesse et contact lus en direct dans Geotab
+// par le relais « geotab-live » toutes les LIVE_SEC secondes tant que la page est affichée.
+const LIVE_SEC = 5, LIVE = { rows: [], pos: {}, at: 0, err: '', markers: {} };
+const LIVE_ORDER = { 'En route': 0, 'Arrêté, contact mis': 1, 'Garé': 2, 'Boîtier hors ligne': 3 };
+function liveRows() {
+  return LIVE.rows.map(r => { const g = LIVE.pos[r.vehicle_key]; return g && g.state ? Object.assign({}, r, { state: g.state, speed: g.speed, since_min: g.since_min,
+    last_pos_at: g.at || r.last_pos_at, lat: g.lat != null ? g.lat : r.lat, lon: g.lon != null ? g.lon : r.lon, live: 1 }) : r; })
+    .sort((a, b) => (LIVE_ORDER[a.state] ?? 9) - (LIVE_ORDER[b.state] ?? 9) || String(a.plate).localeCompare(String(b.plate)));
+}
+function fmtHMS(d) { if (!d) return ''; const p = parts(d); return p.day + '/' + p.month + ' ' + p.hour + ':' + p.minute + ':' + p.second; }
+function directParts(rows) {
+  const n = s => rows.filter(r => r.state === s).length;
+  return {
+    cards: cards([['En route', n('En route'), 'ok'], ['Arrêtés contact mis', n('Arrêté, contact mis'), n('Arrêté, contact mis') ? 'warn' : ''], ['Garés', n('Garé')],
+      ['Boîtiers hors ligne', n('Boîtier hors ligne') + n('Pas de réponse Geotab'), n('Boîtier hors ligne') ? 'crit' : '']]),
+    table: table('tlive', [
       ['Plaque', r => `<a class="fl" href="#/vehicule?k=${encodeURIComponent(r.vehicle_key)}">${plate(r.plate, S.veh[r.vehicle_key] && S.veh[r.vehicle_key].other_plates)}</a>`, r => r.plate],
-      ['Modèle', r => esc(r.model)], ['État', r => badge(r.state, (STATE_CLS[r.state] || '') + ' dot'), r => order[r.state] ?? 9],
+      ['Modèle', r => esc(r.model)], ['État', r => badge(r.state, (STATE_CLS[r.state] || '') + ' dot'), r => LIVE_ORDER[r.state] ?? 9],
       ['Vitesse', r => r.speed ? f0(r.speed) + ' km/h' : '', r => r.speed, 'n'], ['Depuis', r => r.since_min != null ? fH(r.since_min / 60) : '', r => r.since_min, 'n'],
-      ['Dernière position', r => fmtDT(r.last_pos_at), r => r.last_pos_at], ['Chauffeur sous contrat', r => esc(r.driver_name)], ['Contrat', r => esc(r.contract_num || '')],
+      ['Dernière position', r => r.live ? fmtHMS(r.last_pos_at) : fmtDT(r.last_pos_at), r => r.last_pos_at], ['Chauffeur sous contrat', r => esc(r.driver_name)], ['Contrat', r => esc(r.contract_num || '')],
       ['Km aujourd\'hui', r => f1(r.km_today), r => r.km_today, 'n'], ['Conduite', r => fH(r.drive_min_today / 60), r => r.drive_min_today, 'n'],
       ['Ralenti', r => fH(r.idle_min_today / 60), r => r.idle_min_today, 'n'], ['Carburant (L)', r => r.fuel_l_today === null ? `<span class="nm">${NM}</span>` : f1(r.fuel_l_today), r => r.fuel_l_today, 'n'],
       ['Alertes du jour', r => r.alerts_today ? `<a href="#/alertes?plaque=${encodeURIComponent(r.plate)}&jour=${today()}">${r.alerts_today}</a>` : '0', r => r.alerts_today, 'n'],
-      ['Carte', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">Voir</a>` : '']], rows, { empty: 'Aucun véhicule actif' })}`;
-  drawMap(rows);
-  liveDrivers(rows).then(h => { const t = $('#tlive'); if (h && t && t.closest('#page')) t.closest('.tw').insertAdjacentHTML('afterend', h); }).catch(() => { });
+      ['Carte', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">Voir</a>` : '']], rows, { empty: 'Aucun véhicule actif' })
+  };
+}
+function liveStatusTxt() {
+  if (LIVE.at) return `<span class="livedot" aria-hidden="true"></span>Temps réel Geotab : actualisé toutes les ${LIVE_SEC} s, dernière lecture ${fmtHMS(LIVE.at).slice(6)}.`;
+  if (LIVE.err) return 'Temps réel Geotab indisponible (' + esc(LIVE.err) + ') : positions du collecteur, toutes les ' + (S.P.liveMin || 5) + ' min.';
+  return 'Connexion au temps réel Geotab…';
+}
+/** refresh = données du collecteur relues sans redessiner la carte */
+async function pageDirect(refresh) {
+  const ok = inAgency();
+  LIVE.rows = (await all('live_status', '*', null, ['plate'])).filter(r => ok(r.vehicle_key));
+  const rows = liveRows(), d = directParts(rows);
+  if (refresh && $('#tlive') && MAP) { applyDirect(); return; }
+  const last = LIVE.rows.reduce((m, r) => Math.max(m, new Date(r.updated_at || 0).getTime()), 0);
+  $('#page').innerHTML = `
+    <div class="head"><h1>En direct</h1><div class="sub"><span id="livest">${liveStatusTxt()}</span>
+      ${last ? 'Totaux du jour (trajets terminés, contact coupé) mis à jour le ' + fmtDTY(last) + '.' : 'Totaux du jour : le collecteur n\'a pas encore tourné.'}</div>
+      ${canEdit() ? '<button id="syncnow">Mettre à jour les totaux</button>' : ''}</div>
+    <div id="livecards">${d.cards}</div>
+    <div id="map"></div>
+    <div id="livetab">${d.table}</div>`;
+  LIVE.markers = {}; drawMap(rows);
+  liveDrivers(LIVE.rows).then(h => { const t = $('#livetab'); if (h && t && t.closest('#page')) t.insertAdjacentHTML('afterend', h); }).catch(() => { });
   const b = $('#syncnow');
   if (b) b.onclick = async () => { b.disabled = true; try { await job('sync_now'); b.textContent = 'Demande envoyée (5 min max)'; } catch (e) { alert(e.message); b.disabled = false; } };
+}
+function applyDirect() {
+  const rows = liveRows(), d = directParts(rows), c = $('#livecards'), t = $('#livetab'), st = $('#livest');
+  if (c) c.innerHTML = d.cards; if (t) t.innerHTML = d.table; if (st) st.innerHTML = liveStatusTxt();
+  if (MAP) rows.forEach(placeMarker);
+}
+/** Lecture Geotab en direct par le relais ; arrêt du relais (non installé, erreur) : nouvel essai dans 1 min */
+async function liveTick(my) {
+  if (document.hidden || my !== ROUTING || Date.now() < (LIVE.retryAt || 0)) return;
+  try {
+    const r = await fetch(CFG.SUPABASE_URL + '/functions/v1/geotab-live', { headers: { apikey: CFG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + (S.session && S.session.access_token) } });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || j.message || 'HTTP ' + r.status);
+    if (my !== ROUTING) return;
+    const pos = {}; (j.vehicles || []).forEach(v => { pos[v.key] = v; });
+    LIVE.pos = pos; LIVE.at = Date.now(); LIVE.err = ''; LIVE.retryAt = 0;
+  } catch (e) { LIVE.at = 0; LIVE.pos = {}; LIVE.err = String(e.message || e).slice(0, 120); LIVE.retryAt = Date.now() + 60000; }
+  if (my === ROUTING) applyDirect();
+}
+function markerColor(state) {
+  const css = getComputedStyle(document.documentElement), v = n => css.getPropertyValue(n).trim();
+  return { 'En route': v('--ok'), 'Arrêté, contact mis': v('--warn'), 'Garé': v('--mute'), 'Boîtier hors ligne': v('--crit'), 'Pas de réponse Geotab': v('--crit') }[state] || v('--mute');
+}
+/** Marqueur d'un véhicule : créé ou déplacé en glissant vers sa nouvelle position */
+function placeMarker(r) {
+  if (r.lat == null || r.lon == null) return;
+  const html = `<b>${esc(r.plate)}</b><br>${esc(r.state)}${r.speed ? ' · ' + f0(r.speed) + ' km/h' : ''}<br>${esc(r.driver_name || '')}<br><small>${r.live ? fmtHMS(r.last_pos_at) : fmtDT(r.last_pos_at)}</small>`;
+  let m = LIVE.markers[r.vehicle_key];
+  if (!m) {
+    m = LIVE.markers[r.vehicle_key] = L.circleMarker([r.lat, r.lon], { radius: 8, color: '#fff', weight: 2, fillColor: markerColor(r.state), fillOpacity: 1 }).bindPopup(html)
+      .bindTooltip(String(r.plate || ''), { permanent: false, direction: 'top' }).addTo(MAP);
+    m.vehicleKey = r.vehicle_key; return;
+  }
+  m.setStyle({ fillColor: markerColor(r.state) }); m.setPopupContent(html);
+  const a = m.getLatLng(), b = L.latLng(r.lat, r.lon); if (a.equals(b)) return;
+  const t0 = performance.now(), dur = 1500; cancelAnimationFrame(m._anim);
+  const step = t => { const k = Math.min(1, (t - t0) / dur); m.setLatLng([a.lat + (b.lat - a.lat) * k, a.lng + (b.lng - a.lng) * k]); if (k < 1) m._anim = requestAnimationFrame(step); };
+  m._anim = requestAnimationFrame(step);
 }
 function drawMap(rows) {
   if (!window.L) return;
@@ -195,10 +257,7 @@ function drawMap(rows) {
   MAP = L.map('map', { scrollWheelZoom: false });
   // OpenStreetMap refuse les tuiles demandées sans l'adresse du site (Referer) : on l'envoie (origine seule) pour la carte
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, referrerPolicy: 'strict-origin-when-cross-origin', attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>' }).addTo(MAP);
-  const css = getComputedStyle(document.documentElement), v = n => css.getPropertyValue(n).trim();
-  const col = { 'En route': v('--ok'), 'Arrêté, contact mis': v('--warn'), 'Garé': v('--mute'), 'Boîtier hors ligne': v('--crit'), 'Pas de réponse Geotab': v('--crit') };
-  pts.forEach(r => L.circleMarker([r.lat, r.lon], { radius: 8, color: '#fff', weight: 2, fillColor: col[r.state] || v('--mute'), fillOpacity: 1 })
-    .bindPopup(`<b>${esc(r.plate)}</b><br>${esc(r.state)}${r.speed ? ' · ' + f0(r.speed) + ' km/h' : ''}<br>${esc(r.driver_name || '')}<br><small>${fmtDT(r.last_pos_at)}</small>`).addTo(MAP));
+  pts.forEach(placeMarker);
   if (pts.length) MAP.fitBounds(L.latLngBounds(pts.map(r => [r.lat, r.lon])).pad(0.2), { maxZoom: 13 }); else MAP.setView([31.63, -8.0], 6);
 }
 
@@ -771,8 +830,10 @@ async function route() {
   if (my !== ROUTING) return;
   S.timers.push(setInterval(health, 60000));
   if (page === 'direct') {
-    S.timers.push(setInterval(() => { if (!document.hidden && my === ROUTING) pageDirect().catch(() => { }); }, 60000));
-    S.channel = sb.channel('live').on('postgres_changes', { event: '*', schema: 'public', table: 'live_status' }, () => { clearTimeout(window.__lt); window.__lt = setTimeout(() => { if (my === ROUTING) pageDirect().catch(() => { }); }, 3000); }).subscribe();
+    LIVE.retryAt = 0; liveTick(my);
+    S.timers.push(setInterval(() => liveTick(my), LIVE_SEC * 1000));
+    S.timers.push(setInterval(() => { if (!document.hidden && my === ROUTING) pageDirect(true).catch(() => { }); }, 60000));
+    S.channel = sb.channel('live').on('postgres_changes', { event: '*', schema: 'public', table: 'live_status' }, () => { clearTimeout(window.__lt); window.__lt = setTimeout(() => { if (my === ROUTING) pageDirect(true).catch(() => { }); }, 3000); }).subscribe();
   }
 }
 window.addEventListener('hashchange', route);

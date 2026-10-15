@@ -1,0 +1,5 @@
+# Configuration Supabase CLI : uniquement pour publier la fonction « geotab-live » (mise en ligne GitHub Actions)
+project_id = "flotte_luxury"
+
+[functions.geotab-live]
+verify_jwt = true
