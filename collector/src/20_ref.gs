@@ -20,7 +20,7 @@ function inList_(vals) { return 'in.' + enc_('(' + vals.map(v => '"' + String(v)
 // ---------- Paramètres ----------
 const NUM_PARAMS = ['priceDiesel', 'priceGas', 'siphonPct', 'siphonL', 'pleinPct', 'stopMin', 'idleLongMin', 'idleAlertMin', 'idleDayMin', 'minFuelKm',
   'vmaxAlert', 'overAlert', 'scoreY', 'scoreO', 'scoreR', 'kmMin', 'overConsPct', 'ctrTolMin', 'lvlDays',
-  'catchupDays', 'rpmMin', 'fullPct', 'shiftDay', 'shiftNight', 'liveMin', 'autoRenderMin', 'retentionDays'];
+  'catchupDays', 'reportHour', 'rpmMin', 'fullPct', 'shiftDay', 'shiftNight', 'liveMin', 'autoRenderMin', 'retentionDays'];
 function params_() {
   if (MEMO_.__P) return Object.assign({}, MEMO_.__P);
   const P = {};
@@ -191,4 +191,36 @@ function fauxPositifs_() {
   const o = {};
   dbSelect_('alerts', 'select=id&status=eq.' + enc_('Faux positif') + '&id=like.' + enc_('SIPH|*'), 'id').forEach(r => { o[r.id] = 1; });
   return o;
+}
+
+// ---------- Parc (liste des véhicules injectée depuis le site) ----------
+/** Lignes du parc au format de l'ancien onglet : [en-têtes, [plaque, marque, modèle, VIN, carburant], ...] */
+function parcData_(P) {
+  let rows = dbSelect_('parc', 'select=plate,brand,model,vin,fuel', 'plate');
+  if (!rows.length && !PropertiesService.getScriptProperties().getProperty('PARC_SEEDED')) { seedParcFromSheet_(P); rows = dbSelect_('parc', 'select=plate,brand,model,vin,fuel', 'plate'); }
+  return [['Plaque', 'Marque', 'Modèle', 'VIN', 'Carburant']].concat(rows.map(r => [r.plate, r.brand || '', r.model || '', r.vin || '', r.fuel || '']));
+}
+/** Reprise unique du Sheet « ETAT PARC » dans la table parc (une seule fois ; ensuite le parc se gère sur le site) */
+function seedParcFromSheet_(P) {
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('PARC_SEEDED', '1');
+  if (!String(P.parcId || '').trim()) return 0;
+  try {
+    const src = SpreadsheetApp.openById(String(P.parcId)).getSheetByName(String(P.parcTab));
+    if (!src) throw new Error('onglet "' + P.parcTab + '" introuvable');
+    const data = src.getDataRange().getValues(), head = data[0].map(h => normTxt_(h));
+    const find = (re, dflt) => { const i = head.findIndex(h => re.test(h)); return i >= 0 ? i : dflt; };
+    const cPl = colToIndex_(P.parcCol) - 1, cMa = find(/^marque/, 7), cMo = find(/^modele/, 8), cVin = find(/chassis|vin/, 9), cCa = find(/^carburant/, 17);
+    const seen = {}, objs = [];
+    data.slice(1).forEach(r => {
+      const plate = String(r[cPl] || '').trim().toUpperCase().replace(/\s+/g, '');
+      if (!plate || plate.length < 4 || seen[plate]) return;
+      seen[plate] = 1;
+      const s = v => v === '' || v === null || v === undefined ? null : String(v);
+      objs.push({ plate, brand: s(r[cMa]), model: s(r[cMo]), vin: s(r[cVin]), fuel: s(r[cCa]), note: 'Repris du Sheet ETAT PARC' });
+    });
+    if (objs.length) sbReq_('post', 'parc?on_conflict=plate', objs, { Prefer: 'resolution=ignore-duplicates,return=minimal' });
+    log_('Parc', objs.length + ' véhicules repris une fois du Sheet ETAT PARC. La liste se gère maintenant sur le site (page Véhicules).');
+    return objs.length;
+  } catch (e) { log_('Parc', 'Reprise du Sheet ETAT PARC impossible (' + e.message + ') : importez la liste des véhicules sur le site (page Véhicules).'); return 0; }
 }

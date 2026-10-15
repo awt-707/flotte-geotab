@@ -3,8 +3,8 @@
  * ----------------------------------------------------------------------------------------------
  * Toutes les 5 min : état des véhicules et trajets terminés (temps réel), demandes du site
  * (contrats importés, plaques, synchro immédiate), journal et alertes, finalisation des journées
- * terminées (le lendemain midi). Une fois par jour : véhicules du Parc, règles Geotab, chauffeurs,
- * sauvegarde dans Drive. Une fois par mois : archivage dans Drive des données anciennes.
+ * terminées (le lendemain midi), alertes par e-mail, rapports PDF planifiés. Une fois par jour : véhicules
+ * du parc (liste gérée sur le site), règles Geotab, chauffeurs, sauvegarde dans Drive. Une fois par mois : archivage dans Drive des données anciennes.
  *
  * Installation (une seule fois) :
  *  1. Paramètres du projet (roue dentée) > Propriétés du script :
@@ -17,6 +17,7 @@
  */
 const COLLECTOR_V = PropertiesService.getScriptProperties().getProperty('CODE_VERSION') || '1.0';   // version installée (mise à jour automatique)
 const DEFAULT_SUPABASE_URL = 'https://cgiiwumbblimvmrypxlc.supabase.co';          // projet Supabase « flotte_luxury »
+const SITE_URL = 'https://flotte-geotab-clicar.netlify.app';                     // site (liens dans les e-mails)
 const DEFAULT_OLD_SHEET_ID = '1VxAV7P5SlaeSIZRC_EAQKjl3CFICQS4idJre4YLif1k';      // ancien Google Sheet Flotte Geotab (reprise de l'historique)
 /** Tables (mêmes clés que le Sheet v6 : le code de calcul est repris tel quel) */
 const S = { VEH: 'VEH', DRV: 'DRV', CTR: 'CTR', RULE: 'RULE', TRIP: 'TRIP', EVT: 'EVT', FUEL: 'FUEL', IDL: 'IDL', LVL: 'LVL',

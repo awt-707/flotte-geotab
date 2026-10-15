@@ -9,6 +9,7 @@ async function main() {
   const dir = path.join(__dirname, '..', 'collector', 'src');
   const files = fs.readdirSync(dir).filter(f => /\.(gs|json)$/.test(f)).sort().map(f => ({
     name: f.replace(/\.(gs|json)$/, ''), type: f.endsWith('.json') ? 'JSON' : 'SERVER_JS', source: fs.readFileSync(path.join(dir, f), 'utf8') }));
+  require(path.join(__dirname, '..', 'collector', 'build.js')).SHARED.forEach(([name, file]) => files.push({ name, type: 'SERVER_JS', source: fs.readFileSync(file, 'utf8') }));
   const version = new Date().toISOString().slice(0, 10) + '.' + sha.slice(0, 7);
   const headers = { apikey: key, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' };
   if (!/^sb_/.test(key)) headers.Authorization = 'Bearer ' + key;

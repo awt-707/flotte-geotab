@@ -15,7 +15,8 @@ test.after(() => { if (srv) srv.kill(); });
 
 const PAGES = [['direct', 'En direct', /En route|Garé|Arrêté/], ['tableau', 'Tableau de bord', /Km parcourus/], ['jour', 'Journée du', /Journées de travail actives/],
   ['chauffeurs', 'Classement des chauffeurs', /Score/], ['alertes', 'Alertes', /Gravité/], ['contrats', 'Contrats', /Contrats des 40 derniers jours/],
-  ['plaques', 'Changements de plaque', /Ancienne plaque/], ['vehicules', 'Véhicules', /WW968194/], ['reglages', 'Réglages', /Journal technique/]];
+  ['plaques', 'Changements de plaque', /Ancienne plaque/], ['vehicules', 'Véhicules', /WW968194/], ['reglages', 'Réglages', /Journal technique/],
+  ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/]];
 
 for (const [viewport, size] of [['ordinateur', { width: 1440, height: 900 }], ['téléphone', { width: 390, height: 844, isMobile: true, hasTouch: true }]]) {
   test('toutes les pages sur ' + viewport, async () => {

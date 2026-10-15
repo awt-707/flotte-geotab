@@ -172,3 +172,19 @@ td input { width: 100%; min-width: 90px; }
   #map { height: 300px; }
 }
 @media print { .side, .bar, button { display: none !important; } .layout { display: block; } .tw { max-height: none; overflow: visible; } }
+
+/* ---------- Agence (barre latérale), alertes en temps réel, rapports ---------- */
+.side .agsel { display: flex; flex-direction: column; gap: 4px; color: var(--side-ink); }
+.side .agsel select { background: rgba(255,255,255,.06); color: var(--side-hi); border-color: rgba(255,255,255,.18); }
+.side .agsel option { color: var(--ink); background: var(--panel); }
+#toasts { position: fixed; right: 16px; bottom: 16px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; width: min(360px, calc(100vw - 32px)); }
+.toast { position: relative; background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--info); border-radius: var(--r); padding: 10px 34px 10px 12px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.18); font-size: 14px; display: flex; flex-direction: column; gap: 3px; }
+.toast.crit { border-left-color: var(--crit); } .toast.high { border-left-color: var(--high); } .toast.warn { border-left-color: var(--warn); }
+.toast .x { position: absolute; top: 4px; right: 4px; background: transparent; color: var(--mute); padding: 2px 8px; font-size: 18px; line-height: 1; }
+.rptview { overflow-x: auto; }
+.rpt h1 { font-size: 22px; margin: 0 0 2px; } .rpt .rsub { color: var(--mute); margin: 0 0 12px; }
+.rpt h2 { font-size: 16px; margin: 18px 0 6px; } .rpt table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.rpt .rsum { width: auto; } .rpt .rsum th { text-align: left; font-weight: 400; color: var(--mute); padding: 2px 16px 2px 0; } .rpt .rsum td { font-weight: 600; }
+.rpt .rtab th { text-align: left; background: var(--acc-soft); padding: 4px 6px; white-space: nowrap; } .rpt .rtab td { border-bottom: 1px solid var(--line2); padding: 4px 6px; }
+.rpt .n { text-align: right; } .rpt .rempty, .rpt .rfoot { color: var(--mute); }
