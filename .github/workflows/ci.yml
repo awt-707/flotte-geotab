@@ -27,7 +27,6 @@ jobs:
       PG_URL: postgresql://postgres:postgres@localhost:5432/flotte
       PGRST_DB_URI: postgresql://authenticator:authpass@localhost:5432/flotte
       POSTGREST_BIN: ${{ github.workspace }}/.bin/postgrest
-      TZ: Africa/Casablanca
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,7 +43,12 @@ jobs:
       - name: Base de test (migrations Supabase)
         run: bash tests/setup_db.sh
       - name: Tests
-        run: npm test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test.log || {
+            grep -E "^not ok|^  error:|^    [A-Za-z≠'«]" test.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1; }
       - name: Captures d'écran du site
         if: always()
         uses: actions/upload-artifact@v4
