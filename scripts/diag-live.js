@@ -1,6 +1,6 @@
 process.on('uncaughtException', e => { console.log('::error::' + String(e && e.stack || e).replace(/\n/g, ' | ').slice(0, 1500)); process.exit(0); });
 try {
-const {sheetV6}=require('./tests/lib/v6');const L=(d,h,m)=>Date.UTC(2026,9,d,h-1,m||0);
+const {sheetV6}=require('../tests/lib/v6');const L=(d,h,m)=>Date.UTC(2026,9,d,h-1,m||0);
 for (const now of [L(5,12,40), L(6,10)]) {
   const A=sheetV6(now);A.run("queueSync_(['2026-10-03','2026-10-04'], false)");
   const t=A.tab('DATA_TRAJETS');
