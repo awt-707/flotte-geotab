@@ -1,4 +1,6 @@
 // Réglages communs des tests (surchargeables par variables d'environnement, utilisées en CI)
+// Fuseau du processus = fuseau du projet Apps Script (le moteur v6 et le faux Google Sheets s'appuient dessus)
+process.env.TZ = 'Africa/Casablanca';
 const path = require('path'), { execFileSync } = require('child_process');
 const ROOT = path.join(__dirname, '..', '..');
 const PG = process.env.PG_URL || 'postgresql://postgres@localhost:54322/flotte?host=/tmp';
