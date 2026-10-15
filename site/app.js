@@ -6,7 +6,7 @@ const $ = sel => document.querySelector(sel);
 const ROLE_TXT = { admin: 'Administrateur', manager: 'Gestionnaire', viewer: 'Lecture seule', pending: 'En attente' };
 const canEdit = () => S.profile && ['admin', 'manager'].includes(S.profile.role);
 const isAdmin = () => S.profile && S.profile.role === 'admin';
-const PARAM_DEFAULTS = { minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5 };
+const PARAM_DEFAULTS = { minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
 
 // ---------- Accès aux données ----------
 async function all(table, cols, build, order) {
@@ -32,6 +32,7 @@ async function loadRef(force) {
     all('agencies', 'id,name', null, ['name'])]);
   S.agencies = ags; S.agName = {}; ags.forEach(a => { S.agName[a.id] = a.name; });
   S.P = Object.assign({}, PARAM_DEFAULTS); params.forEach(p => { if (p.value !== null && p.value !== '') S.P[p.key] = isNaN(+p.value) ? p.value : +p.value; });
+  setTzRules(S.P.tzRules);
   S.vehList = veh; S.veh = {}; veh.forEach(v => { S.veh[v.key] = v; });
   S.rules = {}; rules.forEach(r => { S.rules[r.id] = r; });
   S.drv = { [HORS]: 'Hors contrat' }; drv.forEach(d => { S.drv[d.code] = d.name; });
@@ -50,7 +51,7 @@ function agTxt(id) { return id ? esc(S.agName[id] || '') : '<span class="small">
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['conduite', 'Conduite'], ['carburant', 'Carburant'],
-  ['ralenti', 'Ralenti'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, reglages: 1 };
 function shell() {
   const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct';
@@ -192,7 +193,8 @@ function drawMap(rows) {
   if (MAP) { MAP.remove(); MAP = null; }
   const pts = rows.filter(r => r.lat != null && r.lon != null);
   MAP = L.map('map', { scrollWheelZoom: false });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(MAP);
+  // OpenStreetMap refuse les tuiles demandées sans l'adresse du site (Referer) : on l'envoie (origine seule) pour la carte
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, referrerPolicy: 'strict-origin-when-cross-origin', attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>' }).addTo(MAP);
   const css = getComputedStyle(document.documentElement), v = n => css.getPropertyValue(n).trim();
   const col = { 'En route': v('--ok'), 'Arrêté, contact mis': v('--warn'), 'Garé': v('--mute'), 'Boîtier hors ligne': v('--crit'), 'Pas de réponse Geotab': v('--crit') };
   pts.forEach(r => L.circleMarker([r.lat, r.lon], { radius: 8, color: '#fff', weight: 2, fillColor: col[r.state] || v('--mute'), fillOpacity: 1 })
@@ -670,7 +672,7 @@ async function pageReglages() {
     all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), sb.from('alerts').select('type').gte('day', addDays(today(), -60)).limit(5000)]);
   const alTypes = [...new Set(((types.data) || []).map(x => x.type))].sort();
   const SEVS = ['Critique', 'Haute', 'Moyenne', 'Info'], FREQ = { jour: 'Chaque jour (veille)', semaine: 'Chaque lundi (semaine passée)', mois: 'Le 1er du mois (mois passé)' };
-  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1 };
+  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1 };
   $('#page').innerHTML = `<div class="head"><h1>Réglages</h1></div>
     <h2>Utilisateurs</h2><div class="sub">Les nouveaux comptes attendent votre validation (rôle « En attente »). Gestionnaire = import des contrats, chauffeurs, plaques, statut des alertes. Lecture seule = consultation. Agences de chaque utilisateur : <a href="#/agences">Agences</a>.</div>
     ${table('tusr', [['Email', u => esc(u.email)], ['Créé le', u => fmtDTY(u.created_at)], ['Rôle', u => u.user_id === S.session.user.id ? ROLE_TXT[u.role] :
@@ -751,7 +753,7 @@ function pendingView() {
 
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
-  conduite: pageConduite, carburant: pageCarburant, ralenti: pageRalenti, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
+  conduite: pageConduite, carburant: pageCarburant, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
   contrats: pageContrats, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {

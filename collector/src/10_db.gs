@@ -11,6 +11,8 @@ const DB = {
     'lim_at_worst', 'worst_time', 'fuel_l', 'fuel_source', 'ecu_l', 'idle_fuel_l', 'idle_fuel_source', 'lat', 'lon', 'driver_code', 'driver_name', 'contract_num'] },
   IDL: { table: 'idles', cols: ['id', 'vehicle_key', 'plate', 'trip_id', 'day', 'start_at', 'end_at', 'stop_min', 'engine_min', 'engine_check', 'liters',
     'liters_source', 'lat', 'lon', 'driver_code', 'driver_name', 'contract_num'] },
+  STP: { table: 'engine_stops', cols: ['id', 'vehicle_key', 'plate', 'trip_id', 'day', 'start_at', 'end_at', 'dur_min', 'liters', 'liters_source',
+    'extra_idle_min', 'lph', 'belt_on_min', 'belt_off_min', 'lat', 'lon', 'driver_code', 'driver_name', 'contract_num'] },
   EVT: { table: 'events', cols: ['id', 'vehicle_key', 'plate', 'day', 'start_at', 'end_at', 'dur_s', 'km', 'rule_id', 'rule_name', 'driver_code', 'driver_name', 'contract_num'] },
   FUEL: { table: 'fuel', cols: ['id', 'vehicle_key', 'plate', 'day', 'type', 'stop_start', 'stop_end', 'stop_min', 'engine', 'lvl_before', 'lvl_after',
     'delta_pct', 'liters_gauge', 'liters_geotab', 'source', 'lat', 'lon', 'driver_code', 'driver_name', 'contract_num', 'next_driver', 'status'] },
@@ -36,9 +38,9 @@ const DB_NUM = {};
   'speed_at_worst', 'lim_at_worst', 'fuel_l', 'ecu_l', 'idle_fuel_l', 'lat', 'lon', 'stop_min', 'engine_min', 'liters', 'dur_s', 'lvl_before', 'lvl_after',
   'delta_pct', 'liters_gauge', 'liters_geotab', 'pct', 'n_trips', 'n_events', 'n_levels', 'contract_h', 'drive_h', 'idle_h', 'long_idle_h',
   'fuel_km', 'l100', 'fuel_cost', 'idle_cost', 'danger_pts', 'score', 'n_fills', 'fill_l', 'n_siphon', 'siphon_l', 'km_off_contract', 'tank_l',
-  'ref_l100', 'revenue', 'n_contracts', 'weight', 'n_events'].forEach(c => { DB_NUM[c] = 1; });
+  'ref_l100', 'revenue', 'n_contracts', 'weight', 'n_events', 'dur_min', 'extra_idle_min', 'lph', 'belt_on_min', 'belt_off_min'].forEach(c => { DB_NUM[c] = 1; });
 const DB_INT = { n_long_idle: 1, n_trips: 1, n_events: 1, n_levels: 1, n_fills: 1, n_siphon: 1, n_contracts: 1 };
-const DATA_KEYS = ['TRIP', 'IDL', 'EVT', 'FUEL', 'LVL'];
+const DATA_KEYS = ['TRIP', 'IDL', 'STP', 'EVT', 'FUEL', 'LVL'];
 
 /** Ligne-tableau (ordre H) -> objet base. final : true = journée finalisée, false = temps réel, undefined = pas de colonne */
 function toDb_(k, r, final) {
@@ -118,7 +120,7 @@ function readData_(k, fromDay, toDay) {
   if (MEMO_[mk]) return MEMO_[mk];
   const t = DB[k].table, dc = k === 'LVL' ? 'vday' : 'day';
   const q = [fromDay ? dc + '=gte.' + fromDay : '', toDay ? dc + '=lte.' + toDay : ''].filter(Boolean).join('&');
-  const ord = { TRIP: 'start_at,id', IDL: 'start_at,id', EVT: 'start_at,id', FUEL: 'stop_start,id', LVL: 'at,id' }[k];   // ordre chronologique, comme le Sheet
+  const ord = { TRIP: 'start_at,id', IDL: 'start_at,id', STP: 'start_at,id', EVT: 'start_at,id', FUEL: 'stop_start,id', LVL: 'at,id' }[k];   // ordre chronologique, comme le Sheet
   const rows = dbSelect_(t, 'select=' + DB[k].cols.join(',') + (q ? '&' + q : ''), ord).map(o => fromDb_(k, o));
   return (MEMO_[mk] = { rows, I: idx_(H[k]), headers: H[k] });
 }

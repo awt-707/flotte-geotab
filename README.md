@@ -47,6 +47,7 @@ Le collecteur envoie les e-mails (alertes et rapports PDF) avec le compte Google
 - Agences : un gestionnaire ne voit et ne modifie que les données de ses agences (droits de la base).
 - Véhicules et chauffeurs injectés depuis le site (Excel et saisie), rapport PDF téléchargé, bandeau d'alerte en temps réel.
 - Alertes par e-mail : bons destinataires (agence, gravité, type), jamais deux fois, historique non envoyé. Rapports planifiés : une fois par période, après finalisation, PDF de la bonne agence.
+- Arrêts moteur tournant (3 min et plus) : contrôlés sur les données brutes Geotab ; litres = vraie différence du compteur ralenti, sinon « non mesuré ».
 - Mise à jour automatique du collecteur.
 - Aucune clé secrète dans le dépôt, clé publique du site = clé « anon ».
 

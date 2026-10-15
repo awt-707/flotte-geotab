@@ -532,6 +532,7 @@ function emitRows_(v, o, P, acc) {
       'Date': dayToDate_(localDay_(s.a)), 'Début': new Date(s.a), 'Fin': new Date(s.b), 'Durée arrêt (min)': Math.round(s.min),
       'Moteur tournant (min)': Math.round(s.min), 'Vérification moteur': 'Régime moteur', 'Litres': '', 'Source litres': '', 'Lat': s.lat, 'Lon': s.lon }));
   });
+  emitStops_(v, o.engStops, acc);
   o.fills.forEach(f => {
     acc.fuels.push(rowOf_(H.FUEL, { 'Clé': v.key + '|' + iso_(f.t) + '|PLEIN', 'Clé plaque': v.key, 'Plaque': v.plate, 'Date': dayToDate_(localDay_(f.t)),
       'Type': 'PLEIN', 'Arrêt début': new Date(f.t), 'Arrêt fin': new Date(f.t), 'Moteur': '', 'Niveau avant (%)': f.min != null ? r1_(f.min) : '',
@@ -669,7 +670,7 @@ function cPrep_(d, win) {
 }
 function cAnalyze_(d, win, P) {
   const pre = cPrep_(d, win), S = pre.S, logs = pre.logs, road = pre.road, trips = pre.trips, cyc = pre.cyc, lvl = pre.lvl;
-  const out = { cycles: [], idles: [], offStops: [], fills: [], evts: [], sources: {} };
+  const out = { cycles: [], idles: [], engStops: [], offStops: [], fills: [], evts: [], sources: {} };
   // nombre de lectures sur la fenêtre d'analyse du jour (jour ± 12 h), quelle que soit la taille du bloc téléchargé
   const wA = win.dayFrom - 12 * C_HOUR, wB = Math.min(win.dayTo + 12 * C_HOUR, win.to);
   Object.keys(S).forEach(k => { out.sources[k] = cIn_(S[k], wA + 1, wB - 1).length; });   // bornes exclues, comme cSeries_
@@ -691,6 +692,7 @@ function cAnalyze_(d, win, P) {
       const pos = cLast_(logs, s.a + 1000, c.a) || cFirst_(logs, s.a, s.b);
       out.idles.push({ a: s.a, b: s.b, min: (s.b - s.a) / C_MIN, cycleA: c.a, lat: pos ? pos.lat : '', lon: pos ? pos.lon : '' });
     });
+    cEngStops_(S, logs, c, tl, prevOff, nextOn, P).forEach(s => out.engStops.push(s));   // hors moteur v6 (17_stops.gs)
     let gap = null;
     if (plaus(fuel) && plaus(ecu) && ecu > 0.5) gap = fuel - ecu;
     out.cycles.push({
@@ -753,7 +755,7 @@ function cCalls_(devId, win) {
   keys.forEach(k => calls.push(sd(CORE_DIAGS[k])));
   return { calls, map: res => { const d = { trips: res[0], exc: res[1], logs: res[2], fills: res[3], sd: {} }; keys.forEach((k, i) => { d.sd[k] = res[4 + i]; }); return d; } };
 }
-function newAcc_() { return { trips: [], evts: [], fuels: [], lvls: [], idles: [], sync: [], days: [], warn: [], rules: rulesMap_() }; }
+function newAcc_() { return { trips: [], evts: [], fuels: [], lvls: [], idles: [], stops: [], sync: [], days: [], warn: [], rules: rulesMap_() }; }
 function attribCtx_() { const P = params_(); return { cidx: contractIndex_(), tol: P.ctrTolMin * MIN, rules: rulesMap_() }; }
 function attribRows_(k, rows, ctx) {
   if (!rows || !rows.length) return;
@@ -766,7 +768,7 @@ function attribRows_(k, rows, ctx) {
   });
 }
 function rowDay_(k, r, I) {
-  if (k === 'IDL') { const m = String(r[I['Trajet ID']] || '').split('|')[1]; if (m) return localDay_(new Date(m)); }
+  if (k === 'IDL' || k === 'STP') { const m = String(r[I['Trajet ID']] || '').split('|')[1]; if (m) return localDay_(new Date(m)); }
   if (k === 'LVL') return localDay_(toDate_(r[I['Horodatage']]) || new Date(0));
   return localDay_(toDate_(r[I[ATTR_TIME[k]]]) || new Date(0));
 }
@@ -847,6 +849,7 @@ function liveRun_(t0, budgetMs, opt) {
       const sel = {
         cycles: emit.filter(cy => okDay(cy.a)),
         idles: o.idles.filter(q => starts[q.cycleA] && okDay(q.cycleA)),
+        engStops: o.engStops.filter(q => starts[q.cycleA] && okDay(q.cycleA)),
         offStops: o.offStops.filter(q => q.off >= c.s0 && q.off < newDone && okDay(q.off)),
         fills: o.fills.filter(q => okDay(q.t)),
         evts: o.evts.filter(e => keepEvt_(acc.rules, e.rule) && okDay(e.t)),
@@ -860,9 +863,11 @@ function liveRun_(t0, budgetMs, opt) {
   }
   // 3) Écriture (mise à jour par clé : un trajet recalculé remplace sa version précédente)
   const actx = attribCtx_();
-  attribRows_('TRIP', acc.trips, actx); attribRows_('IDL', acc.idles, actx); attribRows_('EVT', acc.evts, actx); attribRows_('FUEL', acc.fuels, actx);
-  [['TRIP', acc.trips], ['IDL', acc.idles], ['EVT', acc.evts], ['FUEL', acc.fuels], ['LVL', acc.lvls]].forEach(x => {
-    if (x[1].length) { putLive_(x[0], x[1]); out.wrote += x[1].length; }   // base : lignes provisoires (final = false)
+  attribRows_('TRIP', acc.trips, actx); attribRows_('IDL', acc.idles, actx); attribRows_('STP', acc.stops, actx); attribRows_('EVT', acc.evts, actx); attribRows_('FUEL', acc.fuels, actx);
+  [['TRIP', acc.trips], ['IDL', acc.idles], ['STP', acc.stops], ['EVT', acc.evts], ['FUEL', acc.fuels], ['LVL', acc.lvls]].forEach(x => {
+    if (!x[1].length) return;
+    try { putLive_(x[0], x[1]); } catch (e) { if (x[0] === 'STP' && stopsMissing_(e)) return; throw e; }
+    out.wrote += x[1].length;   // base : lignes provisoires (final = false)
   });
   if (out.wrote) memoClear_();
   const upd = {}; Object.keys(changed).forEach(k => { upd['LIVE|' + k] = JSON.stringify(st[k]); });
