@@ -2,10 +2,10 @@
 const test = require('node:test'), assert = require('node:assert'), path = require('path');
 const env = require('./lib/env'), { sheetV6, collector, copyContracts } = require('./lib/v6'), { startSite, openBrowser, login } = require('./lib/browser');
 const NOW = Date.UTC(2026, 9, 6, 9, 0);
-let srv, B;
+let srv, B, A;
 
 test.before(async () => {
-  const A = sheetV6(NOW);
+  A = sheetV6(NOW);
   B = collector(NOW); B.run('installer()'); copyContracts(A, B);
   B.run("sbReq_('post', 'jobs', [{ kind: 'after_inject', arg: '2026-09-29' }])");
   for (let i = 0; i < 4; i++) { B.setNow(NOW + i * 5 * 60000); B.run('collect()'); }   // 4 passages : journées finalisées, journal et alertes calculés
@@ -16,7 +16,9 @@ test.after(() => { if (srv) srv.kill(); });
 const PAGES = [['direct', 'En direct', /En route|Garé|Arrêté/], ['tableau', 'Tableau de bord', /Km parcourus/], ['jour', 'Journée du', /Journées de travail actives/],
   ['chauffeurs', 'Classement des chauffeurs', /Score/], ['alertes', 'Alertes', /Gravité/], ['contrats', 'Contrats', /Contrats des 40 derniers jours/],
   ['plaques', 'Changements de plaque', /Ancienne plaque/], ['vehicules', 'Véhicules', /WW968194/], ['reglages', 'Réglages', /Journal technique/],
-  ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/]];
+  ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/],
+  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/],
+  ['vehicule?k=968199WW', 'WW968199', /Journées de travail/], ['chauffeur?c=C038', 'Compte rendu', /Par journée de travail/]];
 
 for (const [viewport, size] of [['ordinateur', { width: 1440, height: 900 }], ['téléphone', { width: 390, height: 844, isMobile: true, hasTouch: true }]]) {
   test('toutes les pages sur ' + viewport, async () => {
@@ -35,7 +37,7 @@ for (const [viewport, size] of [['ordinateur', { width: 1440, height: 900 }], ['
           const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
           assert.ok(over <= 1, p + ' : la page déborde de ' + over + ' px en largeur');
         }
-        await page.screenshot({ path: path.join(env.OUT, 'site_' + p + (viewport === 'téléphone' ? '_mobile' : '') + '.png') });
+        await page.screenshot({ path: path.join(env.OUT, 'site_' + p.replace(/\W.*/, '') + (viewport === 'téléphone' ? '_mobile' : '') + '.png') });
       }
       assert.deepStrictEqual(errors, []);
     } finally { await br.close(); }
@@ -51,6 +53,27 @@ test('« En direct » : un véhicule par ligne, plaques dessinées, carte affich
     assert.strictEqual(await page.locator('#tlive tbody tr').count(), n);
     assert.ok(await page.locator('#tlive .plate').count() >= n);
     assert.strictEqual(await page.locator('#map.leaflet-container').count(), 1);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});
+
+test('page Carburant : mêmes totaux que « Carburant consommé entre deux dates » du Sheet v6', async () => {
+  A.run("queueSync_(['2026-09-29','2026-09-30','2026-10-01','2026-10-02','2026-10-03','2026-10-04'], false)");
+  const ref = A.run("fuelPeriod('2026-09-30T00:00','2026-10-07T00:00','',false)").replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const m = ref.match(/([\d.]+) L consommés · (\d+) km · ([\d.]+) L\/100 km Dont moteur allumé à l'arrêt : ([\d.]+) L · Pleins détectés : (\d+) \(([\d.]+) L/);
+  assert.ok(m, ref);
+  const { br, page, errors } = await openBrowser();
+  await page.clock.setFixedTime(new Date('2026-10-06T09:18:00Z'));
+  try {
+    await login(page, '#/carburant');
+    await page.waitForSelector('#tcv');
+    const card = async l => (await page.locator('.card', { hasText: l }).first().locator('.cv').innerText()).replace(/\s/g, '').replace(',', '.');
+    assert.strictEqual(+await card('Carburant consommé'), +m[1]);
+    assert.strictEqual(+await card('Km'), +m[2]);
+    assert.strictEqual(+await card('Consommation'), +m[3]);
+    assert.strictEqual(+await card('moteur allumé'), +m[4]);
+    assert.strictEqual(+await card('Pleins détectés'), +m[5]);
+    assert.strictEqual(+await card('Litres pleins'), +m[6]);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });

@@ -49,8 +49,8 @@ function agOptions(sel, emptyTxt) { return (emptyTxt !== undefined ? `<option va
 function agTxt(id) { return id ? esc(S.agName[id] || '') : '<span class="small">aucune</span>'; }
 
 // ---------- Mise en page ----------
-const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'],
-  ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
+const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['conduite', 'Conduite'], ['carburant', 'Carburant'],
+  ['ralenti', 'Ralenti'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, reglages: 1 };
 function shell() {
   const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct';
@@ -174,7 +174,7 @@ async function pageDirect() {
       ['Boîtiers hors ligne', n('Boîtier hors ligne') + n('Pas de réponse Geotab'), n('Boîtier hors ligne') ? 'crit' : '']])}
     <div id="map"></div>
     ${table('tlive', [
-      ['Plaque', r => plate(r.plate, S.veh[r.vehicle_key] && S.veh[r.vehicle_key].other_plates), r => r.plate],
+      ['Plaque', r => `<a class="fl" href="#/vehicule?k=${encodeURIComponent(r.vehicle_key)}">${plate(r.plate, S.veh[r.vehicle_key] && S.veh[r.vehicle_key].other_plates)}</a>`, r => r.plate],
       ['Modèle', r => esc(r.model)], ['État', r => badge(r.state, (STATE_CLS[r.state] || '') + ' dot'), r => order[r.state] ?? 9],
       ['Vitesse', r => r.speed ? f0(r.speed) + ' km/h' : '', r => r.speed, 'n'], ['Depuis', r => r.since_min != null ? fH(r.since_min / 60) : '', r => r.since_min, 'n'],
       ['Dernière position', r => fmtDT(r.last_pos_at), r => r.last_pos_at], ['Chauffeur sous contrat', r => esc(r.driver_name)], ['Contrat', r => esc(r.contract_num || '')],
@@ -183,6 +183,7 @@ async function pageDirect() {
       ['Alertes du jour', r => r.alerts_today ? `<a href="#/alertes?plaque=${encodeURIComponent(r.plate)}&jour=${today()}">${r.alerts_today}</a>` : '0', r => r.alerts_today, 'n'],
       ['Carte', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">Voir</a>` : '']], rows, { empty: 'Aucun véhicule actif' })}`;
   drawMap(rows);
+  liveDrivers(rows).then(h => { const t = $('#tlive'); if (h && t && t.closest('#page')) t.closest('.tw').insertAdjacentHTML('afterend', h); }).catch(() => { });
   const b = $('#syncnow');
   if (b) b.onclick = async () => { b.disabled = true; try { await job('sync_now'); b.textContent = 'Demande envoyée (5 min max)'; } catch (e) { alert(e.message); b.disabled = false; } };
 }
@@ -226,7 +227,7 @@ async function pageTableau() {
       ['Alertes critiques', f0(crit), crit ? 'crit' : ''], ['Alertes hautes', f0(high)]])}
     <h2>Véhicules</h2>
     ${table('tveh', [
-      ['Plaque', x => plate(x.v.plate), x => x.v.plate], ['Modèle', x => esc(x.v.model)], ['Contrats', x => Object.keys(x.a.ctr).length, null, 'n'],
+      ['Plaque', x => vlink(x.v.key), x => x.v.plate], ['Modèle', x => esc(x.v.model)], ['Contrats', x => Object.keys(x.a.ctr).length, null, 'n'],
       ['Heures sous contrat', x => fH(x.a.ctrH), x => x.a.ctrH, 'n'], ['Km', x => f1(x.a.km), x => x.a.km, 'n'], ['Conduite', x => fH(x.a.drive), x => x.a.drive, 'n'],
       ['Ralenti total', x => fH(x.a.idle), x => x.a.idle, 'n'], ['dont prolongé', x => fH(x.a.idleLong), x => x.a.idleLong, 'n'], ['Arrêts prolongés', x => x.a.nLong, null, 'n'],
       ['Carburant (L)', x => nmv(fuelVal(x.a)), x => x.a.fuel, 'n'], ['L/100 km', x => nmv(l100Val(x.a)), x => x.a.l100 || 0, 'n'], ['Source carburant', x => esc(srcTxt(x.a))],
@@ -235,7 +236,7 @@ async function pageTableau() {
       ['Score /100 km', x => f1(scoreOf(x.a, P)), x => scoreOf(x.a, P), 'n'], ['Siphonages suspects', x => x.a.siph ? `<b class="red">${x.a.siph}</b>` : '0', x => x.a.siph, 'n'],
       ['Km hors contrat', x => x.a.kmHors ? `<b class="red">${f1(x.a.kmHors)}</b>` : '0', x => x.a.kmHors, 'n'], ['Alertes', x => x.al, null, 'n']], vrows)}
     <h2>Chauffeurs les plus dangereux <a class="more" href="#/chauffeurs">Voir le classement complet</a></h2>
-    ${table('tdrv', [['Rang', (d) => drows.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${esc(d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
+    ${table('tdrv', [['Rang', (d) => drows.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${dlink(d.code, d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
       ['Niveau', d => badge(d.level, LEVEL_CLS[d.level]), d => d.score], ['Score /100 km', d => f1(d.score), d => d.score, 'n'], ['Événements', d => d.a.evts, null, 'n'],
       ['Km', d => f1(d.a.km), d => d.a.km, 'n'], ['Ralenti total', d => fH(d.a.idle), d => d.a.idle, 'n'], ['dont prolongé', d => fH(d.a.idleLong), d => d.a.idleLong, 'n'],
       ['Carburant (L)', d => nmv(fuelVal(d.a)), d => d.a.fuel, 'n'], ['L/100 km', d => nmv(l100Val(d.a)), d => d.a.l100 || 0, 'n'], ['Vmax', d => f0(d.a.vmax), d => d.a.vmax, 'n'],
@@ -254,7 +255,8 @@ function alertTable(id, rows, editable) {
     ['Statut', a => editable ? `<select data-al="${esc(a.id)}" class="alst">${['À traiter', 'En cours', 'Traité', 'Faux positif'].map(s => `<option ${s === a.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(a.status), a => a.status],
     ['Commentaire', a => editable ? `<input data-alc="${esc(a.id)}" class="alc" value="${esc(a.comment || '')}" placeholder="…">` : esc(a.comment || '')]], rows, { empty: 'Aucune alerte' });
 }
-function linkify(t) { return esc(t).replace(/(https:\/\/maps\.google\.com\/\?q=[0-9.,\-]+)/g, '<a target="_blank" rel="noopener" href="$1">carte</a>'); }
+/** Les alertes du moteur v6 contiennent un lien Google Maps : affiché comme lien OpenStreetMap */
+function linkify(t) { return esc(t).replace(/https:\/\/maps\.google\.com\/\?q=(-?[0-9.]+),(-?[0-9.]+)/g, (m, la, lo) => `<a target="_blank" rel="noopener" href="${osmUrl(la, lo)}">carte</a>`); }
 
 // ---------- DU JOUR ----------
 async function pageJour() {
@@ -305,7 +307,7 @@ async function pageChauffeurs() {
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Classement des chauffeurs</h1><div class="sub">Score = points danger pour 100 km (poids des règles dans Réglages). Seuils : Modéré ${P.scoreY}, Élevé ${P.scoreO}, Dangereux ${P.scoreR}.</div></div>
     ${periodBar(go)}
-    ${table('trank', [['Rang', d => list.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${esc(d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
+    ${table('trank', [['Rang', d => list.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${dlink(d.code, d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
       ['Niveau', d => badge(d.level, LEVEL_CLS[d.level]), d => d.score], ['Score /100 km', d => f1(d.score), d => d.score, 'n'], ['Points danger', d => f1(d.a.pts), d => d.a.pts, 'n'],
       ['Événements', d => d.a.evts, null, 'n'], ['Journées', d => Object.keys(d.a.ctr).length || Object.keys(d.a.days).length, null, 'n'], ['Heures sous contrat', d => fH(d.a.ctrH), d => d.a.ctrH, 'n'],
       ['Km', d => f1(d.a.km), d => d.a.km, 'n'], ['Conduite', d => fH(d.a.drive), d => d.a.drive, 'n'], ['Ralenti total', d => fH(d.a.idle), d => d.a.idle, 'n'],
@@ -749,6 +751,7 @@ function pendingView() {
 
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
+  conduite: pageConduite, carburant: pageCarburant, ralenti: pageRalenti, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
   contrats: pageContrats, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {

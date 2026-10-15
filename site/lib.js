@@ -37,7 +37,9 @@ function f1(v) { return v === null || v === undefined || v === '' ? '' : nf1.for
 /** heures décimales -> "2h05" */
 function fH(h) { if (h === null || h === undefined || h === '') return ''; const m = Math.round(num(h) * 60); return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0'); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-function mapLink(la, lo) { return la != null && lo != null && isFinite(+la) && isFinite(+lo) ? 'https://maps.google.com/?q=' + (+la).toFixed(5) + ',' + (+lo).toFixed(5) : ''; }
+/** Lien vers la carte OpenStreetMap (point marqué) */
+function mapLink(la, lo) { return la != null && lo != null && la !== '' && lo !== '' && isFinite(+la) && isFinite(+lo) ? osmUrl(+la, +lo) : ''; }
+function osmUrl(la, lo) { const a = (+la).toFixed(5), o = (+lo).toFixed(5); return 'https://www.openstreetmap.org/?mlat=' + a + '&mlon=' + o + '#map=17/' + a + '/' + o; }
 
 /** Plaque -> clé du véhicule (toutes les plaques d'un véhicule, y compris les changements saisis, renvoient à sa clé historique) */
 function buildCanonMap(vehicles, plateChanges) {
