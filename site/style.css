@@ -188,3 +188,10 @@ td input { width: 100%; min-width: 90px; }
 .rpt .rsum { width: auto; } .rpt .rsum th { text-align: left; font-weight: 400; color: var(--mute); padding: 2px 16px 2px 0; } .rpt .rsum td { font-weight: 600; }
 .rpt .rtab th { text-align: left; background: var(--acc-soft); padding: 4px 6px; white-space: nowrap; } .rpt .rtab td { border-bottom: 1px solid var(--line2); padding: 4px 6px; }
 .rpt .n { text-align: right; } .rpt .rempty, .rpt .rfoot { color: var(--mute); }
+
+/* ---------- Graphiques, cartes de chaleur, liens vers les fiches ---------- */
+.chart { width: 100%; max-width: 760px; height: auto; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 8px; margin: 8px 0 14px; }
+.chart text { font: 12px var(--f); fill: var(--ink); } .chart text.cl { fill: var(--mute); } .chart text.cv { font-weight: 600; } .chart .gl { stroke: var(--line2); }
+.heat { display: inline-block; min-width: 38px; padding: 1px 4px; border-radius: 3px; color: #14202b; }
+a.fl { text-decoration: none; color: inherit; } a.fl:hover { text-decoration: underline; color: var(--acc); }
+@media print { .head button, #toasts { display: none !important; } main { padding: 0; } .chart { break-inside: avoid; } }
