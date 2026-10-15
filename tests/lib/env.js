@@ -4,7 +4,11 @@ process.env.TZ = 'Africa/Casablanca';
 const path = require('path'), { execFileSync } = require('child_process');
 const ROOT = path.join(__dirname, '..', '..');
 const PG = process.env.PG_URL || 'postgresql://postgres@localhost:54322/flotte?host=/tmp';
+// Heure du Maroc des tests : table du collecteur (MA_TZ), indépendante de la version des fuseaux de Node (CI comprise)
+const MA_TZ = JSON.parse(require('fs').readFileSync(path.join(ROOT, 'collector', 'src', '05_constants.gs'), 'utf8').match(/const MA_TZ = (\[.*\]);/)[1]);
+const maOff = t => { let lo = 0, hi = MA_TZ.length - 1; while (lo < hi) { const k = (lo + hi + 1) >> 1; if (MA_TZ[k][0] <= t) lo = k; else hi = k - 1; } return MA_TZ[lo][1]; };
 const env = {
+  MA_TZ, maOff,
   ROOT,
   REF: path.join(ROOT, 'tests', 'reference'),
   FIX: path.join(ROOT, 'tests', 'fixtures'),

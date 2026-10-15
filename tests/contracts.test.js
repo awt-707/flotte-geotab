@@ -1,6 +1,7 @@
 // L'import des contrats dans le site (lib.js, dans le navigateur) doit lire l'extraction exactement comme le Google Sheet v6
 const test = require('node:test'), assert = require('node:assert');
 const env = require('./lib/env'), { sheetV6 } = require('./lib/v6'), L = require('../site/lib.js');
+L.setTzRules(env.MA_TZ);   // comme le site : heure du Maroc publiée par le collecteur
 
 test('contrats identiques à l\'injection du Sheet v6', () => {
   const A = sheetV6(Date.UTC(2026, 9, 6, 9));
