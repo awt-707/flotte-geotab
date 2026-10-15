@@ -79,8 +79,13 @@ bash tests/setup_db.sh     # Postgres 16 + PostgREST requis (voir .github/workfl
 npm test
 ```
 
-## Installation du collecteur (déjà faite)
+## Installation du collecteur (chargeur, une seule fois)
 
-Projet Apps Script « Flotte Geotab - Collecteur » sous a.atmani@clicar.fr. Propriétés du script : `GEO_USER`, `GEO_PWD`, `SUPABASE_KEY` (service_role). Fonction `installer` exécutée une fois. Fonctions utiles : `testConnexions`, `collecterMaintenant`, `arreter`.
+Projet Apps Script « Flotte Geotab - Collecteur » sous a.atmani@clicar.fr (https://script.google.com/d/1Ou0GfD8tiaWGYpM3ywzSz4IR-khIwKuWBq-n0sgj7pEt32uAQbWrndJ3/edit) :
 
-L'envoi d'e-mails (alertes, rapports) demande l'autorisation « Envoyer des e-mails en votre nom » : si le collecteur a été installé avant cette version, exécuter `installer` une fois de plus dans l'éditeur pour l'accepter (le Journal technique le signale sinon).
+1. Fichier `Code.gs` : remplacer tout son contenu par `collector/loader/Code.gs` (chargeur, environ 60 lignes, ne change plus).
+2. Paramètres du projet > cocher « Afficher le fichier manifeste appsscript.json » ; remplacer son contenu par `collector/src/appsscript.json`.
+3. Propriétés du script : `GEO_USER`, `GEO_PWD`, `SUPABASE_KEY` (service_role).
+4. Exécuter `installer` et accepter les autorisations.
+
+Ensuite, chaque version qui passe les tests sur `main` est chargée automatiquement au passage suivant (5 min). Aucune API Google à activer. Fonctions utiles : `testConnexions`, `collecterMaintenant`, `arreter`.

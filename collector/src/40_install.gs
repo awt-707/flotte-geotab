@@ -60,14 +60,42 @@ const IMPORT_TABLES = [
   ['DATA_CARBURANT', 'FUEL', 'final'], ['DATA_NIVEAU', 'LVL', 'final'], ['LIVE_TRAJETS', 'TRIP', 'live'], ['LIVE_RALENTI', 'IDL', 'live'],
   ['LIVE_EVENEMENTS', 'EVT', 'live'], ['LIVE_CARBURANT', 'FUEL', 'live'], ['LIVE_NIVEAU', 'LVL', 'live'], ['DATA_JOURNALIER', 'JRN', 'id'], ['ALERTES', 'ALERT', 'id']
 ];
-/** Lecture rapide d'un onglet par l'API Sheets (valeurs brutes, dates en numéro de série) */
+/**
+ * Lecture rapide d'un onglet par l'API Sheets (valeurs brutes, dates en numéro de série).
+ * Si l'API Google Sheets n'est pas activée dans le projet Google du script (projet caché, non modifiable),
+ * lecture directe du classeur (SpreadsheetApp, dates déjà converties) : plus lente, mais sans réglage à faire.
+ */
 function sheetValues_(id, range) {
-  const r = UrlFetchApp.fetch('https://sheets.googleapis.com/v4/spreadsheets/' + id + '/values/' + encodeURIComponent(range) +
-    '?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER&majorDimension=ROWS',
-    { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
-  if (r.getResponseCode() === 400 && /Unable to parse range/.test(r.getContentText())) return null;   // onglet absent
-  if (r.getResponseCode() !== 200) throw new Error('Lecture du Sheet ' + range + ' : HTTP ' + r.getResponseCode() + ' ' + r.getContentText().slice(0, 200));
-  return JSON.parse(r.getContentText()).values || [];
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('SHEETS_VIA_APP') !== '1') {
+    const r = UrlFetchApp.fetch('https://sheets.googleapis.com/v4/spreadsheets/' + id + '/values/' + encodeURIComponent(range) +
+      '?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER&majorDimension=ROWS',
+      { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+    const code = r.getResponseCode(), text = r.getContentText();
+    if (code === 400 && /Unable to parse range/.test(text)) return null;   // onglet absent
+    if (code === 200) return JSON.parse(text).values || [];
+    if (code !== 403 || !/has not been used|is disabled|SERVICE_DISABLED|accessNotConfigured/i.test(text))
+      throw new Error('Lecture du Sheet ' + range + ' : HTTP ' + code + ' ' + text.slice(0, 200));
+    props.setProperty('SHEETS_VIA_APP', '1');
+    log_('Reprise du Google Sheet', 'API Google Sheets non activée : lecture directe du classeur (plus lente, rien à faire)');
+  }
+  return sheetValuesApp_(id, range);
+}
+/** Même lecture par SpreadsheetApp. range = « Onglet!A2:Z4001 » ou « Onglet!1:1 » */
+function sheetValuesApp_(id, range) {
+  const m = String(range).match(/^(.*)!(?:([A-Z]+)(\d+):([A-Z]+)(\d+)|(\d+):(\d+))$/);
+  if (!m) throw new Error('Plage non reconnue : ' + range);
+  const sh = SpreadsheetApp.openById(id).getSheetByName(m[1]);
+  if (!sh) return null;
+  const lr = sh.getLastRow(), lc = sh.getLastColumn();
+  let r0, r1, c0, c1;
+  if (m[6]) { r0 = +m[6]; r1 = +m[7]; c0 = 1; c1 = lc; } else { c0 = colToIndex_(m[2]); r0 = +m[3]; c1 = colToIndex_(m[4]); r1 = +m[5]; }
+  r1 = Math.min(r1, lr); c1 = Math.min(c1, lc);
+  if (r1 < r0 || c1 < c0) return [];
+  const v = sh.getRange(r0, c0, r1 - r0 + 1, c1 - c0 + 1).getValues();
+  while (v.length && !v[v.length - 1].some(x => x !== '' && x !== null)) v.pop();
+  if (m[6]) v.forEach(row => { while (row.length && row[row.length - 1] === '') row.pop(); });   // en-têtes : comme l'API, sans cellules vides en fin
+  return v;
 }
 function sheetTz_(id) {
   const r = UrlFetchApp.fetch('https://sheets.googleapis.com/v4/spreadsheets/' + id + '?fields=properties.timeZone',
