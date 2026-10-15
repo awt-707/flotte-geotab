@@ -1,0 +1,85 @@
+name: Tests et mise en ligne
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    name: Tests (moteur v6, base, site)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PG_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      PG_URL: postgresql://postgres:postgres@localhost:5432/flotte
+      PGRST_DB_URI: postgresql://authenticator:authpass@localhost:5432/flotte
+      POSTGREST_BIN: ${{ github.workspace }}/.bin/postgrest
+      TZ: Africa/Casablanca
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Navigateur de test
+        run: npx playwright install --with-deps chromium
+      - name: PostgREST (même moteur que Supabase)
+        run: |
+          mkdir -p .bin
+          curl -sSfL https://github.com/PostgREST/postgrest/releases/download/v12.2.3/postgrest-v12.2.3-linux-static-x64.tar.xz | tar -xJ -C .bin
+      - name: Base de test (migrations Supabase)
+        run: bash tests/setup_db.sh
+      - name: Tests
+        run: npm test
+      - name: Captures d'écran du site
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: captures-site
+          path: tests/out/*.png
+          retention-days: 14
+
+  deploy:
+    name: Mise en ligne
+    needs: tests
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production
+    env:
+      NETLIFY_SITE_ID: 00645516-06e7-4f1a-b209-7a9065244464
+      SUPABASE_URL: https://cgiiwumbblimvmrypxlc.supabase.co
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Site (Netlify)
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then echo "::warning::Secret NETLIFY_AUTH_TOKEN absent : site non publié (voir README)"; exit 0; fi
+          (cd site && zip -qr ../site.zip .)
+          curl -sSf -X POST -H "Authorization: Bearer $NETLIFY_AUTH_TOKEN" -H "Content-Type: application/zip" \
+            --data-binary @site.zip "https://api.netlify.com/api/v1/sites/$NETLIFY_SITE_ID/deploys?title=$(git log -1 --format=%h)" \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const d=JSON.parse(s);console.log('Site publié :',d.state,d.ssl_url||d.url)})"
+      - name: Collecteur (installé automatiquement par Apps Script au passage suivant)
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_SERVICE_KEY" ]; then echo "::warning::Secret SUPABASE_SERVICE_KEY absent : collecteur non publié (voir README)"; exit 0; fi
+          node scripts/publish-collector.js

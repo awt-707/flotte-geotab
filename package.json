@@ -1,0 +1,23 @@
+{
+  "name": "flotte-geotab",
+  "private": true,
+  "description": "Supervision de la flotte (Geotab) : collecteur Apps Script, base Supabase, site Netlify",
+  "scripts": {
+    "build": "node collector/build.js",
+    "check": "node scripts/check.js",
+    "test:db": "bash tests/setup_db.sh",
+    "test": "npm run build && npm run check && node --test --test-concurrency=1 \"tests/*.test.js\"",
+    "test:site": "node --test --test-concurrency=1 tests/site.test.js tests/site_import.test.js"
+  },
+  "devDependencies": {
+    "@fontsource/barlow": "5.1.0",
+    "@fontsource/barlow-semi-condensed": "5.1.0",
+    "@supabase/supabase-js": "2.45.4",
+    "leaflet": "1.9.4",
+    "playwright": "1.56.0",
+    "xlsx": "0.18.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

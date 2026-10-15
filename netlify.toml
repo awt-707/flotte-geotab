@@ -1,0 +1,4 @@
+# Le site est publié par GitHub Actions (après tests réussis). Ce fichier sert si le dépôt est relié directement à Netlify.
+[build]
+  publish = "site"
+  command = ""
