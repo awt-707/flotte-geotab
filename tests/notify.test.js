@@ -45,6 +45,17 @@ test('nouvelles alertes : chaque destinataire reçoit celles qui le concernent, 
   assert.strictEqual(B.mails.length, 3, 'alertes renvoyées');
 });
 
+test('lien de carte des e-mails : OpenStreetMap', () => {
+  B.mails.length = 0;
+  env.psql(`insert into alerts (id, day, time, plate, vehicle_key, driver_name, type, severity, detail, value) values
+    ('map1', '2026-10-06', '11:00', 'WW968194', '968194WW', 'X', 'Siphonage suspect', 'Critique', 'Jauge 50 % → 30 % https://maps.google.com/?q=33.57311,-7.58984', '')`);
+  B.run('notifyAlerts_()');
+  const m = B.mails.find(x => x.to === 'chef@x');
+  assert.ok(m, 'e-mail non envoyé');
+  assert.match(m.htmlBody, /href="https:\/\/www\.openstreetmap\.org\/\?mlat=33\.57311&mlon=-7\.58984#map=17\/33\.57311\/-7\.58984">carte<\/a>/);
+  assert.doesNotMatch(m.htmlBody, /maps\.google/);
+});
+
 test('rapport quotidien : envoyé une fois, après l\'heure prévue et la finalisation, avec le PDF de l\'agence', () => {
   B.mails.length = 0;
   env.psql(`insert into journal (id, day, plate, vehicle_key, driver_code, driver_name, contract_num, km, drive_h, idle_h, fuel_l, fuel_km, n_events, danger_pts, n_trips) values

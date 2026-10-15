@@ -255,7 +255,8 @@ function alertTable(id, rows, editable) {
     ['Statut', a => editable ? `<select data-al="${esc(a.id)}" class="alst">${['À traiter', 'En cours', 'Traité', 'Faux positif'].map(s => `<option ${s === a.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(a.status), a => a.status],
     ['Commentaire', a => editable ? `<input data-alc="${esc(a.id)}" class="alc" value="${esc(a.comment || '')}" placeholder="…">` : esc(a.comment || '')]], rows, { empty: 'Aucune alerte' });
 }
-function linkify(t) { return esc(t).replace(/(https:\/\/maps\.google\.com\/\?q=[0-9.,\-]+)/g, '<a target="_blank" rel="noopener" href="$1">carte</a>'); }
+/** Les alertes du moteur v6 contiennent un lien Google Maps : affiché comme lien OpenStreetMap */
+function linkify(t) { return esc(t).replace(/https:\/\/maps\.google\.com\/\?q=(-?[0-9.]+),(-?[0-9.]+)/g, (m, la, lo) => `<a target="_blank" rel="noopener" href="${osmUrl(la, lo)}">carte</a>`); }
 
 // ---------- DU JOUR ----------
 async function pageJour() {

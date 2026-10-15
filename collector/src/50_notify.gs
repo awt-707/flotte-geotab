@@ -39,7 +39,7 @@ function notifyAlerts_() {
     const worst = list[0].severity;
     const rows = list.map(a => '<tr><td>' + rptDay(a.day) + ' ' + rptEsc(a.time || '') + '</td><td><b>' + rptEsc(a.plate || '') + '</b></td><td>' + rptEsc(a.driver_name || '') +
       '</td><td>' + rptEsc(a.type) + '</td><td style="color:' + (a.severity === 'Critique' ? '#b42318' : a.severity === 'Haute' ? '#c4320a' : '#5d6b74') + '"><b>' + rptEsc(a.severity) +
-      '</b></td><td>' + rptEsc(a.detail || '').replace(/(https:\/\/maps\.google\.com\/\?q=[0-9.,\-]+)/g, '<a href="$1">carte</a>') + '</td></tr>').join('');
+      '</b></td><td>' + rptEsc(a.detail || '').replace(/https:\/\/maps\.google\.com\/\?q=(-?[0-9.]+),(-?[0-9.]+)/g, (m, la, lo) => '<a href="https://www.openstreetmap.org/?mlat=' + la + '&mlon=' + lo + '#map=17/' + la + '/' + lo + '">carte</a>') + '</td></tr>').join('');
     const html = '<div style="font-family:Arial,sans-serif;font-size:13px"><p>' + list.length + ' nouvelle' + (list.length > 1 ? 's' : '') + ' alerte' + (list.length > 1 ? 's' : '') +
       (r.agency_id ? ' (agence ' + rptEsc(agName[r.agency_id] || '') + ')' : '') + ' :</p><table cellpadding="4" style="border-collapse:collapse;font-size:12px">' +
       '<tr style="background:#eef0f7"><th align="left">Date</th><th align="left">Plaque</th><th align="left">Chauffeur</th><th align="left">Type</th><th align="left">Gravité</th><th align="left">Détail</th></tr>' +
