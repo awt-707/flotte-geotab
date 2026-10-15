@@ -6,7 +6,7 @@ const $ = sel => document.querySelector(sel);
 const ROLE_TXT = { admin: 'Administrateur', manager: 'Gestionnaire', viewer: 'Lecture seule', pending: 'En attente' };
 const canEdit = () => S.profile && ['admin', 'manager'].includes(S.profile.role);
 const isAdmin = () => S.profile && S.profile.role === 'admin';
-const PARAM_DEFAULTS = { minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5 };
+const PARAM_DEFAULTS = { minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
 
 // ---------- Accès aux données ----------
 async function all(table, cols, build, order) {
@@ -50,7 +50,7 @@ function agTxt(id) { return id ? esc(S.agName[id] || '') : '<span class="small">
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['conduite', 'Conduite'], ['carburant', 'Carburant'],
-  ['ralenti', 'Ralenti'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, reglages: 1 };
 function shell() {
   const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct';
@@ -751,7 +751,7 @@ function pendingView() {
 
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
-  conduite: pageConduite, carburant: pageCarburant, ralenti: pageRalenti, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
+  conduite: pageConduite, carburant: pageCarburant, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
   contrats: pageContrats, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {

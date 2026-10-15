@@ -10,20 +10,20 @@ function putLive_(k, rows) {
 function flush_(acc) {
   if (!acc.days.length) return;
   const actx = attribCtx_();
-  attribRows_('TRIP', acc.trips, actx); attribRows_('IDL', acc.idles, actx); attribRows_('EVT', acc.evts, actx); attribRows_('FUEL', acc.fuels, actx);
+  attribRows_('TRIP', acc.trips, actx); attribRows_('IDL', acc.idles, actx); attribRows_('STP', acc.stops, actx); attribRows_('EVT', acc.evts, actx); attribRows_('FUEL', acc.fuels, actx);
   const days = acc.days.filter((d, i, a) => a.indexOf(d) === i), lots = chunks_(days, 6), pos = {};
   days.forEach((d, i) => { pos[d] = Math.floor(i / 6); });
-  const parts = lots.map(() => ({ trips: [], idles: [], events: [], fuel: [], levels: [], sync: [] }));
+  const parts = lots.map(() => ({ trips: [], idles: [], stops: [], events: [], fuel: [], levels: [], sync: [] }));
   const lotOf = (key, day) => { const p = pos[key + '|' + day]; if (p !== undefined) return p;
     const any = days.findIndex(d => d.indexOf(key + '|') === 0); return any >= 0 ? pos[days[any]] : parts.length - 1; };
-  [['TRIP', acc.trips, 'trips'], ['IDL', acc.idles, 'idles'], ['EVT', acc.evts, 'events'], ['FUEL', acc.fuels, 'fuel'], ['LVL', acc.lvls, 'levels']].forEach(x => {
+  [['TRIP', acc.trips, 'trips'], ['IDL', acc.idles, 'idles'], ['STP', acc.stops, 'stops'], ['EVT', acc.evts, 'events'], ['FUEL', acc.fuels, 'fuel'], ['LVL', acc.lvls, 'levels']].forEach(x => {
     const I = idx_(H[x[0]]);
     x[1].forEach(r => { const o = toDb_(x[0], r, true); parts[lotOf(o.vehicle_key, o.vday)][x[2]].push(o); });
   });
   acc.sync.forEach(r => { const o = toDb_('SYNC', r); parts[lotOf(o.vehicle_key, o.day)].sync.push(o); });
   lots.forEach((keys, i) => {
     const p = parts[i];
-    dbRpc_('finalize_vdays', { p_keys: keys, p_trips: p.trips, p_idles: p.idles, p_events: p.events, p_fuel: p.fuel, p_levels: p.levels, p_sync: p.sync });
+    dbRpc_('finalize_vdays', { p_keys: keys, p_trips: p.trips, p_idles: p.idles, p_events: p.events, p_fuel: p.fuel, p_levels: p.levels, p_sync: p.sync, p_stops: p.stops });
   });
   memoClear_();
 }
@@ -47,7 +47,7 @@ function updateDerived_(fromDay) {
 function reattribute_(fromDay) {
   const ctx = attribCtx_(), col = { 'Code chauffeur': 'driver_code', 'Chauffeur': 'driver_name', 'Contrat': 'contract_num', 'Règle': 'rule_name', 'Chauffeur suivant': 'next_driver' };
   let n = 0;
-  ['TRIP', 'IDL', 'EVT', 'FUEL'].forEach(k => {
+  ['TRIP', 'IDL', 'STP', 'EVT', 'FUEL'].forEach(k => {
     const A = readData_(k, fromDay); if (!A.rows.length) return;
     const I = A.I, cols = ['Code chauffeur', 'Chauffeur', 'Contrat'].concat(k === 'EVT' ? ['Règle'] : k === 'FUEL' ? ['Chauffeur suivant'] : []);
     const sig = r => cols.map(c => String(r[I[c]])).join('|');
@@ -262,7 +262,7 @@ function dailyStep_(t0) {
     if (h < 2 && st) return '';                                        // la nuit, après 2 h
     st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size'] };
     const month = today.slice(0, 7);
-    if (props.getProperty('ARCH_MONTH') !== month) st.steps.push('arch:trips', 'arch:idles', 'arch:events', 'arch:fuel', 'arch:levels',
+    if (props.getProperty('ARCH_MONTH') !== month) st.steps.push('arch:trips', 'arch:idles', 'arch:engine_stops', 'arch:events', 'arch:fuel', 'arch:levels',
       'arch:vehicle_days', 'arch:journal', 'arch:alerts', 'arch:done');
   }
   const out = [];
@@ -308,7 +308,7 @@ function backup_() {
 /** Archivage mensuel : lignes plus anciennes que la durée de conservation copiées en CSV dans Drive, puis retirées de la base */
 function archiveTable_(table) {
   const P = params_(), today = localDay_(new Date());
-  const ret = { trips: P.retentionDays, idles: P.retentionDays, events: P.retentionDays, fuel: P.retentionDays, levels: P.lvlDays || 30,
+  const ret = { trips: P.retentionDays, idles: P.retentionDays, engine_stops: P.retentionDays, events: P.retentionDays, fuel: P.retentionDays, levels: P.lvlDays || 30,
     vehicle_days: (P.retentionDays || 62) + 30, journal: 400, alerts: 180 }[table];
   if (!(ret > 0)) return '';
   const cutoff = addDays_(today, -ret), dc = ['vehicle_days', 'journal', 'alerts'].indexOf(table) >= 0 ? 'day' : 'vday';

@@ -18,7 +18,7 @@ function writeTable_(k, headers, rows) {
 function inList_(vals) { return 'in.' + enc_('(' + vals.map(v => '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"').join(',') + ')'); }
 
 // ---------- Paramètres ----------
-const NUM_PARAMS = ['priceDiesel', 'priceGas', 'siphonPct', 'siphonL', 'pleinPct', 'stopMin', 'idleLongMin', 'idleAlertMin', 'idleDayMin', 'minFuelKm',
+const NUM_PARAMS = ['priceDiesel', 'priceGas', 'siphonPct', 'siphonL', 'pleinPct', 'stopMin', 'idleLongMin', 'idleAlertMin', 'idleDayMin', 'engStopMin', 'minFuelKm',
   'vmaxAlert', 'overAlert', 'scoreY', 'scoreO', 'scoreR', 'kmMin', 'overConsPct', 'ctrTolMin', 'lvlDays',
   'catchupDays', 'reportHour', 'rpmMin', 'fullPct', 'shiftDay', 'shiftNight', 'liveMin', 'autoRenderMin', 'retentionDays'];
 function params_() {

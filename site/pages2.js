@@ -214,6 +214,58 @@ async function pageRalenti() {
   window.__rerender = render; render();
 }
 
+// ---------- ARRÊTS MOTEUR TOURNANT (chaque arrêt de engStopMin min et plus, litres réels quand Geotab les mesure) ----------
+function beltTxt(r) {
+  if (r.belt_on_min === null && r.belt_off_min === null) return `<span class="nm">${NM}</span>`;
+  const on = num(r.belt_on_min), off = num(r.belt_off_min);
+  return on && !off ? 'bouclée' : off && !on ? 'débouclée' : `bouclée ${f0(on)} min, débouclée ${f0(off)} min`;
+}
+async function pageArrets() {
+  const p = period(), P = S.P, sel = qs().get('k') || '', minS = num(P.engStopMin, 3);
+  const [rows, trips] = await Promise.all([dataRows('engine_stops', '*', p.from, p.to, { key: sel || undefined }),
+    dataRows('trips', 'id,vehicle_key,idle_fuel_l,idle_min', addDays(p.from, -1), addDays(p.to, 1), { key: sel || undefined })]);
+  const trip = {}; trips.forEach(t => { trip[t.id] = t; });
+  const measured = rows.filter(r => r.liters !== null), litres = measured.reduce((t, r) => t + num(r.liters), 0), minT = rows.reduce((t, r) => t + num(r.dur_min), 0);
+  const cost = r => { const pr = priceOf(vehOf(r.vehicle_key)); return r.liters !== null && pr ? num(r.liters) * pr : null; };
+  const beltKnown = rows.filter(r => r.belt_on_min !== null || r.belt_off_min !== null);
+  const group = keyFn => { const o = {}; rows.forEach(r => { const k = keyFn(r), a = o[k] || (o[k] = { k, n: 0, min: 0, max: 0, nL: 0, L: 0, minL: 0, cost: 0, nCost: 0, on: 0, off: 0, nBelt: 0 });
+    a.n++; a.min += num(r.dur_min); a.max = Math.max(a.max, num(r.dur_min));
+    if (r.liters !== null) { a.nL++; a.L += num(r.liters); a.minL += num(r.dur_min); const c = cost(r); if (c !== null) { a.cost += c; a.nCost++; } }
+    if (r.belt_on_min !== null || r.belt_off_min !== null) { a.nBelt++; a.on += num(r.belt_on_min); a.off += num(r.belt_off_min); } });
+    return Object.values(o).sort((x, y) => y.min - x.min); };
+  const gcols = (first, label, link) => [[first, a => link(a.k), a => label(a.k)], ['Arrêts', a => f0(a.n), a => a.n, 'n'], ['Durée totale', a => fH(a.min / 60), a => a.min, 'n'],
+    ['Plus long arrêt (min)', a => f0(a.max), a => a.max, 'n'], ['Arrêts mesurés', a => a.nL + ' / ' + a.n, a => a.nL, 'n'],
+    ['Litres mesurés', a => a.nL ? `<b>${f1(a.L)}</b>` : `<span class="nm">${NM}</span>`, a => a.L, 'n'],
+    ['L/h (arrêts mesurés)', a => a.nL && a.minL ? f1(a.L / (a.minL / 60)) : '', a => a.minL ? a.L / a.minL : 0, 'n'],
+    ['Coût mesuré (MAD)', a => a.nCost ? f0(a.cost) : '', a => a.cost, 'n'],
+    ['Ceinture conducteur pendant les arrêts', a => a.nBelt ? `bouclée ${fH(a.on / 60)}, débouclée ${fH(a.off / 60)}` : `<span class="nm">${NM}</span>`]];
+  const det = rows.slice().sort((a, b) => new Date(b.start_at) - new Date(a.start_at));
+  $('#page').innerHTML = `<div class="head"><h1>Arrêts moteur tournant</h1><div class="sub">Chaque arrêt de ${esc(minS)} min et plus, véhicule immobile (moins de 2 km/h) et moteur thermique tournant (plus de ${esc(P.rpmMin || 300)} tr/min).
+    <b>Litres</b> = compteur Geotab du carburant brûlé au ralenti, relevé juste avant et juste après l'arrêt : valeur réelle. Le boîtier ne relève ce compteur qu'à certains moments (surtout au contact mis ou coupé) :
+    quand aucun relevé n'encadre l'arrêt, les litres de l'arrêt sont « non mesuré » et la colonne « Ralenti du trajet » donne le total réel du trajet, qui inclut cet arrêt (plafond).
+    <b>Ceinture conducteur</b> : état transmis par le véhicule pendant l'arrêt (Staria) ; la présence d'un passager et la climatisation ne sont transmises par aucun boîtier : non mesurées.</div></div>
+    ${periodBar(go)}<div class="bar">${vehSelect(sel)}${isAdmin() ? '<button class="ghost" id="stopsback">Calculer les 14 derniers jours</button><span id="stopsres" class="hint"></span>' : ''}</div>
+    ${cards([['Arrêts moteur tournant', f0(rows.length)], ['Durée totale', fH(minT / 60)], ['Arrêts avec litres mesurés', measured.length + ' / ' + rows.length],
+      ['Litres mesurés', measured.length ? f1(litres) : NM], ['L/h mesuré', measured.length ? f1(litres / (measured.reduce((t, r) => t + num(r.dur_min), 0) / 60 || 1)) : NM],
+      ['Ceinture connue', beltKnown.length + ' / ' + rows.length]])}
+    <h2>Par chauffeur</h2>${table('tstd', gcols('Chauffeur', k => drvName(k), k => dlink(k)), group(r => r.driver_code || HORS), { empty: 'Aucun arrêt moteur tournant sur la période' })}
+    <h2>Par véhicule</h2>${table('tstv', gcols('Véhicule', k => vehOf(k).plate, k => vlink(k)), group(r => r.vehicle_key), { empty: 'Aucun arrêt moteur tournant sur la période' })}
+    <h2>Détail des arrêts</h2>
+    ${table('tstops', [['Début', r => fmtDTY(r.start_at), r => r.start_at], ['Fin', r => fmtDT(r.end_at)], ['Durée (min)', r => f1(r.dur_min), r => num(r.dur_min), 'n'],
+      ['Véhicule', r => vlink(r.vehicle_key, r.plate)], ['Chauffeur', r => dlink(r.driver_code, drvName(r.driver_code, r.driver_name))], ['Contrat', r => esc(r.contract_num || '')],
+      ['Litres de l\'arrêt', r => r.liters !== null ? `<b>${f1(r.liters)}</b>` : `<span class="nm" title="${esc(r.liters_source || '')}">${NM}</span>`, r => r.liters === null ? -1 : num(r.liters), 'n'],
+      ['L/h', r => r.lph !== null ? f1(r.lph) : '', r => num(r.lph), 'n'], ['Coût (MAD)', r => { const c = cost(r); return c !== null ? f1(c) : ''; }, r => cost(r) || 0, 'n'],
+      ['Ralenti du trajet (réel)', r => { const t = trip[r.trip_id]; return t && t.idle_fuel_l !== null ? f1(t.idle_fuel_l) + ' L en ' + f0(t.idle_min) + ' min' : ''; }],
+      ['Ceinture conducteur', r => beltTxt(r)], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']],
+      det, { empty: 'Aucun arrêt moteur tournant sur la période' })}`;
+  $('#vsel').onchange = e => { location.hash = '#/arrets' + (e.target.value ? '?k=' + encodeURIComponent(e.target.value) : ''); };
+  const bk = $('#stopsback');
+  if (bk) bk.onclick = async () => {
+    if (!confirm('Retélécharger les 14 derniers jours depuis Geotab pour calculer leurs arrêts moteur tournant ? (les autres chiffres sont recalculés à l\'identique)')) return;
+    try { await job('resync', addDays(today(), -14) + '|' + addDays(today(), -1)); $('#stopsres').textContent = 'Demandé : calcul en arrière-plan (Journal technique).'; bk.disabled = true; }
+    catch (e) { $('#stopsres').textContent = 'Erreur : ' + e.message; } };
+}
+
 // ---------- CONDUITE (classement conduite du Sheet : événements par type, vitesses, dépassements) ----------
 async function drivingStats(from, to, opt) {
   opt = opt || {};

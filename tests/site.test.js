@@ -17,7 +17,7 @@ const PAGES = [['direct', 'En direct', /En route|Garé|Arrêté/], ['tableau', '
   ['chauffeurs', 'Classement des chauffeurs', /Score/], ['alertes', 'Alertes', /Gravité/], ['contrats', 'Contrats', /Contrats des 40 derniers jours/],
   ['plaques', 'Changements de plaque', /Ancienne plaque/], ['vehicules', 'Véhicules', /WW968194/], ['reglages', 'Réglages', /Journal technique/],
   ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/],
-  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/],
+  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/],
   ['vehicule?k=968199WW', 'WW968199', /Journées de travail/], ['chauffeur?c=C038', 'Compte rendu', /Par journée de travail/]];
 
 for (const [viewport, size] of [['ordinateur', { width: 1440, height: 900 }], ['téléphone', { width: 390, height: 844, isMobile: true, hasTouch: true }]]) {
@@ -88,4 +88,21 @@ test('compte en attente : aucune donnée visible', async () => {
     assert.match(await page.innerText('.lbox'), /doit être validé/);
     assert.strictEqual(await page.locator('.side').count(), 0);
   } finally { await br.close(); srv.kill(); srv = await startSite(); }
+});
+
+test('arrêts moteur tournant : chaque arrêt de la base affiché, litres non mesurés signalés', async () => {
+  const { br, page, errors } = await openBrowser();
+  await page.clock.setFixedTime(new Date('2026-10-06T09:18:00Z'));
+  try {
+    await login(page, '#/arrets');
+    await page.selectOption('#psel', '30 derniers jours');
+    await page.waitForFunction(() => !document.querySelector('#page .loading'), null, { timeout: 15000 });
+    const n = +env.psql("select count(*) from engine_stops where day between '2026-09-07' and '2026-10-06'");
+    assert.ok(n > 0, 'aucun arrêt calculé');
+    assert.strictEqual(await page.locator('#tstops tbody tr').count(), n);
+    const nm = +env.psql("select count(*) from engine_stops where day between '2026-09-07' and '2026-10-06' and liters is null");
+    assert.strictEqual(await page.locator('#tstops tbody tr td:nth-child(7) .nm').count(), nm, 'litres non mesurés');
+    assert.match(await page.innerText('.cards'), new RegExp(`${n - nm} / ${n}`));
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
 });

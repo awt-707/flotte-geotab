@@ -24,6 +24,8 @@ const H = {
     'Lat arrêt', 'Lon arrêt', 'Code chauffeur', 'Chauffeur', 'Contrat'],
   IDL: ['Clé', 'Clé plaque', 'Plaque', 'Trajet ID', 'Date', 'Début', 'Fin', 'Durée arrêt (min)', 'Moteur tournant (min)',
     'Vérification moteur', 'Litres', 'Source litres', 'Lat', 'Lon', 'Code chauffeur', 'Chauffeur', 'Contrat'],
+  STP: ['Clé', 'Clé plaque', 'Plaque', 'Trajet ID', 'Date', 'Début', 'Fin', 'Durée (min)', 'Litres', 'Source litres',
+    'Ralenti hors arrêt inclus (min)', 'L/h', 'Ceinture bouclée (min)', 'Ceinture débouclée (min)', 'Lat', 'Lon', 'Code chauffeur', 'Chauffeur', 'Contrat'],
   SRC: ['Clé', 'Clé plaque', 'Plaque', 'Diagnostic ID', 'Nom', 'Unité', 'Lectures', 'Rôle', 'Analysé le'],
   EVT: ['ID', 'Clé plaque', 'Plaque', 'Date', 'Début', 'Fin', 'Durée (s)', 'Distance (km)', 'Règle ID',
     'Règle', 'Code chauffeur', 'Chauffeur', 'Contrat'],
@@ -60,6 +62,7 @@ const PARAM_DEFS = [
   ['idleLongMin', 'Ralenti prolongé : durée mini (min)', 10, 'Arrêt continu moteur allumé compté comme prolongé (en dessous : feux, bouchons)'],
   ['idleAlertMin', 'Ralenti prolongé : alerte (min)', 20, 'Alerte sur un seul arrêt moteur allumé'],
   ['idleDayMin', 'Ralenti prolongé par journée : alerte (min)', 60, 'Cumul sur un contrat (journée de travail)'],
+  ['engStopMin', 'Arrêt moteur tournant : durée mini (min)', 3, 'Véhicule immobile moteur allumé : chaque arrêt d\'au moins cette durée est listé avec ses litres réels (page Arrêts moteur)'],
   ['minFuelKm', 'Km mesurés mini pour afficher L/100', 30, 'En dessous, la conso n\'est pas affichée'],
   ['rpmMin', 'Régime moteur tournant (tr/min)', 300, 'Au-dessus : moteur thermique en marche'],
   ['fullPct', 'Plein complet : jauge après (%)', 90, 'Pour la conso plein à plein'],
@@ -88,10 +91,11 @@ const LEASE_MS = 35 * 60 * 1000;
 const CORE_DIAGS = {
   ign: 'DiagnosticIgnitionId', rpm: 'DiagnosticEngineSpeedId', spd: 'DiagnosticEngineRoadSpeedId',
   fuel: 'DiagnosticDeviceTotalFuelId', ecu: 'DiagnosticTotalFuelUsedId', idleFuel: 'DiagnosticDeviceTotalIdleFuelId',
-  lvlL: 'DiagnosticFuelUnitsId', lvlPct: 'DiagnosticFuelLevelId', odo: 'DiagnosticOdometerId'
+  lvlL: 'DiagnosticFuelUnitsId', lvlPct: 'DiagnosticFuelLevelId', odo: 'DiagnosticOdometerId',
+  belt: 'DiagnosticDriverSeatbeltId'   // ceinture conducteur (1 = débouclée) : arrêts moteur tournant uniquement, hors moteur v6
 };
 const C_MIN = 60000, C_HOUR = 3600000;
-const ATTR_TIME = { TRIP: 'Début', IDL: 'Début', EVT: 'Début', FUEL: 'Arrêt début' };
+const ATTR_TIME = { TRIP: 'Début', IDL: 'Début', STP: 'Début', EVT: 'Début', FUEL: 'Arrêt début' };
 const LIVE_SETTLE = 5 * MIN;
 const LIVE_CTX = HOUR;
 const LIVE_EVBACK = 3 * HOUR;

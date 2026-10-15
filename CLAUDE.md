@@ -69,8 +69,10 @@ Fait :
 
 Ajouté le 15/10/2026 (branche `claude/sweet-albattani-9xcpvl`, à fusionner dans `main`) : agences, parc et chauffeurs gérés sur le site, alertes par e-mail et en temps réel, rapports PDF. **Migration `20261016000000_agences.sql` à exécuter dans Supabase > SQL Editor** (après `20261015…`).
 
+Ajouté le 16/10/2026 : page **Arrêts moteur** (chaque arrêt moteur tournant ≥ `engStopMin` = 3 min, table `engine_stops`, calcul `collector/src/17_stops.gs` à côté du moteur v6 qui reste inchangé). Litres = compteur Geotab `DiagnosticDeviceTotalIdleFuelId` relevé avant/après l'arrêt (≤ 1 min d'autre ralenti entre les relevés), sinon « non mesuré » ; le site affiche alors le ralenti réel du trajet entier. Ceinture conducteur `DiagnosticDriverSeatbeltId` (0 bouclée, 1 débouclée ; transmise par les Staria, pas par les Sonata). Frein à main (`DiagnosticParkingBrakeId`) toujours 0 sur la flotte, présence passager et clim non transmises : non utilisés. **Migration `20261017000000_arrets_moteur.sql` à exécuter dans Supabase > SQL Editor.** Constat sur les données réelles : le compteur ralenti est surtout relevé au contact mis / coupé, donc peu d'arrêts en cours de trajet ont des litres mesurés (1 sur 13 dans le jeu de test).
+
 Reste à faire (par Ahmed, secrets et autorisations) :
-0. Supabase > SQL Editor : exécuter `supabase/migrations/20261016000000_agences.sql`.
+0. Supabase > SQL Editor : exécuter `supabase/migrations/20261016000000_agences.sql` (fait), puis `20261017000000_arrets_moteur.sql`.
 1. Apps Script > Paramètres du projet > Propriétés du script : `GEO_USER`, `GEO_PWD`, `SUPABASE_KEY` (service_role de flotte_luxury : Project Settings > API Keys > Legacy).
 2. Exécuter `installer` dans l'éditeur, accepter les autorisations.
 3. Activer « API Google Apps Script » : script.google.com/home/usersettings.

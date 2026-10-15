@@ -20,7 +20,7 @@ const DEFAULT_SUPABASE_URL = 'https://cgiiwumbblimvmrypxlc.supabase.co';        
 const SITE_URL = 'https://flotte-geotab-clicar.netlify.app';                     // site (liens dans les e-mails)
 const DEFAULT_OLD_SHEET_ID = '1VxAV7P5SlaeSIZRC_EAQKjl3CFICQS4idJre4YLif1k';      // ancien Google Sheet Flotte Geotab (reprise de l'historique)
 /** Tables (mêmes clés que le Sheet v6 : le code de calcul est repris tel quel) */
-const S = { VEH: 'VEH', DRV: 'DRV', CTR: 'CTR', RULE: 'RULE', TRIP: 'TRIP', EVT: 'EVT', FUEL: 'FUEL', IDL: 'IDL', LVL: 'LVL',
+const S = { VEH: 'VEH', DRV: 'DRV', CTR: 'CTR', RULE: 'RULE', TRIP: 'TRIP', EVT: 'EVT', FUEL: 'FUEL', IDL: 'IDL', STP: 'STP', LVL: 'LVL',
   SYNC: 'SYNC', JRN: 'JRN', ALERT: 'ALERT', PLATES: 'PLATES' };
 let HOLDS_LOCK_ = false;
 // Pas d'interface Sheets dans le collecteur
