@@ -32,7 +32,8 @@ async function loadRef(force) {
     all('agencies', 'id,name', null, ['name'])]);
   S.agencies = ags; S.agName = {}; ags.forEach(a => { S.agName[a.id] = a.name; });
   S.P = Object.assign({}, PARAM_DEFAULTS); params.forEach(p => { if (p.value !== null && p.value !== '') S.P[p.key] = isNaN(+p.value) ? p.value : +p.value; });
-  setTzRules(S.P.tzRules);
+  // Heures affichées à l'heure de l'appareil de l'utilisateur (fuseau Africa/Casablanca de son navigateur) :
+  // les règles du collecteur (param tzRules) ne sont pas appliquées, elles ne correspondaient pas à l'heure réelle du Maroc.
   S.vehList = veh; S.veh = {}; veh.forEach(v => { S.veh[v.key] = v; });
   S.rules = {}; rules.forEach(r => { S.rules[r.id] = r; });
   S.drv = { [HORS]: 'Hors contrat' }; drv.forEach(d => { S.drv[d.code] = d.name; });
