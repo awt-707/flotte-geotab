@@ -2,6 +2,13 @@
 // CONSTANTES (reprises du Sheet v6)
 // ============================================================================
 const TZ = 'Africa/Casablanca';
+/**
+ * Heure du Maroc telle que l'affichent les téléphones et ordinateurs des utilisateurs (UTC+1, UTC+0 pendant le Ramadan) :
+ * [instant UTC (ms), décalage (min)] à partir de chaque changement d'heure, 2018-2037 (table des fuseaux 2025b).
+ * La table des fuseaux de Google met le Maroc à UTC+0 depuis le 20/09/2026, ce qui ne correspond pas à l'heure réelle
+ * vue par Ahmed (UTC+1) : le collecteur utilise donc cette table, et la publie pour le site (tzPublish_).
+ */
+const MA_TZ = [[1514764800000,0],[1521943200000,60],[1526176800000,0],[1529200800000,60],[1557021600000,0],[1560045600000,60],[1587261600000,0],[1590890400000,60],[1618106400000,0],[1621130400000,60],[1648346400000,0],[1651975200000,60],[1679191200000,0],[1682215200000,60],[1710036000000,0],[1713060000000,60],[1740276000000,0],[1743904800000,60],[1771120800000,0],[1774144800000,60],[1801965600000,0],[1804989600000,60],[1832205600000,0],[1835834400000,60],[1863050400000,0],[1866074400000,60],[1893290400000,0],[1896919200000,60],[1924135200000,0],[1927159200000,60],[1954980000000,0],[1958004000000,60],[1985220000000,0],[1988848800000,60],[2016064800000,0],[2019088800000,60],[2046304800000,0],[2049933600000,60],[2077149600000,0],[2080778400000,60],[2107994400000,0],[2111018400000,60],[2138234400000,0],[2141863200000,60]];
 const PARC_ID_DEFAULT = '14HGWlCDPb3aCNZOZVQi2wgHHoZXCOrWBhekbyCPYxys';
 const MAX_RUN_MS = 4.6 * 60 * 1000;
 const ENGINE_V = '5.3';

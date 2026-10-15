@@ -36,7 +36,7 @@ http.createServer((req, res) => {
   fs.readFile(f, (e, d) => { if (e) { res.statusCode = 404; return res.end(); } res.setHeader('Content-Type', types[path.extname(f)] || 'application/octet-stream'); res.end(d); });
 }).listen(PORT, () => console.log('site test sur', PORT));
 
-let LIVE_T = Date.parse(process.env.LIVE_START || '2026-10-03T10:20:00Z');
+let LIVE_T = Date.parse(process.env.LIVE_START || '2026-10-03T12:20:00Z');
 async function liveCall(req, res) {
   if (process.env.LIVE_OFF) { res.statusCode = 404; res.setHeader('Content-Type', 'application/json'); return res.end('{"code":"NOT_FOUND","message":"Requested function was not found"}'); }
   const { handle, resetMemory } = await import('../../supabase/functions/geotab-live/live.mjs'), geo = require('./geotab_fake');

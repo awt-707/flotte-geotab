@@ -82,3 +82,16 @@ test('secrets Geotab absents ou faux : message clair', async () => {
   r = await call('admin', { GEO_PWD: 'mauvais' }, NOW + 30000);
   assert.strictEqual(r.status, 502); assert.match(r.body.error, /^Geotab : /);
 });
+
+test('événements de conduite Geotab des 30 dernières minutes, rattachés au véhicule', async () => {
+  L.resetMemory();
+  global.__NOW = NOW; const r = await call('admin', {}, NOW + 60000);
+  const fx = JSON.parse(require('zlib').gunzipSync(fs.readFileSync(path.join(__dirname, 'fixtures', 'geotab_2026-09-26_10-06.json.gz'))));
+  const keyOf = {}; JSON.parse(env.psql("select json_agg(json_build_array(geotab_id, key)) from vehicles")).forEach(([g, k]) => { keyOf[g] = k; });
+  const exp = {};
+  fx.data.forEach(w => (w.exc || []).forEach(e => { const t = Date.parse(e.activeFrom); if (t >= NOW - 1800000 && t <= NOW && e.state !== 'ExceptionEventStateInvalidId') exp[e.id] = keyOf[w.id]; }));
+  assert.ok(Object.keys(exp).length > 0, 'aucun événement de référence');
+  assert.deepStrictEqual(Object.fromEntries(r.body.events.map(e => [e.id, e.key])), exp);
+  r.body.events.forEach(e => { assert.ok(e.rule && e.at, e.id); });
+  assert.deepStrictEqual(r.body.events.map(e => e.at), r.body.events.map(e => e.at).slice().sort().reverse(), 'du plus récent au plus ancien');
+});

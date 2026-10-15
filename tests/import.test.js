@@ -5,8 +5,7 @@ const env = require('./lib/env'), { sheetV6, collector } = require('./lib/v6');
 const NOW = Date.UTC(2026, 9, 6, 9, 0);
 let A, B, cnt, nSheets = 0;
 
-const serial = d => { const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Casablanca', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(d).reduce((o, x) => (o[x.type] = x.value, o), {});
-  return (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) + d.getMilliseconds()) / 86400000 + 25569; };
+const serial = d => (d.getTime() + env.maOff(d.getTime()) * 60000) / 86400000 + 25569;   // numéro de série du classeur (heure du Maroc)
 
 test.before(() => {
   A = sheetV6(NOW);

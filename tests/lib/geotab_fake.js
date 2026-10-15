@@ -26,7 +26,8 @@ function get(p) {
   if (p.typeName === 'DeviceStatusInfo') { const L = all(id, 'logs').filter(l => ms(l[0]) <= (global.__NOW || Date.now())).sort((a, b) => ms(a[0]) - ms(b[0])).pop(); return L ? [{ device: { id }, dateTime: L[0], speed: L[1], latitude: L[2], longitude: L[3], isDriving: L[1] > 2, currentStateDuration: '00:12:00', isDeviceCommunicating: true }] : []; }
   switch (p.typeName) {
     case 'Trip': return all(id, 'trips').filter(t => ms(t.stop) >= ms(s.fromDate) && ms(t.start) <= ms(s.toDate));
-    case 'ExceptionEvent': return all(id, 'exc').filter(e => inR(e.activeFrom, s));
+    case 'ExceptionEvent': return id ? all(id, 'exc').filter(e => inR(e.activeFrom, s))
+      : fx.devices.flatMap(d => all(d.id, 'exc').filter(e => ms(e.activeFrom) >= ms(s.fromDate) && ms(e.activeFrom) <= (s.toDate ? ms(s.toDate) : (global.__NOW || Date.now()))).map(e => Object.assign({ device: { id: d.id } }, e)));
     case 'LogRecord': return all(id, 'logs').filter(l => inR(l[0], s)).map(l => ({ dateTime: l[0], speed: l[1], latitude: l[2], longitude: l[3] }));
     case 'FillUp': return all(id, 'fills').filter(f => inR(f.dateTime, s));
     case 'StatusData': {

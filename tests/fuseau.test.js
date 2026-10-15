@@ -28,3 +28,22 @@ test('le site suit les règles du collecteur, quel que soit le navigateur', () =
   const intl = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Casablanca', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(t));
   assert.strictEqual(lib.localHM(t), intl, 'sans règles : table du navigateur');
 });
+
+test('heure réelle du Maroc (UTC+1) dans le collecteur, quelle que soit la table des fuseaux de Google', () => {
+  const B = collector(NOW);
+  assert.strictEqual(B.run("localDay_(new Date('2026-10-14T23:30:00Z'))"), '2026-10-15');
+  assert.strictEqual(B.run("localHM_(new Date('2026-10-14T23:30:00Z'))"), '00:30');
+  assert.strictEqual(B.run("dayBounds_('2026-10-16').start.toISOString()"), '2026-10-15T23:00:00.000Z');
+  assert.strictEqual(B.run("localHM_(new Date('2027-02-20T12:00:00Z'))"), '12:00', 'Ramadan : UTC+0');
+});
+
+test('une seule fois : journées depuis le 20/09/2026 retéléchargées et recalculées à l\'heure réelle', () => {
+  const B = collector(NOW, { TZ_FIX: '' }); B.run('installer()');
+  env.psql('delete from logs');
+  B.run('collect()');
+  assert.match(env.psql("select detail from logs where action = 'Heure du Maroc'"), /Journées du 20\/09\/2026 au 05\/10\/2026 recalculées .* véhicule-jours à retélécharger/);
+  assert.match(env.psql("select detail from logs where action = 'Collecte' order by at desc limit 1"), /véhicule-jours finalisés/);
+  assert.strictEqual(env.psql("select count(distinct day) from vehicle_days where day between '2026-09-20' and '2026-10-04'"), '15', 'journées non retéléchargées');
+  B.setNow(NOW + 5 * 60000); B.run('collect()');
+  assert.strictEqual(env.psql("select count(*) from logs where action = 'Heure du Maroc'"), '1');
+});

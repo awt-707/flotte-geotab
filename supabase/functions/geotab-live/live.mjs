@@ -7,7 +7,7 @@
 // - Réponse Geotab gardée 2 s : plusieurs écrans ouverts ne multiplient pas les appels à Geotab.
 // Fichier sans dépendance, exécuté par Deno (index.ts) et par Node dans les tests.
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
-const CACHE_MS = 2000;
+const CACHE_MS = 2000, EVENTS_MIN = 30;   // événements de conduite renvoyés : 30 dernières minutes
 const mem = { session: null, data: null, at: 0, pending: null };
 
 export function resetMemory() { mem.session = null; mem.data = null; mem.at = 0; mem.pending = null; }
@@ -58,16 +58,20 @@ async function fleet(deps, ids) {
   if (mem.data && now - mem.at < CACHE_MS && ids.every(id => id in mem.data)) return mem.data;
   if (mem.pending) return mem.pending;
   mem.pending = (async () => {
-    const iso = new Date(now).toISOString(), calls = [{ method: 'Get', params: { typeName: 'DeviceStatusInfo' } }];
+    const iso = new Date(now).toISOString(), calls = [{ method: 'Get', params: { typeName: 'DeviceStatusInfo' } },
+      // événements des règles Geotab (excès de vitesse, freinages, accélérations, virages, ceinture, collision) de toute la flotte
+      { method: 'Get', params: { typeName: 'ExceptionEvent', search: { fromDate: new Date(now - EVENTS_MIN * 60000).toISOString() } } }];
     // contact : dernière valeur connue (même date de début et de fin = valeur en vigueur à cet instant)
     ids.forEach(id => calls.push({ method: 'Get', params: { typeName: 'StatusData', search: { deviceSearch: { id }, diagnosticSearch: { id: 'DiagnosticIgnitionId' }, fromDate: iso, toDate: iso } } }));
     const res = await geo(deps, 'ExecuteMultiCall', { calls }), out = {};
-    ids.forEach((id, i) => { out[id] = { dsi: null, ign: (res[1 + i] || []).slice(-1)[0] || null }; });
+    ids.forEach((id, i) => { out[id] = { dsi: null, ign: (res[2 + i] || []).slice(-1)[0] || null, evts: [] }; });
     (res[0] || []).forEach(d => { const id = d.device && d.device.id; if (id in out) out[id].dsi = d; });
+    (res[1] || []).forEach(e => { const id = e.device && e.device.id; if (id in out && e.state !== 'ExceptionEventStateInvalidId' && e.state !== 1) out[id].evts.push(e); });
     mem.data = out; mem.at = now; return out;
   })();
   try { return await mem.pending; } finally { mem.pending = null; }
 }
+/** Réponse : vehicles (état en direct) et events (événements Geotab des 30 dernières minutes, du plus récent au plus ancien) */
 export async function handle(req, deps) {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   const auth = req.headers.get('authorization') || '';
@@ -79,7 +83,8 @@ export async function handle(req, deps) {
     if (vr.status === 401) return json(401, { error: 'Connexion requise' });
     if (!vr.ok) return json(502, { error: 'Base : HTTP ' + vr.status });
     const veh = (await vr.json()).filter(v => String(v.active).toUpperCase() !== 'NON' && v.active !== false);
-    if (!veh.length) return json(200, { at: new Date().toISOString(), vehicles: [] });
+    const nowIso = new Date(deps.now ? deps.now() : Date.now()).toISOString();
+    if (!veh.length) return json(200, { at: nowIso, vehicles: [], events: [] });
     const f = await fleet(deps, veh.map(v => v.geotab_id));
     const vehicles = veh.map(v => {
       const x = f[v.geotab_id] || {}, d = x.dsi, ignOn = x.ign ? +x.ign.data >= 1 : null;
@@ -89,7 +94,11 @@ export async function handle(req, deps) {
       return { key: v.key, plate: v.plate, state, lat: d.latitude, lon: d.longitude, speed: driving ? Math.round(+d.speed || 0) : 0, bearing: d.bearing,
         at: d.dateTime, since_min: durMin(d.currentStateDuration), ign_on: ignOn };
     });
-    return json(200, { at: new Date().toISOString(), vehicles });
+    const events = [];
+    veh.forEach(v => ((f[v.geotab_id] || {}).evts || []).forEach(e => events.push({ id: String(e.id), key: v.key, plate: v.plate,
+      rule: e.rule && e.rule.id ? String(e.rule.id) : '', at: e.activeFrom, end: e.activeTo || null, dur_min: durMin(e.duration), km: e.distance != null ? +e.distance : null })));
+    events.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    return json(200, { at: nowIso, vehicles, events });
   } catch (e) {
     return json(e.status || 502, { error: 'Geotab : ' + e.message });
   }
