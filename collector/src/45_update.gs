@@ -20,7 +20,7 @@ function selfUpdate_() {
   if (r.getResponseCode() !== 200) {
     const t = r.getContentText();
     throw new Error(/has not been used|is disabled|SERVICE_DISABLED|User has not enabled the Apps Script API/i.test(t)
-      ? 'activez « API Google Apps Script » sur script.google.com/home/usersettings (une seule fois)'
+      ? 'activez « API Google Apps Script » sur script.google.com/home/usersettings (une seule fois). Réponse Google : ' + t.replace(/\s+/g, ' ').slice(0, 220)
       : 'HTTP ' + r.getResponseCode() + ' ' + t.slice(0, 200));
   }
   props.setProperty('CODE_SHA', rel.sha); props.setProperty('CODE_VERSION', rel.version);
@@ -29,6 +29,7 @@ function selfUpdate_() {
 }
 /** Appelé par collect : une erreur de mise à jour n'est signalée qu'une fois par jour et n'arrête jamais la collecte */
 function tryUpdate_() {
+  if (typeof FLOTTE_LOADER !== 'undefined') return '';   // chargeur : la dernière version est chargée à chaque exécution, rien à installer
   try { return selfUpdate_(); }
   catch (e) {
     const props = PropertiesService.getScriptProperties(), d = localDay_(new Date());

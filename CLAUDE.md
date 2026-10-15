@@ -54,13 +54,16 @@ Après une nouvelle migration, relancer `tests/setup_db.sh` (sinon PostgREST ne 
 
 `.github/workflows/ci.yml` : tests à chaque push ; sur `main` et **seulement si tout passe** :
 1. site publié sur Netlify (API zip, secret `NETLIFY_AUTH_TOKEN`) ;
-2. collecteur publié dans `releases` (`scripts/publish-collector.js`, secret `SUPABASE_SERVICE_KEY`). Au passage suivant, le collecteur remplace son propre code via l'API Apps Script (à activer une fois sur script.google.com/home/usersettings). `AUTO_UPDATE=NON` dans les propriétés du script désactive la mise à jour.
+2. collecteur publié dans `releases` (`scripts/publish-collector.js`, secret `SUPABASE_SERVICE_KEY`).
+
+**Chargeur (depuis le 15/10/2026)** : le projet Apps Script ne contient que `collector/loader/Code.gs` (+ `collector/src/appsscript.json`). À chaque exécution il charge la dernière version de `releases` et l'exécute (`new Function`), sans API Google : le projet Google Cloud lié au script est un projet caché, Ahmed ne peut pas y activer d'API (erreur `resourcemanager.projects.get`). L'ancienne mise à jour par l'API Apps Script (`45_update.gs`) est ignorée en mode chargeur. La reprise de l'ancien Sheet lit le classeur par SpreadsheetApp si l'API Sheets répond 403 (`sheetValuesApp_`).
 
 ## État au 15/10/2026
 
 Fait :
 - Base flotte_luxury : schéma complet + table `releases` appliqués.
-- Site en ligne (ancienne version visuelle) ; la nouvelle version du dépôt sera publiée par la CI.
+- Site en ligne et à jour (CI verte, secrets GitHub en place, publication automatique).
+- 15/10 soir : collecte bloquée en production (reprise de l'ancien Sheet en échec : API Sheets désactivée dans le projet caché). Corrigé dans le code ; il faut coller le chargeur dans Apps Script (voir README) puis exécuter `installer`.
 - Projet Apps Script : code = build du dépôt (`dist/Collecteur.gs`, un fichier `Code.gs`) + manifeste avec les scopes (dont `script.projects`). Fuseau Africa/Casablanca.
 - 41 tests verts en local.
 
