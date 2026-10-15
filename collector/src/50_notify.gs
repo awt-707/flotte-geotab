@@ -4,6 +4,11 @@
 // Rapports planifiés : Réglages > Rapports (table report_schedules). Le PDF est construit avec site/report.js (mêmes calculs que le site).
 // ============================================================================
 const SEV_RANK = { 'Critique': 0, 'Haute': 1, 'Moyenne': 2, 'Info': 3 };
+/** Message d'erreur d'envoi, avec la marche à suivre quand l'autorisation d'envoyer des e-mails n'a pas encore été acceptée */
+function mailErr_(e) {
+  const m = String(e && e.message || e);
+  return /permission|autoris|script\.send_mail/i.test(m) ? m + ' (ouvrez le projet Apps Script et exécutez « installer » une fois pour accepter l\'envoi d\'e-mails)' : m;
+}
 
 /** Nouvelles alertes (veille et jour même) envoyées une seule fois à chaque destinataire concerné */
 function notifyAlerts_() {
@@ -42,7 +47,7 @@ function notifyAlerts_() {
     try {
       MailApp.sendEmail({ to: r.email, subject: 'Flotte : ' + list.length + ' alerte' + (list.length > 1 ? 's' : '') + ' (' + worst.toLowerCase() + ')' + (list.length === 1 ? ' ' + list[0].type + ' ' + list[0].plate : ''), htmlBody: html, name: 'Flotte Geotab' });
       sent++;
-    } catch (e) { err.push(r.email + ' : ' + e.message); }
+    } catch (e) { err.push(r.email + ' : ' + mailErr_(e)); }
   });
   return (sent ? 'alertes envoyées par e-mail à ' + sent + ' destinataire' + (sent > 1 ? 's' : '') : '') + (err.length ? ' | e-mail impossible : ' + err.join(' ; ') : '');
 }
@@ -92,7 +97,7 @@ function reportsStep_() {
     const per = reportPeriod_(s.frequency, today);
     if (s.last_period === per.key) return;
     let res;
-    try { res = sendReport_(s, per); } catch (e) { res = 'Erreur : ' + e.message; }
+    try { res = sendReport_(s, per); } catch (e) { res = 'Erreur : ' + mailErr_(e); }
     sbReq_('patch', 'report_schedules?id=eq.' + s.id, { last_period: per.key, last_sent_at: new Date().toISOString(), last_result: res }, { Prefer: 'return=minimal' });
     out.push('Rapport ' + (s.name || s.frequency) + ' : ' + res);
   });
@@ -106,7 +111,7 @@ function jobSendReport_(args) {
     if (!s) { out.push('rapport ' + id + ' introuvable'); return; }
     const per = reportPeriod_(s.frequency, today);
     let res;
-    try { res = sendReport_(s, per); } catch (e) { res = 'Erreur : ' + e.message; }
+    try { res = sendReport_(s, per); } catch (e) { res = 'Erreur : ' + mailErr_(e); }
     sbReq_('patch', 'report_schedules?id=eq.' + s.id, { last_sent_at: new Date().toISOString(), last_result: res }, { Prefer: 'return=minimal' });
     out.push(res);
   });

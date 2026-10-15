@@ -3,6 +3,9 @@ const http = require('http'), fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '..', '..', 'site'), PORT = +process.env.PORT || 8080;
 const ADMIN = { id: '11111111-1111-1111-1111-111111111111', email: 'admin@x', aud: 'authenticated', role: 'authenticated', app_metadata: {}, user_metadata: {}, created_at: '2026-10-01T00:00:00Z' };
 const TOKEN = fs.readFileSync(path.join(__dirname, (process.env.WHO || 'admin') + '.jwt'), 'utf8').trim();
+// Utilisateur connecté = celui du jeton (admin@x ou new@x)
+const SUB = JSON.parse(Buffer.from(TOKEN.split('.')[1], 'base64url').toString()).sub;
+if (SUB !== ADMIN.id) Object.assign(ADMIN, { id: SUB, email: 'new@x' });
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
 // En-têtes de sécurité de production (site/_headers), avec l'adresse Supabase remplacée par ce serveur de test
 const HEADERS = fs.readFileSync(path.join(ROOT, '_headers'), 'utf8').split('\n/').shift().split('\n').slice(1).map(l => l.trim()).filter(Boolean)
