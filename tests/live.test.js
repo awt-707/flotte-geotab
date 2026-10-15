@@ -2,7 +2,10 @@
 // doivent déjà être identiques au Sheet v6 le soir même, puis être finalisés le lendemain midi sans changer.
 const test = require('node:test'), assert = require('node:assert');
 const env = require('./lib/env'), { sheetV6, collector, copyContracts } = require('./lib/v6'), { compareRows, fmt } = require('./lib/compare');
-const L = (d, h, m) => Date.UTC(2026, 9, d, h - 1, m || 0);   // heure du Maroc (UTC+1)
+// Heure du Maroc -> instant UTC, d'après les fuseaux installés (le Maroc est repassé de UTC+1 à UTC+0 le 20/09/2026)
+const L = (d, h, m) => { const w = Date.UTC(2026, 9, d, h, m || 0), p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Casablanca', hourCycle: 'h23',
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(w)).reduce((o, x) => (o[x.type] = x.value, o), {});
+  return w - (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - w); };
 let A, B, ref, refE, at2355, final, worstMs = 0;
 
 const snapshot = (refRows) => {

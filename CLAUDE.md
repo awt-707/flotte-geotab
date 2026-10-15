@@ -74,6 +74,8 @@ Ensuite (Claude) :
 
 ## Pièges connus
 
+- **Heure du Maroc** : le Maroc est repassé à GMT (UTC+0) le 20/09/2026. Tout le code passe par le fuseau `Africa/Casablanca` (jamais de décalage écrit en dur) ; les résultats dépendent donc de la version des fuseaux installée (Node récent / Google = UTC+0). Le projet Apps Script doit rester en fuseau Africa/Casablanca. Les tests forcent `TZ=Africa/Casablanca`.
+
 - Copier du code dans l'éditeur Apps Script via le navigateur : l'outil JavaScript décode les `\uXXXX` ; reconstruire les échappements avec `String.fromCharCode(92)` et vérifier le hash SHA-256 du contenu final.
 - PostgREST renvoie 1 000 lignes max par requête : toujours paginer (`dbSelect_`, `all()` côté site).
 - Les dates du Sheet arrivent en numéros de série dans le fuseau du classeur (`serialToDate_`).

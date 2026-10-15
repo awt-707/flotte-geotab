@@ -42,8 +42,6 @@ jobs:
           curl -sSfL https://github.com/PostgREST/postgrest/releases/download/v12.2.3/postgrest-v12.2.3-linux-static-x64.tar.xz | tar -xJ -C .bin
       - name: Base de test (migrations Supabase)
         run: bash tests/setup_db.sh
-      - name: Diagnostic temporaire
-        run: node scripts/diag-live.js
       - name: Tests
         shell: bash
         run: |
