@@ -22,6 +22,7 @@ function get(p) {
   if (p.typeName === 'Rule') return fx.rules;
   if (p.typeName === 'Diagnostic') return [{ id: s.id, name: s.id }];
   const id = s.deviceSearch && s.deviceSearch.id;
+  if (p.typeName === 'DeviceStatusInfo' && !id) return fx.devices.flatMap(d => get({ typeName: 'DeviceStatusInfo', search: { deviceSearch: { id: d.id } } }));   // sans filtre : toute la flotte
   if (p.typeName === 'DeviceStatusInfo') { const L = all(id, 'logs').filter(l => ms(l[0]) <= (global.__NOW || Date.now())).sort((a, b) => ms(a[0]) - ms(b[0])).pop(); return L ? [{ device: { id }, dateTime: L[0], speed: L[1], latitude: L[2], longitude: L[3], isDriving: L[1] > 2, currentStateDuration: '00:12:00', isDeviceCommunicating: true }] : []; }
   switch (p.typeName) {
     case 'Trip': return all(id, 'trips').filter(t => ms(t.stop) >= ms(s.fromDate) && ms(t.start) <= ms(s.toDate));

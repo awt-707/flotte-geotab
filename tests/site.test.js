@@ -106,3 +106,34 @@ test('arrêts moteur tournant : chaque arrêt de la base affiché, litres non me
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
+
+test('en direct : positions Geotab lues toutes les 5 s, les véhicules bougent sur la carte', async () => {
+  const { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/direct');
+    await page.waitForFunction(() => /Temps réel Geotab : actualisé toutes les 5 s/.test(document.querySelector('#livest').innerText), null, { timeout: 15000 });
+    const pos = () => page.evaluate(() => Object.fromEntries(Object.entries(LIVE.markers).map(([k, m]) => [k, m.getLatLng().lat + ',' + m.getLatLng().lng])));
+    const p1 = await pos();
+    assert.deepStrictEqual(Object.keys(p1).sort(), ['968194WW', '968199WW']);
+    await page.waitForFunction(p => Object.entries(LIVE.markers).some(([k, m]) => m.getLatLng().lat + ',' + m.getLatLng().lng !== p[k]), p1, { timeout: 20000 });
+    await page.waitForTimeout(1600);   // fin du glissement du marqueur
+    const live = await page.evaluate(() => LIVE.pos);
+    for (const [k, v] of Object.entries(await pos())) assert.strictEqual(v, live[k].lat + ',' + live[k].lon, k + ' : marqueur pas à la position Geotab');
+    const txt = await page.innerText('#tlive');
+    Object.values(live).filter(v => v.state === 'En route').forEach(v => assert.match(txt, new RegExp(v.speed + ' km/h')));
+    assert.match(txt, /\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/, 'heure de position à la seconde');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});
+
+test('en direct : relais Geotab pas encore installé, positions du collecteur et message clair', async () => {
+  srv.kill(); process.env.LIVE_OFF = '1'; srv = await startSite(); delete process.env.LIVE_OFF;
+  const { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/direct');
+    await page.waitForFunction(() => /indisponible/.test(document.querySelector('#livest').innerText), null, { timeout: 15000 });
+    assert.match(await page.innerText('#livest'), /Temps réel Geotab indisponible \(Requested function was not found\) : positions du collecteur/);
+    assert.ok(await page.locator('#tlive tbody tr').count() > 0);
+    assert.deepStrictEqual(errors.filter(e => !/404/.test(e)), []);
+  } finally { await br.close(); srv.kill(); srv = await startSite(); }
+});

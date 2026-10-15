@@ -195,3 +195,7 @@ td input { width: 100%; min-width: 90px; }
 .heat { display: inline-block; min-width: 38px; padding: 1px 4px; border-radius: 3px; color: #14202b; }
 a.fl { text-decoration: none; color: inherit; } a.fl:hover { text-decoration: underline; color: var(--acc); }
 @media print { .head button, #toasts { display: none !important; } main { padding: 0; } .chart { break-inside: avoid; } }
+/* Temps réel Geotab (page En direct) */
+.livedot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; vertical-align: middle; animation: livepulse 1.6s ease-in-out infinite; }
+@keyframes livepulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .livedot { animation: none; } }

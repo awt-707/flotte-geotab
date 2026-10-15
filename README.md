@@ -48,6 +48,7 @@ Le collecteur envoie les e-mails (alertes et rapports PDF) avec le compte Google
 - Véhicules et chauffeurs injectés depuis le site (Excel et saisie), rapport PDF téléchargé, bandeau d'alerte en temps réel.
 - Alertes par e-mail : bons destinataires (agence, gravité, type), jamais deux fois, historique non envoyé. Rapports planifiés : une fois par période, après finalisation, PDF de la bonne agence.
 - Arrêts moteur tournant (3 min et plus) : contrôlés sur les données brutes Geotab ; litres = vraie différence du compteur ralenti, sinon « non mesuré ».
+- En direct : positions, vitesses et contact lus dans Geotab toutes les 5 s par le relais, chaque utilisateur ne reçoit que les véhicules de ses agences, session Geotab réutilisée.
 - Mise à jour automatique du collecteur.
 - Aucune clé secrète dans le dépôt, clé publique du site = clé « anon ».
 
@@ -56,7 +57,8 @@ Le collecteur envoie les e-mails (alertes et rapports PDF) avec le compte Google
 À chaque modification sur `main`, GitHub Actions lance les tests. **Seulement s'ils réussissent** :
 
 1. le site est publié sur Netlify ;
-2. le collecteur est publié dans la table `releases` ; Apps Script l'installe tout seul au passage suivant (5 min).
+2. le collecteur est publié dans la table `releases` ; Apps Script l'installe tout seul au passage suivant (5 min) ;
+3. le relais Geotab en direct (`supabase/functions/geotab-live`) est publié dans Supabase.
 
 Secrets à créer une fois dans GitHub (Settings > Secrets and variables > Actions) :
 
@@ -64,6 +66,9 @@ Secrets à créer une fois dans GitHub (Settings > Secrets and variables > Actio
 |---|---|
 | `NETLIFY_AUTH_TOKEN` | Netlify > User settings > Applications > Personal access tokens > New access token |
 | `SUPABASE_SERVICE_KEY` | Supabase (flotte_luxury) > Project Settings > API Keys > Legacy > `service_role` |
+| `SUPABASE_ACCESS_TOKEN` | https://supabase.com/dashboard/account/tokens > Generate new token (publication du relais en direct) |
+
+Secrets du relais en direct, dans Supabase (flotte_luxury) > Edge Functions > Secrets : `GEO_USER`, `GEO_PWD` (mêmes identifiants Geotab que le collecteur), `GEO_DB` facultatif (`clicar` par défaut).
 
 Et une fois dans Google : https://script.google.com/home/usersettings > « API Google Apps Script » = **Activé** (permet au collecteur de se mettre à jour).
 
