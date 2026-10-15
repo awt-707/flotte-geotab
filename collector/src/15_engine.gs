@@ -145,13 +145,9 @@ function colToIndex_(col) {
 }
 function importVehicles(silent) {
   const t0 = Date.now(), P = params_();
-  const src = SpreadsheetApp.openById(String(P.parcId)).getSheetByName(String(P.parcTab));
-  if (!src) throw new Error('Onglet "' + P.parcTab + '" introuvable dans le Sheet Parc.');
-  const data = src.getDataRange().getValues();
-  const head = data[0].map(h => normTxt_(h));
-  const find = (re, dflt) => { const i = head.findIndex(h => re.test(h)); return i >= 0 ? i : dflt; };
-  const cPl = colToIndex_(P.parcCol) - 1;
-  const cMa = find(/^marque/, 7), cMo = find(/^modele/, 8), cVin = find(/chassis|vin/, 9), cCa = find(/^carburant/, 17);
+  // Liste du parc injectée depuis le site (table parc), qui remplace le Sheet « ETAT PARC » : plaque, marque, modèle, VIN, carburant
+  const data = parcData_(P);
+  const cPl = 0, cMa = 1, cMo = 2, cVin = 3, cCa = 4;
   const T = readTable_(S.VEH), I = idx_(H.VEH);
   const byKey = {}, known = {}; T.rows.forEach(r => { byKey[String(r[I['Clé']])] = r; platesOf_(r, I).forEach(p => { known[normPlate_(p)] = 1; }); });
   let added = 0;

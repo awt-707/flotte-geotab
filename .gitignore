@@ -4,3 +4,4 @@ tests/out/
 .clasprc.json
 .env
 .DS_Store
+.bin/

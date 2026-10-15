@@ -153,6 +153,8 @@ function collect() {
     if (dirty && Date.now() - lastD >= every - 30000 && Date.now() - t0 < 150000) {
       try { updateDerived_(dirty); props.deleteProperty('DERIVED_DIRTY'); } catch (e) { msg.push('Journal / alertes : ' + e.message); }
     }
+    // Nouvelles alertes envoyées par e-mail aux destinataires choisis sur le site
+    try { const m = notifyAlerts_(); if (m) msg.push(m); } catch (e) { msg.push('Alertes par e-mail : ' + e.message); }
     // Finalisation des journées terminées (une seule fois par véhicule-jour)
     if (Date.now() - t0 < 180000) {
       const n = queueDays_(dueFinal_(P));
@@ -164,6 +166,8 @@ function collect() {
     }
     // Tâches du jour / du mois, par étapes
     if (Date.now() - t0 < MAX_RUN_MS - 90000) { try { const m = dailyStep_(t0); if (m) msg.push(m); } catch (e) { msg.push('Maintenance : ' + e.message); } }
+    // Rapports PDF planifiés (une fois par période, données finalisées)
+    if (Date.now() - t0 < MAX_RUN_MS - 60000) { try { const m = reportsStep_(); if (m) msg.push(m); } catch (e) { msg.push('Rapports : ' + e.message); } }
     const lastLog = +(props.getProperty('LIVE_LOG_LAST') || 0);
     if (Date.now() - lastLog >= HOUR) {
       msg.unshift((+(props.getProperty('LIVE_COUNT') || 0)) + ' trajets terminés ajoutés depuis ' + (lastLog ? Utilities.formatDate(new Date(lastLog), TZ, 'HH:mm') : 'le démarrage'));
@@ -182,7 +186,7 @@ function processJobs_(t0) {
   if (!jobs.length) return '';
   const by = {}, out = [];
   jobs.forEach(j => { (by[j.kind] = by[j.kind] || []).push(j); });
-  const order = ['apply_plates', 'import_vehicles', 'after_inject', 'resync', 'recompute', 'sync_now'];
+  const order = ['apply_plates', 'import_vehicles', 'after_inject', 'resync', 'recompute', 'sync_now', 'send_report'];
   Object.keys(by).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)).forEach(kind => {
     if (Date.now() - t0 > 210000) return;   // la suite au prochain passage
     const list = by[kind], args = list.map(j => j.arg).filter(Boolean);
@@ -194,6 +198,7 @@ function processJobs_(t0) {
       else if (kind === 'sync_now') res = jobSyncNow_();
       else if (kind === 'recompute') res = jobRecompute_(args.map(a => toDayStr_(a)).filter(Boolean).sort()[0]);
       else if (kind === 'resync') res = jobResync_(args);
+      else if (kind === 'send_report') res = jobSendReport_(args);
       else res = 'Demande inconnue : ' + kind;
     } catch (e) { res = 'Erreur : ' + e.message; }
     const ids = list.map(j => j.id);
@@ -286,7 +291,8 @@ function driveFolder_(name) {
 /** Sauvegarde quotidienne dans Drive de ce qui est saisi à la main (contrats, plaques, chauffeurs, réglages, statuts d'alertes) */
 function backup_() {
   const o = { at: new Date().toISOString(), version: COLLECTOR_V };
-  [['vehicles', 'key'], ['plate_changes', 'id'], ['drivers', 'code'], ['contracts', 'num'], ['rules', 'id'], ['params', 'key'], ['profiles', 'user_id']].forEach(t => {
+  [['vehicles', 'key'], ['plate_changes', 'id'], ['drivers', 'code'], ['contracts', 'num'], ['rules', 'id'], ['params', 'key'], ['profiles', 'user_id'],
+    ['parc', 'plate'], ['agencies', 'id'], ['user_agencies', 'user_id,agency_id'], ['alert_recipients', 'id'], ['report_schedules', 'id']].forEach(t => {
     o[t[0]] = dbSelect_(t[0], 'select=*', t[1]);
   });
   o.alerts = dbSelect_('alerts', 'select=id,status,comment&or=' + enc_('(status.neq.À traiter,comment.neq.)'), 'id');
