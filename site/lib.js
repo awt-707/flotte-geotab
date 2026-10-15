@@ -2,7 +2,21 @@
 const TZ = 'Africa/Casablanca', MIN = 60000, HOUR = 3600000, DAY = 86400000, HORS = 'HORS_CONTRAT';
 
 const fmtParts = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
-function parts(d) { const o = {}; fmtParts.formatToParts(new Date(d)).forEach(p => { o[p.type] = p.value; }); return o; }
+/** Règles horaires publiées par le collecteur ([[instant ms, décalage min], ...]) : prioritaires sur la table du navigateur */
+let TZ_RULES = null;
+function setTzRules(v) { try { const r = typeof v === 'string' ? JSON.parse(v) : v; TZ_RULES = Array.isArray(r) && r.length ? r : null; } catch (e) { TZ_RULES = null; } }
+function ruleOff(ms) {
+  if (!TZ_RULES || ms < TZ_RULES[0][0]) return null;
+  let lo = 0, hi = TZ_RULES.length - 1; while (lo < hi) { const k = (lo + hi + 1) >> 1; if (TZ_RULES[k][0] <= ms) lo = k; else hi = k - 1; }
+  return TZ_RULES[lo][1];
+}
+function parts(d) {
+  const ms = new Date(d).getTime(), off = ruleOff(ms);
+  if (off !== null) { const x = new Date(ms + off * MIN), z = n => String(n).padStart(2, '0');
+    return { year: String(x.getUTCFullYear()), month: z(x.getUTCMonth() + 1), day: z(x.getUTCDate()), hour: z(x.getUTCHours()), minute: z(x.getUTCMinutes()), second: z(x.getUTCSeconds()) }; }
+  return partsIntl(d);
+}
+function partsIntl(d) { const o = {}; fmtParts.formatToParts(new Date(d)).forEach(p => { o[p.type] = p.value; }); return o; }
 function tzOffsetMin(d) { const p = parts(d); const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second); return Math.round((asUtc - Math.floor(new Date(d).getTime() / 1000) * 1000) / MIN); }
 function localToDate(y, mo, d, h, mi) { const g = new Date(Date.UTC(y, mo - 1, d, h || 0, mi || 0)); return new Date(g.getTime() - tzOffsetMin(g) * MIN); }
 function localDay(d) { const p = parts(d); return p.year + '-' + p.month + '-' + p.day; }
@@ -114,4 +128,4 @@ function fuelVal(a) { return a.fuelN ? f1(a.fuel) : NM; }
 function l100Val(a) { return a.l100 !== null ? f1(a.l100) : (a.fuelN ? 'km insuffisants' : NM); }
 function srcTxt(a) { const s = Object.keys(a.srcs); return s.length ? (s.length > 1 ? 'Mixte' : s[0]) : 'Non mesuré'; }
 
-if (typeof module !== 'undefined') module.exports = { localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };
+if (typeof module !== 'undefined') module.exports = { setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };

@@ -30,6 +30,25 @@ function params_() {
   MEMO_.__P = P;
   return Object.assign({}, P);
 }
+/**
+ * Règles horaires du Maroc telles que Google les applique (celles du collecteur), publiées pour le site :
+ * les navigateurs n'ont pas tous la même table des fuseaux (certains mettent encore le Maroc à UTC+1),
+ * le site affiche donc les heures avec ces règles plutôt qu'avec celles du navigateur. Une fois par jour.
+ */
+function tzPublish_(force) {
+  const props = PropertiesService.getScriptProperties(), today = localDay_(new Date());
+  if (!force && props.getProperty('TZ_DAY') === today) return;
+  const off = t => tzOffsetMin_(new Date(t)), from = Date.now() - 1100 * DAY, to = Date.now() + 400 * DAY, out = [[from, off(from)]];
+  for (let t = from; t + DAY <= to; t += DAY) {
+    if (off(t + DAY) === off(t)) continue;
+    let lo = t, hi = t + DAY;                                   // changement d'heure : instant exact, à la minute
+    while (hi - lo > MIN) { const m = lo + Math.floor((hi - lo) / 2 / MIN) * MIN; if (off(m) === off(lo)) lo = m; else hi = m; }
+    out.push([hi, off(hi)]);
+  }
+  sbReq_('post', 'params?on_conflict=key', [{ key: 'tzRules', label: 'Fuseau horaire (calculé par le collecteur)', value: JSON.stringify(out), note: 'Ne pas modifier', sort: 999 }],
+    { Prefer: 'resolution=merge-duplicates,return=minimal' });
+  props.setProperty('TZ_DAY', today);
+}
 function setParam_(key, value) {
   memoClear_();
   sbReq_('patch', 'params?key=eq.' + enc_(key), { value: String(value) }, { Prefer: 'return=minimal' });

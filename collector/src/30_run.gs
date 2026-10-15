@@ -1,6 +1,13 @@
 // ============================================================================
 // ÉCRITURE DES DONNÉES, TABLEAUX CALCULÉS, EN DIRECT
 // ============================================================================
+/** Table engine_stops absente (migration pas encore exécutée) : signalé une fois par jour */
+function stopsMissing_(e) {
+  if (!/engine_stops|finalize_vdays|PGRST202|42P01/.test(String(e && e.message))) return false;
+  const props = PropertiesService.getScriptProperties(), d = localDay_(new Date());
+  if (props.getProperty('STOPS_WARN') !== d) { props.setProperty('STOPS_WARN', d); log_('Arrêts moteur', 'Table engine_stops absente : exécuter supabase/migrations/20261017000000_arrets_moteur.sql dans Supabase > SQL Editor'); }
+  return true;
+}
 /** Lignes temps réel (provisoires) : une ligne finalisée ou une journée finalisée n'est jamais modifiée */
 function putLive_(k, rows) {
   const objs = rows.map(r => toDb_(k, r, false));
@@ -23,7 +30,10 @@ function flush_(acc) {
   acc.sync.forEach(r => { const o = toDb_('SYNC', r); parts[lotOf(o.vehicle_key, o.day)].sync.push(o); });
   lots.forEach((keys, i) => {
     const p = parts[i];
-    dbRpc_('finalize_vdays', { p_keys: keys, p_trips: p.trips, p_idles: p.idles, p_events: p.events, p_fuel: p.fuel, p_levels: p.levels, p_sync: p.sync, p_stops: p.stops });
+    const args = { p_keys: keys, p_trips: p.trips, p_idles: p.idles, p_events: p.events, p_fuel: p.fuel, p_levels: p.levels, p_sync: p.sync };
+    // arrêts moteur tournant : ignorés tant que la migration 20261017000000_arrets_moteur.sql n'est pas exécutée (la collecte continue)
+    try { dbRpc_('finalize_vdays', Object.assign({ p_stops: p.stops }, args)); }
+    catch (e) { if (!stopsMissing_(e)) throw e; dbRpc_('finalize_vdays', args); }
   });
   memoClear_();
 }
@@ -48,7 +58,8 @@ function reattribute_(fromDay) {
   const ctx = attribCtx_(), col = { 'Code chauffeur': 'driver_code', 'Chauffeur': 'driver_name', 'Contrat': 'contract_num', 'Règle': 'rule_name', 'Chauffeur suivant': 'next_driver' };
   let n = 0;
   ['TRIP', 'IDL', 'STP', 'EVT', 'FUEL'].forEach(k => {
-    const A = readData_(k, fromDay); if (!A.rows.length) return;
+    let A; try { A = readData_(k, fromDay); } catch (e) { if (k === 'STP' && stopsMissing_(e)) return; throw e; }
+    if (!A.rows.length) return;
     const I = A.I, cols = ['Code chauffeur', 'Chauffeur', 'Contrat'].concat(k === 'EVT' ? ['Règle'] : k === 'FUEL' ? ['Chauffeur suivant'] : []);
     const sig = r => cols.map(c => String(r[I[c]])).join('|');
     const rows = A.rows.map(r => r.slice()), before = rows.map(sig);
@@ -139,6 +150,7 @@ function collect() {
     const upd = tryUpdate_(); if (upd) msg.push(upd);                     // nouvelle version publiée (testée) : installée pour le prochain passage
     if (props.getProperty('IMPORT_STEPS')) { if (upd) log_('Collecte', upd, t0); importStep_(t0); return; }   // reprise de l'ancien Sheet : d'abord
     const P = params_();
+    try { tzPublish_(); } catch (e) { msg.push('Fuseau horaire : ' + e.message); }
     let live = null;
     try {
       live = liveRun_(t0, 100000); writeLive_(live.status);

@@ -67,3 +67,18 @@ test('moteur v6 inchangé : aucune erreur, ralentis prolongés toujours séparé
   assert.strictEqual(env.psql("select coalesce(string_agg(detail, ' | '), '') from logs where detail ~* 'erreur'"), '');
   assert.strictEqual(+env.psql('select count(*) from idles'), rows.filter(r => r.dur_min >= 10).length);
 });
+
+test('migration des arrêts pas encore exécutée : la collecte continue, consigne affichée une fois', () => {
+  const mig = fs.readFileSync(path.join(env.ROOT, 'supabase', 'migrations', '20261017000000_arrets_moteur.sql'), 'utf8');
+  env.psql("drop function public.finalize_vdays(text[],jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb); drop table public.engine_stops; notify pgrst, 'reload schema'");
+  try {
+    execSleep(1500);
+    env.psql("delete from logs; delete from vehicle_days where day = '2026-10-04'; delete from trips where vday = '2026-10-04'");
+    B.run("sbReq_('post', 'jobs', [{ kind: 'resync', arg: '2026-10-04|2026-10-04' }])");
+    for (let i = 0; i < 3; i++) { B.setNow(NOW + (10 + i) * 5 * 60000); B.run('collect()'); }
+    assert.ok(+env.psql("select count(*) from trips where vday = '2026-10-04' and final") > 0, 'journée non finalisée');
+    assert.strictEqual(env.psql("select count(*) from logs where detail ~ 'exécuter supabase/migrations/20261017000000'"), '1');
+    assert.strictEqual(env.psql("select coalesce(string_agg(detail, ' | '), '') from logs where detail ~* 'erreur'"), '');
+  } finally { env.psql(mig + "\nnotify pgrst, 'reload schema';"); execSleep(1500); }
+});
+function execSleep(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }

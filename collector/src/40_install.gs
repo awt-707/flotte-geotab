@@ -9,7 +9,7 @@ function installer() {
   if (/anon|publishable/i.test(jwtRole_(props.getProperty('SUPABASE_KEY')))) throw new Error('SUPABASE_KEY doit être la clé service_role (secrète), pas la clé anon/publique.');
   sbReq_('get', 'params?select=key&limit=1');
   out.push('Supabase : connexion OK');
-  seedParams_();
+  seedParams_(); tzPublish_(true);
   if (props.getProperty('GEO_USER')) setParam_('geoUser', props.getProperty('GEO_USER'));
   props.deleteProperty('GEO_SESSION'); geoAuth_(true);
   out.push('Geotab : connexion OK');

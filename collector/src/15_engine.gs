@@ -865,7 +865,9 @@ function liveRun_(t0, budgetMs, opt) {
   const actx = attribCtx_();
   attribRows_('TRIP', acc.trips, actx); attribRows_('IDL', acc.idles, actx); attribRows_('STP', acc.stops, actx); attribRows_('EVT', acc.evts, actx); attribRows_('FUEL', acc.fuels, actx);
   [['TRIP', acc.trips], ['IDL', acc.idles], ['STP', acc.stops], ['EVT', acc.evts], ['FUEL', acc.fuels], ['LVL', acc.lvls]].forEach(x => {
-    if (x[1].length) { putLive_(x[0], x[1]); out.wrote += x[1].length; }   // base : lignes provisoires (final = false)
+    if (!x[1].length) return;
+    try { putLive_(x[0], x[1]); } catch (e) { if (x[0] === 'STP' && stopsMissing_(e)) return; throw e; }
+    out.wrote += x[1].length;   // base : lignes provisoires (final = false)
   });
   if (out.wrote) memoClear_();
   const upd = {}; Object.keys(changed).forEach(k => { upd['LIVE|' + k] = JSON.stringify(st[k]); });
