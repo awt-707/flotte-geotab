@@ -89,7 +89,7 @@ function sendReport_(s, per) {
 }
 /** Rapports planifiés dus : une fois par période, quand les journées de la période sont finalisées et le journal à jour */
 function reportsStep_() {
-  const props = PropertiesService.getScriptProperties(), P = params_(), now = new Date(), today = localDay_(now), h = +Utilities.formatDate(now, TZ, 'HH');
+  const props = PropertiesService.getScriptProperties(), P = params_(), now = new Date(), today = localDay_(now), h = +localHM_(now).slice(0, 2);
   if (h < (P.reportHour === '' || P.reportHour === undefined ? 13 : P.reportHour)) return '';
   if (JSON.parse(props.getProperty('SYNC_QUEUE') || '[]').length || props.getProperty('DERIVED_DIRTY')) return '';   // données pas encore finalisées
   const list = dbSelect_('report_schedules', 'select=*&active=is.true', 'id'), out = [];

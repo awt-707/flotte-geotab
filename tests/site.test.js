@@ -156,3 +156,24 @@ test('en direct : chauffeur = contrat en cours maintenant, sinon « Hors contrat
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); env.psql("delete from contracts where num in ('LIVE1', 'LIVE2')" + (open.length ? "; update contracts set end_at = null where num in ('" + open.join("','") + "')" : '')); }
 });
+
+test('en direct : alertes à l\'instant (événements Geotab et vitesse au-dessus du seuil), notification des nouvelles', async () => {
+  const lim = env.psql("select value from params where key = 'vmaxAlert'");
+  env.psql("update params set value = '30' where key = 'vmaxAlert'");
+  const { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/direct');
+    await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test(document.querySelector('#livest').innerText), null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('#toasts .toast').length > 0, null, { timeout: 30000 });
+    const txt = await page.innerText('#livealerts');
+    assert.match(txt, /Alertes en direct/);
+    const rows = await page.$$eval('#tlal tbody tr', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')));
+    assert.ok(rows.length > 0, 'aucune alerte en direct');
+    rows.forEach(r => assert.match(r, /^\d{2}\/\d{2} \d{2}:\d{2}:\d{2} /, r));
+    const ev = await page.evaluate(() => LIVE.alerts.map(a => a.type));
+    assert.ok(ev.some(t => t !== 'Vitesse excessive'), 'aucun événement Geotab');
+    const toast = await page.innerText('#toasts .toast');
+    assert.match(toast, /Voir le véhicule/);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); env.psql(`update params set value = '${lim}' where key = 'vmaxAlert'`); }
+});

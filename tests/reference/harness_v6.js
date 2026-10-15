@@ -4,7 +4,11 @@ let NOW0 = Date.UTC(2026, 9, 6, 9, 0);
 class FakeDate extends Date { constructor(...a) { if (a.length === 0) super(NOW0); else super(...a); } static now() { return NOW0; } }
 const setNow = t => { NOW0 = t; };
 const TZ = 'Africa/Casablanca';
-function parts(d, tz) { const f = new Intl.DateTimeFormat('en-GB', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }); const o = {}; f.formatToParts(d).forEach(p => { o[p.type] = p.value; }); return o; }
+// Heure du Maroc des tests = table du collecteur (MA_TZ, heure réelle UTC+1) quelle que soit la version des fuseaux de Node
+const MA_TZ = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'collector', 'src', '05_constants.gs'), 'utf8').match(/const MA_TZ = (\[.*\]);/)[1]);
+function maOff(t) { let lo = 0, hi = MA_TZ.length - 1; while (lo < hi) { const k = (lo + hi + 1) >> 1; if (MA_TZ[k][0] <= t) lo = k; else hi = k - 1; } return MA_TZ[lo][1]; }
+function parts(d, tz) { if (tz === 'Africa/Casablanca') { d = new Date(d.getTime() + maOff(d.getTime()) * 60000); tz = 'UTC'; }
+  const f = new Intl.DateTimeFormat('en-GB', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }); const o = {}; f.formatToParts(d).forEach(p => { o[p.type] = p.value; }); return o; }
 const Utilities = { sleep: () => { },
   formatDate(d, tz, pat) { d = new Date(d); const p = parts(d, tz);
     if (pat === 'Z') { const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second); const off = Math.round((asUtc - Math.floor(d.getTime() / 1000) * 1000) / 60000); const s = off >= 0 ? '+' : '-', a = Math.abs(off); return s + String(Math.floor(a / 60)).padStart(2, '0') + String(a % 60).padStart(2, '0'); }

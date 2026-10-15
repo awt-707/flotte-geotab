@@ -12,18 +12,20 @@ function normPlate_(s) {
   return t.replace(/[^0-9]/g, '') + t.replace(/[^A-Z]/g, '');
 }
 function tzOffsetMin_(date) {
-  const z = Utilities.formatDate(date, TZ, 'Z');
-  const sign = z[0] === '-' ? -1 : 1;
-  return sign * (parseInt(z.substr(1, 2), 10) * 60 + parseInt(z.substr(3, 2), 10));
+  const t = new Date(date).getTime(); let lo = 0, hi = MA_TZ.length - 1;
+  while (lo < hi) { const k = (lo + hi + 1) >> 1; if (MA_TZ[k][0] <= t) lo = k; else hi = k - 1; }
+  return MA_TZ[lo][1];
 }
+/** Date au format donné, à l'heure du Maroc (MA_TZ) */
+function fmtMa_(d, pat) { const t = new Date(d).getTime(); return Utilities.formatDate(new Date(t + tzOffsetMin_(t) * MIN), 'UTC', pat); }
 function localToDate_(y, mo, d, h, mi) {
   const guess = new Date(Date.UTC(y, mo - 1, d, h || 0, mi || 0));
   return new Date(guess.getTime() - tzOffsetMin_(guess) * MIN);
 }
-function localDay_(d) { return Utilities.formatDate(new Date(d), TZ, 'yyyy-MM-dd'); }
-function localHM_(d) { return Utilities.formatDate(new Date(d), TZ, 'HH:mm'); }
+function localDay_(d) { return fmtMa_(d, 'yyyy-MM-dd'); }
+function localHM_(d) { return fmtMa_(d, 'HH:mm'); }
 function fmtDay_(day) { const p = day.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
-function fmtDT_(d) { return d ? Utilities.formatDate(new Date(d), TZ, 'dd/MM HH:mm') : ''; }
+function fmtDT_(d) { return d ? fmtMa_(d, 'dd/MM HH:mm') : ''; }
 function dayBounds_(day) {
   const p = day.split('-').map(Number);
   const start = localToDate_(p[0], p[1], p[2], 0, 0);

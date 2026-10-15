@@ -32,8 +32,8 @@ async function loadRef(force) {
     all('agencies', 'id,name', null, ['name'])]);
   S.agencies = ags; S.agName = {}; ags.forEach(a => { S.agName[a.id] = a.name; });
   S.P = Object.assign({}, PARAM_DEFAULTS); params.forEach(p => { if (p.value !== null && p.value !== '') S.P[p.key] = isNaN(+p.value) ? p.value : +p.value; });
-  // Heures affichées à l'heure de l'appareil de l'utilisateur (fuseau Africa/Casablanca de son navigateur) :
-  // les règles du collecteur (param tzRules) ne sont pas appliquées, elles ne correspondaient pas à l'heure réelle du Maroc.
+  // Heures à l'heure réelle du Maroc publiée par le collecteur (même règle partout, quelle que soit la table des fuseaux du navigateur)
+  setTzRules(S.P.tzRules);
   S.vehList = veh; S.veh = {}; veh.forEach(v => { S.veh[v.key] = v; });
   S.rules = {}; rules.forEach(r => { S.rules[r.id] = r; });
   S.drv = { [HORS]: 'Hors contrat' }; drv.forEach(d => { S.drv[d.code] = d.name; });
@@ -91,7 +91,7 @@ function onNewAlert(a) {
   let box = $('#toasts'); if (!box) { box = document.createElement('div'); box.id = 'toasts'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
   const t = document.createElement('div'); t.className = 'toast ' + (GRAV_CLS[a.severity] || '');
   t.innerHTML = `<button class="x" aria-label="Fermer">×</button>${badge(a.severity, GRAV_CLS[a.severity])} <b>${esc(a.type)}</b> ${plate(a.plate)}<div>${esc(a.driver_name || '')}${a.time ? ' · ' + esc(a.time) : ''}</div>
-    <div class="small">${esc(String(a.detail || '').replace(/https:\/\/maps\.google\.com\/\?q=\S+/g, '').slice(0, 160))}</div><a href="#/alertes?jour=${esc(a.day)}&plaque=${encodeURIComponent(a.plate || '')}">Voir l'alerte</a>`;
+    <div class="small">${esc(String(a.detail || '').replace(/https:\/\/maps\.google\.com\/\?q=\S+/g, '').slice(0, 160))}</div><a href="${a.link || '#/alertes?jour=' + esc(a.day) + '&plaque=' + encodeURIComponent(a.plate || '')}">${a.link ? 'Voir le véhicule' : 'Voir l\'alerte'}</a>`;
   t.querySelector('.x').onclick = () => t.remove();
   box.prepend(t); while (box.children.length > 5) box.lastChild.remove();
   if (a.severity !== 'Critique') setTimeout(() => t.remove(), 30000);
@@ -165,7 +165,41 @@ async function health() {
 let MAP = null;
 // En direct : état calculé par le collecteur (totaux du jour) + position, vitesse et contact lus en direct dans Geotab
 // par le relais « geotab-live » toutes les LIVE_SEC secondes tant que la page est affichée.
-const LIVE_SEC = 5, LIVE = { rows: [], pos: {}, at: 0, err: '', markers: {}, ctr: [] };
+const LIVE_SEC = 5, LIVE = { rows: [], pos: {}, at: 0, err: '', markers: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {} };
+// Alertes en direct : événements Geotab des règles de conduite (dès que Geotab les signale) + vitesse en direct au-dessus du seuil
+const LIVE_TYPE = { Collision: 'Collision', Vitesse: 'Excès de vitesse', Ceinture: 'Ceinture non bouclée', Freinage: 'Freinage brusque', 'Accélération': 'Accélération brusque', Virage: 'Virage brusque' };
+const LIVE_SEV = { Collision: 'Critique', Vitesse: 'Haute', Ceinture: 'Haute', Freinage: 'Moyenne', 'Accélération': 'Moyenne', Virage: 'Moyenne' };
+function liveAlertOf(e) {
+  const rl = S.rules[e.rule] || {}, cat = rl.category || '';
+  if (!(num(rl.weight) > 0 || cat === 'Collision')) return null;   // mêmes règles que le score de danger
+  const c = contractAt(e.key, new Date(e.at).getTime());
+  return { id: 'EV|' + e.id, vehicle_key: e.key, plate: e.plate, at: e.at, severity: LIVE_SEV[cat] || 'Moyenne', type: LIVE_TYPE[cat] || rl.name || 'Événement de conduite',
+    detail: (rl.name || e.rule) + (e.dur_min != null ? ' · ' + Math.round(e.dur_min * 60) + ' s' : '') + (e.km ? ' · ' + f1(e.km) + ' km' : ''),
+    driver_name: c ? c.name : 'Hors contrat', contract_num: c ? c.num : '' };
+}
+function processLive(j) {
+  const now = Date.now(), lim = num(S.P.vmaxAlert, 130), fresh = [];
+  (j.events || []).forEach(e => { const a = liveAlertOf(e); if (a && !LIVE.seen[a.id]) { LIVE.seen[a.id] = 1; LIVE.alerts.push(a); fresh.push(a); } });
+  (j.vehicles || []).forEach(v => {
+    if (v.state === 'En route' && v.speed >= lim) {
+      if (LIVE.fast[v.key]) { const a = LIVE.alerts.find(x => x.id === LIVE.fast[v.key]); if (a && v.speed > a.vmax) { a.vmax = v.speed; a.detail = 'Vitesse max ' + v.speed + ' km/h (seuil ' + lim + ')'; } return; }
+      const c = contractAt(v.key, now), a = { id: 'VIT|' + v.key + '|' + (v.at || now), vehicle_key: v.key, plate: v.plate, at: v.at || new Date(now).toISOString(), severity: 'Haute',
+        type: 'Vitesse excessive', vmax: v.speed, detail: v.speed + ' km/h (seuil ' + lim + ')', driver_name: c ? c.name : 'Hors contrat', contract_num: c ? c.num : '' };
+      LIVE.fast[v.key] = a.id; LIVE.alerts.push(a); fresh.push(a);
+    } else delete LIVE.fast[v.key];
+  });
+  const cut = now - 30 * MIN; LIVE.alerts = LIVE.alerts.filter(a => new Date(a.at).getTime() >= cut).sort((x, y) => String(y.at).localeCompare(String(x.at)));
+  // à l'ouverture de la page : les alertes des 30 dernières minutes sont listées sans notification
+  if (LIVE.primed) fresh.forEach(a => onNewAlert(Object.assign({ time: fmtHMS(a.at).slice(6), link: '#/vehicule?k=' + encodeURIComponent(a.vehicle_key) }, a)));
+  LIVE.primed = true;
+}
+function liveAlertsHtml() {
+  const list = LIVE.alerts.filter(a => inAgency()(a.vehicle_key));
+  return `<h2>Alertes en direct <span class="small">(30 dernières minutes, à l'instant où Geotab les signale)</span></h2>` + table('tlal', [['Heure', a => fmtHMS(a.at), a => a.at],
+    ['Gravité', a => badge(a.severity, GRAV_CLS[a.severity]), a => ['Critique', 'Haute', 'Moyenne', 'Info'].indexOf(a.severity)], ['Infraction', a => `<b>${esc(a.type)}</b>`],
+    ['Véhicule', a => vlink(a.vehicle_key, a.plate)], ['Chauffeur sous contrat', a => a.contract_num ? esc(a.driver_name) : '<span class="nm">Hors contrat</span>'],
+    ['Contrat', a => esc(a.contract_num || '')], ['Détail', a => esc(a.detail)]], list, { empty: 'Aucune infraction ces 30 dernières minutes' });
+}
 /** Contrat en cours sur le véhicule à l'instant t (même règle que le collecteur : contrat qui couvre t, sinon le plus proche
  *  dans la tolérance « ctrTolMin ») ; aucun : hors contrat */
 function contractAt(key, t) {
@@ -229,6 +263,7 @@ async function pageDirect(refresh) {
       ${last ? 'Totaux du jour (trajets terminés, contact coupé) mis à jour le ' + fmtDTY(last) + '.' : 'Totaux du jour : le collecteur n\'a pas encore tourné.'}</div>
       ${canEdit() ? '<button id="syncnow">Mettre à jour les totaux</button>' : ''}</div>
     <div id="livecards">${d.cards}</div>
+    <div id="livealerts">${liveAlertsHtml()}</div>
     <div id="map"></div>
     <div id="livetab">${d.table}</div>`;
   LIVE.markers = {}; drawMap(rows);
@@ -239,6 +274,7 @@ async function pageDirect(refresh) {
 function applyDirect() {
   const rows = liveRows(), d = directParts(rows), c = $('#livecards'), t = $('#livetab'), st = $('#livest');
   if (c) c.innerHTML = d.cards; if (t) t.innerHTML = d.table; if (st) st.innerHTML = liveStatusTxt();
+  const al = $('#livealerts'); if (al) al.innerHTML = liveAlertsHtml();
   if (MAP) rows.forEach(placeMarker);
 }
 /** Lecture Geotab en direct par le relais ; arrêt du relais (non installé, erreur) : nouvel essai dans 1 min */
@@ -251,6 +287,7 @@ async function liveTick(my) {
     if (my !== ROUTING) return;
     const pos = {}; (j.vehicles || []).forEach(v => { pos[v.key] = v; });
     LIVE.pos = pos; LIVE.at = Date.now(); LIVE.err = ''; LIVE.retryAt = 0;
+    processLive(j);
   } catch (e) { LIVE.at = 0; LIVE.pos = {}; LIVE.err = String(e.message || e).slice(0, 120); LIVE.retryAt = Date.now() + 60000; }
   if (my === ROUTING) applyDirect();
 }
@@ -268,7 +305,7 @@ function placeMarker(r) {
       .bindTooltip(String(r.plate || ''), { permanent: false, direction: 'top' }).addTo(MAP);
     m.vehicleKey = r.vehicle_key; return;
   }
-  m.setStyle({ fillColor: markerColor(r.state) }); m.setPopupContent(html);
+  m.setStyle({ fillColor: LIVE.fast[r.vehicle_key] ? markerColor('Boîtier hors ligne') : markerColor(r.state) }); m.setPopupContent(html);
   const a = m.getLatLng(), b = L.latLng(r.lat, r.lon); if (a.equals(b)) return;
   const t0 = performance.now(), dur = 1500; cancelAnimationFrame(m._anim);
   const step = t => { const k = Math.min(1, (t - t0) / dur); m.setLatLng([a.lat + (b.lat - a.lat) * k, a.lng + (b.lng - a.lng) * k]); if (k < 1) m._anim = requestAnimationFrame(step); };
@@ -854,7 +891,7 @@ async function route() {
   if (my !== ROUTING) return;
   S.timers.push(setInterval(health, 60000));
   if (page === 'direct') {
-    LIVE.retryAt = 0; liveTick(my);
+    LIVE.retryAt = 0; LIVE.primed = false; liveTick(my);
     S.timers.push(setInterval(() => liveTick(my), LIVE_SEC * 1000));
     S.timers.push(setInterval(() => { if (!document.hidden && my === ROUTING) pageDirect(true).catch(() => { }); }, 60000));
     S.channel = sb.channel('live').on('postgres_changes', { event: '*', schema: 'public', table: 'live_status' }, () => { clearTimeout(window.__lt); window.__lt = setTimeout(() => { if (my === ROUTING) pageDirect(true).catch(() => { }); }, 3000); }).subscribe();

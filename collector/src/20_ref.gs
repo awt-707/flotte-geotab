@@ -38,16 +38,20 @@ function params_() {
 function tzPublish_(force) {
   const props = PropertiesService.getScriptProperties(), today = localDay_(new Date());
   if (!force && props.getProperty('TZ_DAY') === today) return;
-  const off = t => tzOffsetMin_(new Date(t)), from = Date.now() - 1100 * DAY, to = Date.now() + 400 * DAY, out = [[from, off(from)]];
-  for (let t = from; t + DAY <= to; t += DAY) {
-    if (off(t + DAY) === off(t)) continue;
-    let lo = t, hi = t + DAY;                                   // changement d'heure : instant exact, à la minute
-    while (hi - lo > MIN) { const m = lo + Math.floor((hi - lo) / 2 / MIN) * MIN; if (off(m) === off(lo)) lo = m; else hi = m; }
-    out.push([hi, off(hi)]);
-  }
-  sbReq_('post', 'params?on_conflict=key', [{ key: 'tzRules', label: 'Fuseau horaire (calculé par le collecteur)', value: JSON.stringify(out), note: 'Ne pas modifier', sort: 999 }],
+  sbReq_('post', 'params?on_conflict=key', [{ key: 'tzRules', label: 'Fuseau horaire (calculé par le collecteur)', value: JSON.stringify(MA_TZ), note: 'Ne pas modifier', sort: 999 }],
     { Prefer: 'resolution=merge-duplicates,return=minimal' });
   props.setProperty('TZ_DAY', today);
+}
+/** Une fois : journées depuis le 20/09/2026 recalculées à l'heure réelle du Maroc (UTC+1 ; Google les comptait en UTC+0) */
+function tzFix_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('TZ_FIX') === 'MA_TZ') return '';
+  props.setProperty('TZ_FIX', 'MA_TZ');
+  const from = '2026-09-20', to = addDays_(localDay_(new Date()), -1);
+  if (to < from) return '';
+  const r = jobResync_([from + '|' + to]); markDirty_(from);
+  log_('Heure du Maroc', 'Journées du ' + fmtDay_(from) + ' au ' + fmtDay_(to) + ' recalculées à l\'heure réelle du Maroc (UTC+1) : ' + r);
+  return '';
 }
 function setParam_(key, value) {
   memoClear_();

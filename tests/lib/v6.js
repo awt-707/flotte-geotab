@@ -18,7 +18,7 @@ function collector(now, props) {
   process.env.CODE = env.COLLECTOR;
   const B = fresh(path.join(__dirname, 'harness_collector.js'));
   B.setNow(now);
-  Object.assign(B.props, { SUPABASE_URL: env.POSTGREST, SUPABASE_REST_PATH: '/', SUPABASE_KEY: env.svcKey(), GEO_USER: 'a', GEO_PWD: 'secret', IMPORT_DONE: '1' }, props || {});   // pas d'ancien Sheet à reprendre, sauf test de reprise
+  Object.assign(B.props, { SUPABASE_URL: env.POSTGREST, SUPABASE_REST_PATH: '/', SUPABASE_KEY: env.svcKey(), GEO_USER: 'a', GEO_PWD: 'secret', IMPORT_DONE: '1', TZ_FIX: 'MA_TZ' }, props || {});   // pas d'ancien Sheet à reprendre, sauf test de reprise
   return B;
 }
 // Contrats de l'onglet CONTRATS du Sheet, copiés dans la base comme le ferait l'import du site

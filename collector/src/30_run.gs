@@ -150,7 +150,7 @@ function collect() {
     const upd = tryUpdate_(); if (upd) msg.push(upd);                     // nouvelle version publiée (testée) : installée pour le prochain passage
     if (props.getProperty('IMPORT_STEPS')) { if (upd) log_('Collecte', upd, t0); importStep_(t0); return; }   // reprise de l'ancien Sheet : d'abord
     const P = params_();
-    try { tzPublish_(); } catch (e) { msg.push('Fuseau horaire : ' + e.message); }
+    try { tzPublish_(); tzFix_(); } catch (e) { msg.push('Fuseau horaire : ' + e.message); }
     let live = null;
     try {
       live = liveRun_(t0, 100000); writeLive_(live.status);
@@ -182,7 +182,7 @@ function collect() {
     if (Date.now() - t0 < MAX_RUN_MS - 60000) { try { const m = reportsStep_(); if (m) msg.push(m); } catch (e) { msg.push('Rapports : ' + e.message); } }
     const lastLog = +(props.getProperty('LIVE_LOG_LAST') || 0);
     if (Date.now() - lastLog >= HOUR) {
-      msg.unshift((+(props.getProperty('LIVE_COUNT') || 0)) + ' trajets terminés ajoutés depuis ' + (lastLog ? Utilities.formatDate(new Date(lastLog), TZ, 'HH:mm') : 'le démarrage'));
+      msg.unshift((+(props.getProperty('LIVE_COUNT') || 0)) + ' trajets terminés ajoutés depuis ' + (lastLog ? localHM_(lastLog) : 'le démarrage'));
       props.setProperty('LIVE_LOG_LAST', String(Date.now())); props.setProperty('LIVE_COUNT', '0');
     }
     if (msg.length) log_('Collecte', msg.join(' | '), t0);
@@ -268,7 +268,7 @@ function jobResync_(args) {
 // TÂCHES DU JOUR ET DU MOIS (par étapes, entre deux collectes)
 // ============================================================================
 function dailyStep_(t0) {
-  const props = PropertiesService.getScriptProperties(), now = new Date(), today = localDay_(now), h = +Utilities.formatDate(now, TZ, 'H');
+  const props = PropertiesService.getScriptProperties(), now = new Date(), today = localDay_(now), h = +localHM_(now).slice(0, 2);
   let st = JSON.parse(props.getProperty('DAILY') || 'null');
   if (!st || st.day !== today) {
     if (h < 2 && st) return '';                                        // la nuit, après 2 h
