@@ -137,3 +137,22 @@ test('en direct : relais Geotab pas encore installé, positions du collecteur et
     assert.deepStrictEqual(errors.filter(e => !/404/.test(e)), []);
   } finally { await br.close(); srv.kill(); srv = await startSite(); }
 });
+
+test('en direct : chauffeur = contrat en cours maintenant, sinon « Hors contrat »', async () => {
+  env.psql(`insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at, status)
+    values ('LIVE1', 'CLIVE', 'Chauffeur En Cours', 'WW968199', '968199WW', now() - interval '2 hours', null, 'En cours'),
+           ('LIVE2', 'COLD', 'Contrat Terminé', 'WW968194', '968194WW', now() - interval '9 hours', now() - interval '3 hours', 'Clôturé')`);
+  // contrats sans date de retour (toujours en cours) du 968194WW clos pour le test, rouverts à la fin
+  const open = env.psql("select coalesce(string_agg(num, ','), '') from contracts where vehicle_key = '968194WW' and end_at is null").split(',').filter(Boolean);
+  env.psql("update contracts set end_at = now() - interval '4 hours' where vehicle_key = '968194WW' and end_at is null");
+  const { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/direct');
+    await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test(document.querySelector('#livest').innerText), null, { timeout: 15000 });
+    const rows = await page.$$eval('#tlive tbody tr', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')));
+    const r99 = rows.find(t => /WW968199/.test(t)), r94 = rows.find(t => /WW968194/.test(t));
+    assert.match(r99, /Chauffeur En Cours LIVE1/);
+    assert.match(r94, /Hors contrat/); assert.doesNotMatch(r94, /Contrat Terminé/);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); env.psql("delete from contracts where num in ('LIVE1', 'LIVE2')" + (open.length ? "; update contracts set end_at = null where num in ('" + open.join("','") + "')" : '')); }
+});
