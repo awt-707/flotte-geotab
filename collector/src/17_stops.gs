@@ -38,7 +38,7 @@ function cEngStops_(S, logs, c, tl, prevOff, nextOn, P) {
     }
     // Ceinture conducteur : minutes bouclée / débouclée pendant l'arrêt
     let on = 0, off = 0;
-    const pts = [cLast_(S.belt, s.a, c.a - 6 * C_HOUR)].concat(cIn_(S.belt, s.a + 1, s.b)).filter(Boolean);
+    const pts = [cLast_(S.belt, s.a, c.a)].concat(cIn_(S.belt, s.a + 1, s.b)).filter(Boolean);   // valeur du cycle en cours seulement (pas d'état périmé)
     pts.forEach((p, k) => {
       const t0 = Math.max(p.t, s.a), t1 = k + 1 < pts.length ? pts[k + 1].t : s.b;
       if (t1 <= t0) return;

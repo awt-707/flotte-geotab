@@ -72,9 +72,12 @@ test('rapport quotidien : envoyé une fois, après l\'heure prévue et la finali
   assert.strictEqual(B.mails.length, 1);
   const m = B.mails[0];
   assert.strictEqual(m.to, 'dir@x,adj@x');
-  assert.strictEqual(m.attachments.length, 1);
+  assert.strictEqual(m.attachments.length, 2);
   assert.match(m.attachments[0].name, /^rapport_flotte_Casablanca_2026-10-05\.pdf$/);
-  const pdfHtml = String(B.pdfs[B.pdfs.length - 1]);
+  assert.match(m.attachments[1].name, /^rapport_consommation_Casablanca_2026-10-05\.pdf$/);
+  const conso = String(B.pdfs[B.pdfs.length - 1]);
+  assert.match(conso, /Rapport de consommation/); assert.match(conso, /du 05\/10\/2026 00:00 au 06\/10\/2026 00:00/); assert.match(conso, /Par véhicule/);
+  const pdfHtml = String(B.pdfs[B.pdfs.length - 2]);
   assert.match(pdfHtml, /Rapport quotidien de la flotte/);
   assert.match(pdfHtml, /Chauffeur Un/); assert.doesNotMatch(pdfHtml, /Chauffeur Deux/, 'autre agence dans le rapport');
   assert.match(pdfHtml, /120/);
@@ -91,7 +94,8 @@ test('« Envoyer maintenant » depuis le site et rapport hebdomadaire de toutes 
   assert.strictEqual(B.mails.length, 1);
   assert.match(B.mails[0].subject, /hebdomadaire de la flotte du 28\/09\/2026 au 04\/10\/2026$/);
   assert.match(env.psql("select result from jobs where kind = 'send_report'"), /envoyé à 1 destinataire/);
-  assert.match(String(B.pdfs[B.pdfs.length - 1]), /Toutes les agences/);
+  assert.match(String(B.pdfs[B.pdfs.length - 2]), /Toutes les agences/);
+  assert.match(String(B.pdfs[B.pdfs.length - 1]), /Rapport de consommation[\s\S]*Toutes les agences/);
 });
 
 test('aucune erreur dans le journal technique', () => {

@@ -17,7 +17,7 @@ const PAGES = [['direct', 'En direct', /En route|Garé|Arrêté/], ['tableau', '
   ['chauffeurs', 'Classement des chauffeurs', /Score/], ['alertes', 'Alertes', /Gravité/], ['contrats', 'Contrats', /Contrats des 40 derniers jours/],
   ['plaques', 'Changements de plaque', /Ancienne plaque/], ['vehicules', 'Véhicules', /WW968194/], ['reglages', 'Réglages', /Journal technique/],
   ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/],
-  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/],
+  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['conso', 'Consommation', /Rapport de consommation/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/],
   ['vehicule?k=968199WW', 'WW968199', /Journées de travail/], ['chauffeur?c=C038', 'Compte rendu', /Par journée de travail/]];
 
 for (const [viewport, size] of [['ordinateur', { width: 1440, height: 900 }], ['téléphone', { width: 390, height: 844, isMobile: true, hasTouch: true }]]) {
@@ -176,4 +176,31 @@ test('en direct : alertes à l\'instant (événements Geotab et vitesse au-dessu
     assert.match(toast, /Voir le véhicule/);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); env.psql(`update params set value = '${lim}' where key = 'vmaxAlert'`); }
+});
+
+test('page Consommation : entre deux instants (à la minute), mêmes totaux que le Sheet v6, PDF téléchargé', async () => {
+  const from = '2026-10-01T06:30', to = '2026-10-04T18:45';
+  A.run("queueSync_(['2026-09-30','2026-10-01','2026-10-02','2026-10-03','2026-10-04','2026-10-05'], false)");
+  const ref = A.run(`fuelPeriod('${from}','${to}','',false)`).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const m = ref.match(/([\d.]+) L consommés · (\d+) km · ([\d.]+) L\/100 km Dont moteur allumé à l'arrêt : ([\d.]+) L · Pleins détectés : (\d+) \(([\d.]+) L/);
+  assert.ok(m, ref);
+  const { br, page, errors } = await openBrowser({ acceptDownloads: true });
+  await page.clock.setFixedTime(new Date('2026-10-06T09:18:00Z'));
+  await page.addInitScript(([a, z]) => { try { localStorage.setItem('conso', JSON.stringify({ a, z, k: '' })); } catch (e) { } }, [from, to]);
+  try {
+    await login(page, '#/conso');
+    await page.waitForSelector('#page .rptview');
+    const sum = {}; (await page.$$eval('.rsum tr', trs => trs.map(tr => [tr.cells[0].innerText, tr.cells[1].innerText]))).forEach(([k, v]) => { sum[k] = v; });
+    const n = s => +String(s).replace(/[\s ]/g, '').replace(',', '.').match(/^[\d.]+/)[0];
+    assert.strictEqual(n(sum['Carburant consommé (L)']), +m[1]);
+    assert.strictEqual(Math.round(n(sum['Km parcourus'])), +m[2]);
+    assert.strictEqual(n(sum['Consommation (L/100 km)']), +m[3]);
+    assert.strictEqual(n(sum['Ralenti (moteur allumé, véhicule immobile)'].split('·')[1]), +m[4]);
+    assert.strictEqual(n(sum['Pleins détectés']), +m[5]);
+    assert.match(await page.innerText('.rsub'), /du 01\/10\/2026 06:30 au 04\/10\/2026 18:45/);
+    assert.match(await page.innerText('.rptview'), /Par véhicule[\s\S]*Par chauffeur[\s\S]*Par jour[\s\S]*Pleins détectés[\s\S]*Siphonages suspects/);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#cpdf')]);
+    assert.match(dl.suggestedFilename(), /^rapport_consommation_toutes_agences_2026-10-01_2026-10-04\.pdf$/);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
 });

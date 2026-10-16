@@ -49,6 +49,8 @@ Le collecteur envoie les e-mails (alertes et rapports PDF) avec le compte Google
 - Alertes par e-mail : bons destinataires (agence, gravité, type), jamais deux fois, historique non envoyé. Rapports planifiés : une fois par période, après finalisation, PDF de la bonne agence.
 - Arrêts moteur tournant (3 min et plus) : contrôlés sur les données brutes Geotab ; litres = vraie différence du compteur ralenti, sinon « non mesuré ».
 - En direct : positions, vitesses et contact lus dans Geotab toutes les 5 s par le relais, chaque utilisateur ne reçoit que les véhicules de ses agences, session Geotab réutilisée.
+- Consommation entre deux instants identique au Sheet v6 « Carburant consommé entre deux dates », PDF ; rapport de consommation joint aux envois automatiques.
+- Droits par agence : import de contrats, plaques, chauffeurs, journal technique, demandes au collecteur, compte remis en attente.
 - Mise à jour automatique du collecteur.
 - Aucune clé secrète dans le dépôt, clé publique du site = clé « anon ».
 

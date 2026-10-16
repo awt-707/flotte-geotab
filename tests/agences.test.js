@@ -63,13 +63,12 @@ test('chauffeur ajouté à la main : conservé au recalcul, agence obligatoire p
   assert.strictEqual(env.psql("select agency_id from drivers where code = 'C1'"), '1');
 });
 
-test('import des contrats par un gestionnaire : extract complet enregistré, rien d\'autre visible', () => {
+test('import des contrats par un gestionnaire : lignes des autres agences ignorées (ni ajoutées ni modifiées), rien d\'autre visible', () => {
   const rows = JSON.stringify([{ num: 'K2', client_code: 'C2', name: 'Chauffeur Deux', plate: 'WW968199', vehicle_key: '968199WW', start_at: '2026-10-05T08:00:00Z' },
     { num: 'K9', client_code: 'C9', name: 'Neuf', plate: 'WW968199', vehicle_key: '968199WW', start_at: '2026-10-04T08:00:00Z' }]);
   const r = JSON.parse(as(MGR, `select import_contracts('${rows}'::jsonb)`).split('\n').pop());
-  assert.deepStrictEqual([r.added, r.updated, r.same], [1, 0, 1]);
-  assert.match(r.min_start, /^2026-10-04/);
-  assert.strictEqual(env.psql("select count(*) from contracts where num = 'K9'"), '1');
+  assert.deepStrictEqual([r.added, r.updated, r.same, r.skipped], [0, 0, 0, 2]);
+  assert.strictEqual(env.psql("select count(*) from contracts where num = 'K9'"), '0');
   assert.strictEqual(count(MGR, 'contracts'), 1);
   assert.throws(() => as(MGR, "insert into contracts (num) values ('X')"), /permission denied/);
 });

@@ -91,21 +91,22 @@ async function pageCarburant() {
     dataRows('trips', 'vehicle_key,start_at,km,fuel_l,fuel_source,driver_code', retFrom, today(), { key })]);
   const inP = d => d >= p.from && d <= p.to;
   const vk = key ? [key] : S.vehList.filter(v => v.active !== 'NON' && inAgency()(v.key)).map(v => v.key);
-  const mk = () => ({ trips: 0, km: 0, drive: 0, fuel: 0, fuelKm: 0, fuelN: 0, idleL: 0, idleMin: 0, pleins: 0, pleinsL: 0, pleinsEst: 0, cost: 0 });
+  const mk = () => ({ trips: 0, km: 0, drive: 0, fuel: 0, fuelKm: 0, fuelN: 0, idleL: 0, idleN: 0, idleMin: 0, pleins: 0, pleinsL: 0, pleinsEst: 0, pleinsEstN: 0, cost: 0, noPrice: 0 });
   const byV = {}, byD = {}, byDay = {}, tot = mk();
   const add = (o, r, v) => { const km = num(r.km); o.trips++; o.km += km; o.drive += num(r.drive_min) / 60; o.idleMin += num(r.idle_min);
-    if (r.fuel_l !== null) { o.fuel += num(r.fuel_l); o.fuelKm += km; o.fuelN++; o.cost += num(r.fuel_l) * priceOf(v); }
-    if (r.idle_fuel_l !== null) o.idleL += num(r.idle_fuel_l); };
+    if (r.fuel_l !== null) { o.fuel += num(r.fuel_l); o.fuelKm += km; o.fuelN++; if (priceOf(v)) o.cost += num(r.fuel_l) * priceOf(v); else o.noPrice++; }
+    if (r.idle_fuel_l !== null) { o.idleL += num(r.idle_fuel_l); o.idleN++; } };
   trips.forEach(r => {
     const v = vehOf(r.vehicle_key), code = r.driver_code || HORS;
     add(byV[r.vehicle_key] = byV[r.vehicle_key] || mk(), r, v); add(tot, r, v); add(byD[code] = byD[code] || Object.assign(mk(), { name: r.driver_name }), r, v);
     if (r.fuel_l !== null) { const d = byDay[r.day] = byDay[r.day] || {}; d[r.vehicle_key] = (d[r.vehicle_key] || 0) + num(r.fuel_l); }
   });
   const fills = fuel.filter(f => f.type === 'PLEIN'), fillsP = fills.filter(f => inP(f.day));
-  fillsP.forEach(f => [byV[f.vehicle_key] = byV[f.vehicle_key] || mk(), tot].forEach(o => { o.pleins++; o.pleinsL += num(f.liters_gauge); o.pleinsEst += num(f.liters_geotab); }));
+  fillsP.forEach(f => [byV[f.vehicle_key] = byV[f.vehicle_key] || mk(), tot].forEach(o => { o.pleins++; o.pleinsL += num(f.liters_gauge); if (f.liters_geotab !== null) { o.pleinsEst += num(f.liters_geotab); o.pleinsEstN++; } }));
   const l100 = o => o.fuelKm >= num(P.minFuelKm, 30) ? f1(o.fuel / o.fuelKm * 100) : (o.fuelN ? 'km insuffisants' : NM);
   const cov = o => o.trips ? Math.round(o.fuelN / o.trips * 100) + ' %' : '-';
-  const cost = o => num(P.priceDiesel) || num(P.priceGas) ? f0(o.cost) : '<span class="nm">prix non saisi</span>';
+  const cost = o => !o.fuelN ? '' : o.noPrice === o.fuelN ? '<span class="nm">prix non saisi</span>' : f0(o.cost) + (o.noPrice ? ' <span class="nm">(partiel : prix non saisi pour une partie)</span>' : '');
+  const idleL = o => o.idleN ? f1(o.idleL) : (o.trips ? `<span class="nm">${NM}</span>` : '');
   // Jauge actuelle (dernière lecture) et courbe 72 h
   const lv = {}; lvls.forEach(x => { (lv[x.vehicle_key] = lv[x.vehicle_key] || []).push({ t: new Date(x.at).getTime(), v: num(x.pct) }); });
   Object.values(lv).forEach(a => a.sort((x, y) => x.t - y.t));
@@ -117,26 +118,25 @@ async function pageCarburant() {
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Carburant</h1><div class="sub">Litres = compteur carburant du véhicule, trajet par trajet (aucune estimation). Pleins détectés par Geotab : à comparer aux tickets. Un trajet compte dans la période s'il y démarre.</div></div>
     ${periodBar(go)}<div class="bar">${vehSelect(key)}</div>
-    ${cards([['Carburant consommé (L)', tot.fuelN ? f1(tot.fuel) : NM], ['Km', f0(tot.km)], ['Consommation (L/100 km)', l100(tot)], ['dont moteur allumé à l\'arrêt (L)', f1(tot.idleL)],
+    ${cards([['Carburant consommé (L)', tot.fuelN ? f1(tot.fuel) : NM], ['Km', f0(tot.km)], ['Consommation (L/100 km)', l100(tot)], ['dont moteur allumé à l\'arrêt (L)', idleL(tot)],
       ['Pleins détectés', f0(tot.pleins)], ['Litres pleins (jauge)', f1(tot.pleinsL)], ['Coût (MAD)', cost(tot)], ['Trajets mesurés', cov(tot)],
       ['Siphonages suspects', f0(siph.filter(f => inP(f.day)).length), siph.some(f => inP(f.day)) ? 'crit' : '']])}
     <h2>Jauge en ce moment</h2>
     ${table('tjauge', [['Véhicule', k => vlink(k), k => vehOf(k).plate], ['Modèle', k => esc(vehOf(k).model || '')],
       ['Jauge (%)', k => { const a = lv[k]; return a && a.length ? `<b>${f0(a[a.length - 1].v)} %</b>` : `<span class="nm">${NM}</span>`; }, k => (lv[k] || []).slice(-1).map(x => x.v)[0] || -1, 'n'],
-      ['Relevée le', k => { const a = lv[k]; return a && a.length ? fmtDT(a[a.length - 1].t) : ''; }],
-      ['Litres estimés au réservoir', k => { const a = lv[k], t = num(vehOf(k).tank_l); return a && a.length && t ? f0(a[a.length - 1].v / 100 * t) + ' L' : ''; }, null, 'n']], vk, { empty: 'Aucun véhicule' })}
+      ['Relevée le', k => { const a = lv[k]; return a && a.length ? fmtDT(a[a.length - 1].t) : ''; }]], vk, { empty: 'Aucun véhicule' })}
     ${key && lv[key] ? '<h2>Jauge, 72 dernières heures (%)</h2>' + svgLine(lv[key], { min: 0, max: 100, title: 'Jauge' }) : ''}
     <h2>Par véhicule</h2>
     ${table('tcv', [['Véhicule', k => vlink(k), k => vehOf(k).plate], ['Modèle', k => esc(vehOf(k).model || '')], ['Trajets', k => f0((byV[k] || mk()).trips), k => (byV[k] || mk()).trips, 'n'],
       ['Km', k => f1((byV[k] || mk()).km), k => (byV[k] || mk()).km, 'n'], ['Carburant (L)', k => (byV[k] || mk()).fuelN ? f1(byV[k].fuel) : `<span class="nm">${NM}</span>`, k => (byV[k] || mk()).fuel, 'n'],
-      ['L/100 km', k => nmv(l100(byV[k] || mk())), null, 'n'], ['Litres moteur à l\'arrêt', k => f1((byV[k] || mk()).idleL), k => (byV[k] || mk()).idleL, 'n'],
+      ['L/100 km', k => nmv(l100(byV[k] || mk())), null, 'n'], ['Litres moteur à l\'arrêt', k => idleL(byV[k] || mk()), k => (byV[k] || mk()).idleL, 'n'],
       ['Temps moteur à l\'arrêt', k => fH((byV[k] || mk()).idleMin / 60), k => (byV[k] || mk()).idleMin, 'n'], ['Pleins', k => f0((byV[k] || mk()).pleins), null, 'n'],
-      ['Litres pleins (jauge)', k => f1((byV[k] || mk()).pleinsL), null, 'n'], ['Estimation Geotab (depuis plein précédent)', k => f1((byV[k] || mk()).pleinsEst), null, 'n'],
-      ['Coût (MAD)', k => priceOf(vehOf(k)) ? f0((byV[k] || mk()).cost) : '', null, 'n'], ['Trajets mesurés', k => cov(byV[k] || mk()), null, 'n']], vk)}
+      ['Litres pleins (jauge)', k => f1((byV[k] || mk()).pleinsL), null, 'n'], ['Estimation Geotab (depuis plein précédent)', k => (byV[k] || mk()).pleinsEstN ? f1(byV[k].pleinsEst) : ((byV[k] || mk()).pleins ? `<span class="nm">${NM}</span>` : ''), null, 'n'],
+      ['Coût (MAD)', k => cost(byV[k] || mk()), null, 'n'], ['Trajets mesurés', k => cov(byV[k] || mk()), null, 'n']], vk)}
     <h2>Par chauffeur</h2>
     ${table('tcd', [['Chauffeur', c => dlink(c, drvName(c, byD[c].name)), c => drvName(c, byD[c].name)], ['Code', c => c === HORS ? '' : esc(c)], ['Trajets', c => byD[c].trips, null, 'n'],
       ['Km', c => f1(byD[c].km), c => byD[c].km, 'n'], ['Carburant (L)', c => byD[c].fuelN ? f1(byD[c].fuel) : `<span class="nm">${NM}</span>`, c => byD[c].fuel, 'n'],
-      ['L/100 km', c => nmv(l100(byD[c])), null, 'n'], ['Litres moteur à l\'arrêt', c => f1(byD[c].idleL), c => byD[c].idleL, 'n'], ['Trajets mesurés', c => cov(byD[c]), null, 'n']],
+      ['L/100 km', c => nmv(l100(byD[c])), null, 'n'], ['Litres moteur à l\'arrêt', c => idleL(byD[c]), c => byD[c].idleL, 'n'], ['Trajets mesurés', c => cov(byD[c]), null, 'n']],
       Object.keys(byD).sort((a, b) => byD[b].fuel - byD[a].fuel))}
     <h2>Par jour (litres)</h2>
     ${table('tcj', [['Jour', d => fmtDay(d), d => d]].concat(vk.map(k => [esc(vehOf(k).plate), d => byDay[d][k] ? f1(byDay[d][k]) : '', d => byDay[d][k] || 0, 'n']))
@@ -212,6 +212,41 @@ async function pageRalenti() {
       idl.sort((a, b) => new Date(b.start_at) - new Date(a.start_at)), { empty: 'Aucun arrêt prolongé' })}`;
   };
   window.__rerender = render; render();
+}
+
+// ---------- CONSOMMATION ENTRE DEUX DATES (toute la flotte ou un véhicule, à la minute près) + rapport PDF ----------
+function consoInputs() {
+  let c = null; try { c = JSON.parse(localStorage.getItem('conso') || 'null'); } catch (e) { }
+  const now = Date.now(), t = today();
+  return { a: (c && c.a) || t.slice(0, 8) + '01T00:00', z: (c && c.z) || t + 'T' + localHM(now), k: c && c.k !== undefined ? c.k : '' };
+}
+async function pageConso() {
+  const inp = consoInputs(), P = S.P, ok = inAgency();
+  const a = parseLocalDT(inp.a), z0 = parseLocalDT(inp.z), now = Date.now();
+  const head = `<div class="head"><h1>Consommation</h1><div class="sub">Carburant consommé entre deux instants (heure du Maroc), toute la flotte ou un véhicule. Litres = compteur carburant du véhicule, trajet par trajet : aucune estimation, « ${NM} » quand Geotab ne donne pas la valeur. Un trajet compte s'il démarre dans la période. Agence : menu de gauche.</div>
+    <button id="cpdf" disabled>Télécharger le PDF</button></div>
+    <div class="bar"><label>Du <input type="datetime-local" id="ca" value="${esc(inp.a)}"></label><label>au <input type="datetime-local" id="cz" value="${esc(inp.z)}"></label>${vehSelect(inp.k)}<button id="cgo">Calculer</button></div>`;
+  const bind = () => {
+    const save = () => { try { localStorage.setItem('conso', JSON.stringify({ a: $('#ca').value, z: $('#cz').value, k: $('#vsel').value })); } catch (e) { } go(); };
+    $('#cgo').onclick = save; $('#vsel').onchange = save;
+  };
+  if (!a || !z0 || !(Math.min(z0.getTime(), now) > a.getTime())) { $('#page').innerHTML = head + msg('Période invalide : la fin doit être après le début (et pas dans le futur).', 'warn'); bind(); return; }
+  const A = a.getTime(), Z = Math.min(z0.getTime(), now), aI = new Date(A).toISOString(), zI = new Date(Z).toISOString(), d0 = localDay(A), d1 = localDay(Z - 1);
+  const vlist = S.vehList.filter(v => ok(v.key) && (!inp.k || v.key === inp.k));
+  const keys = new Set(vlist.map(v => v.key)), mine = r => keys.has(r.vehicle_key);
+  const [trips, fuel, stops, vd] = await Promise.all([
+    all('trips', 'vehicle_key,plate,start_at,km,drive_min,idle_min,fuel_l,fuel_source,idle_fuel_l,driver_code,driver_name,contract_num', q => q.gte('start_at', aI).lt('start_at', zI)),
+    all('fuel', 'vehicle_key,plate,type,stop_start,stop_end,lvl_before,lvl_after,liters_gauge,liters_geotab,engine,status,driver_code,driver_name', q => q.gte('stop_start', aI).lt('stop_start', zI)),
+    all('engine_stops', 'vehicle_key,start_at,dur_min,liters,driver_code', q => q.gte('start_at', aI).lt('start_at', zI)).catch(() => null),
+    all('vehicle_days', 'vehicle_key,day', q => q.gte('day', d0).lte('day', d1))]);
+  // Journées passées (avant-hier et plus) ni finalisées ni téléchargées : totaux incomplets, signalé
+  const have = new Set(vd.map(x => x.vehicle_key + '|' + x.day)), missing = [];
+  for (let d = d0; d <= d1 && d <= addDays(today(), -2); d = addDays(d, 1)) vlist.filter(v => v.geotab_id && v.active !== 'NON').forEach(v => { if (!have.has(v.key + '|' + d)) missing.push({ plate: v.plate, day: d }); });
+  const rep = rptConso({ trips: trips.filter(mine), fuel: fuel.filter(mine), stops: stops ? stops.filter(mine) : null, vehicles: vlist, drivers: S.drv, P, a: A, z: Z, missing,
+    agency: inp.k ? vehOf(inp.k).plate : (agFilter() ? S.agName[agFilter()] : ''), dayOf: localDay, hmOf: localHM, generatedAt: new Date() });
+  $('#page').innerHTML = head + `<div class="panel rptview">${rptHtml(rep)}</div>`;
+  bind();
+  const b = $('#cpdf'); b.disabled = false; b.onclick = () => { try { reportPdf(rep); } catch (e) { alert('PDF impossible : ' + e.message); } };
 }
 
 // ---------- ARRÊTS MOTEUR TOURNANT (chaque arrêt de engStopMin min et plus, litres réels quand Geotab les mesure) ----------
@@ -432,8 +467,8 @@ async function liveDrivers(live) {
   const [trips, evts] = await Promise.all([
     all('trips', 'vehicle_key,contract_num,km,drive_min,idle_min,fuel_l,vmax,worst_over', q => q.in('contract_num', nums).gte('day', addDays(day0, -1))),
     all('events', 'contract_num,rule_id', q => q.in('contract_num', nums).gte('day', addDays(day0, -1)))]);
-  const by = {}; (ctrs || []).forEach(c => { by[c.num] = { c, km: 0, drive: 0, idle: 0, fuel: 0, fuelN: 0, vmax: 0, worst: null, evts: 0, pts: 0 }; });
-  trips.forEach(t => { const o = by[t.contract_num]; if (!o) return; o.km += num(t.km); o.drive += num(t.drive_min); o.idle += num(t.idle_min); if (t.fuel_l !== null) { o.fuel += num(t.fuel_l); o.fuelN++; }
+  const by = {}; (ctrs || []).forEach(c => { by[c.num] = { c, km: 0, drive: 0, idle: 0, fuel: 0, fuelN: 0, fuelKm: 0, vmax: 0, worst: null, evts: 0, pts: 0 }; });
+  trips.forEach(t => { const o = by[t.contract_num]; if (!o) return; o.km += num(t.km); o.drive += num(t.drive_min); o.idle += num(t.idle_min); if (t.fuel_l !== null) { o.fuel += num(t.fuel_l); o.fuelN++; o.fuelKm += num(t.km); }
     o.vmax = Math.max(o.vmax, num(t.vmax)); if (t.worst_over !== null && (o.worst === null || num(t.worst_over) > o.worst)) o.worst = num(t.worst_over); });
   evts.forEach(e => { const o = by[e.contract_num], rl = S.rules[e.rule_id]; if (!o || !rl || num(rl.weight) <= 0) return; o.evts++; o.pts += num(rl.weight); });
   const P = S.P, rows = live.filter(r => by[r.contract_num]).map(r => Object.assign({ live: r }, by[r.contract_num]));
@@ -442,7 +477,7 @@ async function liveDrivers(live) {
     ${table('tlived', [['Chauffeur', o => `<b>${dlink(o.c.client_code, o.c.name)}</b>`, o => o.c.name], ['Véhicule', o => vlink(o.live.vehicle_key, o.live.plate)],
       ['État', o => badge(o.live.state, (STATE_CLS[o.live.state] || '') + ' dot')], ['Depuis le', o => fmtDT(o.c.start_at), o => o.c.start_at], ['Km', o => f1(o.km), o => o.km, 'n'],
       ['Conduite', o => fH(o.drive / 60), o => o.drive, 'n'], ['Ralenti', o => fH(o.idle / 60), o => o.idle, 'n'], ['Carburant (L)', o => o.fuelN ? f1(o.fuel) : `<span class="nm">${NM}</span>`, o => o.fuel, 'n'],
-      ['L/100 km', o => o.fuelN && o.km >= num(P.minFuelKm, 30) ? f1(o.fuel / o.km * 100) : '', null, 'n'], ['Vmax', o => f0(o.vmax), o => o.vmax, 'n'],
+      ['L/100 km', o => o.fuelKm >= num(P.minFuelKm, 30) ? f1(o.fuel / o.fuelKm * 100) : '', null, 'n']   /* litres mesurés / km de ces mêmes trajets */, ['Vmax', o => f0(o.vmax), o => o.vmax, 'n'],
       ['Pire dépassement', o => o.worst === null ? '' : '+' + f0(o.worst), o => o.worst || 0, 'n'], ['Événements', o => o.evts, null, 'n'],
       ['Score /100 km', o => o.km >= num(P.kmMin, 20) ? badge(f1(o.score), LEVEL_CLS[o.level]) : '<span class="small">trop peu de km</span>', o => o.score, 'n']], rows, { empty: 'Aucun chauffeur sous contrat en ce moment' })}
     <div class="sub">Trajets terminés (contact coupé) : mis à jour toutes les ${esc(P.liveMin || 5)} min ; le trajet en cours est ajouté à la coupure du contact.</div>`;

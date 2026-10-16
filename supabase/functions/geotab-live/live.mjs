@@ -8,9 +8,9 @@
 // Fichier sans dépendance, exécuté par Deno (index.ts) et par Node dans les tests.
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
 const CACHE_MS = 2000, EVENTS_MIN = 30;   // événements de conduite renvoyés : 30 dernières minutes
-const mem = { session: null, data: null, at: 0, pending: null };
+const mem = { session: null, data: null, at: 0, pending: null, ids: {} };
 
-export function resetMemory() { mem.session = null; mem.data = null; mem.at = 0; mem.pending = null; }
+export function resetMemory() { mem.session = null; mem.data = null; mem.at = 0; mem.pending = null; mem.ids = {}; }
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 
 /** "1.02:13:05" ou "02:13:05" -> minutes */
@@ -56,8 +56,11 @@ async function geo(deps, method, params) {
 async function fleet(deps, ids) {
   const now = deps.now ? deps.now() : Date.now();
   if (mem.data && now - mem.at < CACHE_MS && ids.every(id => id in mem.data)) return mem.data;
-  if (mem.pending) return mem.pending;
-  mem.pending = (async () => {
+  // appel déjà en cours pour un autre écran : réutilisé s'il couvre ces véhicules (sinon nouvel appel)
+  if (mem.pending) { const r = await mem.pending.catch(() => null); if (r && ids.every(id => id in r)) return r; }
+  // véhicules demandés par tous les écrans (toutes agences) : un seul appel les couvre tous, le cache sert à chacun
+  ids.forEach(id => { mem.ids[id] = 1; }); ids = Object.keys(mem.ids);
+  const p = mem.pending = (async () => {
     const iso = new Date(now).toISOString(), calls = [{ method: 'Get', params: { typeName: 'DeviceStatusInfo' } },
       // événements des règles Geotab (excès de vitesse, freinages, accélérations, virages, ceinture, collision) de toute la flotte
       { method: 'Get', params: { typeName: 'ExceptionEvent', search: { fromDate: new Date(now - EVENTS_MIN * 60000).toISOString() } } }];
@@ -69,7 +72,7 @@ async function fleet(deps, ids) {
     (res[1] || []).forEach(e => { const id = e.device && e.device.id; if (id in out && e.state !== 'ExceptionEventStateInvalidId' && e.state !== 1) out[id].evts.push(e); });
     mem.data = out; mem.at = now; return out;
   })();
-  try { return await mem.pending; } finally { mem.pending = null; }
+  try { return await p; } finally { if (mem.pending === p) mem.pending = null; }
 }
 /** Réponse : vehicles (état en direct) et events (événements Geotab des 30 dernières minutes, du plus récent au plus ancien) */
 export async function handle(req, deps) {

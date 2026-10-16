@@ -3,7 +3,8 @@
 // ============================================================================
 /** Table engine_stops absente (migration pas encore exécutée) : signalé une fois par jour */
 function stopsMissing_(e) {
-  if (!/engine_stops|finalize_vdays|PGRST202|42P01/.test(String(e && e.message))) return false;
+  // seulement « fonction ou table inconnue » (le chemin rpc/finalize_vdays figure dans tous les messages : une erreur passagère n'est pas une migration absente)
+  if (!/PGRST20[25]|42P01|42883|Could not find the (function|table)|relation .*engine_stops.* does not exist/.test(String(e && e.message))) return false;
   const props = PropertiesService.getScriptProperties(), d = localDay_(new Date());
   if (props.getProperty('STOPS_WARN') !== d) { props.setProperty('STOPS_WARN', d); log_('Arrêts moteur', 'Table engine_stops absente : exécuter supabase/migrations/20261017000000_arrets_moteur.sql dans Supabase > SQL Editor'); }
   return true;
@@ -109,7 +110,13 @@ function writeLive_(status) {
       km_today: r1_(o.km), drive_min_today: Math.round(o.drive), idle_min_today: Math.round(o.idle), fuel_l_today: o.fuelN ? r1_(o.fuel) : null,
       alerts_today: nAl[v.key] || 0, updated_at: new Date(now).toISOString() };
   });
-  if (rows.length) { dbUpsert_('live_status', rows, 'vehicle_key'); dbDelete_('live_status', 'vehicle_key=not.' + inList_(rows.map(r => r.vehicle_key))); }
+  if (rows.length) {
+    dbUpsert_('live_status', rows, 'vehicle_key');
+    // véhicules disparus retirés par lots (une liste « not.in » de toutes les clés dépasse vite la longueur d'URL permise)
+    const keep = {}; rows.forEach(r => { keep[r.vehicle_key] = 1; });
+    const gone = dbSelect_('live_status', 'select=vehicle_key', 'vehicle_key').map(r => r.vehicle_key).filter(k => !keep[k]);
+    for (let i = 0; i < gone.length; i += 40) dbDelete_('live_status', 'vehicle_key=' + inList_(gone.slice(i, i + 40)));
+  }
   return rows.length;
 }
 
