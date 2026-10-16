@@ -44,7 +44,7 @@ async function liveCall(req, res) {
   const fetchFn = async (url, opt) => {
     if (/geotab\.com\/apiv1$/.test(url)) { const b = JSON.parse(opt.body), p = b.params;
       if (b.method === 'Authenticate') p.password = 'secret';
-      if (b.method === 'ExecuteMultiCall') p.calls.forEach(c => { const s = c.params.search; if (s && s.fromDate === s.toDate) s.fromDate = s.toDate = new Date(LIVE_T).toISOString(); });
+      if (b.method === 'ExecuteMultiCall') p.calls.forEach(c => { const s = c.params.search; if (s && s.fromDate === s.toDate && s.diagnosticSearch && s.diagnosticSearch.id === 'DiagnosticIgnitionId') s.fromDate = s.toDate = new Date(LIVE_T).toISOString(); });
       return new Response(JSON.stringify(geo.handle(b.method, p))); }
     return fetch(url, opt);
   };

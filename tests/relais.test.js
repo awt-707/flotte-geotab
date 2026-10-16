@@ -13,8 +13,8 @@ const fetchFn = async (url, opt) => {
   return fetch(url, opt);
 };
 const ENV = { SUPABASE_REST: env.POSTGREST, SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: env.svcKey(), GEO_USER: 'a', GEO_PWD: 'bon' };
-const call = async (who, envOver, now) => {
-  const r = await L.handle(new Request('http://x/functions/v1/geotab-live', { headers: who ? { authorization: 'Bearer ' + jwt(who) } : {} }),
+const call = async (who, envOver, now, qs) => {
+  const r = await L.handle(new Request('http://x/functions/v1/geotab-live' + (qs ? '?' + new URLSearchParams(qs) : ''), { headers: who ? { authorization: 'Bearer ' + jwt(who) } : {} }),
     { env: k => Object.assign({}, ENV, envOver)[k], fetch: fetchFn, now: () => now || NOW });
   return { status: r.status, body: await r.json() };
 };
@@ -94,4 +94,53 @@ test('événements de conduite Geotab des 30 dernières minutes, rattachés au v
   assert.deepStrictEqual(Object.fromEntries(r.body.events.map(e => [e.id, e.key])), exp);
   r.body.events.forEach(e => { assert.ok(e.rule && e.at, e.id); });
   assert.deepStrictEqual(r.body.events.map(e => e.at), r.body.events.map(e => e.at).slice().sort().reverse(), 'du plus récent au plus ancien');
+});
+
+const G = (typeName, search, extra) => geo.handle('Get', Object.assign({ credentials: { sessionId: 'S1' }, typeName, search }, extra || {})).result;
+const gid = k => env.psql("select geotab_id from vehicles where key = '" + k + "'");
+
+test('fiche d\'une alerte : vitesse du capteur, positions et limite de la route lues dans Geotab autour de l\'instant', async () => {
+  L.resetMemory(); global.__NOW = NOW;
+  const ev = G('ExceptionEvent', { deviceSearch: { id: gid('968199WW') }, fromDate: '2026-10-03T06:00:00Z', toDate: '2026-10-03T13:50:00Z' })
+    .find(e => e.activeTo && e.state !== 'ExceptionEventStateInvalidId');
+  assert.ok(ev, 'aucun événement de référence');
+  const r = await call('admin', {}, NOW, { mode: 'detail', key: '968199WW', from: ev.activeFrom, to: ev.activeTo });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  const a = Date.parse(ev.activeFrom) - 180000, b = Date.parse(ev.activeTo) + 180000, iso = t => new Date(t).toISOString();
+  assert.strictEqual(r.body.from, iso(a)); assert.strictEqual(r.body.to, iso(b));
+  const spd = G('StatusData', { deviceSearch: { id: gid('968199WW') }, diagnosticSearch: { id: 'DiagnosticEngineRoadSpeedId' }, fromDate: iso(a), toDate: iso(b) })
+    .filter(x => Date.parse(x.dateTime) !== a).map(x => [Date.parse(x.dateTime), Math.round(x.data)]);
+  assert.ok(spd.length > 0); assert.deepStrictEqual(r.body.speed, spd);
+  const gps = G('LogRecord', { deviceSearch: { id: gid('968199WW') }, fromDate: iso(a), toDate: iso(b) });
+  assert.strictEqual(r.body.gps.length, gps.length);
+  assert.deepStrictEqual(r.body.gps[0], [Date.parse(gps[0].dateTime), Math.round(gps[0].speed), gps[0].latitude, gps[0].longitude]);
+  assert.ok(r.body.events.some(e => e.id === String(ev.id)), 'événement de l\'alerte renvoyé');
+  assert.ok(Array.isArray(r.body.road));
+});
+
+test('fiche d\'une alerte : véhicule d\'une autre agence refusé', async () => {
+  const r = await call('pending', {}, NOW, { mode: 'detail', key: '968199WW', from: '2026-10-03T12:00:00Z', to: '2026-10-03T12:01:00Z' });
+  assert.strictEqual(r.status, 404);
+  assert.ok(!calls.includes('ExecuteMultiCall'));
+});
+
+test('chauffeurs en ce moment : compteurs du véhicule entre le début du contrat et maintenant (trajet en cours compris)', async () => {
+  L.resetMemory(); global.__NOW = NOW;
+  const from = Date.UTC(2026, 9, 3, 6, 0), iso = t => new Date(t).toISOString(), id = gid('968199WW');
+  const r = await call('admin', {}, NOW, { mode: 'drivers', c: '968199WW@' + iso(from) + ',968194WW@' + iso(NOW + 3600000) });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual(Object.keys(r.body.drivers), ['968199WW'], 'contrat pas encore commencé : ignoré');
+  const d = r.body.drivers['968199WW'], at = (diag, t) => G('StatusData', { deviceSearch: { id }, diagnosticSearch: { id: diag }, fromDate: iso(t), toDate: iso(t) }).slice(-1)[0].data;
+  assert.strictEqual(d.from, iso(from));
+  const r3 = v => Math.round(v * 1000) / 1000;
+  assert.strictEqual(d.km, r3((at('DiagnosticOdometerId', NOW) - at('DiagnosticOdometerId', from)) / 1000));
+  assert.strictEqual(d.fuel_l, r3(at('DiagnosticDeviceTotalFuelId', NOW) - at('DiagnosticDeviceTotalFuelId', from)));
+  assert.strictEqual(d.idle_l, r3(at('DiagnosticDeviceTotalIdleFuelId', NOW) - at('DiagnosticDeviceTotalIdleFuelId', from)));
+  assert.ok(d.km > 0 && d.fuel_l > 0, JSON.stringify(d));
+  const trips = G('Trip', { deviceSearch: { id }, fromDate: iso(from), toDate: iso(NOW), includeOverlappedTrips: true });
+  const spd = G('StatusData', { deviceSearch: { id }, diagnosticSearch: { id: 'DiagnosticEngineRoadSpeedId' }, fromDate: iso(from), toDate: iso(NOW) });
+  assert.ok(d.vmax >= Math.max(...trips.filter(t => Date.parse(t.stop) > from).map(t => t.maximumSpeed)));
+  assert.ok(d.vmax <= Math.max(...trips.map(t => t.maximumSpeed), ...spd.map(x => Math.round(x.data))));
+  const ev = G('ExceptionEvent', { deviceSearch: { id }, fromDate: iso(from), toDate: iso(NOW) }).filter(e => e.state !== 'ExceptionEventStateInvalidId');
+  assert.deepStrictEqual(d.events.map(e => e.id).sort(), ev.map(e => String(e.id)).sort());
 });

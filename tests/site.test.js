@@ -167,15 +167,49 @@ test('en direct : alertes à l\'instant (événements Geotab et vitesse au-dessu
     await page.waitForFunction(() => document.querySelectorAll('#toasts .toast').length > 0, null, { timeout: 30000 });
     const txt = await page.innerText('#livealerts');
     assert.match(txt, /Alertes en direct/);
-    const rows = await page.$$eval('#tlal tbody tr', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')));
+    const rows = await page.$$eval('#tlal .acard', els => els.map(el => el.innerText.replace(/\s+/g, ' ').trim()));
     assert.ok(rows.length > 0, 'aucune alerte en direct');
-    rows.forEach(r => assert.match(r, /^\d{2}\/\d{2} \d{2}:\d{2}:\d{2} /, r));
+    rows.forEach(r => assert.match(r, /^\d{2}\/\d{2} \d{2}:\d{2}:\d{2} .*Voir la fiche/, r));
     const ev = await page.evaluate(() => LIVE.alerts.map(a => a.type));
     assert.ok(ev.some(t => t !== 'Vitesse excessive'), 'aucun événement Geotab');
     const toast = await page.innerText('#toasts .toast');
     assert.match(toast, /Voir le véhicule/);
+    // clic sur une alerte de vitesse : fiche avec la vitesse lue dans Geotab autour de l'instant
+    await page.click('#tlal .acard:has-text("Vitesse")');
+    await page.waitForSelector('#adlg[open] .adgrid', { timeout: 20000 });
+    const fiche = await page.innerText('#adlg');
+    assert.match(fiche, /Vitesse max/); assert.match(fiche, /Limite de la route à cet instant/); assert.match(fiche, /Rien n'est estimé/);
+    assert.match(fiche, /\d+ km\/h à \d{2}:\d{2}:\d{2}/, 'vitesse max lue dans Geotab');
+    assert.ok((await page.getAttribute('#adlg svg path.spd', 'd')).length > 20, 'courbe de vitesse vide');
+    assert.strictEqual(await page.locator('#admap.leaflet-container').count(), 1);
+    await page.click('#adlg .adclose');
+    assert.strictEqual(await page.locator('#adlg[open]').count(), 0);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); env.psql(`update params set value = '${lim}' where key = 'vmaxAlert'`); }
+});
+
+test('en direct : chauffeurs en ce moment, compteurs Geotab depuis le début du contrat (trajet en cours compris)', async () => {
+  const geo = require('./lib/geotab_fake'), id = env.psql("select geotab_id from vehicles where key = '968199WW'");
+  const open = env.psql("select coalesce(string_agg(num, ','), '') from contracts where vehicle_key = '968199WW' and end_at is null").split(',').filter(Boolean);
+  env.psql("update contracts set end_at = '2026-10-03T07:00:00Z' where vehicle_key = '968199WW' and end_at is null");
+  env.psql(`insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at, status) values ('LIVE3', 'CDRV', 'Chauffeur Compteurs', 'WW968199', '968199WW', '2026-10-03T08:00:00Z', null, 'En cours')`);
+  const { br, page, errors } = await openBrowser();
+  await page.clock.setFixedTime(new Date('2026-10-03T13:30:00Z'));
+  try {
+    await login(page, '#/direct');
+    await page.waitForFunction(() => LIVE.drvAt > 0 && LIVE.drv['968199WW'], null, { timeout: 30000 });
+    const st = await page.evaluate(() => ({ d: LIVE.drv['968199WW'], at: LIVE.drvGeoAt }));
+    const G = (diag, t) => geo.handle('Get', { credentials: { sessionId: 'S1' }, typeName: 'StatusData', search: { deviceSearch: { id }, diagnosticSearch: { id: diag }, fromDate: t, toDate: t } }).result.slice(-1)[0].data;
+    const r3 = v => Math.round(v * 1000) / 1000;
+    const km = r3((G('DiagnosticOdometerId', st.at) - G('DiagnosticOdometerId', '2026-10-03T08:00:00.000Z')) / 1000);
+    const fuel = r3(G('DiagnosticDeviceTotalFuelId', st.at) - G('DiagnosticDeviceTotalFuelId', '2026-10-03T08:00:00.000Z'));
+    assert.strictEqual(st.d.km, km); assert.strictEqual(st.d.fuel_l, fuel); assert.ok(km > 0);
+    const txt = (await page.innerText('#livedrv')).replace(/\s+/g, ' ');
+    assert.match(txt, /Chauffeurs en ce moment/); assert.match(txt, /Chauffeur Compteurs/);
+    const nf = v => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1, minimumFractionDigits: 1 }).format(v).replace(/\s/g, ' ');
+    assert.ok(txt.replace(/\s/g, ' ').includes(nf(km)), 'km affichés : ' + nf(km));
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); env.psql("delete from contracts where num = 'LIVE3'" + (open.length ? "; update contracts set end_at = null where num in ('" + open.join("','") + "')" : '')); }
 });
 
 test('page Consommation : entre deux instants (à la minute), mêmes totaux que le Sheet v6, PDF téléchargé', async () => {
