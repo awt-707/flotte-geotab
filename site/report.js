@@ -123,7 +123,7 @@ function rptConso(o) {
   var l100 = function (x) { return x.fuelKm >= minKm ? rptFmt(x.fuel / x.fuelKm * 100, 1) : (x.fuelN ? 'km insuffisants' : RPT_NM); };
   var liters = function (x) { return x.fuelN ? rptFmt(x.fuel, 1) : RPT_NM; };
   var cov = function (x) { return x.trips ? Math.round(x.fuelN / x.trips * 100) + ' %' : '-'; };
-  var cost = function (x) { return x.costN ? rptFmt(x.cost) : (x.fuelN ? 'prix non saisi' : ''); };
+  var cost = function (x) { return x.costN ? rptFmt(x.cost) + (x.costN < x.fuelN ? ' (partiel : prix non saisi pour une partie)' : '') : (x.fuelN ? 'prix non saisi' : ''); };
   var stopTxt = function (x) { return x.stops ? rptFmt(x.stops) + ' (' + rptH(x.stopMin / 60) + ')' : '0'; };
   var stopL = function (x) { return x.stopLN ? rptFmt(x.stopL, 1) + ' (' + x.stopLN + '/' + x.stops + ' mesurés)' : (x.stops ? RPT_NM : ''); };
   var drvName = function (c) { return c === HORS ? 'Hors contrat' : ((o.drivers || {})[c] || names[c] || c); };

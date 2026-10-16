@@ -55,3 +55,12 @@ test('table horaire republiée même si une ancienne version a déjà publié la
   B.run('collect()');
   assert.deepStrictEqual(JSON.parse(env.psql("select value from params where key = 'tzRules'")), env.MA_TZ);
 });
+
+test('dates d\'un extract : format ISO et format français lus à l\'heure du Maroc', () => {
+  lib.setTzRules(env.MA_TZ);
+  assert.strictEqual(lib.parseLocalDT('2026-10-05 13:30').toISOString(), '2026-10-05T12:30:00.000Z');
+  assert.strictEqual(lib.parseLocalDT('2026-10-05T13:30').toISOString(), '2026-10-05T12:30:00.000Z');
+  assert.strictEqual(lib.parseLocalDT('05/10/2026 à 13h30').toISOString(), '2026-10-05T12:30:00.000Z');
+  assert.strictEqual(lib.parseLocalDT('5-10-26 13:30').toISOString(), '2026-10-05T12:30:00.000Z');
+  lib.setTzRules(null);
+});

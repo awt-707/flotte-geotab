@@ -152,7 +152,8 @@ function contractIndex_() {
     if (key && (first[key] === undefined || t < first[key])) first[key] = t;
   });
   const since = new Date(now - ((P.retentionDays || 62) + 45) * DAY).toISOString();
-  dbSelect_('contracts', 'select=num,client_code,name,vehicle_key,start_at,end_at&start_at=gte.' + since, 'num').forEach(r => {
+  // contrats récents, et contrats longs encore en cours (commencés avant, sans fin ou finis après)
+  dbSelect_('contracts', 'select=num,client_code,name,vehicle_key,start_at,end_at&or=' + enc_('(start_at.gte.' + since + ',end_at.gte.' + since + ',end_at.is.null)'), 'num').forEach(r => {
     const key = canonKey_(r.vehicle_key, cm); if (!key || !r.start_at) return;
     const st = new Date(r.start_at).getTime(), en = r.end_at ? new Date(r.end_at).getTime() : null;
     (map[key] = map[key] || []).push({ start: st, end: en !== null ? en : now + HOUR, open: en === null,

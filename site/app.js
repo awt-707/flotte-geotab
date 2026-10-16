@@ -9,12 +9,15 @@ const isAdmin = () => S.profile && S.profile.role === 'admin';
 const PARAM_DEFAULTS = { minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
 
 // ---------- Accès aux données ----------
+const PK = { vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key' };
 async function all(table, cols, build, order) {
   const out = []; const page = 1000;
   for (let i = 0; ; i += page) {
     let q = sb.from(table).select(cols || '*');
     if (build) q = build(q);
     if (order) q = q.order(order[0], { ascending: order[1] !== false });
+    // toujours un tri sur la clé : sans ordre fixe, la pagination de PostgreSQL peut sauter ou répéter des lignes
+    (PK[table] || 'id').split(',').forEach(c => { if (!order || order[0] !== c) q = q.order(c, { ascending: true }); });
     const { data, error } = await q.range(i, i + page - 1);
     if (error) throw new Error(table + ' : ' + error.message);
     out.push(...data); if (data.length < page) break;
@@ -22,6 +25,15 @@ async function all(table, cols, build, order) {
   return out;
 }
 async function rpc(fn, args) { const { data, error } = await sb.rpc(fn, args || {}); if (error) throw new Error(fn + ' : ' + error.message); return data; }
+/** Fonction de lecture renvoyant des lignes : paginée comme all() (PostgREST renvoie 1 000 lignes au plus) */
+async function rpcAll(fn, args) {
+  const out = [];
+  for (let i = 0; ; i += 1000) {
+    const { data, error } = await sb.rpc(fn, args || {}).range(i, i + 999);
+    if (error) throw new Error(fn + ' : ' + error.message);
+    out.push(...(data || [])); if (!data || data.length < 1000) return out;
+  }
+}
 async function job(kind, arg) {
   const { data, error } = await sb.from('jobs').insert({ kind, arg: arg || null }).select('id').single();
   if (error) throw new Error(error.message); return data.id;
@@ -186,7 +198,7 @@ function processLive(j) {
       const c = contractAt(v.key, now), a = { id: 'VIT|' + v.key + '|' + (v.at || now), vehicle_key: v.key, plate: v.plate, at: v.at || new Date(now).toISOString(), severity: 'Haute',
         type: 'Vitesse excessive', vmax: v.speed, detail: v.speed + ' km/h (seuil ' + lim + ')', driver_name: c ? c.name : 'Hors contrat', contract_num: c ? c.num : '' };
       LIVE.fast[v.key] = a.id; LIVE.alerts.push(a); fresh.push(a);
-    } else delete LIVE.fast[v.key];
+    } else if (v.state !== 'En route' || v.speed < lim - 10) delete LIVE.fast[v.key];   // 10 km/h de marge : pas d'alerte à répétition autour du seuil
   });
   const cut = (Date.parse(j.at) || now) - 30 * MIN;   // 30 dernières minutes à l'heure du relais
   LIVE.alerts = LIVE.alerts.filter(a => new Date(a.at).getTime() >= cut).sort((x, y) => String(y.at).localeCompare(String(x.at)));
@@ -213,8 +225,9 @@ function contractAt(key, t) {
 /** Contrats qui peuvent couvrir le moment présent (relus avec les totaux du collecteur, toutes les minutes) */
 async function loadLiveContracts() {
   const now = Date.now(), tol = num(S.P.ctrTolMin, 20) * MIN;
+  // fenêtre des alertes en direct (30 min) comprise : une infraction d'il y a 25 min reste attribuée au bon contrat
   LIVE.ctr = await all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.lte('start_at', new Date(now + tol).toISOString())
-    .or('end_at.is.null,end_at.gte.' + new Date(now - tol).toISOString()));
+    .or('end_at.is.null,end_at.gte.' + new Date(now - tol - 30 * MIN).toISOString()));
 }
 const LIVE_ORDER = { 'En route': 0, 'Arrêté, contact mis': 1, 'Garé': 2, 'Boîtier hors ligne': 3 };
 function liveRows() {
@@ -240,8 +253,8 @@ function directParts(rows) {
       ['Modèle', r => esc(r.model)], ['État', r => badge(r.state, (STATE_CLS[r.state] || '') + ' dot'), r => LIVE_ORDER[r.state] ?? 9],
       ['Vitesse', r => r.speed ? f0(r.speed) + ' km/h' : '', r => r.speed, 'n'], ['Depuis', r => r.since_min != null ? fH(r.since_min / 60) : '', r => r.since_min, 'n'],
       ['Dernière position', r => r.live ? fmtHMS(r.last_pos_at) : fmtDT(r.last_pos_at), r => r.last_pos_at], ['Chauffeur sous contrat (maintenant)', r => r.contract_num ? dlink(r.driver_code, r.driver_name) : '<span class="nm">Hors contrat</span>', r => r.driver_name], ['Contrat', r => esc(r.contract_num || '')],
-      ['Km aujourd\'hui', r => f1(r.km_today), r => r.km_today, 'n'], ['Conduite', r => fH(r.drive_min_today / 60), r => r.drive_min_today, 'n'],
-      ['Ralenti', r => fH(r.idle_min_today / 60), r => r.idle_min_today, 'n'], ['Carburant (L)', r => r.fuel_l_today === null ? `<span class="nm">${NM}</span>` : f1(r.fuel_l_today), r => r.fuel_l_today, 'n'],
+      ['Km aujourd\'hui', r => f1(r.km_today), r => r.km_today, 'n'], ['Conduite', r => r.drive_min_today == null ? '' : fH(r.drive_min_today / 60), r => r.drive_min_today, 'n'],
+      ['Ralenti', r => r.idle_min_today == null ? '' : fH(r.idle_min_today / 60), r => r.idle_min_today, 'n'], ['Carburant (L)', r => r.fuel_l_today === null ? `<span class="nm">${NM}</span>` : f1(r.fuel_l_today), r => r.fuel_l_today, 'n'],
       ['Alertes du jour', r => r.alerts_today ? `<a href="#/alertes?plaque=${encodeURIComponent(r.plate)}&jour=${today()}">${r.alerts_today}</a>` : '0', r => r.alerts_today, 'n'],
       ['Carte', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">Voir</a>` : '']], rows, { empty: 'Aucun véhicule actif' })
   };
@@ -257,7 +270,7 @@ async function pageDirect(refresh) {
   [LIVE.rows] = await Promise.all([all('live_status', '*', null, ['plate']), loadLiveContracts()]);
   LIVE.rows = LIVE.rows.filter(r => ok(r.vehicle_key));
   const rows = liveRows(), d = directParts(rows);
-  if (refresh && $('#tlive') && MAP) { applyDirect(); return; }
+  if (refresh) { if ($('#tlive') && MAP) applyDirect(); return; }   // relecture : jamais de page redessinée (l'utilisateur a pu changer de page)
   const last = LIVE.rows.reduce((m, r) => Math.max(m, new Date(r.updated_at || 0).getTime()), 0);
   $('#page').innerHTML = `
     <div class="head"><h1>En direct</h1><div class="sub"><span id="livest">${liveStatusTxt()}</span>
@@ -268,7 +281,7 @@ async function pageDirect(refresh) {
     <div id="map"></div>
     <div id="livetab">${d.table}</div>`;
   LIVE.markers = {}; drawMap(rows);
-  liveDrivers(LIVE.rows).then(h => { const t = $('#livetab'); if (h && t && t.closest('#page')) t.insertAdjacentHTML('afterend', h); }).catch(() => { });
+  liveDrivers(liveRows()).then(h => { const t = $('#livetab'); if (h && t && t.closest('#page')) t.insertAdjacentHTML('afterend', h); }).catch(() => { });
   const b = $('#syncnow');
   if (b) b.onclick = async () => { b.disabled = true; try { await job('sync_now'); b.textContent = 'Demande envoyée (5 min max)'; } catch (e) { alert(e.message); b.disabled = false; } };
 }
@@ -328,10 +341,12 @@ async function pageTableau() {
   const p = period(), P = S.P, ok = inAgency();
   let [jrn, ac, tne, top] = await Promise.all([
     all('journal', '*', q => q.gte('day', p.from).lte('day', p.to)),
-    rpc('alert_counts', { p_from: p.from, p_to: p.to }),
-    sb.from('fuel').select('id', { count: 'exact', head: true }).eq('type', 'TRAJET_NON_ENREGISTRE').gte('day', p.from).lte('day', p.to),
-    sb.from('alerts').select('*').in('severity', ['Critique', 'Haute']).gte('day', p.from).lte('day', p.to).order('day', { ascending: false }).order('time', { ascending: false }).limit(25)]);
-  jrn = jrn.filter(r => ok(r.vehicle_key)); ac = ac.filter(x => ok(x.vehicle_key)); top = { data: (top.data || []).filter(a => ok(a.vehicle_key)) };
+    rpcAll('alert_counts', { p_from: p.from, p_to: p.to }),
+    all('fuel', 'vehicle_key', q => q.eq('type', 'TRAJET_NON_ENREGISTRE').gte('day', p.from).lte('day', p.to)),
+    all('alerts', '*', q => q.in('severity', ['Critique', 'Haute']).gte('day', p.from).lte('day', p.to))]);
+  // filtre agence AVANT de garder les 25 plus récentes
+  jrn = jrn.filter(r => ok(r.vehicle_key)); ac = ac.filter(x => ok(x.vehicle_key)); tne = { count: tne.filter(r => ok(r.vehicle_key)).length };
+  top = { data: top.filter(a => ok(a.vehicle_key)).sort((x, y) => (String(y.day) + (y.time || '')).localeCompare(String(x.day) + (x.time || ''))).slice(0, 25) };
   const t = aggJournal(jrn, () => 'ALL', P).ALL || emptyAgg();
   const cnt = f => ac.filter(f).reduce((s, x) => s + x.n, 0);
   const crit = cnt(x => x.severity === 'Critique'), high = cnt(x => x.severity === 'Haute'), ntne = tne.count || 0;
@@ -421,9 +436,12 @@ async function pageJour() {
 async function pageChauffeurs() {
   const p = period(), P = S.P;
   const ok = inAgency();
-  const [jrn0, rc] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpc('driver_rule_counts', { p_from: p.from, p_to: p.to })]);
+  const [jrn0, rc] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAll('driver_rule_counts', { p_from: p.from, p_to: p.to })]);
   const jrn = jrn0.filter(r => ok(r.vehicle_key)), agg = aggJournal(jrn, r => r.driver_code, P), used = {}, byD = {};
-  rc.forEach(x => { if (!agg[x.driver_code]) return; used[x.rule_id] = (used[x.rule_id] || 0) + x.n; (byD[x.driver_code] = byD[x.driver_code] || {})[x.rule_id] = x.n; });
+  const okv = inAgency();
+  // événements des seuls véhicules de l'agence choisie (lignes par chauffeur, règle et véhicule : cumulées)
+  rc.forEach(x => { if (!agg[x.driver_code] || (x.vehicle_key !== undefined && !okv(x.vehicle_key))) return;
+    used[x.rule_id] = (used[x.rule_id] || 0) + x.n; const d = byD[x.driver_code] = byD[x.driver_code] || {}; d[x.rule_id] = (d[x.rule_id] || 0) + x.n; });
   const ruleIds = Object.keys(used).sort((a, b) => used[b] - used[a]);
   const list = Object.values(agg).map(a => { const sc = scoreOf(a, P); return { a, code: a.k, nom: S.drv[a.k] || Object.keys(a.names)[0] || a.k, score: sc, level: levelOf(sc, P), rules: byD[a.k] || {} }; })
     .sort((x, y) => y.score - x.score || y.a.pts - x.a.pts);
@@ -510,7 +528,7 @@ async function importFile(file) {
     const unknown = [...new Set(res.rows.filter(r => !S.veh[r.vehicle_key]).map(r => r.plate))];
     let j = null;
     if (added + updated) j = await job('after_inject', localDay(r.min_start));
-    out.innerHTML = msg(`<b>Contrats lus : ${res.read}</b>, dont ${added} nouveaux, ${updated} mis à jour, ${same + res.dup} déjà à jour${res.invalid ? ', ' + res.invalid + ' lignes invalides' : ''}.<br>` +
+    out.innerHTML = msg(`<b>Contrats lus : ${res.read}</b>, dont ${added} nouveaux, ${updated} mis à jour, ${same + res.dup} déjà à jour${res.invalid ? ', ' + res.invalid + ' lignes invalides' : ''}${r.skipped ? ', ' + r.skipped + ' ignorés (véhicules d\'une autre agence)' : ''}.<br>` +
       (j ? 'Calcul automatique demandé : chauffeurs, trajets, journal et alertes à jour dans 5 minutes maximum. Rien d\'autre à faire.' : 'Aucun changement.') +
       (unknown.length ? `<br><b>Plaques non reconnues (${unknown.length}) :</b> ${unknown.map(esc).join(', ')}<br>Si c'est une nouvelle plaque d'un véhicule existant, ajoutez-la dans <a href="#/plaques">Plaques</a> : les contrats seront rattachés automatiquement.` : ''), unknown.length ? 'warn' : 'ok');
   } catch (e) { out.innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
@@ -790,8 +808,8 @@ async function pageAgences() {
 async function pageReglages() {
   const [params, rules, users, logs, jobs, recs, scheds, types] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
     sb.from('logs').select('*').order('id', { ascending: false }).limit(150), sb.from('jobs').select('*').order('id', { ascending: false }).limit(30),
-    all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), sb.from('alerts').select('type').gte('day', addDays(today(), -60)).limit(5000)]);
-  const alTypes = [...new Set(((types.data) || []).map(x => x.type))].sort();
+    all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), all('alerts', 'type', q => q.gte('day', addDays(today(), -60)))]);
+  const alTypes = [...new Set(types.map(x => x.type))].sort();
   const SEVS = ['Critique', 'Haute', 'Moyenne', 'Info'], FREQ = { jour: 'Chaque jour (veille)', semaine: 'Chaque lundi (semaine passée)', mois: 'Le 1er du mois (mois passé)' };
   const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1 };
   $('#page').innerHTML = `<div class="head"><h1>Réglages</h1></div>
