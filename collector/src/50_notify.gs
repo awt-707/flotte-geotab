@@ -160,7 +160,7 @@ function buildDriver_(code, from, to) {
   return rptDriver({
     driver: { code, name: d.name || code, phone: d.phone, email: d.email, agency: ag },
     journal: dbSelect_('journal', 'select=*' + dr, 'id'),
-    trips: dbSelect_('trips', 'select=id,vehicle_key,plate,day,start_at,km,vmax,lim_at_vmax,worst_over,speed_at_worst,lim_at_worst,worst_time,fuel_l,idle_fuel_l,driver_code' + dr, 'id'),
+    trips: dbSelect_('trips', 'select=*' + dr, 'id'),
     events: dbSelect_('events', 'select=id,vehicle_key,plate,day,start_at,dur_s,km,rule_id,rule_name,driver_code' + dr, 'id'),
     fuel: dbSelect_('fuel', 'select=*&type=in.(PLEIN,SIPHONAGE_SUSPECT)&day=gte.' + from + '&day=lte.' + to, 'id'),
     stops, idles: dbSelect_('idles', 'select=*' + dr, 'id'), alerts: dbSelect_('alerts', 'select=*' + dr, 'id'),

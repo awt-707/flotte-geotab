@@ -89,6 +89,24 @@ test('alerte reçue en temps réel : bandeau affiché', async () => {
   } finally { await br.close(); }
 });
 
+test('alerte de dépassement de vitesse : seuil réglable par limite de route dans Réglages', async () => {
+  const { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/reglages'); await ready(page);
+    await page.waitForSelector('#tspeed');
+    assert.match(await page.innerText('#tspeed'), /50 km\/h\s+80 km\/h/, 'seuil général 30 : route à 50 = alerte à 80');
+    env.psql('delete from jobs');
+    await page.fill('#tspeed .spl[data-l="50"]', '30'); await page.fill('#tspeed .spl[data-l="80"]', '20'); await page.fill('#tspeed .spl[data-l="120"]', '15');
+    const row = l => page.innerText(`#tspeed .spa[data-l="${l}"]`);
+    assert.strictEqual(await row(50), '80 km/h'); assert.strictEqual(await row(60), '90 km/h'); assert.strictEqual(await row(100), '120 km/h'); assert.strictEqual(await row(120), '135 km/h');
+    await page.click('#spsave');
+    await page.waitForFunction(() => /Seuils enregistrés/.test(document.querySelector('#spres').innerText));
+    assert.strictEqual(env.psql("select value from params where key = 'overByLimit'"), '50:30;80:20;120:15');
+    assert.strictEqual(env.psql("select count(*) from jobs where kind = 'recompute'"), '1', 'alertes recalculées');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); env.psql("update params set value = '' where key = 'overByLimit'; delete from jobs"); }
+});
+
 test('destinataires des alertes et rapports automatiques choisis dans Réglages', async () => {
   const { br, page, errors } = await openBrowser();
   page.on('dialog', d => d.accept());

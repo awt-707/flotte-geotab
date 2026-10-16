@@ -42,14 +42,15 @@ function get(p) {
   }
   return [];
 }
+const road = params => all(params.deviceSearch.id, 'road').filter(x => inR(x[0], params)).map(x => ({ k: x[0], v: x[1] }));
 function handle(method, params) {
   try {
     if (method === 'Authenticate') return params.password === 'secret' ? { result: { credentials: { sessionId: 'S1', database: 'clicar', userName: 'a' }, path: 'ThisServer' } } : { error: { message: 'Incorrect', errors: [{ name: 'InvalidUserException' }] } };
     if (!params.credentials || params.credentials.sessionId !== 'S1') return { error: { message: 'bad session', errors: [{ name: 'InvalidUserException' }] } };
     if (method === 'Get') return { result: get(params) };
     if (method === 'ExecuteMultiCall' && process.env.LIMIT_ONCE && !global.__lim) { global.__lim = 1; return { error: { message: 'API calls quota exceeded', errors: [{ name: 'OverLimitException' }] } }; }
-    if (method === 'ExecuteMultiCall') return { result: params.calls.map(c => get(c.params)) };
-    if (method === 'GetRoadMaxSpeeds') { const r = all(params.deviceSearch.id, 'road').filter(x => inR(x[0], params)).map(x => ({ k: x[0], v: x[1] })); return { result: r }; }
+    if (method === 'ExecuteMultiCall') return { result: params.calls.map(c => c.method === 'GetRoadMaxSpeeds' ? road(c.params) : get(c.params)) };
+    if (method === 'GetRoadMaxSpeeds') return { result: road(params) };
     return { error: { message: 'unknown ' + method } };
   } catch (e) { return { error: { message: e.message } }; }
 }

@@ -212,6 +212,19 @@ test('en direct : chauffeurs en ce moment, compteurs Geotab depuis le début du 
   } finally { await br.close(); env.psql("delete from contracts where num = 'LIVE3'" + (open.length ? "; update contracts set end_at = null where num in ('" + open.join("','") + "')" : '')); }
 });
 
+test('en direct : dépassement de la limite de la route au-delà du seuil réglé, alerte à l\'instant', async () => {
+  env.psql("update params set value = '0:-200' where key = 'overByLimit'");   // seuil négatif : tout véhicule en route sous une limite connue déclenche (test)
+  const { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/direct');
+    await page.waitForFunction(() => LIVE.alerts.some(a => a.type === 'Dépassement limite'), null, { timeout: 60000 });
+    const a = await page.evaluate(() => { const a = LIVE.alerts.find(x => x.type === 'Dépassement limite'), v = LIVE.pos[a.vehicle_key]; return { a, v }; });
+    assert.match(a.a.detail, /^\d+ km\/h pour \d+ km\/h autorisés \(seuil \+-200, soit -?\d+ km\/h\)$/);
+    assert.match(await page.innerText('#livealerts'), /Dépassement limite/);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); env.psql("update params set value = '' where key = 'overByLimit'"); }
+});
+
 test('page Consommation : entre deux instants (à la minute), mêmes totaux que le Sheet v6, PDF téléchargé', async () => {
   const from = '2026-10-01T06:30', to = '2026-10-04T18:45';
   A.run("queueSync_(['2026-09-30','2026-10-01','2026-10-02','2026-10-03','2026-10-04','2026-10-05'], false)");

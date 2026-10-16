@@ -665,6 +665,39 @@ function reportPdf(rep) {
   doc.save(rptFileName(rep) + '.pdf');
 }
 
+// ---------- Réglages : alerte de dépassement de vitesse (seuil par limite de route) ----------
+const SPEED_LIMITS = [20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
+function speedSettingsHtml(params) {
+  const pv = k => { const p = params.find(x => x.key === k); return p && p.value != null ? p.value : ''; };
+  const P = { overByLimit: pv('overByLimit'), overAlert: pv('overAlert') || 30 }, exact = {}; rptOverTable(P).forEach(x => { exact[x[0]] = x[1]; });
+  return `<h2>Alerte de dépassement de vitesse</h2>
+    <div class="sub">Alerte « Dépassement limite » quand la vitesse du véhicule dépasse la limite de la route (fournie par Geotab) d'au moins le seuil choisi pour cette limite. Exemple : route à 50 et seuil 30 = alerte à partir de 80 km/h.
+      Limite sans seuil saisi : celui de la limite inférieure la plus proche, sinon le seuil général. S'applique aux alertes du collecteur (trajets) et aux alertes en direct.</div>
+    <div class="panel row"><label>Seuil général (km/h au-dessus de la limite) <input id="spgen" type="number" min="0" max="100" value="${esc(P.overAlert)}" size="4"></label>
+      <label>Vitesse max : alerte quelle que soit la route (km/h) <input id="spvmax" type="number" min="50" max="250" value="${esc(pv('vmaxAlert') || 130)}" size="4"></label></div>
+    <div class="tw"><table id="tspeed"><thead><tr><th>Limite de la route</th><th>Seuil d'alerte (km/h au-dessus)</th><th>Alerte à partir de</th></tr></thead><tbody>
+      ${SPEED_LIMITS.map(l => `<tr><td><b>${l} km/h</b></td><td><input class="spl" data-l="${l}" type="number" min="0" max="100" value="${exact[l] !== undefined ? esc(exact[l]) : ''}" placeholder="${esc(rptOverTol(P, l))}" size="4"></td>
+        <td class="spa" data-l="${l}"><b>${l + rptOverTol(P, l)} km/h</b></td></tr>`).join('')}</tbody></table></div>
+    <div class="panel row"><button id="spsave">Enregistrer les seuils</button><span class="small">Les alertes des 7 derniers jours sont recalculées avec les nouveaux seuils (dans les 5 minutes).</span><span id="spres" aria-live="polite"></span></div>`;
+}
+function bindSpeedSettings(params) {
+  const cur = () => { const m = []; document.querySelectorAll('#tspeed .spl').forEach(i => { if (i.value !== '' && isFinite(+i.value)) m.push(i.dataset.l + ':' + Math.round(+i.value)); }); return { overByLimit: m.join(';'), overAlert: num($('#spgen').value, 30) }; };
+  const show = () => { const P = cur(); document.querySelectorAll('#tspeed .spa').forEach(td => { const l = +td.dataset.l; td.innerHTML = `<b>${l + rptOverTol(P, l)} km/h</b>`; });
+    document.querySelectorAll('#tspeed .spl').forEach(i => { i.placeholder = rptOverTol(P, +i.dataset.l); }); };
+  document.querySelectorAll('#tspeed .spl, #spgen').forEach(i => { i.oninput = show; });
+  $('#spsave').onclick = async () => {
+    const P = cur(), res = $('#spres');
+    if (!(P.overAlert >= 0) || !(num($('#spvmax').value) >= 50)) { res.innerHTML = msg('Valeurs invalides.', 'err'); return; }
+    const set = async (k, v) => { const { data, error } = await sb.from('params').update({ value: String(v) }).eq('key', k).select('key'); if (error) throw error; return (data || []).length; };
+    try {
+      await set('overAlert', P.overAlert); await set('vmaxAlert', Math.round(num($('#spvmax').value)));
+      if (!await set('overByLimit', P.overByLimit) && P.overByLimit) throw new Error('paramètre « overByLimit » absent de la base : exécutez la migration 20261022000000_vitesse.sql dans Supabase > SQL Editor');
+      await job('recompute', addDays(today(), -7));
+      S.P = null; await loadRef(); res.innerHTML = msg('Seuils enregistrés. Alertes des 7 derniers jours recalculées dans les 5 minutes.', 'ok');
+    } catch (e) { res.innerHTML = msg('Erreur : ' + esc(e.message), 'err'); }
+  };
+}
+
 // ---------- AGENCES (admin) ----------
 async function pageAgences() {
   await loadRef(true);
@@ -706,11 +739,12 @@ async function pageReglages() {
     all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), all('alerts', 'type', q => q.gte('day', addDays(today(), -60)))]);
   const alTypes = [...new Set(types.map(x => x.type))].sort();
   const SEVS = ['Critique', 'Haute', 'Moyenne', 'Info'], FREQ = { jour: 'Chaque jour (veille)', semaine: 'Chaque lundi (semaine passée)', mois: 'Le 1er du mois (mois passé)' };
-  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1 };
+  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
   $('#page').innerHTML = `<div class="head"><h1>Réglages</h1></div>
     <h2>Utilisateurs</h2><div class="sub">Les nouveaux comptes attendent votre validation (rôle « En attente »). Gestionnaire = import des contrats, chauffeurs, plaques, statut des alertes. Lecture seule = consultation. Agences de chaque utilisateur : <a href="#/agences">Agences</a>.</div>
     ${table('tusr', [['Email', u => esc(u.email)], ['Créé le', u => fmtDTY(u.created_at)], ['Rôle', u => u.user_id === S.session.user.id ? ROLE_TXT[u.role] :
       `<select class="urole" data-u="${u.user_id}">${Object.keys(ROLE_TXT).map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${ROLE_TXT[r]}</option>`).join('')}</select>`]], users)}
+    ${speedSettingsHtml(params)}
     <h2>Alertes par e-mail</h2><div class="sub">Chaque nouvelle alerte (veille et jour même) est envoyée une seule fois aux destinataires concernés, dans les minutes qui suivent son calcul par le collecteur.</div>
     <div class="panel row"><label>Email <input id="reml" type="email" size="22" placeholder="chef@clicar.fr"></label><label>Nom <input id="rnom" size="14"></label>
       <label>Agence <select id="rag">${agOptions('', 'Toutes')}</select></label><label>Gravité minimum <select id="rsev">${SEVS.map(x => `<option ${x === 'Haute' ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
@@ -743,6 +777,7 @@ async function pageReglages() {
   $('#rsgo').onclick = async () => { await job('resync', $('#rsfrom').value + '|' + $('#rsto').value); done('Retéléchargement demandé.'); };
   $('#vhgo').onclick = async () => { await job('import_vehicles'); done('Mise à jour des véhicules demandée.'); };
   const reload = () => pageReglages().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message), 'err'); });
+  bindSpeedSettings(params);
   $('#radd').onclick = async () => {
     const email = $('#reml').value.trim(); if (!/@/.test(email)) { alert('Saisissez une adresse e-mail.'); return; }
     const types = [...$('#rtyp').selectedOptions].map(o => o.value).join(', ');

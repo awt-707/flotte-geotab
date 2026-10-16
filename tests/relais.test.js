@@ -144,3 +144,22 @@ test('chauffeurs en ce moment : compteurs du véhicule entre le début du contra
   const ev = G('ExceptionEvent', { deviceSearch: { id }, fromDate: iso(from), toDate: iso(NOW) }).filter(e => e.state !== 'ExceptionEventStateInvalidId');
   assert.deepStrictEqual(d.events.map(e => e.id).sort(), ev.map(e => String(e.id)).sort());
 });
+
+test('limite de la route sous chaque véhicule en route (alerte de dépassement en direct)', async () => {
+  L.resetMemory(); global.__NOW = NOW;
+  const fx = JSON.parse(require('zlib').gunzipSync(fs.readFileSync(path.join(__dirname, 'fixtures', 'geotab_2026-09-26_10-06.json.gz'))));
+  let seen = 0;
+  for (const t of [NOW, NOW - 20 * 60000, NOW - 47 * 60000, NOW - 90 * 60000]) {
+    L.resetMemory(); global.__NOW = t;
+    const r = await call('admin', {}, t);
+    assert.strictEqual(r.status, 200);
+    r.body.vehicles.forEach(v => {
+      const id = gid(v.key), m = {}; fx.data.filter(w => w.id === id).forEach(w => (w.road || []).forEach(x => { m[Date.parse(x[0])] = +x[1]; }));
+      const last = Object.keys(m).map(Number).filter(x => x >= t - 180000 && x <= t).sort((a, b) => a - b).pop();
+      const exp = v.state === 'En route' && last !== undefined && m[last] > 0 ? Math.round(m[last]) : null;
+      assert.strictEqual(v.limit, exp, v.key + ' ' + new Date(t).toISOString());
+      if (exp) seen++;
+    });
+  }
+  assert.ok(seen > 0, 'aucune limite de route relevée sur les instants testés');
+});
