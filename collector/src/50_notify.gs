@@ -74,17 +74,35 @@ function buildReport_(from, to, agencyId, freq) {
     vehicles: veh, drivers: drv, P: P, from: from, to: to, agency: ag, frequency: freq, generatedAt: new Date()
   });
 }
-/** Envoi d'un rapport planifié (PDF en pièce jointe). force = renvoi demandé depuis le site. */
+/** Rapport de consommation des journées from..to (heure du Maroc) et d'une agence (vide = toutes) */
+function buildConso_(from, to, agencyId) {
+  const P = params_(), A = dayBounds_(from).start.getTime(), Z = dayBounds_(to).end.getTime(), aI = new Date(A).toISOString(), zI = new Date(Z).toISOString();
+  const veh = dbSelect_('vehicles', 'select=key,plate,model,fuel,active,agency_id,geotab_id', 'key').filter(v => !agencyId || v.agency_id === agencyId);
+  const drv = {}; dbSelect_('drivers', 'select=code,name', 'code').forEach(d => { drv[d.code] = d.name; });
+  let stops = null;
+  try { stops = dbSelect_('engine_stops', 'select=vehicle_key,start_at,dur_min,liters,driver_code&start_at=gte.' + enc_(aI) + '&start_at=lt.' + enc_(zI), 'id'); } catch (e) { stops = null; }
+  const have = {}; dbSelect_('vehicle_days', 'select=vehicle_key,day&day=gte.' + from + '&day=lte.' + to, 'id').forEach(x => { have[x.vehicle_key + '|' + x.day] = 1; });
+  const missing = [];
+  for (let d = from; d <= to; d = addDays_(d, 1)) veh.filter(v => v.geotab_id && v.active !== 'NON').forEach(v => { if (!have[v.key + '|' + d]) missing.push({ plate: v.plate, day: d }); });
+  const ag = agencyId ? (dbSelect_('agencies', 'select=id,name&id=eq.' + agencyId, 'id')[0] || {}).name : '';
+  return rptConso({
+    trips: dbSelect_('trips', 'select=vehicle_key,plate,start_at,km,drive_min,idle_min,fuel_l,fuel_source,idle_fuel_l,driver_code,driver_name,contract_num&start_at=gte.' + enc_(aI) + '&start_at=lt.' + enc_(zI), 'id'),
+    fuel: dbSelect_('fuel', 'select=vehicle_key,plate,type,stop_start,stop_end,lvl_before,lvl_after,liters_gauge,liters_geotab,engine,status,driver_code,driver_name&stop_start=gte.' + enc_(aI) + '&stop_start=lt.' + enc_(zI), 'id'),
+    stops: stops, vehicles: veh, drivers: drv, P: P, a: A, z: Z, missing: missing, agency: ag, dayOf: localDay_, hmOf: localHM_, generatedAt: new Date()
+  });
+}
+const pdfOf_ = rep => { const name = rptFileName(rep); return Utilities.newBlob(rptDoc(rep), 'text/html', name + '.html').getAs('application/pdf').setName(name + '.pdf'); };
+/** Envoi d'un rapport planifié : rapport de la flotte + rapport de consommation (deux PDF en pièce jointe) */
 function sendReport_(s, per) {
-  const rep = buildReport_(per.from, per.to, s.agency_id, s.frequency), name = rptFileName(rep);
-  const pdf = Utilities.newBlob(rptDoc(rep), 'text/html', name + '.html').getAs('application/pdf').setName(name + '.pdf');
+  const rep = buildReport_(per.from, per.to, s.agency_id, s.frequency), pdf = pdfOf_(rep);
+  let conso = null; try { conso = pdfOf_(buildConso_(per.from, per.to, s.agency_id)); } catch (e) { log_('Rapports', 'Rapport de consommation impossible : ' + e.message); }
   const body = '<div style="font-family:Arial,sans-serif;font-size:13px"><p><b>' + rptEsc(rep.title) + '</b><br>' + rptEsc(rep.agency) + ' · ' + rptEsc(rep.period) + '</p><table cellpadding="3" style="font-size:12px">' +
     rep.summary.map(x => '<tr><td style="color:#5d6b74">' + rptEsc(x[0]) + '</td><td><b>' + rptEsc(x[1]) + '</b></td></tr>').join('') +
-    '</table><p>Rapport complet (chauffeurs, véhicules, alertes) en pièce jointe.</p></div>';
+    '</table><p>En pièce jointe : rapport complet (chauffeurs, véhicules, alertes)' + (conso ? ' et rapport de consommation (carburant, ralenti, arrêts moteur, pleins, siphonages)' : '') + '.</p></div>';
   const to = String(s.recipients || '').split(/[,;\s]+/).filter(x => /@/.test(x));
   if (!to.length) throw new Error('aucun destinataire valide');
   MailApp.sendEmail({ to: to.join(','), subject: 'Flotte : ' + rep.title.toLowerCase() + ' ' + rep.period + (s.agency_id ? ' (' + rep.agency + ')' : ''),
-    htmlBody: body, attachments: [pdf], name: 'Flotte Geotab' });
+    htmlBody: body, attachments: conso ? [pdf, conso] : [pdf], name: 'Flotte Geotab' });
   return rep.period + ' envoyé à ' + to.length + ' destinataire' + (to.length > 1 ? 's' : '');
 }
 /** Rapports planifiés dus : une fois par période, quand les journées de la période sont finalisées et le journal à jour */

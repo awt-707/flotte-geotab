@@ -214,6 +214,41 @@ async function pageRalenti() {
   window.__rerender = render; render();
 }
 
+// ---------- CONSOMMATION ENTRE DEUX DATES (toute la flotte ou un véhicule, à la minute près) + rapport PDF ----------
+function consoInputs() {
+  let c = null; try { c = JSON.parse(localStorage.getItem('conso') || 'null'); } catch (e) { }
+  const now = Date.now(), t = today();
+  return { a: (c && c.a) || t.slice(0, 8) + '01T00:00', z: (c && c.z) || t + 'T' + localHM(now), k: c && c.k !== undefined ? c.k : '' };
+}
+async function pageConso() {
+  const inp = consoInputs(), P = S.P, ok = inAgency();
+  const a = parseLocalDT(inp.a), z0 = parseLocalDT(inp.z), now = Date.now();
+  const head = `<div class="head"><h1>Consommation</h1><div class="sub">Carburant consommé entre deux instants (heure du Maroc), toute la flotte ou un véhicule. Litres = compteur carburant du véhicule, trajet par trajet : aucune estimation, « ${NM} » quand Geotab ne donne pas la valeur. Un trajet compte s'il démarre dans la période. Agence : menu de gauche.</div>
+    <button id="cpdf" disabled>Télécharger le PDF</button></div>
+    <div class="bar"><label>Du <input type="datetime-local" id="ca" value="${esc(inp.a)}"></label><label>au <input type="datetime-local" id="cz" value="${esc(inp.z)}"></label>${vehSelect(inp.k)}<button id="cgo">Calculer</button></div>`;
+  const bind = () => {
+    const save = () => { try { localStorage.setItem('conso', JSON.stringify({ a: $('#ca').value, z: $('#cz').value, k: $('#vsel').value })); } catch (e) { } go(); };
+    $('#cgo').onclick = save; $('#vsel').onchange = save;
+  };
+  if (!a || !z0 || !(Math.min(z0.getTime(), now) > a.getTime())) { $('#page').innerHTML = head + msg('Période invalide : la fin doit être après le début (et pas dans le futur).', 'warn'); bind(); return; }
+  const A = a.getTime(), Z = Math.min(z0.getTime(), now), aI = new Date(A).toISOString(), zI = new Date(Z).toISOString(), d0 = localDay(A), d1 = localDay(Z - 1);
+  const vlist = S.vehList.filter(v => ok(v.key) && (!inp.k || v.key === inp.k));
+  const keys = new Set(vlist.map(v => v.key)), mine = r => keys.has(r.vehicle_key);
+  const [trips, fuel, stops, vd] = await Promise.all([
+    all('trips', 'vehicle_key,plate,start_at,km,drive_min,idle_min,fuel_l,fuel_source,idle_fuel_l,driver_code,driver_name,contract_num', q => q.gte('start_at', aI).lt('start_at', zI)),
+    all('fuel', 'vehicle_key,plate,type,stop_start,stop_end,lvl_before,lvl_after,liters_gauge,liters_geotab,engine,status,driver_code,driver_name', q => q.gte('stop_start', aI).lt('stop_start', zI)),
+    all('engine_stops', 'vehicle_key,start_at,dur_min,liters,driver_code', q => q.gte('start_at', aI).lt('start_at', zI)).catch(() => null),
+    all('vehicle_days', 'vehicle_key,day', q => q.gte('day', d0).lte('day', d1))]);
+  // Journées passées (avant-hier et plus) ni finalisées ni téléchargées : totaux incomplets, signalé
+  const have = new Set(vd.map(x => x.vehicle_key + '|' + x.day)), missing = [];
+  for (let d = d0; d <= d1 && d <= addDays(today(), -2); d = addDays(d, 1)) vlist.filter(v => v.geotab_id && v.active !== 'NON').forEach(v => { if (!have.has(v.key + '|' + d)) missing.push({ plate: v.plate, day: d }); });
+  const rep = rptConso({ trips: trips.filter(mine), fuel: fuel.filter(mine), stops: stops ? stops.filter(mine) : null, vehicles: vlist, drivers: S.drv, P, a: A, z: Z, missing,
+    agency: inp.k ? vehOf(inp.k).plate : (agFilter() ? S.agName[agFilter()] : ''), dayOf: localDay, hmOf: localHM, generatedAt: new Date() });
+  $('#page').innerHTML = head + `<div class="panel rptview">${rptHtml(rep)}</div>`;
+  bind();
+  const b = $('#cpdf'); b.disabled = false; b.onclick = () => { try { reportPdf(rep); } catch (e) { alert('PDF impossible : ' + e.message); } };
+}
+
 // ---------- ARRÊTS MOTEUR TOURNANT (chaque arrêt de engStopMin min et plus, litres réels quand Geotab les mesure) ----------
 function beltTxt(r) {
   if (r.belt_on_min === null && r.belt_off_min === null) return `<span class="nm">${NM}</span>`;

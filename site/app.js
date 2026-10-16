@@ -51,7 +51,7 @@ function agOptions(sel, emptyTxt) { return (emptyTxt !== undefined ? `<option va
 function agTxt(id) { return id ? esc(S.agName[id] || '') : '<span class="small">aucune</span>'; }
 
 // ---------- Mise en page ----------
-const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['conduite', 'Conduite'], ['carburant', 'Carburant'],
+const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
   ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, reglages: 1 };
 function shell() {
@@ -874,7 +874,7 @@ function pendingView() {
 
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
-  conduite: pageConduite, carburant: pageCarburant, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
+  conduite: pageConduite, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
   contrats: pageContrats, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
