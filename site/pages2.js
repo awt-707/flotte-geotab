@@ -381,7 +381,7 @@ async function pageFicheVehicule() {
   const a = aggJournal(jrn.filter(r => r.day >= p.from && r.day <= p.to), () => 'A', P).A || emptyAgg();
   const lv = lvls.map(x => ({ t: new Date(x.at).getTime(), v: num(x.pct) })).sort((x, y) => x.t - y.t), last = lv[lv.length - 1];
   const c0 = (ctr.data || [])[0], cur = c0 && new Date(c0.start_at) <= new Date() && (!c0.end_at || new Date(c0.end_at) >= new Date()) ? c0 : null;
-  const cd = ctrDayMap(jrn), er = {};
+  const cd = ctrDayMap(jrn), er = {}, alS = await alertShifts((al.data || []).slice());
   evts.filter(e => { const d = e.contract_num && cd[e.contract_num] ? cd[e.contract_num] : e.day; return d >= p.from && d <= p.to; }).forEach(e => {
     const rl = S.rules[e.rule_id] || { name: e.rule_id, weight: 0 }, k = e.rule_id + '|' + e.driver_code;
     const o = er[k] || (er[k] = { rule: rl.name, code: e.driver_code, n: 0, dur: 0, w: num(rl.weight) }); o.n++; o.dur += num(e.dur_s); });
@@ -414,7 +414,7 @@ async function pageFicheVehicule() {
       ['Jauge avant → après (%)', f => f1(f.lvl_before) + ' → ' + f1(f.lvl_after)], ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n'], ['Litres Geotab', f => f1(f.liters_geotab), null, 'n'],
       ['Chauffeur', f => dlink(f.driver_code, drvName(f.driver_code, f.driver_name))], ['Chauffeur au redémarrage', f => esc(f.next_driver || '')], ['Statut', f => esc(f.status || '')]],
       fuel.sort((x, y) => new Date(y.stop_start) - new Date(x.stop_start)), { empty: 'Aucun' })}
-    <h2>Alertes (30 plus récentes)</h2>${alertTable('tfva', al.data || [], false)}`;
+    <h2>Alertes (30 plus récentes)</h2>${alertTable('tfva', alS, false)}`;
 }
 
 // ---------- FICHE CHAUFFEUR (compte rendu chauffeur du Sheet, imprimable en PDF) ----------
@@ -430,7 +430,7 @@ async function pageFicheChauffeur() {
     sb.from('drivers').select('*').eq('code', code).maybeSingle(),
     drivingStats(retFrom, today())]);
   const ok = inAgency(), mine = jrn.filter(r => ok(r.vehicle_key)).sort((x, y) => String(x.contract_start || x.day).localeCompare(String(y.contract_start || y.day)));
-  const d = drvRow.data || {}, nom = d.name || drvName(code);
+  const d = drvRow.data || {}, nom = d.name || drvName(code), alS = await alertShifts(al.filter(a => ok(a.vehicle_key)));
   if (!mine.length && !d.code) { $('#page').innerHTML = msg('Chauffeur inconnu ou d\'une autre agence.', 'warn'); return; }
   const A = rows => aggJournal(rows, () => 'A', P).A || emptyAgg(), all0 = A(mine);
   const rk = list.filter(o => o.a.km >= num(P.kmMin, 20)).sort((x, y) => y.score - x.score), pos = rk.findIndex(o => o.code === code);
@@ -474,7 +474,7 @@ async function pageFicheChauffeur() {
       ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n'], ['Litres Geotab', f => f1(f.liters_geotab), null, 'n']], pleins, { empty: 'Aucun plein pendant ses contrats' })}
     ${siph.length ? table('tccsi', [['Arrêt', f => fmtDTY(f.stop_start)], ['Redémarrage', f => fmtDTY(f.stop_end)], ['Véhicule', f => vlink(f.vehicle_key, f.plate)], ['Jauge', f => f1(f.lvl_before) + ' → ' + f1(f.lvl_after) + ' %'],
       ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n'], ['Rôle', f => f.driver_code === code ? 'Véhicule garé par lui' : 'Redémarré par lui'], ['Statut', f => esc(f.status || '')]], siph) : ''}
-    <h2>Alertes</h2>${alertTable('tcca', al.filter(x => x.status !== 'Faux positif'), false)}
+    <h2>Alertes</h2>${alertTable('tcca', alS.filter(x => x.status !== 'Faux positif'), false)}
     <p class="small">Toutes les valeurs proviennent du boîtier Geotab. Journée de travail = horaires du contrat (tolérance ${esc(P.ctrTolMin || 20)} min). « ${NM} » quand Geotab ne fournit pas la valeur : rien n'est estimé.</p>`;
   $('#cprint').onclick = () => window.print();
 }
