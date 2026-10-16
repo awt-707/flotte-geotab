@@ -27,6 +27,25 @@ function rptAgg(rows, minKm) {
   a.l100 = a.fuelKm >= (minKm || 30) ? a.fuel / a.fuelKm * 100 : null;
   return a;
 }
+/** Shift d'un contrat d'après l'heure de début 'hh:mm' (heure du Maroc) : le début de shift le plus proche (jour shiftDay h, nuit shiftNight h) */
+function rptShiftH(P, k, def) { return P && P[k] !== undefined && P[k] !== null && P[k] !== '' ? rptNum(P[k]) : def; }
+function rptShift(hm, P) {
+  if (!hm) return '';
+  var h = rptNum(String(hm).slice(0, 2)) + rptNum(String(hm).slice(3, 5)) / 60, d = rptShiftH(P, 'shiftDay', 7), n = rptShiftH(P, 'shiftNight', 19);
+  var dist = function (a, b) { var x = Math.abs(a - b) % 24; return Math.min(x, 24 - x); };
+  return dist(h, d) <= dist(h, n) ? 'Jour' : 'Nuit';
+}
+var RPT_SHIFTS = ['Jour', 'Nuit', ''];
+function rptShiftName(s, P) {
+  var z = function (h) { return ('0' + h).slice(-2) + ':00'; }, d = rptShiftH(P, 'shiftDay', 7), n = rptShiftH(P, 'shiftNight', 19);
+  return s === 'Jour' ? 'Shift jour (' + z(d) + ' → ' + z(n) + ')' : s === 'Nuit' ? 'Shift nuit (' + z(n) + ' → ' + z(d) + ')' : 'Hors contrat';
+}
+/** Un tableau par shift (jour, nuit, hors contrat) ; t.rowsOf(shift) donne les lignes du shift */
+function rptSplit(t, P, shifts) {  // t.none : titre des lignes sans shift (défaut « Hors contrat »)
+  var out = [];
+  shifts.forEach(function (s) { var rows = t.rowsOf(s); if (rows.length) out.push({ title: t.title + ' : ' + (s === '' && t.none ? t.none : rptShiftName(s, P)), empty: '', head: t.head, num: t.num, rows: rows }); });
+  return out.length ? out : [{ title: t.title, empty: t.empty, head: t.head, num: t.num, rows: [] }];
+}
 function rptLevel(score, P) { return score >= P.scoreR ? 'Dangereux' : score >= P.scoreO ? 'Élevé' : score >= P.scoreY ? 'Modéré' : 'Faible'; }
 
 /**
@@ -39,12 +58,14 @@ function rptBuild(o) {
   var jrn = (o.journal || []).filter(function (r) { return keys[r.vehicle_key]; });
   var al = (o.alerts || []).filter(function (a) { return keys[a.vehicle_key]; });
   var t = rptAgg(jrn, minKm), byV = {}, byD = {};
-  jrn.forEach(function (r) { (byV[r.vehicle_key] = byV[r.vehicle_key] || []).push(r); if (r.driver_code && r.driver_code !== HORS) (byD[r.driver_code] = byD[r.driver_code] || []).push(r); });
+  // shift du chauffeur = heure de début du contrat (o.hmOf : heure du Maroc) ; un chauffeur qui a fait les deux shifts apparaît dans chacun
+  var shOf = function (r) { return o.hmOf && r.contract_num && r.contract_start ? rptShift(o.hmOf(new Date(r.contract_start).getTime()), P) : ''; };
+  jrn.forEach(function (r) { (byV[r.vehicle_key] = byV[r.vehicle_key] || []).push(r); if (r.driver_code && r.driver_code !== HORS) { var k = shOf(r) + '|' + r.driver_code; (byD[k] = byD[k] || []).push(r); } });
   var alV = {}, sev = {}; RPT_SEV.forEach(function (s) { sev[s] = 0; });
   al.forEach(function (a) { alV[a.vehicle_key] = (alV[a.vehicle_key] || 0) + 1; sev[a.severity] = (sev[a.severity] || 0) + 1; });
-  var drivers = Object.keys(byD).map(function (code) {
-    var a = rptAgg(byD[code], minKm), score = a.pts / Math.max(a.km, kmMin) * 100;
-    return { code: code, name: (o.drivers || {})[code] || Object.keys(a.names)[0] || code, days: Object.keys(a.ctr).length || Object.keys(a.days).length,
+  var drivers = Object.keys(byD).map(function (k) {
+    var a = rptAgg(byD[k], minKm), score = a.pts / Math.max(a.km, kmMin) * 100, code = k.slice(k.indexOf('|') + 1);
+    return { code: code, shift: k.slice(0, k.indexOf('|')), name: (o.drivers || {})[code] || Object.keys(a.names)[0] || code, days: Object.keys(a.ctr).length || Object.keys(a.days).length,
       km: a.km, drive: a.drive, idle: a.idle, evts: a.evts, score: score, level: rptLevel(score, P), siph: a.siph };
   }).sort(function (x, y) { return y.score - x.score || x.name.localeCompare(y.name); });
   var vehicles = Object.keys(keys).map(function (k) { return keys[k]; }).filter(function (v) { return v.active !== 'NON' || byV[v.key]; }).map(function (v) {
@@ -75,7 +96,7 @@ function rptBuild(o) {
       ['Km hors contrat', rptFmt(t.kmHors, 1)],
       ['Alertes', RPT_SEV.map(function (s) { return s + ' ' + sev[s]; }).join(' · ')]
     ],
-    alertCounts: sev, nAlerts: al.length, drivers: drivers, vehicles: vehicles, topAlerts: top
+    alertCounts: sev, nAlerts: al.length, drivers: drivers, vehicles: vehicles, topAlerts: top, shifts: !!o.hmOf, P: P
   };
 }
 
@@ -96,10 +117,12 @@ function rptConso(o) {
     stops: 0, stopMin: 0, stopL: 0, stopLN: 0, pleins: 0, pleinsL: 0, siph: 0, siphL: 0 }; };
   var tot = mk(), byV = {}, byD = {}, byDay = {}, names = {};
   var trips = (o.trips || []).filter(function (r) { return keys[r.vehicle_key] && inP(r.start_at); });
+  // chauffeur par shift : o.ctrShift(n° de contrat) -> 'Jour' / 'Nuit' (début du contrat) ; hors contrat : ''
+  var dkOf = function (r) { var code = r.driver_code || HORS; return (code !== HORS && o.ctrShift ? o.ctrShift(r.contract_num) || '' : '') + '|' + code; };
   trips.forEach(function (r) {
-    var v = keys[r.vehicle_key], code = r.driver_code || HORS, km = rptNum(r.km), pr = rptPrice(v, P), day = o.dayOf(new Date(r.start_at).getTime());
+    var v = keys[r.vehicle_key], code = r.driver_code || HORS, km = rptNum(r.km), pr = rptPrice(v, P), day = o.dayOf(new Date(r.start_at).getTime()), dk = dkOf(r);
     if (code !== HORS && r.driver_name) names[code] = r.driver_name;
-    [tot, byV[r.vehicle_key] = byV[r.vehicle_key] || mk(), byD[code] = byD[code] || mk(), byDay[day] = byDay[day] || mk()].forEach(function (x) {
+    [tot, byV[r.vehicle_key] = byV[r.vehicle_key] || mk(), byD[dk] = byD[dk] || mk(), byDay[day] = byDay[day] || mk()].forEach(function (x) {
       x.trips++; x.km += km; x.drive += rptNum(r.drive_min) / 60; x.idleMin += rptNum(r.idle_min);
       if (r.fuel_l !== null && r.fuel_l !== undefined && r.fuel_l !== '') { x.fuel += rptNum(r.fuel_l); x.fuelKm += km; x.fuelN++; if (pr) { x.cost += rptNum(r.fuel_l) * pr; x.costN++; } }
       else x.noFuelKm += km;
@@ -108,8 +131,8 @@ function rptConso(o) {
   });
   (o.stops || []).forEach(function (s) {
     if (!keys[s.vehicle_key] || !inP(s.start_at)) return;
-    var code = s.driver_code || HORS;
-    [tot, byV[s.vehicle_key] = byV[s.vehicle_key] || mk(), byD[code] = byD[code] || mk()].forEach(function (x) {
+    var dk = dkOf(s);
+    [tot, byV[s.vehicle_key] = byV[s.vehicle_key] || mk(), byD[dk] = byD[dk] || mk()].forEach(function (x) {
       x.stops++; x.stopMin += rptNum(s.dur_min); if (s.liters !== null && s.liters !== undefined) { x.stopL += rptNum(s.liters); x.stopLN++; } });
   });
   var fills = [], siph = [], tne = [];
@@ -126,6 +149,7 @@ function rptConso(o) {
   var cost = function (x) { return x.costN ? rptFmt(x.cost) + (x.costN < x.fuelN ? ' (partiel : prix non saisi pour une partie)' : '') : (x.fuelN ? 'prix non saisi' : ''); };
   var stopTxt = function (x) { return x.stops ? rptFmt(x.stops) + ' (' + rptH(x.stopMin / 60) + ')' : '0'; };
   var stopL = function (x) { return x.stopLN ? rptFmt(x.stopL, 1) + ' (' + x.stopLN + '/' + x.stops + ' mesurés)' : (x.stops ? RPT_NM : ''); };
+  var kc = function (k) { return k.slice(k.indexOf('|') + 1); };
   var drvName = function (c) { return c === HORS ? 'Hors contrat' : ((o.drivers || {})[c] || names[c] || c); };
   var fdt = function (t) { return rptDT(new Date(t).getTime(), o.dayOf, o.hmOf); };
   var vlist = Object.keys(keys).filter(function (k) { return byV[k] || keys[k].active !== 'NON'; }).sort(function (x, y) { return ((byV[y] || {}).fuel || 0) - ((byV[x] || {}).fuel || 0) || String(keys[x].plate).localeCompare(String(keys[y].plate)); });
@@ -136,11 +160,11 @@ function rptConso(o) {
       rows: vlist.map(function (k) { var x = byV[k] || mk(), v = keys[k];
         return [v.plate, v.model || '', rptFmt(x.trips), rptFmt(x.km, 1), liters(x), l100(x), cost(x), rptH(x.idleMin / 60), x.idleN ? rptFmt(x.idleL, 1) : (x.trips ? RPT_NM : ''),
           stopTxt(x), stopL(x), rptFmt(x.pleins), rptFmt(x.pleinsL, 1), x.siph ? rptFmt(x.siph) + ' (' + rptFmt(x.siphL, 1) + ' L)' : '0', cov(x)]; }) },
-    { title: 'Par chauffeur (contrats)', empty: 'Aucun trajet sur la période',
+  ].concat(rptSplit({ title: 'Par chauffeur', empty: 'Aucun trajet sur la période',
       head: ['Chauffeur', 'Code', 'Trajets', 'Km', 'Carburant (L)', 'L/100 km', 'Coût (MAD)', 'Ralenti', 'Litres au ralenti', 'Arrêts moteur tournant', 'Litres à l\'arrêt', 'Trajets mesurés'],
       num: [2, 3, 4, 5, 6, 7, 8],
-      rows: Object.keys(byD).filter(function (c) { return byD[c].trips; }).sort(function (x, y) { return byD[y].fuel - byD[x].fuel || drvName(x).localeCompare(drvName(y)); }).map(function (c) { var x = byD[c];
-        return [drvName(c), c === HORS ? '' : c, rptFmt(x.trips), rptFmt(x.km, 1), liters(x), l100(x), cost(x), rptH(x.idleMin / 60), x.idleN ? rptFmt(x.idleL, 1) : RPT_NM, stopTxt(x), stopL(x), cov(x)]; }) },
+      rowsOf: function (sh) { return Object.keys(byD).filter(function (k) { return byD[k].trips && k.slice(0, k.indexOf('|')) === sh; }).sort(function (x, y) { return byD[y].fuel - byD[x].fuel || drvName(kc(x)).localeCompare(drvName(kc(y))); })
+        .map(function (k) { var x = byD[k], c = kc(k); return [drvName(c), c === HORS ? '' : c, rptFmt(x.trips), rptFmt(x.km, 1), liters(x), l100(x), cost(x), rptH(x.idleMin / 60), x.idleN ? rptFmt(x.idleL, 1) : RPT_NM, stopTxt(x), stopL(x), cov(x)]; }); } }, P, RPT_SHIFTS)).concat([
     { title: 'Par jour', empty: 'Aucun trajet sur la période',
       head: ['Jour', 'Trajets', 'Km', 'Carburant (L)', 'L/100 km', 'Coût (MAD)', 'Litres au ralenti', 'Trajets mesurés'], num: [1, 2, 3, 4, 5, 6],
       rows: Object.keys(byDay).sort().map(function (d) { var x = byDay[d]; return [rptDay(d), rptFmt(x.trips), rptFmt(x.km, 1), liters(x), l100(x), cost(x), x.idleN ? rptFmt(x.idleL, 1) : RPT_NM, cov(x)]; }) },
@@ -152,7 +176,7 @@ function rptConso(o) {
       head: ['Arrêt', 'Redémarrage', 'Plaque', 'Chauffeur à l\'arrêt', 'Jauge avant → après (%)', 'Litres (jauge)', 'Statut'], num: [5],
       rows: siph.sort(function (x, y) { return new Date(x.stop_start) - new Date(y.stop_start); }).map(function (f) {
         return [fdt(f.stop_start), fdt(f.stop_end), keys[f.vehicle_key].plate, f.driver_name || '', rptFmt(f.lvl_before) + ' → ' + rptFmt(f.lvl_after), rptFmt(Math.abs(rptNum(f.liters_gauge)), 1), f.status || '']; }) }
-  ];
+  ]);
   if (tne.length) tables.push({ title: 'Trajets non enregistrés (boîtier coupé, compteur km du véhicule avancé)', empty: '', head: ['De', 'À', 'Plaque', 'Chauffeur', 'Km non enregistrés'], num: [4],
     rows: tne.map(function (f) { return [fdt(f.stop_start), fdt(f.stop_end), keys[f.vehicle_key].plate, f.driver_name || '', String(f.engine || '').split(' ')[0]]; }) });
   if ((o.missing || []).length) tables.push({ title: 'Journées pas encore téléchargées depuis Geotab : totaux incomplets', empty: '', head: ['Plaque', 'Jour'], num: [],
@@ -182,11 +206,14 @@ function rptConso(o) {
 /** Tableaux du rapport (colonnes + lignes de texte), utilisés pour le HTML et pour le PDF du site */
 function rptTables(rep) {
   if (rep.tables) return rep.tables;
-  return [
-    { title: 'Chauffeurs (du plus dangereux au moins dangereux)', empty: 'Aucune journée de travail sur la période',
-      head: ['Rang', 'Chauffeur', 'Code', 'Niveau', 'Score /100 km', 'Journées', 'Km', 'Conduite', 'Événements', 'Siphonages'],
-      num: [0, 4, 5, 6, 7, 8, 9],
-      rows: rep.drivers.map(function (d, i) { return [String(i + 1), d.name, d.code, d.level, rptFmt(d.score, 1), rptFmt(d.days), rptFmt(d.km), rptH(d.drive), rptFmt(d.evts), rptFmt(d.siph)]; }) },
+  var drvT = { title: 'Chauffeurs (du plus dangereux au moins dangereux)', empty: 'Aucune journée de travail sur la période',
+    head: ['Rang', 'Chauffeur', 'Code', 'Niveau', 'Score /100 km', 'Journées', 'Km', 'Conduite', 'Événements', 'Siphonages'],
+    num: [0, 4, 5, 6, 7, 8, 9],
+    rowsOf: function (s) { return rep.drivers.filter(function (d) { return s === null || (d.shift || '') === s; })
+      .map(function (d, i) { return [String(i + 1), d.name, d.code, d.level, rptFmt(d.score, 1), rptFmt(d.days), rptFmt(d.km), rptH(d.drive), rptFmt(d.evts), rptFmt(d.siph)]; }); } };
+  drvT.none = 'heure de début du contrat inconnue';
+  var drvTables = rep.shifts ? rptSplit(drvT, rep.P, RPT_SHIFTS) : [{ title: drvT.title, empty: drvT.empty, head: drvT.head, num: drvT.num, rows: drvT.rowsOf(null) }];
+  return drvTables.concat([
     { title: 'Véhicules', empty: 'Aucun véhicule',
       head: ['Plaque', 'Modèle', 'Jours roulés', 'Km', 'Conduite', 'Ralenti', 'Carburant (L)', 'L/100 km', 'Événements', 'Alertes', 'Km hors contrat'],
       num: [2, 3, 4, 5, 6, 7, 8, 9, 10],
@@ -194,7 +221,7 @@ function rptTables(rep) {
     { title: 'Alertes critiques et hautes' + (rep.topAlerts.length >= 60 ? ' (60 plus récentes)' : ''), empty: 'Aucune alerte critique ou haute',
       head: ['Date', 'Heure', 'Plaque', 'Chauffeur', 'Type', 'Gravité', 'Détail'], num: [],
       rows: rep.topAlerts.map(function (a) { return [rptDay(a.day), a.time || '', a.plate || '', a.driver_name || '', a.type || '', a.severity || '', String(a.detail || '').replace(/https:\/\/maps\.google\.com\/\?q=\S+/g, '').trim()]; }) }
-  ];
+  ]);
 }
 
 /** Corps HTML du rapport (affiché sur le site, converti en PDF par le collecteur) */
@@ -219,4 +246,4 @@ function rptDoc(rep) { return '<!doctype html><html><head><meta charset="utf-8">
 /** Nom de fichier du rapport */
 function rptFileName(rep) { return ((rep.kind === 'conso' ? 'rapport_consommation_' : 'rapport_flotte_') + (rep.agency === 'Toutes les agences' ? 'toutes_agences' : rep.agency) + '_' + rep.from + (rep.to !== rep.from ? '_' + rep.to : '')).replace(/[^A-Za-z0-9_\-]+/g, '_'); }
 
-if (typeof module !== 'undefined') module.exports = { rptConso: rptConso, rptBuild: rptBuild, rptTables: rptTables, rptHtml: rptHtml, rptDoc: rptDoc, rptFileName: rptFileName, rptFmt: rptFmt };
+if (typeof module !== 'undefined') module.exports = { rptConso: rptConso, rptBuild: rptBuild, rptTables: rptTables, rptHtml: rptHtml, rptDoc: rptDoc, rptFileName: rptFileName, rptFmt: rptFmt, rptShift: rptShift };

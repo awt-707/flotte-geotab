@@ -26,6 +26,8 @@ Geotab ──► Collecteur (Google Apps Script, toutes les 5 min) ──► Bas
 | Agences (admin) | Création des agences et accès des utilisateurs : chacun ne voit que les véhicules (et leurs trajets, contrats, alertes, chauffeurs) de ses agences ; l'admin voit tout. |
 | Réglages (admin) | Utilisateurs, destinataires des alertes par e-mail (agence, gravité, types), rapports PDF automatiques (jour / semaine / mois, par agence), paramètres. |
 
+**Shift jour / shift nuit** : partout où des chauffeurs sont listés (En direct, Tableau de bord, Du jour, Classement, Conduite, Fiches, Carburant, Ralenti, Arrêts moteur, Consommation, rapports PDF), ils sont séparés en *Shift jour* et *Shift nuit*, puis *Hors contrat*. Le shift d'un contrat se lit sur son heure de début (heure du Maroc) : le début de shift le plus proche, jour à `shiftDay` (7 h) ou nuit à `shiftNight` (19 h), réglables dans Réglages. Un chauffeur qui a fait les deux shifts sur la période apparaît dans chacun, avec les chiffres de chaque shift. Les alertes portent le shift de l'heure de l'infraction.
+
 Le collecteur envoie les e-mails (alertes et rapports PDF) avec le compte Google du projet Apps Script.
 
 | Dossier | Contenu |

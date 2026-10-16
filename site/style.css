@@ -199,3 +199,9 @@ a.fl { text-decoration: none; color: inherit; } a.fl:hover { text-decoration: un
 .livedot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; vertical-align: middle; animation: livepulse 1.6s ease-in-out infinite; }
 @keyframes livepulse { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { .livedot { animation: none; } }
+/* Shifts jour / nuit */
+h3.shift { margin: 18px 0 6px; font-size: 15px; }
+h3.sh-jour, .badge.sh-jour { color: #b7791f; }
+h3.sh-nuit, .badge.sh-nuit { color: #5b6bd6; }
+.badge.sh-jour { background: rgba(214, 158, 46, .15); }
+.badge.sh-nuit { background: rgba(91, 107, 214, .15); }

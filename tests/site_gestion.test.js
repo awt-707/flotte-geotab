@@ -52,7 +52,7 @@ test('agences, véhicules et chauffeurs gérés depuis le site', async () => {
     await page.waitForFunction(() => /chauffeurs lus|Erreur/.test(document.querySelector('#dres').innerText), null, { timeout: 15000 });
     assert.match(await page.innerText('#dres'), /2 chauffeurs lus : 1 ajoutés, 1 mis à jour/);
     assert.strictEqual(env.psql(`select phone || '|' || source from drivers where code = '${known}'`), '0622222222|contrats');
-    assert.match(await page.innerText('#tfic'), /Deuxième Test/);
+    assert.match(await page.innerText('#page'), /Deuxième Test/);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
