@@ -230,12 +230,19 @@ h3.sh-nuit, .badge.sh-nuit { color: #5b6bd6; }
 .sdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--mute)); margin-right: 6px; vertical-align: 1px; }
 .vcard.st-ok .sdot { animation: livepulse 1.6s ease-in-out infinite; }
 .vc-l3 { min-height: 19px; } .vc-l4 { font-size: 12px; color: var(--mute); }
-/* marqueurs : pastille de couleur avec flèche (sens de la marche) et plaque */
+/* marqueurs : rond coloré (état) avec un fourgon blanc, flèche du sens de marche, halo quand il roule, plaque à côté */
 .leaflet-div-icon.vmk { background: transparent; border: 0; }
-.vmk-c { position: absolute; left: 0; top: 0; width: 28px; height: 28px; border-radius: 50%; background: var(--c, #8a97a3); border: 2px solid #fff; box-shadow: 0 1px 5px rgba(0,0,0,.35); display: grid; place-items: center; }
-.vmk-c svg { width: 18px; height: 18px; fill: #fff; transition: transform .6s; }
-.vmk-c i { width: 8px; height: 8px; border-radius: 50%; background: #fff; }
-.vmk-l { position: absolute; left: 32px; top: 4px; white-space: nowrap; background: rgba(15, 38, 51, .88); color: #fff; font: 600 12px/1 var(--fc); padding: 4px 6px; border-radius: 4px; pointer-events: none; }
+.vmk-pin { position: absolute; left: 0; top: 0; width: 40px; height: 40px; border-radius: 50%; background: var(--c, #8a97a3); border: 3px solid #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,.45); display: grid; place-items: center; box-sizing: border-box; }
+.vmk-pin.moving::after { content: ''; position: absolute; inset: -9px; border-radius: 50%; border: 3px solid var(--c, #8a97a3); opacity: .6; animation: vmkpulse 1.8s ease-out infinite; }
+@keyframes vmkpulse { from { transform: scale(.75); opacity: .7; } to { transform: scale(1.35); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .vmk-pin.moving::after { animation: none; } }
+.vmk-van { width: 24px; height: 24px; fill: #fff; }
+.vmk-dir { position: absolute; inset: -12px; transition: transform .6s; pointer-events: none; }
+.vmk-dir i { position: absolute; left: 50%; top: 0; margin-left: -7px; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 10px solid var(--c, #8a97a3);
+  filter: drop-shadow(0 0 1.5px #fff) drop-shadow(0 0 1px #fff); }
+.vmk-l { position: absolute; left: 46px; top: 10px; white-space: nowrap; background: rgba(15, 38, 51, .9); color: #fff; font: 600 12px/1 var(--fc); padding: 4px 6px; border-radius: 4px; pointer-events: none; }
+.leaflet-tooltip.vtip { font: 14px/1.35 var(--f); padding: 6px 10px; border-radius: 6px; box-shadow: 0 3px 12px rgba(0,0,0,.25); }
 .vtrail { stroke: var(--acc); }
 .vpop { display: flex; flex-direction: column; gap: 3px; min-width: 210px; }
 /* alertes en direct : une carte par alerte, cliquable */

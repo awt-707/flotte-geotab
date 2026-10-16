@@ -226,10 +226,17 @@ async function liveDrvTick(my) {
 }
 
 // ---------- Carte ----------
+// silhouette de fourgon (Staria) vue de côté, blanche, au centre du marqueur
+const VAN_SVG = '<svg class="vmk-van" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 15.5V9.2C2 7.4 3.4 6 5.2 6h9.6c1 0 1.9.5 2.5 1.2l3.2 4c.3.4.5.9.5 1.4v2.9c0 .8-.6 1.5-1.4 1.5h-.9a2.7 2.7 0 0 1-5.3 0H8.8a2.7 2.7 0 0 1-5.3 0h-.1c-.8 0-1.4-.7-1.4-1.5ZM14 8v3.6h5.1L16.4 8.4A1 1 0 0 0 15.6 8H14Zm-4.5 0v3.6h3V8h-3ZM4 8.9v2.7h4V8H4.9c-.5 0-.9.4-.9.9Z"/><circle cx="6.2" cy="17.2" r="1.5"/><circle cx="16.4" cy="17.2" r="1.5"/></svg>';
 function vIcon(r) {
   const st = LIVE.fast[r.vehicle_key] ? 'crit' : ST_CLS(r.state), rot = r.state === 'En route' && r.bearing != null && isFinite(+r.bearing) ? +r.bearing : null;
-  const html = `<span class="vmk-c st-${st}">${rot != null ? `<svg viewBox="0 0 20 20" aria-hidden="true" style="transform:rotate(${Math.round(rot)}deg)"><path d="M10 2 16.5 17 10 13 3.5 17Z"/></svg>` : '<i></i>'}</span><span class="vmk-l">${esc(r.plate || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) : ''}</span>`;
-  return { html, icon: () => L.divIcon({ className: 'vmk', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -14], html }) };
+  const html = `<span class="vmk-pin st-${st}${r.state === 'En route' ? ' moving' : ''}">${rot != null ? `<span class="vmk-dir" style="transform:rotate(${Math.round(rot)}deg)"><i></i></span>` : ''}${VAN_SVG}</span>`
+    + `<span class="vmk-l">${esc(r.plate || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}</span>`;
+  return { html, icon: () => L.divIcon({ className: 'vmk', iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20], tooltipAnchor: [0, -22], html }) };
+}
+/** Info-bulle au survol : chauffeur sous contrat, plaque, état, vitesse */
+function tipHtml(r) {
+  return `<b>${r.contract_num ? esc(r.driver_name) : 'Hors contrat'}</b>${r.contract_num && r.shift ? ' · shift ' + esc(r.shift.toLowerCase()) : ''}<br>${esc(r.plate || '')} · ${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}`;
 }
 function popupHtml(r) {
   return `<div class="vpop">${plate(r.plate)} <span class="small">${esc(r.model || '')}</span><div><b>${esc(r.state || '')}</b>${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</div>
@@ -243,12 +250,13 @@ function placeMarker(r) {
   const ic = vIcon(r), k = r.vehicle_key;
   let m = LIVE.markers[k];
   if (!m) {
-    m = LIVE.markers[k] = L.marker([r.lat, r.lon], { icon: ic.icon(), riseOnHover: true, keyboard: false }).bindPopup(popupHtml(r)).addTo(MAP);
+    m = LIVE.markers[k] = L.marker([r.lat, r.lon], { icon: ic.icon(), riseOnHover: true, keyboard: false }).bindPopup(popupHtml(r))
+      .bindTooltip(tipHtml(r), { direction: 'top', className: 'vtip', opacity: 1 }).addTo(MAP);
     m.vehicleKey = k; m._ik = ic.html;
     m.on('click', () => { LIVE.sel = k; document.querySelectorAll('#vlist .vcard').forEach(el => el.classList.toggle('on', el.dataset.vk === k)); });
   } else {
     if (m._ik !== ic.html) { m.setIcon(ic.icon()); m._ik = ic.html; }
-    m.setPopupContent(popupHtml(r));
+    m.setPopupContent(popupHtml(r)); m.setTooltipContent(tipHtml(r));
   }
   if (r.live) {
     const tr = LIVE.trails[k] = LIVE.trails[k] || { pts: [], line: null }, last = tr.pts[tr.pts.length - 1];
