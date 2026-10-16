@@ -7,7 +7,7 @@ Répondre à Ahmed **en français**, de façon courte et directe. Il veut des do
 Supervision de la flotte au Maroc (Hyundai Staria / Sonata, chauffeurs sous contrat, base Geotab « clicar »). Remplace l'ancien Google Sheet v6 (Apps Script) par :
 
 ```
-Geotab ──► Collecteur Apps Script (toutes les 5 min) ──► Supabase (Postgres) ──► Site statique Netlify
+Geotab ──► Collecteur Apps Script (toutes les 5 min) ──► Supabase (Postgres) ──► Site statique Cloudflare Pages
 ```
 
 - **Plus aucune dépendance aux Google Sheets** (demande d'Ahmed, 15/10/2026) : contrats, véhicules (table `parc`), chauffeurs et agences se gèrent sur le site. Le Sheet ETAT PARC n'est lu qu'une fois (`seedParcFromSheet_`) si `parc` est vide ; l'ancien Sheet v6 une fois (reprise de l'historique). Le collecteur reste sur Apps Script (choix d'Ahmed : gratuit, pas de limite de calcul).
@@ -24,13 +24,13 @@ Geotab ──► Collecteur Apps Script (toutes les 5 min) ──► Supabase (P
 |---|---|
 | Dépôt | github.com/awt-707/flotte-geotab (privé), branche `main` |
 | Supabase | projet **flotte_luxury**, ref `cgiiwumbblimvmrypxlc`, https://cgiiwumbblimvmrypxlc.supabase.co (orga LUXURY-DISCOVERY) |
-| Netlify | site `flotte-geotab-clicar`, Site ID `00645516-06e7-4f1a-b209-7a9065244464`, https://flotte-geotab-clicar.netlify.app (équipe a-atmani) |
+| Site | **Cloudflare Pages**, projet `ludy-flotte`, https://ludy-flotte.pages.dev (depuis le 16/10/2026). Ancien : Netlify `flotte-geotab-clicar` (équipe a-atmani), crédit épuisé, publications bloquées : plus mis à jour |
 | Apps Script | « Flotte Geotab - Collecteur », script ID `1Ou0GfD8tiaWGYpM3ywzSz4IR-khIwKuWBq-n0sgj7pEt32uAQbWrndJ3`, compte a.atmani@clicar.fr |
 | Ancien Google Sheet v6 | `1VxAV7P5SlaeSIZRC_EAQKjl3CFICQS4idJre4YLif1k` (historique repris automatiquement au 1er lancement) |
 | Sheet Parc (« ETAT PARC ») | lu chaque jour par `importVehicles` (ID dans les paramètres) |
 | Ancien projet Supabase « flotte-geotab » | « Unhealthy », abandonné ; ne pas l'utiliser |
 
-Secrets (jamais dans le dépôt, jamais demandés en clair) : `GEO_USER`, `GEO_PWD`, `SUPABASE_KEY` dans les propriétés du script Apps Script ; `NETLIFY_AUTH_TOKEN`, `SUPABASE_SERVICE_KEY` dans les secrets GitHub Actions. La clé du site (`site/config.js`) est la clé **anon** publique ; `npm run check` refuse toute autre clé.
+Secrets (jamais dans le dépôt, jamais demandés en clair) : `GEO_USER`, `GEO_PWD`, `SUPABASE_KEY` dans les propriétés du script Apps Script ; `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `SUPABASE_SERVICE_KEY`, `SUPABASE_ACCESS_TOKEN` dans les secrets GitHub Actions. La clé du site (`site/config.js`) est la clé **anon** publique ; `npm run check` refuse toute autre clé.
 
 ## Structure
 
@@ -53,7 +53,7 @@ Après une nouvelle migration, relancer `tests/setup_db.sh` (sinon PostgREST ne 
 ## Mise en ligne
 
 `.github/workflows/ci.yml` : tests à chaque push ; sur `main` et **seulement si tout passe** :
-1. site publié sur Netlify (API zip, secret `NETLIFY_AUTH_TOKEN`) ;
+1. site publié sur Cloudflare Pages (`wrangler pages deploy site`, secrets `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`) ; chaque étape (site, collecteur, relais) est publiée même si une autre échoue ;
 2. collecteur publié dans `releases` (`scripts/publish-collector.js`, secret `SUPABASE_SERVICE_KEY`).
 
 **Chargeur (depuis le 15/10/2026)** : le projet Apps Script ne contient que `collector/loader/Code.gs` (+ `collector/src/appsscript.json`). À chaque exécution il charge la dernière version de `releases` et l'exécute (`new Function`), sans API Google : le projet Google Cloud lié au script est un projet caché, Ahmed ne peut pas y activer d'API (erreur `resourcemanager.projects.get`). L'ancienne mise à jour par l'API Apps Script (`45_update.gs`) est ignorée en mode chargeur. La reprise de l'ancien Sheet lit le classeur par SpreadsheetApp si l'API Sheets répond 403 (`sheetValuesApp_`).
@@ -101,7 +101,7 @@ Reste à faire (par Ahmed, secrets et autorisations) :
 1. Apps Script > Paramètres du projet > Propriétés du script : `GEO_USER`, `GEO_PWD`, `SUPABASE_KEY` (service_role de flotte_luxury : Project Settings > API Keys > Legacy).
 2. Exécuter `installer` dans l'éditeur, accepter les autorisations.
 3. Activer « API Google Apps Script » : script.google.com/home/usersettings.
-4. Secrets GitHub (Settings > Secrets and variables > Actions) : `NETLIFY_AUTH_TOKEN` (Netlify > User settings > Applications > Personal access tokens) et `SUPABASE_SERVICE_KEY`.
+4. Secrets GitHub (Settings > Secrets and variables > Actions) : `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (voir README) et `SUPABASE_SERVICE_KEY`. Supabase > Authentication > URL Configuration : Site URL et Redirect URLs = https://ludy-flotte.pages.dev (inscription, mot de passe oublié).
 5. Créer son compte sur le site : le **premier compte créé devient administrateur**, les suivants attendent sa validation (Réglages).
 6. Une fois le nouveau collecteur installé (Journal : « collecteur mis à jour »), exécuter `installer` encore une fois pour accepter l'envoi d'e-mails.
 7. Sur le site : créer les agences, rattacher véhicules et utilisateurs (page Agences), choisir les destinataires des alertes et des rapports (Réglages).

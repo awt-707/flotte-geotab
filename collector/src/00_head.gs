@@ -17,7 +17,7 @@
  */
 const COLLECTOR_V = PropertiesService.getScriptProperties().getProperty('CODE_VERSION') || '1.0';   // version installée (mise à jour automatique)
 const DEFAULT_SUPABASE_URL = 'https://cgiiwumbblimvmrypxlc.supabase.co';          // projet Supabase « flotte_luxury »
-const SITE_URL = 'https://flotte-geotab-clicar.netlify.app';                     // site (liens dans les e-mails)
+const SITE_URL = 'https://ludy-flotte.pages.dev';                                 // site (liens dans les e-mails)
 const DEFAULT_OLD_SHEET_ID = '1VxAV7P5SlaeSIZRC_EAQKjl3CFICQS4idJre4YLif1k';      // ancien Google Sheet Flotte Geotab (reprise de l'historique)
 /** Tables (mêmes clés que le Sheet v6 : le code de calcul est repris tel quel) */
 const S = { VEH: 'VEH', DRV: 'DRV', CTR: 'CTR', RULE: 'RULE', TRIP: 'TRIP', EVT: 'EVT', FUEL: 'FUEL', IDL: 'IDL', STP: 'STP', LVL: 'LVL',

@@ -4,12 +4,12 @@ Supervision de la flotte au Maroc (base Geotab « clicar ») : véhicules en dir
 
 Aucun Google Sheet n'est nécessaire au fonctionnement : véhicules, chauffeurs, contrats et agences se gèrent sur le site. L'ancien Sheet v6 et le Sheet « ETAT PARC » ne sont lus qu'une fois, au premier lancement, pour reprendre l'historique et la liste du parc.
 
-Site : https://flotte-geotab-clicar.netlify.app
+Site : https://ludy-flotte.pages.dev (Cloudflare Pages ; l'ancienne adresse Netlify n'est plus mise à jour depuis le 16/10/2026)
 
 ## Comment ça marche
 
 ```
-Geotab ──► Collecteur (Google Apps Script, toutes les 5 min) ──► Base Supabase ──► Site (Netlify)
+Geotab ──► Collecteur (Google Apps Script, toutes les 5 min) ──► Base Supabase ──► Site (Cloudflare Pages)
                          ▲                                          ▲
                          └── nouvelle version testée (releases) ────┘── contrats, véhicules, chauffeurs, agences, réglages
 ```
@@ -60,7 +60,7 @@ Le collecteur envoie les e-mails (alertes et rapports PDF) avec le compte Google
 
 À chaque modification sur `main`, GitHub Actions lance les tests. **Seulement s'ils réussissent** :
 
-1. le site est publié sur Netlify ;
+1. le site est publié sur Cloudflare Pages (projet `ludy-flotte`, créé automatiquement au premier passage) ;
 2. le collecteur est publié dans la table `releases` ; Apps Script l'installe tout seul au passage suivant (5 min) ;
 3. le relais Geotab en direct (`supabase/functions/geotab-live`) est publié dans Supabase.
 
@@ -68,7 +68,8 @@ Secrets à créer une fois dans GitHub (Settings > Secrets and variables > Actio
 
 | Secret | Où le trouver |
 |---|---|
-| `NETLIFY_AUTH_TOKEN` | Netlify > User settings > Applications > Personal access tokens > New access token |
+| `CLOUDFLARE_API_TOKEN` | dash.cloudflare.com > Mon profil > Jetons d'API > Créer un jeton > Jeton personnalisé : autorisation « Compte · Cloudflare Pages · Modifier » |
+| `CLOUDFLARE_ACCOUNT_ID` | dash.cloudflare.com > Workers & Pages : « ID de compte » (colonne de droite) |
 | `SUPABASE_SERVICE_KEY` | Supabase (flotte_luxury) > Project Settings > API Keys > Legacy > `service_role` |
 | `SUPABASE_ACCESS_TOKEN` | https://supabase.com/dashboard/account/tokens > Generate new token (publication du relais en direct) |
 
