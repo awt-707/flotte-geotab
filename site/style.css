@@ -276,3 +276,20 @@ h3.sh-nuit, .badge.sh-nuit { color: #5b6bd6; }
 @media (max-width: 900px) { .livegrid #map { height: 320px; } .alist { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 900px) { #toasts .toast:nth-child(n+2) { display: none; } }
 .toast > .badge, .toast > .plate { align-self: flex-start; }
+/* ---------- Comportement chauffeur ---------- */
+.dprof { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 14px 20px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 16px 18px; margin: 14px 0; }
+.dav { width: 58px; height: 58px; border-radius: 50%; background: var(--side); color: #fff; display: grid; place-items: center; font: 700 21px var(--f); letter-spacing: .02em; }
+.did h2 { margin: 0 0 4px; font-size: 22px; } .dlinks { margin-top: 6px; font-size: 14px; }
+.dlevel { text-align: center; } .dlevel .badge { font-size: 15px; padding: 4px 12px; }
+.dact { display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 250px; }
+.dmail { display: flex; gap: 6px; } .dmail input { flex: 1; min-width: 0; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 0 24px; }
+a.btnlink { display: inline-block; font-weight: 600; font-size: 14px; padding: 8px 4px; }
+@media (max-width: 900px) { .dprof { grid-template-columns: auto minmax(0, 1fr); } .dact { grid-column: 1 / -1; min-width: 0; } .grid2 { grid-template-columns: minmax(0, 1fr); } }
+/* ---------- Marque Ludy ---------- */
+.brand { flex-direction: column; align-items: flex-start; gap: 6px; }
+.brand .logo { display: block; width: 168px; height: auto; }
+.brand small { margin-top: 0; padding-left: 2px; letter-spacing: .12em; text-transform: uppercase; font-size: 11px; }
+.lbox .brand { align-items: center; } .lbox .brand .logo { width: 200px; }
+@media (max-width: 900px) { .brand { flex-direction: row; align-items: center; } .brand .logo { width: 104px; } }
+.dprof + .cards { grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); }

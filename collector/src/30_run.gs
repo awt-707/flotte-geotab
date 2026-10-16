@@ -207,9 +207,18 @@ function processJobs_(t0) {
   if (!jobs.length) return '';
   const by = {}, out = [];
   jobs.forEach(j => { (by[j.kind] = by[j.kind] || []).push(j); });
-  const order = ['apply_plates', 'import_vehicles', 'after_inject', 'resync', 'recompute', 'sync_now', 'send_report'];
+  const order = ['apply_plates', 'import_vehicles', 'after_inject', 'resync', 'recompute', 'sync_now', 'send_report', 'driver_report'];
   Object.keys(by).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)).forEach(kind => {
     if (Date.now() - t0 > 210000) return;   // la suite au prochain passage
+    if (kind === 'driver_report') {   // une réponse par demande (chaque utilisateur voit le résultat de la sienne)
+      by[kind].forEach(j => {
+        if (Date.now() - t0 > 240000) return;
+        let res; try { res = jobDriverReport_(j.arg); } catch (e) { res = 'Erreur : ' + mailErr_(e); }
+        sbReq_('patch', 'jobs?id=eq.' + j.id, { done_at: new Date().toISOString(), result: String(res).slice(0, 2000) }, { Prefer: 'return=minimal' });
+        out.push(kind + ' : ' + res);
+      });
+      return;
+    }
     const list = by[kind], args = list.map(j => j.arg).filter(Boolean);
     let res;
     try {
