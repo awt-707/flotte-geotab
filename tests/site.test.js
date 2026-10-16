@@ -28,7 +28,8 @@ for (const [viewport, size] of [['ordinateur', { width: 1440, height: 900 }], ['
       await login(page);
       for (const [p, title, content] of PAGES) {
         await page.goto('http://localhost:8080/#/' + p + (p === 'jour' ? '?jour=2026-10-03' : ''));
-        await page.waitForFunction(() => !document.querySelector('#page .loading'), null, { timeout: 15000 });
+        // le changement d'adresse (#) ne recharge pas la page : attendre que la nouvelle page remplace l'ancienne
+        await page.waitForFunction(t => { const h = document.querySelector('#page h1'); return h && h.innerText.startsWith(t) && !document.querySelector('#page .loading'); }, title, { timeout: 15000 }).catch(() => {});
         const h1 = await page.innerText('#page h1'), txt = await page.innerText('#page');
         assert.ok(h1.startsWith(title), p + ' : titre « ' + h1 + ' »');
         assert.match(txt, content, p + ' : contenu attendu absent');
