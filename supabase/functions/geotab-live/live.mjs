@@ -10,7 +10,7 @@ const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const CACHE_MS = 2000, EVENTS_MIN = 30;   // événements de conduite renvoyés : 30 dernières minutes
 const mem = { session: null, data: null, at: 0, pending: null, ids: {} };
 
-export function resetMemory() { mem.session = null; mem.data = null; mem.at = 0; mem.pending = null; mem.ids = {}; }
+export function resetMemory() { mem.session = null; mem.data = null; mem.at = 0; mem.pending = null; mem.ids = {}; mem.noRoad = false; }
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 
 /** "1.02:13:05" ou "02:13:05" -> minutes */
@@ -63,17 +63,23 @@ async function fleet(deps, ids) {
   const p = mem.pending = (async () => {
     // une demande par véhicule (état, événements des 30 dernières minutes, contact) : la base Geotab contient d'autres
     // boîtiers que les nôtres, une demande « toute la base » était lente (plus de 20 s)
-    const iso = new Date(now).toISOString(), from = new Date(now - EVENTS_MIN * 60000).toISOString(), calls = [];
-    ids.forEach(id => calls.push(
+    const iso = new Date(now).toISOString(), from = new Date(now - EVENTS_MIN * 60000).toISOString();
+    const build = withRoad => { const calls = []; ids.forEach(id => { calls.push(
       { method: 'Get', params: { typeName: 'DeviceStatusInfo', search: { deviceSearch: { id } } } },
       // événements des règles Geotab (excès de vitesse, freinages, accélérations, virages, ceinture, collision)
       { method: 'Get', params: { typeName: 'ExceptionEvent', search: { deviceSearch: { id }, fromDate: from, toDate: iso } } },
       // contact : dernière valeur connue (même date de début et de fin = valeur en vigueur à cet instant)
-      { method: 'Get', params: { typeName: 'StatusData', search: { deviceSearch: { id }, diagnosticSearch: { id: 'DiagnosticIgnitionId' }, fromDate: iso, toDate: iso } } }));
-    const t0 = Date.now(), res = await geo(deps, 'ExecuteMultiCall', { calls }), out = {};
+      { method: 'Get', params: { typeName: 'StatusData', search: { deviceSearch: { id }, diagnosticSearch: { id: 'DiagnosticIgnitionId' }, fromDate: iso, toDate: iso } } });
+      // limite de vitesse de la route sous le véhicule (Geotab), 3 dernières minutes : alerte de dépassement en direct
+      if (withRoad) calls.push({ method: 'GetRoadMaxSpeeds', params: { deviceSearch: { id }, fromDate: new Date(now - 3 * 60000).toISOString(), toDate: iso } }); }); return calls; };
+    const t0 = Date.now(), out = {};
+    let res, n = mem.noRoad ? 3 : 4;
+    try { res = await geo(deps, 'ExecuteMultiCall', { calls: build(n === 4) }); }
+    catch (e) { if (n !== 4) throw e; mem.noRoad = true; n = 3; res = await geo(deps, 'ExecuteMultiCall', { calls: build(false) }); }   // limites refusées : positions quand même
     mem.geoMs = Date.now() - t0;
-    ids.forEach((id, i) => { out[id] = { dsi: (res[3 * i] || [])[0] || null, ign: (res[3 * i + 2] || []).slice(-1)[0] || null,
-      evts: (res[3 * i + 1] || []).filter(e => e.state !== 'ExceptionEventStateInvalidId' && e.state !== 1) }; });
+    ids.forEach((id, i) => { const road = n === 4 ? roadList(res[n * i + 3]).filter(p => p.t <= now).slice(-1)[0] || null : null;
+      out[id] = { dsi: (res[n * i] || [])[0] || null, ign: (res[n * i + 2] || []).slice(-1)[0] || null, road,
+        evts: (res[n * i + 1] || []).filter(e => e.state !== 'ExceptionEventStateInvalidId' && e.state !== 1) }; });
     mem.data = out; mem.at = now; return out;
   })();
   try { return await p; } finally { if (mem.pending === p) mem.pending = null; }
@@ -182,7 +188,8 @@ export async function handle(req, deps) {
       const comm = d.isDeviceCommunicating !== false, driving = !!d.isDriving;
       const state = !comm ? 'Boîtier hors ligne' : driving ? 'En route' : ignOn ? 'Arrêté, contact mis' : 'Garé';
       return { key: v.key, plate: v.plate, state, lat: d.latitude, lon: d.longitude, speed: driving ? Math.round(+d.speed || 0) : 0, bearing: d.bearing,
-        at: d.dateTime, since_min: durMin(d.currentStateDuration), ign_on: ignOn };
+        at: d.dateTime, since_min: durMin(d.currentStateDuration), ign_on: ignOn,
+        limit: driving && x.road && x.road.v > 0 ? Math.round(x.road.v) : null, limit_at: driving && x.road && x.road.v > 0 ? new Date(x.road.t).toISOString() : null };
     });
     const events = [];
     veh.forEach(v => ((f[v.geotab_id] || {}).evts || []).forEach(e => events.push({ id: String(e.id), key: v.key, plate: v.plate,

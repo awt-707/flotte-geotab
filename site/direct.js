@@ -10,7 +10,7 @@
 // =============================================================================
 let MAP = null;
 const LIVE_SEC = 5, DRV_SEC = 30, TRAIL_MAX = 240;
-const LIVE = { rows: [], pos: {}, at: 0, err: '', markers: {}, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {},
+const LIVE = { rows: [], pos: {}, at: 0, err: '', markers: {}, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {},
   drv: {}, drvAt: 0, drvErr: '', drvFallback: '', drvBusy: false, sel: '' };
 // Alertes en direct : événements Geotab des règles de conduite (dès que Geotab les signale) + vitesse en direct au-dessus du seuil
 const LIVE_TYPE = { Collision: 'Collision', Vitesse: 'Excès de vitesse', Ceinture: 'Ceinture non bouclée', Freinage: 'Freinage brusque', 'Accélération': 'Accélération brusque', Virage: 'Virage brusque' };
@@ -48,6 +48,17 @@ function processLive(j) {
         type: 'Vitesse excessive', vmax: v.speed, detail: v.speed + ' km/h (seuil ' + lim + ')', driver_name: c ? c.name : 'Hors contrat', driver_code: c ? c.client_code : '', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
       LIVE.fast[v.key] = a.id; LIVE.alerts.push(a); fresh.push(a);
     } else if (v.state !== 'En route' || v.speed < lim - 10) delete LIVE.fast[v.key];   // 10 km/h de marge : pas d'alerte à répétition autour du seuil
+    // dépassement de la limite de la route (limite Geotab sous le véhicule) au-delà du seuil réglé pour cette limite (Réglages)
+    if (v.state === 'En route' && v.limit) {
+      const tol = rptOverTol(S.P, v.limit), thr = v.limit + tol, txt = sp => sp + ' km/h pour ' + v.limit + ' km/h autorisés (seuil +' + tol + ', soit ' + thr + ' km/h)';
+      if (v.speed >= thr) {
+        const o = LIVE.over[v.key] && LIVE.alerts.find(x => x.id === LIVE.over[v.key]);
+        if (o) { o.end = v.at || o.end; if (v.speed > o.vmax) { o.vmax = v.speed; o.detail = txt(v.speed); } }
+        else { const c = contractAt(v.key, now), a = { id: 'DEP|' + v.key + '|' + (v.at || now), vehicle_key: v.key, plate: v.plate, at: v.at || new Date(now).toISOString(), end: v.at || null, cat: 'Vitesse',
+          severity: 'Haute', type: 'Dépassement limite', vmax: v.speed, detail: txt(v.speed), driver_name: c ? c.name : 'Hors contrat', driver_code: c ? c.client_code : '', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
+          LIVE.over[v.key] = a.id; LIVE.alerts.push(a); fresh.push(a); }
+      } else if (v.speed < thr - 5) delete LIVE.over[v.key];   // 5 km/h de marge
+    } else if (v.state !== 'En route') delete LIVE.over[v.key];
   });
   const cut = (Date.parse(j.at) || now) - 30 * MIN;   // 30 dernières minutes à l'heure du relais
   LIVE.alerts = LIVE.alerts.filter(a => new Date(a.at).getTime() >= cut).sort((x, y) => String(y.at).localeCompare(String(x.at)));
@@ -229,7 +240,7 @@ async function liveDrvTick(my) {
 // silhouette de fourgon (Staria) vue de côté, blanche, au centre du marqueur
 const VAN_SVG = '<svg class="vmk-van" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 15.5V9.2C2 7.4 3.4 6 5.2 6h9.6c1 0 1.9.5 2.5 1.2l3.2 4c.3.4.5.9.5 1.4v2.9c0 .8-.6 1.5-1.4 1.5h-.9a2.7 2.7 0 0 1-5.3 0H8.8a2.7 2.7 0 0 1-5.3 0h-.1c-.8 0-1.4-.7-1.4-1.5ZM14 8v3.6h5.1L16.4 8.4A1 1 0 0 0 15.6 8H14Zm-4.5 0v3.6h3V8h-3ZM4 8.9v2.7h4V8H4.9c-.5 0-.9.4-.9.9Z"/><circle cx="6.2" cy="17.2" r="1.5"/><circle cx="16.4" cy="17.2" r="1.5"/></svg>';
 function vIcon(r) {
-  const st = LIVE.fast[r.vehicle_key] ? 'crit' : ST_CLS(r.state), rot = r.state === 'En route' && r.bearing != null && isFinite(+r.bearing) ? +r.bearing : null;
+  const st = LIVE.fast[r.vehicle_key] || LIVE.over[r.vehicle_key] ? 'crit' : ST_CLS(r.state), rot = r.state === 'En route' && r.bearing != null && isFinite(+r.bearing) ? +r.bearing : null;
   const html = `<span class="vmk-pin st-${st}${r.state === 'En route' ? ' moving' : ''}">${rot != null ? `<span class="vmk-dir" style="transform:rotate(${Math.round(rot)}deg)"><i></i></span>` : ''}${VAN_SVG}</span>`
     + `<span class="vmk-l">${esc(r.plate || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}</span>`;
   return { html, icon: () => L.divIcon({ className: 'vmk', iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20], tooltipAnchor: [0, -22], html }) };

@@ -527,7 +527,8 @@ function emitRows_(v, o, P, acc) {
       'Limite au pire': w ? w.lim : '', 'Heure pire': w ? localHM_(w.t) : '',
       'Carburant (L)': c.fuelL != null ? r2_(c.fuelL) : '', 'Source carburant': c.fuelL != null ? 'Compteur' : 'Non mesuré',
       'Contrôle calculateur (L)': c.ecuL != null ? r2_(c.ecuL) : '', 'Carburant ralenti (L)': c.idleL != null ? r2_(c.idleL) : '',
-      'Source carburant ralenti': c.idleL != null ? 'Compteur ralenti' : '', 'Lat arrêt': c.lat, 'Lon arrêt': c.lon }));
+      'Source carburant ralenti': c.idleL != null ? 'Compteur ralenti' : '', 'Lat arrêt': c.lat, 'Lon arrêt': c.lon,
+      'Dépassements par limite': c.obl ? JSON.stringify(c.obl) : '' }));
   });
   o.idles.forEach(s => {
     acc.idles.push(rowOf_(H.IDL, { 'Clé': v.key + '|' + iso_(s.a), 'Clé plaque': v.key, 'Plaque': v.plate, 'Trajet ID': v.key + '|' + iso_(s.cycleA),
@@ -685,7 +686,7 @@ function cAnalyze_(d, win, P) {
     const km = trips.filter(t => t.a >= c.a - 60000 && t.a < c.b).reduce((s, t) => s + t.km, 0);
     const fuel = cCounter_(S.fuel, c, prevOff, nextOn), ecu = cCounter_(S.ecu, c, prevOff, nextOn), idleL = cCounter_(S.idleFuel, c, prevOff, nextOn);
     const hours = (c.b - c.a) / C_HOUR, plaus = L => L != null && L <= km * 0.4 + hours * 4 + 1;
-    const sp = cSpeed_(S.spd, logs, road, c.a, c.b);
+    const sp = cSpeed_(S.spd, logs, road, c.a, c.b), obl = cOverByLimit_(S.spd, road, c.a, c.b);   // obl : hors moteur v6 (19_speed.gs)
     const lastLog = cLast_(logs, c.b, c.a);
     const long = tl.segs.filter(s => s.b - s.a >= P.idleLongMin * C_MIN);
     const hist = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];   // nb et minutes : <1, 1-3, 3-5, 5-10, >=10 min
@@ -702,7 +703,7 @@ function cAnalyze_(d, win, P) {
       driveMin: tl.drive / C_MIN, stillMin: tl.still / C_MIN, idleMin: tl.idle / C_MIN, evOffMin: tl.evOff / C_MIN,
       coverage: tl.coverage, hist, nLong: long.length, longMin: long.reduce((s, x) => s + (x.b - x.a), 0) / C_MIN,
       fuelL: plaus(fuel) ? fuel : null, ecuL: plaus(ecu) ? ecu : null, gapL: gap, idleL: plaus(idleL) ? idleL : null,
-      vmax: sp.vmax, vmaxGps: sp.vmaxGps, limAtMax: sp.limAtMax, worst: sp.worst, limCoverage: sp.limCoverage,
+      vmax: sp.vmax, vmaxGps: sp.vmaxGps, limAtMax: sp.limAtMax, worst: sp.worst, obl, limCoverage: sp.limCoverage,
       lat: lastLog ? lastLog.lat : '', lon: lastLog ? lastLog.lon : ''
     });
   });
@@ -1015,7 +1016,9 @@ function buildAlerts_(T, E, F, Il, jrn, veh, rules, P, cidx, cut) {
     const vm = num_(r[IT['Vmax (km/h)']]), w = r[IT['Pire dépassement (km/h)']];
     if (vm >= P.vmaxAlert) add('VIT|' + r[0], r[IT['Début']], r[IT['Plaque']], r[IT['Code chauffeur']], r[IT['Chauffeur']], 'Vitesse excessive', 'Haute',
       'Vmax ' + vm + ' km/h' + (r[IT['Limite à Vmax']] !== '' ? ' (limite de la route ' + r[IT['Limite à Vmax']] + ' km/h)' : '') + ', trajet du ' + fmtDT_(r[IT['Début']]), vm + ' km/h');
-    if (w !== '' && num_(w) >= P.overAlert) add('DEP|' + r[0], r[IT['Début']], r[IT['Plaque']], r[IT['Code chauffeur']], r[IT['Chauffeur']], 'Dépassement limite', 'Haute',
+    const ob = String(P.overByLimit || '').trim() ? overAlertOf_(r, IT, P) : null;   // seuils par limite de route (19_speed.gs) ; vides : règle du v6
+    if (ob) add('DEP|' + r[0], r[IT['Début']], r[IT['Plaque']], r[IT['Code chauffeur']], r[IT['Chauffeur']], 'Dépassement limite', 'Haute', ob.detail, ob.value);
+    else if (!String(P.overByLimit || '').trim() && w !== '' && num_(w) >= P.overAlert) add('DEP|' + r[0], r[IT['Début']], r[IT['Plaque']], r[IT['Code chauffeur']], r[IT['Chauffeur']], 'Dépassement limite', 'Haute',
       r[IT['Vitesse au pire']] + ' km/h pour ' + r[IT['Limite au pire']] + ' km/h autorisés à ' + r[IT['Heure pire']], '+' + w + ' km/h');
   });
   // Ralenti prolongé : chaque arrêt moteur allumé au-delà du seuil d'alerte

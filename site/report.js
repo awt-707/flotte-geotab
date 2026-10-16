@@ -203,6 +203,29 @@ function rptConso(o) {
   };
 }
 
+/** Seuils d'alerte de dépassement par limite de route : P.overByLimit « 50:30;80:20 » -> [[50, 30], [80, 20]] (triés) */
+function rptOverTable(P) {
+  var m = [];
+  String((P && P.overByLimit) || '').split(/[;,\n]+/).forEach(function (x) { var p = x.split(':'); if (p.length === 2 && String(p[0]).trim() !== '' && String(p[1]).trim() !== '' && isFinite(+p[0]) && isFinite(+p[1])) m.push([+p[0], +p[1]]); });
+  return m.sort(function (a, b) { return a[0] - b[0]; });
+}
+/** Seuil pour une limite : la ligne de même limite ou, à défaut, la limite inférieure la plus proche ; sinon le seuil général (overAlert) */
+function rptOverTol(P, lim) { var t = null; rptOverTable(P).forEach(function (x) { if (x[0] <= lim) t = x[1]; }); return t !== null ? t : (rptNum(P && P.overAlert) || 30); }
+/**
+ * Pire dépassement d'un trajet au regard des seuils réglés : celui qui dépasse le plus son seuil, { lim, v, ex, tol, t | hm } ;
+ * trip.over_by_limit = { limite: [dépassement, vitesse, instant ms] } ; trajets plus anciens sans ce détail : pire dépassement du trajet.
+ */
+function rptOverWorst(trip, P) {
+  var o = trip.over_by_limit, best = null;
+  if (o && typeof o === 'string') { try { o = JSON.parse(o); } catch (e) { o = null; } }
+  if (o && typeof o === 'object') Object.keys(o).forEach(function (k) { var x = o[k], lim = +k, tol = rptOverTol(P, lim);
+    if (!best || x[0] - tol > best.ex - best.tol) best = { lim: lim, ex: x[0], v: x[1], t: x[2], tol: tol }; });
+  else if (trip.worst_over !== null && trip.worst_over !== undefined && trip.worst_over !== '' && trip.lim_at_worst) {
+    var l = rptNum(trip.lim_at_worst); best = { lim: l, ex: rptNum(trip.worst_over), v: rptNum(trip.speed_at_worst), hm: trip.worst_time || '', tol: rptOverTol(P, l) }; }
+  return best;
+}
+function rptOverHit(trip, P) { var w = rptOverWorst(trip, P); return !!w && w.ex >= w.tol; }
+
 /**
  * Comportement d'un chauffeur entre deux jours (heure du Maroc) : profil, conduite (vitesse, événements, score),
  * consommation, pleins, siphonages, ralenti, arrêts moteur tournant, alertes. Toutes les valeurs viennent des tables
@@ -231,7 +254,7 @@ function rptDriver(o) {
   // vitesse
   var vmaxT = null, worstT = null, nOver = 0, nVal = 0;
   trips.forEach(function (t) { if (rptNum(t.vmax) > (vmaxT ? rptNum(vmaxT.vmax) : 0)) vmaxT = t; if (t.worst_over !== null && t.worst_over !== undefined && t.worst_over !== '') {
-    if (!worstT || rptNum(t.worst_over) > rptNum(worstT.worst_over)) worstT = t; if (rptNum(t.worst_over) >= over) nOver++; } if (rptNum(t.vmax) >= vAl) nVal++; });
+    if (!worstT || rptNum(t.worst_over) > rptNum(worstT.worst_over)) worstT = t; } if (rptOverHit(t, P)) nOver++; if (rptNum(t.vmax) >= vAl) nVal++; });
   var speed = trips.filter(function (t) { return rptNum(t.worst_over) >= 10 || rptNum(t.vmax) >= vAl; }).sort(function (x, y) { return new Date(x.start_at) - new Date(y.start_at); });
   // événements par règle
   var byR = {}; evts.forEach(function (e) { var r = rl(e.rule_id), x = byR[e.rule_id] = byR[e.rule_id] || { n: r.name || e.rule_name || e.rule_id, cat: r.category || '', w: rptNum(r.weight), c: 0, s: 0 }; x.c++; x.s += rptNum(e.dur_s); });
@@ -301,7 +324,7 @@ function rptDriver(o) {
       ['Coût carburant (MAD)', a.costN ? rptFmt(a.cost) : 'prix non saisi'],
       ['Vitesse max', vmaxT ? rptFmt(vmaxT.vmax) + ' km/h le ' + dt(vmaxT.start_at) + ' (' + (vmaxT.plate || '') + (vmaxT.lim_at_vmax ? ', limite ' + rptFmt(vmaxT.lim_at_vmax) : '') + ')' : '-'],
       ['Pire dépassement de la limite', worstT ? '+' + rptFmt(worstT.worst_over) + ' km/h (' + rptFmt(worstT.speed_at_worst) + ' / ' + rptFmt(worstT.lim_at_worst) + ') le ' + dt(worstT.start_at) : 'aucun (ou limites non fournies)'],
-      ['Trajets dépassant de ' + over + ' km/h ou plus / Vmax ≥ ' + vAl, rptFmt(nOver) + ' / ' + rptFmt(nVal)],
+      ['Trajets au-dessus du seuil d\'alerte de dépassement / Vmax ≥ ' + vAl, rptFmt(nOver) + ' / ' + rptFmt(nVal)],
       ['Événements de conduite', rptFmt(a.evts) + ' (' + rptFmt(a.pts, 1) + ' points)'],
       ['Score /100 km', a.km >= kmMin ? rptFmt(score, 1) + ' (' + rptLevel(score, P) + ')' : (a.km ? 'trop peu de km' : '-')],
       ['Rang au classement (1 = le plus dangereux)', rank ? (rank.pos ? rank.pos + ' / ' + rank.n : 'non classé (moins de ' + kmMin + ' km)') : '-'],
@@ -362,4 +385,4 @@ function rptDoc(rep) { return '<!doctype html><html><head><meta charset="utf-8">
 /** Nom de fichier du rapport */
 function rptFileName(rep) { return ((rep.kind === 'conso' ? 'rapport_consommation_' : rep.kind === 'chauffeur' ? 'comportement_' : rep.kind === 'conduite' ? 'conduite_' : rep.kind === 'classement' ? 'classement_' : 'rapport_flotte_') + (rep.agency === 'Toutes les agences' ? 'toutes_agences' : rep.agency) + '_' + rep.from + (rep.to !== rep.from ? '_' + rep.to : '')).replace(/[^A-Za-z0-9_\-]+/g, '_'); }
 
-if (typeof module !== 'undefined') module.exports = { rptConso: rptConso, rptBuild: rptBuild, rptTables: rptTables, rptHtml: rptHtml, rptDoc: rptDoc, rptFileName: rptFileName, rptFmt: rptFmt, rptShift: rptShift, rptDriver: rptDriver, rptSimple: rptSimple };
+if (typeof module !== 'undefined') module.exports = { rptConso: rptConso, rptBuild: rptBuild, rptTables: rptTables, rptHtml: rptHtml, rptDoc: rptDoc, rptFileName: rptFileName, rptFmt: rptFmt, rptShift: rptShift, rptDriver: rptDriver, rptSimple: rptSimple, rptOverTol: rptOverTol, rptOverWorst: rptOverWorst, rptOverHit: rptOverHit };

@@ -312,7 +312,7 @@ async function drivingStats(from, to, opt) {
   const [jrn, evts, trips] = await Promise.all([
     all('journal', '*', q => { q = q.gte('day', addDays(from, -1)).lte('day', addDays(to, 1)); if (opt.code) q = q.eq('driver_code', opt.code); return q; }),
     all('events', 'id,vehicle_key,day,start_at,dur_s,rule_id,driver_code,contract_num', q => { q = q.gte('day', addDays(from, -2)).lte('day', addDays(to, 1)); if (opt.code) q = q.eq('driver_code', opt.code); return q; }),
-    all('trips', 'vehicle_key,plate,day,start_at,km,vmax,lim_at_vmax,worst_over,speed_at_worst,lim_at_worst,worst_time,driver_code,contract_num', q => { q = q.gte('day', addDays(from, -1)).lte('day', addDays(to, 1)); if (opt.code) q = q.eq('driver_code', opt.code); return q; })]);
+    all('trips', '*', q => { q = q.gte('day', addDays(from, -1)).lte('day', addDays(to, 1)); if (opt.code) q = q.eq('driver_code', opt.code); return q; })]);   // * : dépassements par limite (over_by_limit) quand la colonne existe
   const cd = ctrDayMap(jrn), dayOf = r => r.contract_num && cd[r.contract_num] ? cd[r.contract_num] : r.day, inP = d => d >= from && d <= to;
   // opt.split : un chauffeur par shift (jour / nuit, début du contrat) ; événements et trajets rattachés par leur contrat
   const cs = {}; jrn.forEach(r => { if (r.contract_num) cs[r.contract_num] = shiftOf(r.contract_start, P); });
@@ -327,7 +327,8 @@ async function drivingStats(from, to, opt) {
     if (o.cat[rl.category] === undefined) return; o.cat[rl.category]++; if (rl.category === 'Vitesse') o.speedS += num(e.dur_s); });
   trips.forEach(r => { const o = oOf(r); if (!o || !ok(r.vehicle_key) || !inP(dayOf(r))) return; o.trips++;
     if (num(r.vmax) > o.vmax) { o.vmax = num(r.vmax); o.vmaxAt = { t: r.start_at, plate: r.plate, lim: r.lim_at_vmax }; }
-    if (r.worst_over !== null) { if (num(r.worst_over) >= num(P.overAlert, 30)) o.nOver++;
+    if (rptOverHit(r, P)) o.nOver++;
+    if (r.worst_over !== null) {
       if (!o.worst || num(r.worst_over) > o.worst.ex) o.worst = { ex: num(r.worst_over), v: r.speed_at_worst, lim: r.lim_at_worst, hm: r.worst_time || '', t: r.start_at, plate: r.plate }; } });
   return Object.values(by);
 }
@@ -340,9 +341,9 @@ async function pageConduite() {
     .concat(DRIVE_CATS.map(c => [CAT_TXT[c], o => o.cat[c] ? `<b>${o.cat[c]}</b>` : '0', o => o.cat[c], 'n']))
     .concat([['Temps en excès de vitesse', o => fH(o.speedS / 3600), o => o.speedS, 'n'], ['Vmax (km/h)', o => f0(o.vmax), o => o.vmax, 'n'],
       ['Vmax : véhicule et heure', o => o.vmaxAt ? esc(o.vmaxAt.plate) + ' le ' + fmtDT(o.vmaxAt.t) + (o.vmaxAt.lim ? ' (limite ' + o.vmaxAt.lim + ')' : '') : ''],
-      ['Pire dépassement', o => o.worst ? `<b class="${o.worst.ex >= num(P.overAlert, 30) ? 'red' : ''}">+${f0(o.worst.ex)}</b> (${esc(o.worst.v)} / ${esc(o.worst.lim)})` : '', o => o.worst ? o.worst.ex : 0, 'n'],
+      ['Pire dépassement', o => o.worst ? `<b class="${o.worst.lim && o.worst.ex >= rptOverTol(P, num(o.worst.lim)) ? 'red' : ''}">+${f0(o.worst.ex)}</b> (${esc(o.worst.v)} / ${esc(o.worst.lim)})` : '', o => o.worst ? o.worst.ex : 0, 'n'],
       ['Pire dépassement : où et quand', o => o.worst ? esc(o.worst.plate) + ' le ' + fmtDay(localDay(o.worst.t)).slice(0, 5) + ' ' + esc(o.worst.hm) : ''],
-      ['Trajets dépassant de ' + esc(P.overAlert || 30) + ' km/h ou plus', o => f0(o.nOver), o => o.nOver, 'n'], ['Trajets', o => f0(o.trips), null, 'n']]);
+      ['Trajets au-dessus du seuil d\'alerte de dépassement', o => f0(o.nOver), o => o.nOver, 'n'], ['Trajets', o => f0(o.trips), null, 'n']]);
   $('#page').innerHTML = `<div class="head"><h1>Conduite</h1><div class="sub">Du plus dangereux au plus sûr. Chiffres bruts : événements détectés par le boîtier Geotab (règles de conduite, une seule version par règle), vitesse du capteur du véhicule, limite de la route fournie par Geotab. Classés : au moins ${esc(P.kmMin || 20)} km.</div>
       <button id="cdpdf">Télécharger le PDF</button></div>
     ${periodBar(go)}
@@ -517,7 +518,7 @@ async function driverReport(code, from, to) {
   const [drv, jrn, trips, evts, fuel, stops, idles, al, rankJ] = await Promise.all([
     sb.from('drivers').select('*').eq('code', code).maybeSingle(),
     all('journal', '*', dr),
-    all('trips', 'id,vehicle_key,plate,day,start_at,km,vmax,lim_at_vmax,worst_over,speed_at_worst,lim_at_worst,worst_time,fuel_l,idle_fuel_l,driver_code', dr),
+    all('trips', '*', dr),
     all('events', 'id,vehicle_key,plate,day,start_at,dur_s,km,rule_id,rule_name,driver_code', dr),
     all('fuel', '*', q => q.gte('day', from).lte('day', to).in('type', ['PLEIN', 'SIPHONAGE_SUSPECT'])),
     all('engine_stops', '*', dr).catch(() => null),

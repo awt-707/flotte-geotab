@@ -28,7 +28,7 @@ const H = {
     'Ralenti moteur tournant (min)', 'Source ralenti', 'Ralenti prolongé (min)', 'Nb ralentis prolongés', 'Vmax (km/h)',
     'Vmoy (km/h)', 'Vmax GPS (contrôle)', 'Limite à Vmax', 'Source limite', 'Pire dépassement (km/h)', 'Vitesse au pire', 'Limite au pire',
     'Heure pire', 'Carburant (L)', 'Source carburant', 'Contrôle calculateur (L)', 'Carburant ralenti (L)', 'Source carburant ralenti',
-    'Lat arrêt', 'Lon arrêt', 'Code chauffeur', 'Chauffeur', 'Contrat'],
+    'Lat arrêt', 'Lon arrêt', 'Code chauffeur', 'Chauffeur', 'Contrat', 'Dépassements par limite'],
   IDL: ['Clé', 'Clé plaque', 'Plaque', 'Trajet ID', 'Date', 'Début', 'Fin', 'Durée arrêt (min)', 'Moteur tournant (min)',
     'Vérification moteur', 'Litres', 'Source litres', 'Lat', 'Lon', 'Code chauffeur', 'Chauffeur', 'Contrat'],
   STP: ['Clé', 'Clé plaque', 'Plaque', 'Trajet ID', 'Date', 'Début', 'Fin', 'Durée (min)', 'Litres', 'Source litres',
@@ -89,7 +89,8 @@ const PARAM_DEFS = [
   ['autoRenderMin', 'Tableaux mis à jour automatiquement toutes les (min)', 15, 'Tableau de bord, Du jour, En direct. Les autres onglets : toutes les 3 h et sur ACTUALISER'],
   ['retentionDays', 'Données détaillées conservées (jours)', 62, 'Au-delà, archivées chaque mois dans le classeur « Flotte Geotab - Archive » (Drive)'],
   ['shiftDay', 'Équipe de jour : début (heure)', 7, 'Bilan de fin de shift : l\'équipe de jour finit quand commence l\'équipe de nuit'],
-  ['shiftNight', 'Équipe de nuit : début (heure)', 19, 'L\'équipe de nuit finit le lendemain à l\'heure de début de l\'équipe de jour']
+  ['shiftNight', 'Équipe de nuit : début (heure)', 19, 'L\'équipe de nuit finit le lendemain à l\'heure de début de l\'équipe de jour'],
+  ['overByLimit', 'Dépassement : seuil d\'alerte par limite de route', '', 'limite:seuil séparés par « ; » (ex. 50:30;80:20;120:20). Limite non listée : la ligne inférieure la plus proche, sinon le seuil général. Réglé dans Réglages > Alerte de dépassement de vitesse']
 ];
 const MODEL_DEFAULTS = { STARIA: { tank: 75 }, SONATA: { tank: 50 }, _: { tank: '' } };
 const HORS_PERIODE = 'Hors période des contrats';

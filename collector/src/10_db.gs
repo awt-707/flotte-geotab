@@ -8,7 +8,7 @@ H.PLATES = ['Ancienne plaque (WW / W18)', 'Plaque définitive', 'Date du changem
 const DB = {
   TRIP: { table: 'trips', cols: ['id', 'vehicle_key', 'plate', 'day', 'start_at', 'end_at', 'km', 'drive_min', 'still_min', 'evoff_min', 'idle_min',
     'idle_source', 'long_idle_min', 'n_long_idle', 'vmax', 'vavg', 'vmax_gps', 'lim_at_vmax', 'lim_source', 'worst_over', 'speed_at_worst',
-    'lim_at_worst', 'worst_time', 'fuel_l', 'fuel_source', 'ecu_l', 'idle_fuel_l', 'idle_fuel_source', 'lat', 'lon', 'driver_code', 'driver_name', 'contract_num'] },
+    'lim_at_worst', 'worst_time', 'fuel_l', 'fuel_source', 'ecu_l', 'idle_fuel_l', 'idle_fuel_source', 'lat', 'lon', 'driver_code', 'driver_name', 'contract_num', 'over_by_limit'] },
   IDL: { table: 'idles', cols: ['id', 'vehicle_key', 'plate', 'trip_id', 'day', 'start_at', 'end_at', 'stop_min', 'engine_min', 'engine_check', 'liters',
     'liters_source', 'lat', 'lon', 'driver_code', 'driver_name', 'contract_num'] },
   STP: { table: 'engine_stops', cols: ['id', 'vehicle_key', 'plate', 'trip_id', 'day', 'start_at', 'end_at', 'dur_min', 'liters', 'liters_source',
