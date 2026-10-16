@@ -314,3 +314,33 @@ test('PDF des pages Conduite et Classement', async () => {
   } finally { await br.close(); }
 });
 
+
+test('shift des alertes : contrat en cours à l\'heure de l\'alerte, sinon créneau 7 h-19 h / 19 h-7 h ; une nuit appartient au jour où elle commence', async () => {
+  // 05/10/2026 (heure du Maroc = UTC+1) : contrat de jour pris à 06:31 ; alertes à 06:45 (dans le contrat), 14:06, et 02:30 le 06/10 sans contrat
+  env.psql(`insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at, status)
+    values ('SHJ1', 'CSH', 'Chauffeur Shift', 'SH-1', 'SHTEST', '2026-10-05T05:31:00Z', '2026-10-05T17:20:00Z', 'Clôturé')`);
+  env.psql(`insert into alerts (id, day, time, plate, vehicle_key, driver_code, driver_name, type, severity, detail, value, status)
+    values ('TSH|1', '2026-10-05', '06:45', 'SH-1', 'SHTEST', 'CSH', 'Chauffeur Shift', 'Dépassement limite', 'Haute', 'TESTSHIFT-A1', '', 'À traiter'),
+           ('TSH|2', '2026-10-05', '14:06', 'SH-1', 'SHTEST', 'CSH', 'Chauffeur Shift', 'Dépassement limite', 'Haute', 'TESTSHIFT-A2', '', 'À traiter'),
+           ('TSH|3', '2026-10-06', '02:30', 'SH-2', 'SHTEST2', '', '', 'Vitesse excessive', 'Haute', 'TESTSHIFT-A3', '', 'À traiter'),
+           ('TSH|4', '2026-10-05', '02:30', 'SH-2', 'SHTEST2', '', '', 'Vitesse excessive', 'Haute', 'TESTSHIFT-A4', '', 'À traiter')`);
+  const { br, page, errors } = await openBrowser();
+  await page.clock.setFixedTime(new Date('2026-10-06T09:18:00Z'));
+  try {
+    await login(page, '#/jour?jour=2026-10-05');
+    await page.waitForFunction(() => /TESTSHIFT/.test(document.querySelector('#page').innerText), null, { timeout: 15000 });
+    // journée du 05/10 = shift jour du 05/10 puis shift nuit du 05/10 au 06/10 ; la nuit du 04/10 au 05/10 (02:30 le 05/10) n'en fait pas partie
+    const sec = await page.$$eval('#page h3.shift', hs => hs.filter(h => h.nextElementSibling && /TESTSHIFT/.test(h.nextElementSibling.innerText))
+      .map(h => h.innerText.replace(/\s+/g, ' ').trim() + ' = ' + (h.nextElementSibling.innerText.match(/TESTSHIFT-A\d/g) || []).sort().join(',')));
+    assert.deepStrictEqual(sec, ['Shift nuit du 05/10 → 06/10 (19:00 → 07:00) · 1 alerte = TESTSHIFT-A3', 'Shift jour du 05/10 (07:00 → 19:00) · 2 alertes = TESTSHIFT-A1,TESTSHIFT-A2']);
+    // page Alertes : colonne Shift (06:45 dans un contrat de jour = Jour ; 02:30 = nuit de la veille)
+    await page.goto('http://localhost:8080/#/alertes?jour=2026-10-05');
+    await page.waitForFunction(() => /TESTSHIFT-A4/.test(document.querySelector('#page').innerText), null, { timeout: 15000 });
+    const rows = await page.$$eval('#talall tbody tr', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')).filter(t => /TESTSHIFT/.test(t)));
+    const row = id => rows.find(t => t.includes(id)) || '';
+    assert.match(row('TESTSHIFT-A1'), /06:45 Jour 05\/10 /);
+    assert.match(row('TESTSHIFT-A2'), /14:06 Jour 05\/10 /);
+    assert.match(row('TESTSHIFT-A4'), /02:30 Nuit 04\/10 → 05\/10 /);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); env.psql("delete from alerts where id like 'TSH|%'; delete from contracts where num = 'SHJ1'"); }
+});

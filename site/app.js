@@ -187,7 +187,7 @@ async function pageTableau() {
     all('alerts', '*', q => q.in('severity', ['Critique', 'Haute']).gte('day', p.from).lte('day', p.to))]);
   // filtre agence AVANT de garder les 25 plus récentes
   jrn = jrn.filter(r => ok(r.vehicle_key)); ac = ac.filter(x => ok(x.vehicle_key)); tne = { count: tne.filter(r => ok(r.vehicle_key)).length };
-  top = { data: top.filter(a => ok(a.vehicle_key)).sort((x, y) => (String(y.day) + (y.time || '')).localeCompare(String(x.day) + (x.time || ''))).slice(0, 25) };
+  top = { data: await alertShifts(top.filter(a => ok(a.vehicle_key)).sort((x, y) => (String(y.day) + (y.time || '')).localeCompare(String(x.day) + (x.time || ''))).slice(0, 25)) };
   const t = aggJournal(jrn, () => 'ALL', P).ALL || emptyAgg();
   const cnt = f => ac.filter(f).reduce((s, x) => s + x.n, 0);
   const crit = cnt(x => x.severity === 'Critique'), high = cnt(x => x.severity === 'Haute'), ntne = tne.count || 0;
@@ -222,7 +222,7 @@ async function pageTableau() {
       ['Carburant (L)', d => nmv(fuelVal(d.a)), d => d.a.fuel, 'n'], ['L/100 km', d => nmv(l100Val(d.a)), d => d.a.l100 || 0, 'n'], ['Vmax', d => f0(d.a.vmax), d => d.a.vmax, 'n'],
       ['Siphonages suspects', d => d.a.siph, null, 'n']], sub))}
     <h2>Alertes critiques et hautes <a class="more" href="#/alertes">Voir toutes les alertes</a></h2>
-    ${alertTable('tal', top.data || [], false)}`;
+    ${alertSections('tal', top.data || [], false)}`;
   };
   window.__rerender = render; render();
 }
@@ -247,11 +247,53 @@ async function contractShifts(nums) {
   return n => (n && S.ctrShift[n]) || '';
 }
 function nmv(v) { return v === NM || v === 'km insuffisants' ? `<span class="nm">${v}</span>` : v; }
-/** Shift d'une alerte : heure de l'infraction (même règle que les contrats) ; vide pour une alerte de journée sans heure */
-function alertShift(a) { if (!a.time || !a.day) return ''; const p = String(a.day).slice(0, 10).split('-').map(Number), h = String(a.time).split(':').map(Number);
-  return shiftOf(localToDate(p[0], p[1], p[2], h[0] || 0, h[1] || 0), S.P); }
+/** Instant d'une alerte (jour + heure du Maroc), null pour une alerte de journée sans heure */
+function alertAt(a) { if (!a.time || !a.day) return null; const p = String(a.day).slice(0, 10).split('-').map(Number), h = String(a.time).split(':').map(Number);
+  return localToDate(p[0], p[1], p[2], h[0] || 0, h[1] || 0); }
+/** N° de contrat d'une alerte de journée de travail (id « TYPE|C|n° ») */
+function alertCtrNum(a) { const m = String(a.id || '').match(/\|C\|(.+)$/); return m ? m[1] : ''; }
+/**
+ * Contrats des alertes : le shift d'une alerte est celui du contrat en cours sur le véhicule à son heure (même chauffeur de préférence),
+ * sinon le créneau horaire (shiftAt). Charge les contrats une fois par liste, avant l'affichage ; résultat dans a._sh.
+ */
+async function alertShifts(rows) {
+  rows = rows || []; if (!rows.length) return rows;
+  const veh = [...new Set(rows.map(a => a.vehicle_key).filter(Boolean))], days = rows.map(a => String(a.day || '').slice(0, 10)).filter(Boolean).sort();
+  const nums = [...new Set(rows.map(alertCtrNum).filter(Boolean))], byNum = {}, byVeh = {};
+  try {
+    const add = c => { if (byNum[c.num]) return; byNum[c.num] = c; (byVeh[c.vehicle_key] = byVeh[c.vehicle_key] || []).push(c); };
+    for (let i = 0; i < veh.length && days.length; i += 100) {
+      (await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('vehicle_key', veh.slice(i, i + 100))
+        .lte('start_at', dayBounds(addDays(days[days.length - 1], 1)).end.toISOString()).or('end_at.is.null,end_at.gte.' + dayBounds(addDays(days[0], -1)).start.toISOString()))).forEach(add);
+    }
+    const miss = nums.filter(n => !byNum[n]);
+    for (let i = 0; i < miss.length; i += 150) (await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('num', miss.slice(i, i + 150)))).forEach(add);
+  } catch (e) { /* contrats illisibles : créneau horaire seul */ }
+  rows.forEach(a => {
+    const t = alertAt(a); let c = byNum[alertCtrNum(a)] || null;
+    if (!c && t) {
+      const live = (byVeh[a.vehicle_key] || []).filter(x => new Date(x.start_at) <= t && (!x.end_at || new Date(x.end_at) >= t));
+      c = live.find(x => a.driver_code && x.client_code === a.driver_code) || live.sort((x, y) => new Date(y.start_at) - new Date(x.start_at))[0] || null;
+    }
+    a._sh = c ? shiftOfCtr(c.start_at, S.P) : shiftAt(t, S.P);
+  });
+  return rows;
+}
+/** Shift d'une alerte ('Jour' / 'Nuit' / '') : contrat en cours à son heure (alertShifts), sinon créneau horaire */
+function alertShift(a) { const x = alertShiftDay(a); return x ? x.s : ''; }
+function alertShiftDay(a) { return a._sh !== undefined ? a._sh : shiftAt(alertAt(a), S.P); }
+/** Alertes regroupées par shift (du plus récent au plus ancien) : « Shift nuit du 15/10 → 16/10 (19:00 → 07:00) » */
+function alertSections(id, rows, editable) {
+  const keyOf = a => { const x = alertShiftDay(a); return x ? x.day + (x.s === 'Nuit' ? '|2' : '|1') : ''; }, groups = {};
+  rows.forEach(a => { const k = keyOf(a); (groups[k] = groups[k] || []).push(a); });
+  const keys = Object.keys(groups).sort().reverse();
+  if (!keys.length) return alertTable(id, rows, editable);
+  return keys.map((k, i) => { const x = k ? alertShiftDay(groups[k][0]) : null, n = groups[k].length;
+    const title = x ? 'Shift ' + shiftDayName(x).replace(/^J/, 'j').replace(/^N/, 'n') + ' (' + shiftName(x.s, S.P).replace(/^.*\(/, '') : 'Sans heure';
+    return `<h3 class="shift ${x ? 'sh-' + x.s.toLowerCase() : ''}">${esc(title)} <span class="small">· ${n} alerte${n > 1 ? 's' : ''}</span></h3>` + alertTable(id + (i ? '_' + i : ''), groups[k], editable); }).join('');
+}
 function alertTable(id, rows, editable) {
-  return table(id, [['Date', a => fmtDay(a.day), a => a.day + (a.time || '')], ['Heure', a => esc(a.time || '')], ['Shift', a => { const s = alertShift(a); return s ? shiftBadge(s) : ''; }, a => alertShift(a)],
+  return table(id, [['Date', a => fmtDay(a.day), a => a.day + (a.time || '')], ['Heure', a => esc(a.time || '')], ['Shift', a => { const x = alertShiftDay(a); return x ? shiftBadge(x.s) + `<div class="small">${esc(shiftDayName(x).replace(/^(Jour|Nuit) du /, ''))}</div>` : ''; }, a => { const x = alertShiftDay(a); return x ? x.day + x.s : ''; }],
     ['Plaque', a => plate(a.plate), a => a.plate], ['Chauffeur', a => esc(a.driver_name || '')],
     ['Type', a => esc(a.type)], ['Gravité', a => badge(a.severity, GRAV_CLS[a.severity]), a => ({ Critique: 0, Haute: 1, Moyenne: 2, Info: 3 }[a.severity])],
     ['Valeur', a => esc(a.value || '')], ['Détail', a => linkify(a.detail), null, 'wide'],
@@ -266,16 +308,18 @@ function linkify(t) { return esc(t).replace(/https:\/\/maps\.google\.com\/\?q=(-
 // ---------- DU JOUR ----------
 async function pageJour() {
   const qs = new URLSearchParams(location.hash.split('?')[1] || ''), day = qs.get('jour') || today(), P = S.P;
-  const b = dayBounds(day), b0 = b.start.getTime(), b1 = b.end.getTime(), now = Date.now();
-  const ok = inAgency();
-  const [jrn, al, idl] = (await Promise.all([
-    all('journal', '*', q => q.gte('day', addDays(day, -2)).lte('day', addDays(day, 1))),
-    all('alerts', '*', q => q.eq('day', day), ['time']),
-    all('idles', '*', q => q.gte('start_at', b.start.toISOString()).lt('start_at', b.end.toISOString()), ['start_at'])])).map(l => l.filter(r => ok(r.vehicle_key)));
-  const rows = jrn.filter(r => { const st = r.contract_start ? new Date(r.contract_start).getTime() : 0; if (!st) return r.day === day;
-    const en = r.contract_end ? new Date(r.contract_end).getTime() : now; return st < b1 && en > b0; });
+  // journée d'exploitation : shift jour (shiftDay h → shiftNight h) puis shift nuit jusqu'au lendemain shiftDay h ; une nuit appartient au jour où elle commence
+  const ok = inAgency(), dp = day.split('-').map(Number), d1 = addDays(day, 1).split('-').map(Number), sd = num(P.shiftDay, 7);
+  const w0 = localToDate(dp[0], dp[1], dp[2], sd, 0), w1 = localToDate(d1[0], d1[1], d1[2], sd, 0);
+  const [jrn, al0, idl] = (await Promise.all([
+    all('journal', '*', q => q.gte('day', addDays(day, -1)).lte('day', addDays(day, 1))),
+    all('alerts', '*', q => q.gte('day', day).lte('day', addDays(day, 1)), ['time']),
+    all('idles', '*', q => q.gte('start_at', w0.toISOString()).lt('start_at', w1.toISOString()), ['start_at'])])).map(l => l.filter(r => ok(r.vehicle_key)));
+  const rows = jrn.filter(r => (r.contract_start ? shiftOfCtr(r.contract_start, P).day : r.day) === day);
+  const al = (await alertShifts(al0)).filter(a => { const x = alertShiftDay(a); return x ? x.day === day : a.day === day; })
+    .sort((x, y) => (String(y.day) + (y.time || '')).localeCompare(String(x.day) + (x.time || '')));
   const render = () => {
-    $('#page').innerHTML = `<div class="head"><h1>Journée du ${fmtDay(day)}</h1><div class="sub">Chaque ligne de contrat couvre toute la journée de travail, selon les horaires du contrat.</div></div>
+    $('#page').innerHTML = `<div class="head"><h1>Journée du ${fmtDay(day)}</h1><div class="sub">${esc(shiftName('Jour', P))} du ${fmtDay(day)}, puis ${esc(shiftName('Nuit', P).replace(/^S/, 's'))} du ${fmtDay(day)} au ${fmtDay(addDays(day, 1))}. Chaque ligne de contrat couvre toute la journée de travail, selon les horaires du contrat.</div></div>
     <div class="bar"><label>Date <input type="date" id="jday" value="${day}"></label><button class="ghost" id="jprev">Veille</button><button class="ghost" id="jnext">Lendemain</button></div>
     <h2>Journées de travail actives, par shift (de la plus dangereuse à la moins dangereuse)</h2>
     ${shiftSections(rows.sort((x, y) => y.score - x.score), r => shiftOf(r.contract_start, P), (sub, sfx) => table('tjour' + sfx, [['Plaque', r => plate(r.plate), r => r.plate], ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name)], ['Contrat', r => esc(r.contract_num || 'Hors contrat')],
@@ -291,7 +335,7 @@ async function pageJour() {
     ${table('tidl', [['Début', r => fmtDT(r.start_at), r => r.start_at], ['Fin', r => fmtDT(r.end_at)], ['Durée arrêt', r => fH(r.stop_min / 60), r => r.stop_min, 'n'],
       ['Moteur tournant', r => r.engine_check === 'Régime moteur' ? fH(r.engine_min / 60) : 'non vérifiable', r => r.engine_min, 'n'], ['Plaque', r => plate(r.plate), r => r.plate],
       ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name || '')], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']], idl, { empty: 'Aucun arrêt prolongé' })}
-    <h2>Alertes du jour</h2>${alertTable('tjal', al, false)}`;
+    <h2>Alertes de la journée, par shift</h2>${alertSections('tjal', al, false)}`;
     $('#jday').onchange = e => { location.hash = '#/jour?jour=' + e.target.value; };
     $('#jprev').onclick = () => { location.hash = '#/jour?jour=' + addDays(day, -1); };
     $('#jnext').onclick = () => { location.hash = '#/jour?jour=' + addDays(day, 1); };
@@ -351,7 +395,7 @@ async function pageChauffeurs() {
 async function pageAlertes() {
   const qs = new URLSearchParams(location.hash.split('?')[1] || ''), p = period();
   const from = qs.get('jour') || p.from, to = qs.get('jour') || p.to;
-  const ok = inAgency(), rows = (await all('alerts', '*', q => q.gte('day', from).lte('day', to), ['day', false])).filter(r => ok(r.vehicle_key));
+  const ok = inAgency(), rows = await alertShifts((await all('alerts', '*', q => q.gte('day', from).lte('day', to), ['day', false])).filter(r => ok(r.vehicle_key)));
   const f = JSON.parse(localStorage.getItem('fal') || '{}'); if (qs.get('plaque')) f.plate = qs.get('plaque');
   const types = [...new Set(rows.map(r => r.type))].sort();
   const render = () => {

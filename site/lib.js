@@ -133,6 +133,28 @@ function shiftOf(t, P) {
   const dist = (a, b) => { const x = Math.abs(a - b) % 24; return Math.min(x, 24 - x); };
   return dist(h, d) <= dist(h, n) ? 'Jour' : 'Nuit';
 }
+/**
+ * Shift auquel appartient un instant (alerte, événement) : jour de shiftDay h à shiftNight h, sinon nuit.
+ * Une nuit appartient au jour où elle commence : 02:00 le 17/10 = nuit du 16/10 → 17/10. { s: 'Jour' | 'Nuit', day: jour de début du shift }
+ */
+function shiftAt(t, P) {
+  if (!t) return null;
+  const hm = localHM(t), h = +hm.slice(0, 2) + +hm.slice(3, 5) / 60, d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19), day = localDay(t);
+  if (d < n ? h >= d && h < n : h >= d || h < n) return { s: 'Jour', day };
+  return { s: 'Nuit', day: h < d ? addDays(day, -1) : day };
+}
+/** Shift d'un contrat avec son jour : règle de shiftOf (début de shift le plus proche) ; une nuit prise après minuit appartient à la veille */
+function shiftOfCtr(start, P) {
+  if (!start) return null;
+  const s = shiftOf(start, P), day = localDay(start), h = +localHM(start).slice(0, 2);
+  return { s, day: s === 'Nuit' && h < num((P || {}).shiftDay, 7) ? addDays(day, -1) : day };
+}
+/** « Jour du 16/10 » / « Nuit du 16/10 → 17/10 » */
+function shiftDayName(x) {
+  if (!x) return '';
+  const f = d => d.slice(8, 10) + '/' + d.slice(5, 7);
+  return x.s === 'Jour' ? 'Jour du ' + f(x.day) : 'Nuit du ' + f(x.day) + ' → ' + f(addDays(x.day, 1));
+}
 const SHIFTS = ['Jour', 'Nuit', ''];
 function shiftName(s, P) {
   const z = h => String(num(h)).padStart(2, '0') + ':00', d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19);
@@ -144,4 +166,4 @@ function fuelVal(a) { return a.fuelN ? f1(a.fuel) : NM; }
 function l100Val(a) { return a.l100 !== null ? f1(a.l100) : (a.fuelN ? 'km insuffisants' : NM); }
 function srcTxt(a) { const s = Object.keys(a.srcs); return s.length ? (s.length > 1 ? 'Mixte' : s[0]) : 'Non mesuré'; }
 
-if (typeof module !== 'undefined') module.exports = { shiftOf, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };
+if (typeof module !== 'undefined') module.exports = { shiftOf, shiftAt, shiftOfCtr, shiftDayName, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };
