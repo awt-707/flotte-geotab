@@ -11,7 +11,10 @@ function writeTable_(k, headers, rows) {
   const objs = rows.map(r => toDb_(k, r)).filter(o => o[pk]);
   if (!objs.length) return;
   dbUpsert_(DB[k].table, objs, pk);
-  dbDelete_(DB[k].table, pk + '=not.' + inList_(objs.map(o => o[pk])));
+  // lignes disparues retirées par lots (une liste « not.in » de toutes les clés dépasse la longueur d'URL permise par UrlFetch)
+  const keep = {}; objs.forEach(o => { keep[String(o[pk])] = 1; });
+  const gone = dbSelect_(DB[k].table, 'select=' + pk, pk).map(r => String(r[pk])).filter(v => !keep[v]);
+  for (let i = 0; i < gone.length; i += 40) dbDelete_(DB[k].table, pk + '=' + inList_(gone.slice(i, i + 40)));
   memoClear_();
 }
 /** Filtre PostgREST « in.(...) » encodé pour l'URL */
@@ -37,10 +40,11 @@ function params_() {
  */
 function tzPublish_(force) {
   const props = PropertiesService.getScriptProperties(), today = localDay_(new Date());
-  if (!force && props.getProperty('TZ_DAY') === today) return;
+  // TZ_PUB (et non plus TZ_DAY, utilisé par l'ancienne version qui publiait la table de Google) : la table MA_TZ est republiée au moins une fois
+  if (!force && props.getProperty('TZ_PUB') === today) return;
   sbReq_('post', 'params?on_conflict=key', [{ key: 'tzRules', label: 'Fuseau horaire (calculé par le collecteur)', value: JSON.stringify(MA_TZ), note: 'Ne pas modifier', sort: 999 }],
     { Prefer: 'resolution=merge-duplicates,return=minimal' });
-  props.setProperty('TZ_DAY', today);
+  props.setProperty('TZ_PUB', today);
 }
 /** Une fois : journées depuis le 20/09/2026 recalculées à l'heure réelle du Maroc (UTC+1 ; Google les comptait en UTC+0) */
 function tzFix_() {

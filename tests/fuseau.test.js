@@ -47,3 +47,11 @@ test('une seule fois : journées depuis le 20/09/2026 retéléchargées et recal
   B.setNow(NOW + 5 * 60000); B.run('collect()');
   assert.strictEqual(env.psql("select count(*) from logs where action = 'Heure du Maroc'"), '1');
 });
+
+test('table horaire republiée même si une ancienne version a déjà publié la sienne aujourd\'hui', () => {
+  const B = collector(NOW, { TZ_DAY: '2026-10-06' }); B.run('installer()');
+  env.psql(`update params set value = '[[0,0]]' where key = 'tzRules'`);
+  B.run("PropertiesService.getScriptProperties().deleteProperty('TZ_PUB')");
+  B.run('collect()');
+  assert.deepStrictEqual(JSON.parse(env.psql("select value from params where key = 'tzRules'")), env.MA_TZ);
+});
