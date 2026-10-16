@@ -72,25 +72,31 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # chaque partie est publiée même si une autre échoue (le travail reste en échec, avec la raison)
       - name: Site (Netlify)
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
         run: |
           if [ -z "$NETLIFY_AUTH_TOKEN" ]; then echo "::warning::Secret NETLIFY_AUTH_TOKEN absent : site non publié (voir README)"; exit 0; fi
           (cd site && zip -qr ../site.zip .)
-          curl -sSf -X POST -H "Authorization: Bearer $NETLIFY_AUTH_TOKEN" -H "Content-Type: application/zip" \
-            --data-binary @site.zip "https://api.netlify.com/api/v1/sites/$NETLIFY_SITE_ID/deploys?title=$(git log -1 --format=%h)" \
-            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const d=JSON.parse(s);console.log('Site publié :',d.state,d.ssl_url||d.url)})"
+          # en cas de refus, le message de Netlify est affiché (ex. 403 : jeton refusé ou publications bloquées sur le compte)
+          code=$(curl -sS -o deploy.json -w '%{http_code}' -X POST -H "Authorization: Bearer $NETLIFY_AUTH_TOKEN" -H "Content-Type: application/zip" \
+            --data-binary @site.zip "https://api.netlify.com/api/v1/sites/$NETLIFY_SITE_ID/deploys?title=$(git log -1 --format=%h)")
+          if [ "$code" -ge 300 ]; then echo "::error::Netlify a refusé la publication du site (HTTP $code) : $(head -c 500 deploy.json)"; exit 1; fi
+          node -e "const d=require('./deploy.json');console.log('Site publié :',d.state,d.ssl_url||d.url)"
       - name: Collecteur (installé automatiquement par Apps Script au passage suivant)
+        if: ${{ !cancelled() }}
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           if [ -z "$SUPABASE_SERVICE_KEY" ]; then echo "::warning::Secret SUPABASE_SERVICE_KEY absent : collecteur non publié (voir README)"; exit 0; fi
           node scripts/publish-collector.js
       - uses: supabase/setup-cli@v1
+        if: ${{ !cancelled() }}
         with:
           version: latest
       - name: Relais Geotab en direct (fonction Supabase geotab-live)
+        if: ${{ !cancelled() }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
