@@ -17,7 +17,7 @@ const PAGES = [['direct', 'En direct', /En route|Garé|Arrêté/], ['tableau', '
   ['chauffeurs', 'Classement des chauffeurs', /Score/], ['alertes', 'Alertes', /Gravité/], ['contrats', 'Contrats', /Contrats des 40 derniers jours/],
   ['plaques', 'Changements de plaque', /Ancienne plaque/], ['vehicules', 'Véhicules', /WW968194/], ['reglages', 'Réglages', /Journal technique/],
   ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/],
-  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['conso', 'Consommation', /Rapport de consommation/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/],
+  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['conso', 'Consommation', /Rapport de consommation/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/], ['comportement', 'Comportement chauffeur', /Choisissez un chauffeur/],
   ['vehicule?k=968199WW', 'WW968199', /Journées de travail/], ['chauffeur?c=C038', 'Compte rendu', /Par journée de travail/]];
 
 for (const [viewport, size] of [['ordinateur', { width: 1440, height: 900 }], ['téléphone', { width: 390, height: 844, isMobile: true, hasTouch: true }]]) {
@@ -238,3 +238,65 @@ test('page Consommation : entre deux instants (à la minute), mêmes totaux que 
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
+
+test('comportement chauffeur : profil et historique entre deux dates, PDF, envoi par e-mail du même rapport par le collecteur', async () => {
+  const fs = require('fs'), from = '2026-09-29', to = '2026-10-06';
+  const code = env.psql(`select driver_code from journal where day between '${from}' and '${to}' and driver_code <> 'HORS_CONTRAT' group by 1 order by sum(km) desc limit 1`);
+  const km = +env.psql(`select round(sum(km)::numeric, 1) from journal where driver_code = '${code}' and day between '${from}' and '${to}'`);
+  const nEv = +env.psql(`select coalesce(sum(n_events), 0) from journal where driver_code = '${code}' and day between '${from}' and '${to}'`);
+  const { br, page, errors } = await openBrowser({ acceptDownloads: true });
+  await page.clock.setFixedTime(new Date('2026-10-06T09:18:00Z'));
+  await page.addInitScript(([c, a, z]) => { try { localStorage.setItem('comp', JSON.stringify({ c, from: a, to: z })); } catch (e) { } }, [code, from, to]);
+  try {
+    await login(page, '#/comportement');
+    await page.waitForSelector('.dprof', { timeout: 20000 });
+    const sum = {}; (await page.$$eval('.rsum tr', trs => trs.map(tr => [tr.cells[0].innerText, tr.cells[1].innerText]))).forEach(([k, v]) => { sum[k] = v; });
+    const n = v => +String(v).replace(/[\s\u202f\u00a0]/g, '').replace(',', '.').match(/^-?[\d.]+/)[0];
+    assert.strictEqual(n(sum['Km parcourus']), km);
+    assert.strictEqual(n(sum['Événements de conduite']), nEv);
+    assert.match(sum['Chauffeur'], new RegExp('code client ' + code));
+    const txt = await page.innerText('#page');
+    ['Journées de travail (horaires du contrat)', 'Vitesse : dépassements', 'Événements de conduite Geotab par règle', 'Consommation par véhicule', 'Pleins détectés', 'Alertes'].forEach(t => assert.ok(txt.includes(t), t));
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#cpdf')]);
+    assert.match(dl.suggestedFilename(), /^comportement_.*_2026-09-29_2026-10-06\.pdf$/);
+    const f = require('path').join(env.OUT, dl.suggestedFilename()); await dl.saveAs(f);
+    assert.strictEqual(fs.readFileSync(f).slice(0, 5).toString(), '%PDF-');
+    // envoi par e-mail : demande au collecteur, qui prépare le même rapport et l'envoie avec le PDF
+    env.psql('delete from jobs'); B.mails.length = 0;
+    await page.fill('#cmail', 'chef@exemple.ma'); await page.click('#csend');
+    await page.waitForFunction(() => /Demande envoyée/.test(document.querySelector('#cmailst').innerText));
+    let raw = ''; for (let i = 0; i < 40 && !raw; i++) { raw = env.psql("select coalesce(max(arg), '') from jobs where kind = 'driver_report'"); if (!raw) await page.waitForTimeout(250); }
+    if (!raw) throw new Error('demande non créée : ' + await page.innerText('#cmailst'));
+    const arg = JSON.parse(raw);
+    assert.deepStrictEqual(arg, { code, from, to, email: 'chef@exemple.ma' });
+    B.run('processJobs_(Date.now())');
+    assert.strictEqual(B.mails.length, 1);
+    const m = B.mails[0];
+    assert.strictEqual(m.to, 'chef@exemple.ma'); assert.match(m.subject, /^Ludy : comportement de .* du 29\/09\/2026 au 06\/10\/2026$/);
+    assert.strictEqual(m.attachments.length, 1);
+    assert.ok(m.htmlBody.includes('Km parcourus : <b>' + sum['Km parcourus'].replace(/\s/g, ' ') + '</b>') || m.htmlBody.replace(/[\u202f\u00a0]/g, ' ').includes('Km parcourus : <b>' + sum['Km parcourus'].replace(/[\s\u202f\u00a0]/g, ' ') + '</b>'), 'mêmes km que la page');
+    await page.waitForFunction(() => /Envoyé : PDF envoyé à chef@exemple\.ma/.test(document.querySelector('#cmailst').innerText), null, { timeout: 20000 });
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});
+
+test('PDF des pages Conduite et Classement', async () => {
+  const fs = require('fs');
+  const { br, page, errors } = await openBrowser({ acceptDownloads: true });
+  await page.clock.setFixedTime(new Date('2026-10-06T09:18:00Z'));
+  try {
+    for (const [hash, btn, re, word] of [['#/conduite', '#cdpdf', /^conduite_toutes_agences_2026-09-30_2026-10-06\.pdf$/, 'Le plus dangereux'], ['#/chauffeurs', '#rkpdf', /^classement_toutes_agences_2026-09-30_2026-10-06\.pdf$/, 'Seuils']]) {
+      if (hash === '#/conduite') await login(page, hash); else { await page.goto('http://localhost:8080/' + hash); await page.waitForSelector('#psel'); }
+      await page.selectOption('#psel', '7 derniers jours');
+      await page.waitForSelector(btn);
+      const [dl] = await Promise.all([page.waitForEvent('download'), page.click(btn)]);
+      assert.match(dl.suggestedFilename(), re);
+      const f = require('path').join(env.OUT, dl.suggestedFilename()); await dl.saveAs(f);
+      const pdf = fs.readFileSync(f);
+      assert.strictEqual(pdf.slice(0, 5).toString(), '%PDF-'); assert.ok(pdf.length > 5000);
+      assert.ok(pdf.toString('latin1').includes(word), word + ' absent du PDF');
+    }
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});
+

@@ -1,4 +1,4 @@
-// Flotte Geotab — site web (lecture de la base Supabase alimentée par le collecteur Apps Script)
+// Ludy (supervision de flotte, données Geotab) — site web (lecture de la base Supabase alimentée par le collecteur Apps Script)
 const CFG = window.FLOTTE_CONFIG || {};
 const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const S = { session: null, profile: null, P: null, veh: null, vehList: [], rules: null, drv: null, timers: [], channel: null, agencies: [], agName: {}, alertCh: null };
@@ -63,7 +63,7 @@ function agOptions(sel, emptyTxt) { return (emptyTxt !== undefined ? `<option va
 function agTxt(id) { return id ? esc(S.agName[id] || '') : '<span class="small">aucune</span>'; }
 
 // ---------- Mise en page ----------
-const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
+const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
   ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, reglages: 1 };
 function shell() {
@@ -83,7 +83,9 @@ function shell() {
   const on = $('.side nav a.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   return page;
 }
-const BRAND = '<div class="brand"><span class="mark" aria-hidden="true"></span><div>Flotte Geotab<small>Supervision des véhicules</small></div></div>';
+const BRAND = '<div class="brand"><img class="logo" src="logo-ludy.png" alt="Ludy" width="168" height="41"><small>Supervision de flotte</small></div>';
+/** Écran de connexion (fond clair) : logo en version foncée */
+const BRAND_LIGHT = '<div class="brand"><img class="logo" src="logo-ludy-sombre.png" alt="Ludy" width="200" height="49"><small>Supervision de flotte</small></div>';
 /** Plaque d'immatriculation dessinée comme une vraie plaque (provisoire WW / W18 en jaune) */
 function plate(p, others) {
   if (!p) return '';
@@ -109,7 +111,7 @@ function onNewAlert(a) {
   if (a.severity !== 'Critique') setTimeout(() => t.remove(), 30000);
   openAlerts();
   try { if (document.hidden && ['Critique', 'Haute'].includes(a.severity) && 'Notification' in window && Notification.permission === 'granted')
-    new Notification('Flotte : ' + a.type + ' ' + (a.plate || ''), { body: (a.driver_name ? a.driver_name + ' · ' : '') + String(a.detail || '').slice(0, 120), tag: a.id }); } catch (e) { }
+    new Notification('Ludy : ' + a.type + ' ' + (a.plate || ''), { body: (a.driver_name ? a.driver_name + ' · ' : '') + String(a.detail || '').slice(0, 120), tag: a.id }); } catch (e) { }
 }
 window.__onNewAlert = onNewAlert;
 function watchAlerts() {
@@ -316,8 +318,21 @@ async function pageChauffeurs() {
   const list = Object.values(agg).map(a => { const [sh, code] = a.k.split('|'), sc = scoreOf(a, P);
     return { a, sh, code, nom: S.drv[code] || Object.keys(a.names)[0] || code, score: sc, level: levelOf(sc, P), rules: byD[a.k] || {} }; })
     .sort((x, y) => y.score - x.score || y.a.pts - x.a.pts);
+  const pdf = () => {
+    const tabs = [], rk = ruleIds.slice(0, 10);
+    SHIFTS.forEach(sh => { const sub = list.filter(d => (d.sh || '') === sh); if (!sub.length) return; const nm = sh ? shiftName(sh, P) : 'Hors contrat';
+      tabs.push(colsTable('Classement : ' + nm, [['Rang', d => sub.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => d.nom], ['Code', d => d.code], ['Niveau', d => d.level], ['Score /100 km', d => f1(d.score), null, 'n'],
+        ['Points', d => f1(d.a.pts), null, 'n'], ['Événements', d => d.a.evts, null, 'n'], ['Journées', d => Object.keys(d.a.ctr).length || Object.keys(d.a.days).length, null, 'n'], ['Km', d => f1(d.a.km), null, 'n'],
+        ['Conduite', d => fH(d.a.drive), null, 'n'], ['Ralenti', d => fH(d.a.idle), null, 'n'], ['Carburant (L)', d => fuelVal(d.a), null, 'n'], ['L/100 km', d => l100Val(d.a), null, 'n'],
+        ['Vmax', d => f0(d.a.vmax), null, 'n'], ['Pire dépassement', d => d.a.worst === null ? '' : '+' + f0(d.a.worst), null, 'n'], ['Pleins', d => d.a.fills, null, 'n'], ['Siphonages', d => d.a.siph, null, 'n']], sub));
+      if (rk.length) tabs.push(colsTable('Événements Geotab par règle : ' + nm, [['Chauffeur', d => d.nom]].concat(rk.map(id => [((S.rules[id] || {}).name || id) + ' ×' + ((S.rules[id] || {}).weight || ''), d => d.rules[id] || 0, null, 'n'])), sub)); });
+    reportPdf(rptSimple({ kind: 'classement', title: 'Classement des chauffeurs', period: p.from === p.to ? 'du ' + fmtDay(p.from) : 'du ' + fmtDay(p.from) + ' au ' + fmtDay(p.to), from: p.from, to: p.to,
+      agency: agFilter() ? S.agName[agFilter()] : 'Toutes les agences',
+      summary: [['Score', 'points danger pour 100 km (poids des règles dans Réglages)'], ['Seuils', 'Modéré ' + P.scoreY + ', Élevé ' + P.scoreO + ', Dangereux ' + P.scoreR], ['Chauffeurs classés', String(list.length)]], tables: tabs }));
+  };
   const render = () => {
-    $('#page').innerHTML = `<div class="head"><h1>Classement des chauffeurs</h1><div class="sub">Score = points danger pour 100 km (poids des règles dans Réglages). Seuils : Modéré ${P.scoreY}, Élevé ${P.scoreO}, Dangereux ${P.scoreR}.</div></div>
+    $('#page').innerHTML = `<div class="head"><h1>Classement des chauffeurs</h1><div class="sub">Score = points danger pour 100 km (poids des règles dans Réglages). Seuils : Modéré ${P.scoreY}, Élevé ${P.scoreO}, Dangereux ${P.scoreR}.</div>
+      <button id="rkpdf">Télécharger le PDF</button></div>
     ${periodBar(go)}
     ${shiftSections(list, d => d.sh, (sub, sfx) => table('trank' + sfx, [['Rang', d => sub.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${dlink(d.code, d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
       ['Niveau', d => badge(d.level, LEVEL_CLS[d.level]), d => d.score], ['Score /100 km', d => f1(d.score), d => d.score, 'n'], ['Points danger', d => f1(d.a.pts), d => d.a.pts, 'n'],
@@ -327,6 +342,7 @@ async function pageChauffeurs() {
       ['Vmax', d => f0(d.a.vmax), d => d.a.vmax, 'n'], ['Pire dépassement', d => d.a.worst === null ? '' : '+' + f0(d.a.worst), d => d.a.worst || 0, 'n']]
       .concat(ruleIds.map(id => [esc((S.rules[id] || {}).name || id) + ` <span class="small">×${(S.rules[id] || {}).weight || ''}</span>`, d => d.rules[id] || 0, d => d.rules[id] || 0, 'n']))
       .concat([['Pleins', d => d.a.fills, null, 'n'], ['Siphonages suspects', d => d.a.siph, null, 'n'], ['Véhicules', d => esc(Object.keys(d.a.plates).join(', '))]]), sub))}`;
+    $('#rkpdf').onclick = () => { try { pdf(); } catch (e) { alert('PDF impossible : ' + e.message); } };
   };
   window.__rerender = render; render();
 }
@@ -615,12 +631,19 @@ async function pageRapports() {
     <div class="panel rptview">${rptHtml(rep)}</div>`;
   $('#rpdf').onclick = () => { try { reportPdf(rep); } catch (e) { alert('PDF impossible : ' + e.message); } };
 }
+/** Texte d'une cellule HTML (pour les PDF faits depuis les tableaux des pages) */
+function txtOf(html) { const d = document.createElement('div'); d.innerHTML = String(html == null ? '' : html); return d.textContent.replace(/\s+/g, ' ').trim(); }
+/** Tableau de page (colonnes de table()) -> tableau de rapport PDF */
+function colsTable(title, cols, rows, empty) {
+  return { title, empty: empty || 'Aucune donnée', head: cols.map(c => txtOf(c[0])), num: cols.map((c, i) => c[3] === 'n' ? i : -1).filter(i => i >= 0), rows: rows.map(r => cols.map(c => txtOf(c[1](r)))) };
+}
 /** PDF du rapport (jsPDF + AutoTable, texte vectoriel) */
 function reportPdf(rep) {
   if (!window.jspdf) throw new Error('bibliothèque PDF non chargée, réessayez dans un instant');
   if (window.applyPlugin && !window.jspdf.jsPDF.API.autoTable) window.applyPlugin(window.jspdf.jsPDF);
-  const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }), cl = v => String(v == null ? '' : v).replace(/ /g, ' ');
+  const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }), cl = v => String(v == null ? '' : v).replace(/ /g, ' ').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/→/g, '->');   // signes absents de la police Helvetica du PDF
   const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
+  try { doc.addImage(RPT_LOGO, 'PNG', W - 14 - 36, 8, 36, 8.8); } catch (e) { }   // logo Ludy en haut à droite
   doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(20, 32, 43); doc.text(cl(rep.title), 14, 16);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(93, 107, 120); doc.text(cl(rep.agency + ' · ' + rep.period), 14, 22);
   doc.autoTable({ startY: 26, body: rep.summary.map(r => r.map(cl)), theme: 'plain', tableWidth: 160, styles: { fontSize: 9, cellPadding: 0.8 },
@@ -740,7 +763,7 @@ async function pageReglages() {
 
 // ---------- Connexion ----------
 function loginView(info) {
-  $('#app').innerHTML = `<div class="login"><div class="lbox">${BRAND}
+  $('#app').innerHTML = `<div class="login"><div class="lbox">${BRAND_LIGHT}
     <form id="lf"><label>Email<input type="email" id="le" required autocomplete="username"></label>
     <label>Mot de passe<input type="password" id="lp" required autocomplete="current-password" minlength="6"></label>
     <button type="submit">Se connecter</button>
@@ -756,7 +779,7 @@ function loginView(info) {
     out(error ? msg(esc(error.message), 'err') : msg('Email envoyé : suivez le lien pour choisir un nouveau mot de passe.', 'ok')); };
 }
 function pendingView() {
-  $('#app').innerHTML = `<div class="login"><div class="lbox">${BRAND}
+  $('#app').innerHTML = `<div class="login"><div class="lbox">${BRAND_LIGHT}
     ${msg('Votre compte (' + esc(S.profile ? S.profile.email : '') + ') est créé. Il doit être validé par l\'administrateur avant de voir les données.', 'warn')}
     <button id="lout" class="ghost">Déconnexion</button></div></div>`;
   $('#lout').onclick = () => sb.auth.signOut();
@@ -764,7 +787,7 @@ function pendingView() {
 
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
-  conduite: pageConduite, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
+  conduite: pageConduite, comportement: pageComportement, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
   contrats: pageContrats, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {

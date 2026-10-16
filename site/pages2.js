@@ -343,13 +343,25 @@ async function pageConduite() {
       ['Pire dépassement', o => o.worst ? `<b class="${o.worst.ex >= num(P.overAlert, 30) ? 'red' : ''}">+${f0(o.worst.ex)}</b> (${esc(o.worst.v)} / ${esc(o.worst.lim)})` : '', o => o.worst ? o.worst.ex : 0, 'n'],
       ['Pire dépassement : où et quand', o => o.worst ? esc(o.worst.plate) + ' le ' + fmtDay(localDay(o.worst.t)).slice(0, 5) + ' ' + esc(o.worst.hm) : ''],
       ['Trajets dépassant de ' + esc(P.overAlert || 30) + ' km/h ou plus', o => f0(o.nOver), o => o.nOver, 'n'], ['Trajets', o => f0(o.trips), null, 'n']]);
-  $('#page').innerHTML = `<div class="head"><h1>Conduite</h1><div class="sub">Du plus dangereux au plus sûr. Chiffres bruts : événements détectés par le boîtier Geotab (règles de conduite, une seule version par règle), vitesse du capteur du véhicule, limite de la route fournie par Geotab. Classés : au moins ${esc(P.kmMin || 20)} km.</div></div>
+  $('#page').innerHTML = `<div class="head"><h1>Conduite</h1><div class="sub">Du plus dangereux au plus sûr. Chiffres bruts : événements détectés par le boîtier Geotab (règles de conduite, une seule version par règle), vitesse du capteur du véhicule, limite de la route fournie par Geotab. Classés : au moins ${esc(P.kmMin || 20)} km.</div>
+      <button id="cdpdf">Télécharger le PDF</button></div>
     ${periodBar(go)}
     ${cards([['Le plus dangereux', ranked[0] ? esc(ranked[0].nom) : '—', 'crit'], ['Son score /100 km', ranked[0] ? f1(ranked[0].score) : ''], ['Le plus sûr', ranked.length ? esc(ranked[ranked.length - 1].nom) : '—', 'ok'],
       ['Son score /100 km', ranked.length ? f1(ranked[ranked.length - 1].score) : ''], ['Chauffeurs classés', ranked.length + ' / ' + list.length], ['Km analysés', f0(kmT)], ['Événements de conduite', f0(evT)]])}
     ${svgBars(ranked.map(o => ({ label: o.nom + ' (' + (o.shift === 'Jour' ? 'jour' : 'nuit') + ')', value: Math.max(o.score, 0.5), color: LVL_COLOR[o.level], text: f1(o.score) + ' pts' })), { title: 'Score par chauffeur' })}
     <h2>Classement par shift (1 = le plus dangereux du shift)</h2>${shiftSections(ranked, o => o.shift, (sub, sfx) => table('tcond' + sfx, cols(true), sub))}
     ${small.length ? `<h2>Non classés : moins de ${esc(P.kmMin || 20)} km (pour information)</h2>${shiftSections(small, o => o.shift, (sub, sfx) => table('tcond2' + sfx, cols(false), sub))}` : ''}`;
+  $('#cdpdf').onclick = () => { try {
+    const tabs = [];
+    SHIFTS.forEach(sh => { const nm = sh ? shiftName(sh, P) : 'Hors contrat', a = ranked.filter(o => (o.shift || '') === sh), b = small.filter(o => (o.shift || '') === sh);
+      if (a.length) tabs.push(colsTable('Classement conduite : ' + nm + ' (1 = le plus dangereux)', cols(true), a));
+      if (b.length) tabs.push(colsTable('Non classés, moins de ' + (P.kmMin || 20) + ' km : ' + nm, cols(false), b)); });
+    reportPdf(rptSimple({ kind: 'conduite', title: 'Conduite des chauffeurs', period: p.from === p.to ? 'du ' + fmtDay(p.from) : 'du ' + fmtDay(p.from) + ' au ' + fmtDay(p.to), from: p.from, to: p.to,
+      agency: agFilter() ? S.agName[agFilter()] : 'Toutes les agences',
+      summary: [['Le plus dangereux', ranked[0] ? ranked[0].nom + ' (' + f1(ranked[0].score) + ' /100 km)' : '—'], ['Le plus sûr', ranked.length ? ranked[ranked.length - 1].nom + ' (' + f1(ranked[ranked.length - 1].score) + ' /100 km)' : '—'],
+        ['Chauffeurs classés', ranked.length + ' / ' + list.length], ['Km analysés', f0(kmT)], ['Événements de conduite', f0(evT)],
+        ['Sources', 'événements du boîtier Geotab, vitesse du capteur du véhicule, limite de la route fournie par Geotab']], tables: tabs }));
+  } catch (e) { alert('PDF impossible : ' + e.message); } };
 }
 
 // ---------- FICHE VÉHICULE ----------
@@ -434,7 +446,7 @@ async function pageFicheChauffeur() {
   const pleins = fuel.filter(f => f.type === 'PLEIN' && f.driver_code === code), siph = fuel.filter(f => f.type === 'SIPHONAGE_SUSPECT' && (f.driver_code === code || f.next_driver === nom));
   $('#page').innerHTML = `<div class="head"><h1>Compte rendu : ${esc(nom)}</h1><div class="sub">Code client ${esc(code)}${d.phone ? ' · Tél. ' + esc(d.phone) : ''}${d.agency_id ? ' · agence ' + agTxt(d.agency_id) : ''} ·
       ${mine.length ? 'du ' + fmtDay(mine[0].day) + ' au ' + fmtDay(mine[mine.length - 1].day) + ' (données conservées)' : 'aucune journée de travail'} · ${Object.keys(all0.ctr).length} contrats · véhicules ${esc(Object.keys(all0.plates).join(', '))}</div>
-      <button id="cprint" class="ghost">Imprimer / PDF</button></div>
+      <button id="cprint" class="ghost">Imprimer / PDF</button> <a class="btnlink" href="#/comportement?c=${encodeURIComponent(code)}">Comportement entre deux dates (PDF, e-mail)</a></div>
     ${cards([['Classement danger', pos >= 0 ? (pos + 1) + ' / ' + rk.length + ' (' + esc(rk[pos].level) + ')' : '—'], ['Score /100 km', f1(scoreOf(all0, P))], ['Km', f0(all0.km)], ['Heures sous contrat', fH(all0.ctrH)],
       ['Conduite', fH(all0.drive)], ['Ralenti', fH(all0.idle)], ['dont prolongé', fH(all0.idleLong) + ' (' + all0.nLong + ')', all0.idleLong ? 'crit' : ''], ['Carburant mesuré', all0.fuelN ? f1(all0.fuel) + ' L' : NM],
       ['Consommation', all0.l100 !== null ? f1(all0.l100) + ' L/100' : NM], ['Vmax', f0(all0.vmax) + ' km/h'], ['Événements', f0(all0.evts)], ['Siphonages suspects', f0(all0.siph), all0.siph ? 'crit' : ''], ['Alertes', f0(al.length)]])}
@@ -491,4 +503,93 @@ async function liveDrivers(live) {
       ['Pire dépassement', o => o.worst === null ? '' : '+' + f0(o.worst), o => o.worst || 0, 'n'], ['Événements', o => o.evts, null, 'n'],
       ['Score /100 km', o => o.km >= num(P.kmMin, 20) ? badge(f1(o.score), LEVEL_CLS[o.level]) : '<span class="small">trop peu de km</span>', o => o.score, 'n']], sub), { empty: 'Aucun chauffeur sous contrat en ce moment' })}
     <div class="sub">Trajets terminés (contact coupé) : mis à jour toutes les ${esc(P.liveMin || 5)} min ; le trajet en cours est ajouté à la coupure du contact.</div>`;
+}
+
+// ---------- COMPORTEMENT CHAUFFEUR : profil et historique entre deux dates, PDF, envoi par e-mail ----------
+function compInputs() {
+  let c = null; try { c = JSON.parse(localStorage.getItem('comp') || 'null'); } catch (e) { }
+  const q = qs(), t = today();
+  return { c: q.get('c') || (c && c.c) || '', from: (c && c.from) || addDays(t, -29), to: (c && c.to) || t };
+}
+/** Toutes les données du chauffeur sur la période (droits de la base : agences), puis le rapport partagé rptDriver (site/report.js) */
+async function driverReport(code, from, to) {
+  const P = S.P, dr = q => q.eq('driver_code', code).gte('day', from).lte('day', to);
+  const [drv, jrn, trips, evts, fuel, stops, idles, al, rankJ] = await Promise.all([
+    sb.from('drivers').select('*').eq('code', code).maybeSingle(),
+    all('journal', '*', dr),
+    all('trips', 'id,vehicle_key,plate,day,start_at,km,vmax,lim_at_vmax,worst_over,speed_at_worst,lim_at_worst,worst_time,fuel_l,idle_fuel_l,driver_code', dr),
+    all('events', 'id,vehicle_key,plate,day,start_at,dur_s,km,rule_id,rule_name,driver_code', dr),
+    all('fuel', '*', q => q.gte('day', from).lte('day', to).in('type', ['PLEIN', 'SIPHONAGE_SUSPECT'])),
+    all('engine_stops', '*', dr).catch(() => null),
+    all('idles', '*', dr),
+    all('alerts', '*', dr),
+    all('journal', 'id,driver_code,day,km,danger_pts', q => q.gte('day', from).lte('day', to))]);
+  const ok = inAgency(), mine = r => ok(r.vehicle_key), d = drv.data || {};
+  return rptDriver({ driver: { code, name: d.name || drvName(code), phone: d.phone, email: d.email, agency: d.agency_id ? S.agName[d.agency_id] : '' },
+    journal: jrn.filter(mine), trips: trips.filter(mine), events: evts.filter(mine), fuel: fuel.filter(mine), stops: stops ? stops.filter(mine) : null, idles: idles.filter(mine),
+    alerts: al.filter(mine), rules: S.rules, P, from, to, rankJournal: rankJ.filter(mine), dayOf: localDay, hmOf: localHM, generatedAt: new Date() });
+}
+async function pageComportement() {
+  const inp = compInputs(), P = S.P;
+  const codes = Object.keys(S.drv).filter(c => c !== HORS).sort((a, b) => String(S.drv[a]).localeCompare(String(S.drv[b])));
+  const lbl = c => (S.drv[c] || c) + ' (' + c + ')';
+  const head = `<div class="head"><h1>Comportement chauffeur</h1><div class="sub">Profil et historique complet d'un chauffeur entre deux dates (journées de travail de ses contrats) : conduite, vitesse, événements Geotab, consommation, pleins, ralenti, alertes. PDF et envoi par e-mail. Rien n'est estimé.</div></div>
+    <div class="bar"><label>Chauffeur <input id="cdrv" list="cdrvl" value="${esc(inp.c ? lbl(inp.c) : '')}" placeholder="Nom ou code client" autocomplete="off" size="34"></label>
+      <datalist id="cdrvl">${codes.map(c => `<option value="${esc(lbl(c))}"></option>`).join('')}</datalist>
+      <label>Du <input type="date" id="cfrom" value="${esc(inp.from)}"></label><label>au <input type="date" id="cto" value="${esc(inp.to)}"></label><button id="cgo">Afficher</button></div>`;
+  const bind = () => {
+    $('#cgo').onclick = () => {
+      const v = $('#cdrv').value.trim(), m = v.match(/\(([^()]+)\)\s*$/), code = m ? m[1] : codes.find(c => c === v || String(S.drv[c]).toLowerCase() === v.toLowerCase()) || '';
+      const f = $('#cfrom').value, t = $('#cto').value;
+      if (!code) { alert('Chauffeur inconnu : choisissez-le dans la liste.'); return; }
+      if (!f || !t || f > t) { alert('Période invalide.'); return; }
+      try { localStorage.setItem('comp', JSON.stringify({ c: code, from: f, to: t })); } catch (e) { }
+      if (qs().get('c') && qs().get('c') !== code) location.hash = '#/comportement'; else go();
+    };
+  };
+  if (!inp.c) { $('#page').innerHTML = head + msg('Choisissez un chauffeur et une période, puis « Afficher ».'); bind(); return; }
+  const rep = await driverReport(inp.c, inp.from, inp.to), a = rep.agg;
+  const days = {};
+  // un point par journée de travail : score de la journée (journal du collecteur)
+  (await all('journal', 'id,day,km,danger_pts,score,vehicle_key', q => q.eq('driver_code', inp.c).gte('day', inp.from).lte('day', inp.to))).filter(r => inAgency()(r.vehicle_key))
+    .forEach(r => { const x = days[r.day] = days[r.day] || { km: 0, pts: 0 }; x.km += num(r.km); x.pts += num(r.danger_pts); });
+  const dk = Object.keys(days).sort(), sc = x => x.pts / Math.max(x.km, num(P.kmMin, 20)) * 100;
+  const initials = String(S.drv[inp.c] || inp.c).split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const sum = Object.fromEntries(rep.summary);
+  $('#page').innerHTML = head + `
+    <div class="dprof">
+      <div class="dav" aria-hidden="true">${esc(initials)}</div>
+      <div class="did"><h2>${esc(rep.title.replace('Comportement du chauffeur : ', ''))}</h2>
+        <div class="sub">${esc(rep.agency)} · ${esc(sum['Téléphone / e-mail'])} · ${esc(rep.period)}</div>
+        <div class="dlinks"><a href="#/chauffeur?c=${encodeURIComponent(inp.c)}">Fiche chauffeur (toutes ses données conservées)</a></div></div>
+      <div class="dlevel">${rep.level ? badge(rep.level, LEVEL_CLS[rep.level]) : ''}<div class="small">${esc(sum['Rang au classement (1 = le plus dangereux)'] !== '-' ? 'Rang ' + sum['Rang au classement (1 = le plus dangereux)'] : '')}</div></div>
+      <div class="dact"><button id="cpdf">Télécharger le PDF</button>
+        ${canEdit() ? `<div class="dmail"><input type="email" id="cmail" placeholder="adresse e-mail" value="${esc((S.session && S.session.user && S.session.user.email) || '')}"><button id="csend" class="ghost">Envoyer par e-mail</button></div><div id="cmailst" class="small" aria-live="polite"></div>` : ''}</div>
+    </div>
+    ${cards([['Km', f0(a.km)], ['Conduite', fH(a.drive)], ['Ralenti', fH(a.idle), a.idleLong ? 'warn' : ''], ['Carburant', a.fuelN ? f1(a.fuel) + ' L' : NM],
+      ['L/100 km', a.l100 !== null ? f1(a.l100) : NM], ['Événements', f0(a.evts)], ['Score /100 km', rep.score != null ? f1(rep.score) : '—', rep.level ? LEVEL_CLS[rep.level] : ''],
+      ['Pleins', esc(sum['Pleins détectés'].split(' ')[0])], ['Alertes', esc(String(sum['Alertes']).match(/\d+/g).reduce((t, x) => t + +x, 0))]])}
+    <div class="grid2">
+      <div><h2>Score de danger par journée</h2>${svgBars(dk.map(k => { const s = sc(days[k]), lv = levelOf(s, P); return { label: fmtDay(k), value: Math.max(s, 0.3), color: LVL_COLOR[lv], text: f1(s) + ' · ' + f0(days[k].km) + ' km' }; }), { title: 'Score par journée', empty: 'Aucune journée de travail' })}</div>
+      <div><h2>Km par journée</h2>${svgBars(dk.map(k => ({ label: fmtDay(k), value: days[k].km, text: f1(days[k].km) + ' km' })), { title: 'Km par journée', empty: 'Aucune journée de travail' })}</div>
+    </div>
+    <div class="panel rptview">${rptHtml(rep)}</div>`;
+  bind();
+  $('#cpdf').onclick = () => { try { reportPdf(rep); } catch (e) { alert('PDF impossible : ' + e.message); } };
+  const sb2 = $('#csend');
+  if (sb2) sb2.onclick = async () => {
+    const to = $('#cmail').value.trim(), st = $('#cmailst');
+    if (!/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(to)) { st.textContent = 'Adresse e-mail invalide.'; return; }
+    sb2.disabled = true; st.textContent = 'Demande envoyée au collecteur (PDF préparé et envoyé dans les 5 min)…';
+    try {
+      const id = await job('driver_report', JSON.stringify({ code: inp.c, from: inp.from, to: inp.to, email: to }));
+      for (let i = 0; i < 80; i++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const { data } = await sb.from('jobs').select('done_at,result').eq('id', id).maybeSingle();
+        if (data && data.done_at) { st.textContent = /^Erreur|impossible/i.test(data.result || '') ? data.result : 'Envoyé : ' + (data.result || to); break; }
+        if (!$('#cmailst')) return;
+      }
+    } catch (e) { st.textContent = 'Erreur : ' + e.message; }
+    sb2.disabled = false;
+  };
 }

@@ -61,15 +61,19 @@ async function fleet(deps, ids) {
   // véhicules demandés par tous les écrans (toutes agences) : un seul appel les couvre tous, le cache sert à chacun
   ids.forEach(id => { mem.ids[id] = 1; }); ids = Object.keys(mem.ids);
   const p = mem.pending = (async () => {
-    const iso = new Date(now).toISOString(), calls = [{ method: 'Get', params: { typeName: 'DeviceStatusInfo' } },
-      // événements des règles Geotab (excès de vitesse, freinages, accélérations, virages, ceinture, collision) de toute la flotte
-      { method: 'Get', params: { typeName: 'ExceptionEvent', search: { fromDate: new Date(now - EVENTS_MIN * 60000).toISOString() } } }];
-    // contact : dernière valeur connue (même date de début et de fin = valeur en vigueur à cet instant)
-    ids.forEach(id => calls.push({ method: 'Get', params: { typeName: 'StatusData', search: { deviceSearch: { id }, diagnosticSearch: { id: 'DiagnosticIgnitionId' }, fromDate: iso, toDate: iso } } }));
-    const res = await geo(deps, 'ExecuteMultiCall', { calls }), out = {};
-    ids.forEach((id, i) => { out[id] = { dsi: null, ign: (res[2 + i] || []).slice(-1)[0] || null, evts: [] }; });
-    (res[0] || []).forEach(d => { const id = d.device && d.device.id; if (id in out) out[id].dsi = d; });
-    (res[1] || []).forEach(e => { const id = e.device && e.device.id; if (id in out && e.state !== 'ExceptionEventStateInvalidId' && e.state !== 1) out[id].evts.push(e); });
+    // une demande par véhicule (état, événements des 30 dernières minutes, contact) : la base Geotab contient d'autres
+    // boîtiers que les nôtres, une demande « toute la base » était lente (plus de 20 s)
+    const iso = new Date(now).toISOString(), from = new Date(now - EVENTS_MIN * 60000).toISOString(), calls = [];
+    ids.forEach(id => calls.push(
+      { method: 'Get', params: { typeName: 'DeviceStatusInfo', search: { deviceSearch: { id } } } },
+      // événements des règles Geotab (excès de vitesse, freinages, accélérations, virages, ceinture, collision)
+      { method: 'Get', params: { typeName: 'ExceptionEvent', search: { deviceSearch: { id }, fromDate: from, toDate: iso } } },
+      // contact : dernière valeur connue (même date de début et de fin = valeur en vigueur à cet instant)
+      { method: 'Get', params: { typeName: 'StatusData', search: { deviceSearch: { id }, diagnosticSearch: { id: 'DiagnosticIgnitionId' }, fromDate: iso, toDate: iso } } }));
+    const t0 = Date.now(), res = await geo(deps, 'ExecuteMultiCall', { calls }), out = {};
+    mem.geoMs = Date.now() - t0;
+    ids.forEach((id, i) => { out[id] = { dsi: (res[3 * i] || [])[0] || null, ign: (res[3 * i + 2] || []).slice(-1)[0] || null,
+      evts: (res[3 * i + 1] || []).filter(e => e.state !== 'ExceptionEventStateInvalidId' && e.state !== 1) }; });
     mem.data = out; mem.at = now; return out;
   })();
   try { return await p; } finally { if (mem.pending === p) mem.pending = null; }
@@ -184,7 +188,7 @@ export async function handle(req, deps) {
     veh.forEach(v => ((f[v.geotab_id] || {}).evts || []).forEach(e => events.push({ id: String(e.id), key: v.key, plate: v.plate,
       rule: e.rule && e.rule.id ? String(e.rule.id) : '', at: e.activeFrom, end: e.activeTo || null, dur_min: durMin(e.duration), km: e.distance != null ? +e.distance : null })));
     events.sort((a, b) => String(b.at).localeCompare(String(a.at)));
-    return json(200, { at: nowIso, vehicles, events });
+    return json(200, { at: nowIso, vehicles, events, geo_ms: mem.geoMs });
   } catch (e) {
     return json(e.status || 502, { error: 'Geotab : ' + e.message });
   }
