@@ -1,7 +1,7 @@
 {
   "name": "flotte-geotab",
   "private": true,
-  "description": "Supervision de la flotte (Geotab) : collecteur Apps Script, base Supabase, site Netlify",
+  "description": "Supervision de la flotte (Geotab) : collecteur Apps Script, base Supabase, site Cloudflare Pages",
   "scripts": {
     "build": "node collector/build.js",
     "check": "node scripts/check.js",

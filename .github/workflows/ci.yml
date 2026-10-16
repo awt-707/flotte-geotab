@@ -65,7 +65,7 @@ jobs:
     timeout-minutes: 10
     environment: production
     env:
-      NETLIFY_SITE_ID: 00645516-06e7-4f1a-b209-7a9065244464
+      CF_PROJECT: ludy-flotte
       SUPABASE_URL: https://cgiiwumbblimvmrypxlc.supabase.co
     steps:
       - uses: actions/checkout@v4
@@ -73,17 +73,17 @@ jobs:
         with:
           node-version: 22
       # chaque partie est publiée même si une autre échoue (le travail reste en échec, avec la raison)
-      - name: Site (Netlify)
+      # site : Cloudflare Pages (gratuit, publication directe des fichiers de site/, en-têtes de site/_headers) ;
+      # Netlify abandonné le 16/10/2026 (crédit du compte épuisé : publications bloquées)
+      - name: Site (Cloudflare Pages)
         env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then echo "::warning::Secret NETLIFY_AUTH_TOKEN absent : site non publié (voir README)"; exit 0; fi
-          (cd site && zip -qr ../site.zip .)
-          # en cas de refus, le message de Netlify est affiché (ex. 403 : jeton refusé ou publications bloquées sur le compte)
-          code=$(curl -sS -o deploy.json -w '%{http_code}' -X POST -H "Authorization: Bearer $NETLIFY_AUTH_TOKEN" -H "Content-Type: application/zip" \
-            --data-binary @site.zip "https://api.netlify.com/api/v1/sites/$NETLIFY_SITE_ID/deploys?title=$(git log -1 --format=%h)")
-          if [ "$code" -ge 300 ]; then echo "::error::Netlify a refusé la publication du site (HTTP $code) : $(head -c 500 deploy.json)"; exit 1; fi
-          node -e "const d=require('./deploy.json');console.log('Site publié :',d.state,d.ssl_url||d.url)"
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then echo "::warning::Secrets CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID absents : site non publié (voir README)"; exit 0; fi
+          # projet créé au premier passage (ensuite il existe déjà : message ignoré)
+          npx --yes wrangler@4.147.0 pages project create "$CF_PROJECT" --production-branch main || true
+          npx --yes wrangler@4.147.0 pages deploy site --project-name "$CF_PROJECT" --branch main --commit-hash "$(git rev-parse HEAD)" --commit-message "$(git log -1 --format=%s | head -c 200)"
       - name: Collecteur (installé automatiquement par Apps Script au passage suivant)
         if: ${{ !cancelled() }}
         env:
