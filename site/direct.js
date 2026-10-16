@@ -333,6 +333,7 @@ function renderDetail(d, a, j, t0, t1) {
   let above = 0, known = false;
   for (let i = 0; i + 1 < spd.length; i++) { const p = spd[i], q = spd[i + 1], x0 = Math.max(p[0], t0), x1 = Math.min(q[0], t1); if (x1 <= x0) continue;
     const l = limitAt(road, p[0]); if (l) { known = true; if (p[1] > l) above += x1 - x0; } }
+  if (!known && lim) known = true;   // événement instantané (freinage, virage) : limite connue, 0 s au-dessus
   const near = t => { let b = null; gps.forEach(p => { if (!b || Math.abs(p[0] - t) < Math.abs(b[0] - t)) b = p; }); return b; };
   const at = pk ? near(pk[0]) : near(t0);
   const c = [['Vitesse max ' + (src === 'capteur' ? '(capteur du véhicule)' : '(GPS)'), pk ? `<b>${f0(pk[1])} km/h</b> à ${esc(fmtHMS(pk[0]).slice(6))}` : `<span class="nm">${NM}</span>`],
