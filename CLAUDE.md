@@ -81,6 +81,8 @@ Ajouté le 16/10/2026 (nuit) :
 
 Ajouté le 16/10/2026 (jour) : **chauffeurs séparés en shift jour / shift nuit partout** (demande d'Ahmed) : site (`shiftOf`, `shiftName` dans `lib.js` ; `shiftSections`, `contractShifts`, `alertShift` dans `app.js`) et rapports PDF (`rptShift`, `rptSplit` dans `report.js` ; le collecteur passe `hmOf: localHM_` et `ctrShift`). Shift = heure de début du contrat, début de shift le plus proche (`shiftDay` 7 h, `shiftNight` 19 h) ; sans contrat : « Hors contrat ». `driver_rule_counts` renvoie aussi `contract_num` (migration `20261020000000_shifts.sql`, exécutée le 16/10). Test : `tests/shift.test.js`.
 
+Corrigé le 16/10/2026 (après-midi) : **pleins de la nuit non détectés** (signalé par Ahmed : pleins du 16/10 vers 02:30 et 05:15). Les pleins viennent des FillUp Geotab, calculés par Geotab après coup ; la collecte en direct ne relit que 3 h en arrière (`LIVE_EVBACK`), donc un FillUp publié plus tard n'apparaissait qu'à la finalisation (lendemain ~13 h). `collector/src/18_fills.gs` (`liveFills_`, à côté du moteur v6) relit à chaque passage les FillUp d'hier et d'aujourd'hui (journées non finalisées), lignes provisoires identiques à la finalisation. Test : `tests/pleins.test.js` (faux Geotab : FillUp visibles 6 h après le plein, `__FILL_DELAY_MS`).
+
 Reste à faire (par Ahmed, secrets et autorisations) :
 0. Supabase > SQL Editor : exécuter `supabase/migrations/20261016000000_agences.sql` (fait), puis `20261017000000_arrets_moteur.sql`, `20261018000000_relais_direct.sql`, `20261019000000_securite.sql` et `20261020000000_shifts.sql` (tous faits, 16/10).
 0 bis. Relais en direct : secrets `GEO_USER` / `GEO_PWD` dans Supabase > Edge Functions > Secrets ; secret GitHub `SUPABASE_ACCESS_TOKEN`.

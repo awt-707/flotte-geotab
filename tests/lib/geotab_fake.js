@@ -29,7 +29,8 @@ function get(p) {
     case 'ExceptionEvent': return id ? all(id, 'exc').filter(e => inR(e.activeFrom, s))
       : fx.devices.flatMap(d => all(d.id, 'exc').filter(e => ms(e.activeFrom) >= ms(s.fromDate) && ms(e.activeFrom) <= (s.toDate ? ms(s.toDate) : (global.__NOW || Date.now()))).map(e => Object.assign({ device: { id: d.id } }, e)));
     case 'LogRecord': return all(id, 'logs').filter(l => inR(l[0], s)).map(l => ({ dateTime: l[0], speed: l[1], latitude: l[2], longitude: l[3] }));
-    case 'FillUp': return all(id, 'fills').filter(f => inR(f.dateTime, s));
+    // Geotab calcule ses pleins après coup : global.__FILL_DELAY_MS les cache tant qu'ils sont plus récents que ce délai
+    case 'FillUp': return all(id, 'fills').filter(f => inR(f.dateTime, s) && ms(f.dateTime) <= (global.__NOW || Date.now()) - (global.__FILL_DELAY_MS || 0));
     case 'StatusData': {
       if (!s.diagnosticSearch) return [];
       const arr = sd(id, s.diagnosticSearch.id);
