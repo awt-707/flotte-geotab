@@ -187,7 +187,7 @@ function liveAlertOf(e) {
   const c = contractAt(e.key, new Date(e.at).getTime());
   return { id: 'EV|' + e.id, vehicle_key: e.key, plate: e.plate, at: e.at, severity: LIVE_SEV[cat] || 'Moyenne', type: LIVE_TYPE[cat] || rl.name || 'Événement de conduite',
     detail: (rl.name || e.rule) + (e.dur_min != null ? ' · ' + Math.round(e.dur_min * 60) + ' s' : '') + (e.km ? ' · ' + f1(e.km) + ' km' : ''),
-    driver_name: c ? c.name : 'Hors contrat', contract_num: c ? c.num : '' };
+    driver_name: c ? c.name : 'Hors contrat', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
 }
 function processLive(j) {
   const now = Date.now(), lim = num(S.P.vmaxAlert, 130), fresh = [];
@@ -196,7 +196,7 @@ function processLive(j) {
     if (v.state === 'En route' && v.speed >= lim) {
       if (LIVE.fast[v.key]) { const a = LIVE.alerts.find(x => x.id === LIVE.fast[v.key]); if (a && v.speed > a.vmax) { a.vmax = v.speed; a.detail = 'Vitesse max ' + v.speed + ' km/h (seuil ' + lim + ')'; } return; }
       const c = contractAt(v.key, now), a = { id: 'VIT|' + v.key + '|' + (v.at || now), vehicle_key: v.key, plate: v.plate, at: v.at || new Date(now).toISOString(), severity: 'Haute',
-        type: 'Vitesse excessive', vmax: v.speed, detail: v.speed + ' km/h (seuil ' + lim + ')', driver_name: c ? c.name : 'Hors contrat', contract_num: c ? c.num : '' };
+        type: 'Vitesse excessive', vmax: v.speed, detail: v.speed + ' km/h (seuil ' + lim + ')', driver_name: c ? c.name : 'Hors contrat', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
       LIVE.fast[v.key] = a.id; LIVE.alerts.push(a); fresh.push(a);
     } else if (v.state !== 'En route' || v.speed < lim - 10) delete LIVE.fast[v.key];   // 10 km/h de marge : pas d'alerte à répétition autour du seuil
   });
@@ -210,7 +210,7 @@ function liveAlertsHtml() {
   const list = LIVE.alerts.filter(a => inAgency()(a.vehicle_key));
   return `<h2>Alertes en direct <span class="small">(30 dernières minutes, à l'instant où Geotab les signale)</span></h2>` + table('tlal', [['Heure', a => fmtHMS(a.at), a => a.at],
     ['Gravité', a => badge(a.severity, GRAV_CLS[a.severity]), a => ['Critique', 'Haute', 'Moyenne', 'Info'].indexOf(a.severity)], ['Infraction', a => `<b>${esc(a.type)}</b>`],
-    ['Véhicule', a => vlink(a.vehicle_key, a.plate)], ['Chauffeur sous contrat', a => a.contract_num ? esc(a.driver_name) : '<span class="nm">Hors contrat</span>'],
+    ['Véhicule', a => vlink(a.vehicle_key, a.plate)], ['Chauffeur sous contrat', a => a.contract_num ? esc(a.driver_name) : '<span class="nm">Hors contrat</span>'], ['Shift', a => a.contract_num ? shiftBadge(a.shift) : '', a => a.shift || 'z'],
     ['Contrat', a => esc(a.contract_num || '')], ['Détail', a => esc(a.detail)]], list, { empty: 'Aucune infraction ces 30 dernières minutes' });
 }
 /** Contrat en cours sur le véhicule à l'instant t (même règle que le collecteur : contrat qui couvre t, sinon le plus proche
@@ -237,10 +237,10 @@ function liveRows() {
   const extra = Object.values(LIVE.pos).filter(g => !have[g.key] && ok(g.key)).map(g => ({ vehicle_key: g.key, plate: g.plate, model: (S.veh[g.key] || {}).model || '' }));
   return LIVE.rows.concat(extra).map(r => {
     const g = LIVE.pos[r.vehicle_key], c = contractAt(r.vehicle_key, now);
-    const who = { driver_name: c ? c.name : 'Hors contrat', contract_num: c ? c.num : '', driver_code: c ? c.client_code : HORS };
+    const who = { driver_name: c ? c.name : 'Hors contrat', contract_num: c ? c.num : '', driver_code: c ? c.client_code : HORS, shift: c ? shiftOf(c.start_at, S.P) : '' };
     return g && g.state ? Object.assign({}, r, who, { state: g.state, speed: g.speed, since_min: g.since_min,
       last_pos_at: g.at || r.last_pos_at, lat: g.lat != null ? g.lat : r.lat, lon: g.lon != null ? g.lon : r.lon, live: 1 }) : Object.assign({}, r, who); })
-    .sort((a, b) => (LIVE_ORDER[a.state] ?? 9) - (LIVE_ORDER[b.state] ?? 9) || String(a.plate).localeCompare(String(b.plate)));
+    .sort((a, b) => SHIFTS.indexOf(a.shift || '') - SHIFTS.indexOf(b.shift || '') || (LIVE_ORDER[a.state] ?? 9) - (LIVE_ORDER[b.state] ?? 9) || String(a.plate).localeCompare(String(b.plate)));   // shift jour, puis nuit, puis hors contrat
 }
 function fmtHMS(d) { if (!d) return ''; const p = parts(d); return p.day + '/' + p.month + ' ' + p.hour + ':' + p.minute + ':' + p.second; }
 function directParts(rows) {
@@ -252,7 +252,8 @@ function directParts(rows) {
       ['Plaque', r => `<a class="fl" href="#/vehicule?k=${encodeURIComponent(r.vehicle_key)}">${plate(r.plate, S.veh[r.vehicle_key] && S.veh[r.vehicle_key].other_plates)}</a>`, r => r.plate],
       ['Modèle', r => esc(r.model)], ['État', r => badge(r.state, (STATE_CLS[r.state] || '') + ' dot'), r => LIVE_ORDER[r.state] ?? 9],
       ['Vitesse', r => r.speed ? f0(r.speed) + ' km/h' : '', r => r.speed, 'n'], ['Depuis', r => r.since_min != null ? fH(r.since_min / 60) : '', r => r.since_min, 'n'],
-      ['Dernière position', r => r.live ? fmtHMS(r.last_pos_at) : fmtDT(r.last_pos_at), r => r.last_pos_at], ['Chauffeur sous contrat (maintenant)', r => r.contract_num ? dlink(r.driver_code, r.driver_name) : '<span class="nm">Hors contrat</span>', r => r.driver_name], ['Contrat', r => esc(r.contract_num || '')],
+      ['Dernière position', r => r.live ? fmtHMS(r.last_pos_at) : fmtDT(r.last_pos_at), r => r.last_pos_at], ['Chauffeur sous contrat (maintenant)', r => r.contract_num ? dlink(r.driver_code, r.driver_name) : '<span class="nm">Hors contrat</span>', r => r.driver_name],
+      ['Shift', r => r.contract_num ? shiftBadge(r.shift) : '', r => r.shift || 'z'], ['Contrat', r => esc(r.contract_num || '')],
       ['Km aujourd\'hui', r => f1(r.km_today), r => r.km_today, 'n'], ['Conduite', r => r.drive_min_today == null ? '' : fH(r.drive_min_today / 60), r => r.drive_min_today, 'n'],
       ['Ralenti', r => r.idle_min_today == null ? '' : fH(r.idle_min_today / 60), r => r.idle_min_today, 'n'], ['Carburant (L)', r => r.fuel_l_today === null ? `<span class="nm">${NM}</span>` : f1(r.fuel_l_today), r => r.fuel_l_today, 'n'],
       ['Alertes du jour', r => r.alerts_today ? `<a href="#/alertes?plaque=${encodeURIComponent(r.plate)}&jour=${today()}">${r.alerts_today}</a>` : '0', r => r.alerts_today, 'n'],
@@ -352,9 +353,10 @@ async function pageTableau() {
   const crit = cnt(x => x.severity === 'Critique'), high = cnt(x => x.severity === 'Haute'), ntne = tne.count || 0;
   const byV = aggJournal(jrn, r => r.vehicle_key, P);
   const vrows = S.vehList.filter(v => v.active !== 'NON' && ok(v.key)).map(v => ({ v, a: byV[v.key] || emptyAgg(), al: cnt(x => x.vehicle_key === v.key) }));
-  const byD = aggJournal(jrn.filter(r => r.driver_code !== HORS), r => r.driver_code, P);
-  const drows = Object.values(byD).map(a => { const sc = scoreOf(a, P); return { a, code: a.k, nom: S.drv[a.k] || Object.keys(a.names)[0] || a.k, score: sc, level: levelOf(sc, P) }; })
-    .sort((x, y) => y.score - x.score || y.a.pts - x.a.pts).slice(0, 15);
+  const byD = aggJournal(jrn.filter(r => r.driver_code !== HORS), r => shiftOf(r.contract_start, P) + '|' + r.driver_code, P);
+  const drows0 = Object.values(byD).map(a => { const [sh, code] = a.k.split('|'), sc = scoreOf(a, P); return { a, sh, code, nom: S.drv[code] || Object.keys(a.names)[0] || code, score: sc, level: levelOf(sc, P) }; })
+    .sort((x, y) => y.score - x.score || y.a.pts - x.a.pts);
+  const drows = SHIFTS.flatMap(s => drows0.filter(d => d.sh === s).slice(0, 10));   // 10 plus dangereux de chaque shift
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Tableau de bord</h1><div class="sub">Données mesurées par Geotab uniquement, « ${NM} » quand Geotab ne fournit pas la valeur.</div></div>
     ${periodBar(go)}
@@ -373,21 +375,44 @@ async function pageTableau() {
       ['Pire dépassement', x => x.a.worst === null ? '' : '+' + f0(x.a.worst), x => x.a.worst || 0, 'n'], ['Événements', x => x.a.evts, null, 'n'],
       ['Score /100 km', x => f1(scoreOf(x.a, P)), x => scoreOf(x.a, P), 'n'], ['Siphonages suspects', x => x.a.siph ? `<b class="red">${x.a.siph}</b>` : '0', x => x.a.siph, 'n'],
       ['Km hors contrat', x => x.a.kmHors ? `<b class="red">${f1(x.a.kmHors)}</b>` : '0', x => x.a.kmHors, 'n'], ['Alertes', x => x.al, null, 'n']], vrows)}
-    <h2>Chauffeurs les plus dangereux <a class="more" href="#/chauffeurs">Voir le classement complet</a></h2>
-    ${table('tdrv', [['Rang', (d) => drows.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${dlink(d.code, d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
+    <h2>Chauffeurs les plus dangereux, par shift <a class="more" href="#/chauffeurs">Voir le classement complet</a></h2>
+    ${shiftSections(drows, d => d.sh, (sub, sfx) => table('tdrv' + sfx, [['Rang', (d) => sub.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${dlink(d.code, d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
       ['Niveau', d => badge(d.level, LEVEL_CLS[d.level]), d => d.score], ['Score /100 km', d => f1(d.score), d => d.score, 'n'], ['Événements', d => d.a.evts, null, 'n'],
       ['Km', d => f1(d.a.km), d => d.a.km, 'n'], ['Ralenti total', d => fH(d.a.idle), d => d.a.idle, 'n'], ['dont prolongé', d => fH(d.a.idleLong), d => d.a.idleLong, 'n'],
       ['Carburant (L)', d => nmv(fuelVal(d.a)), d => d.a.fuel, 'n'], ['L/100 km', d => nmv(l100Val(d.a)), d => d.a.l100 || 0, 'n'], ['Vmax', d => f0(d.a.vmax), d => d.a.vmax, 'n'],
-      ['Siphonages suspects', d => d.a.siph, null, 'n']], drows)}
+      ['Siphonages suspects', d => d.a.siph, null, 'n']], sub))}
     <h2>Alertes critiques et hautes <a class="more" href="#/alertes">Voir toutes les alertes</a></h2>
     ${alertTable('tal', top.data || [], false)}`;
   };
   window.__rerender = render; render();
 }
 function go() { route(); }
+/** Liste découpée en Shift jour / Shift nuit / Hors contrat : un tableau par shift (id de tableau suffixé) */
+function shiftSections(items, shiftFn, renderFn, opt) {
+  opt = opt || {};
+  const out = SHIFTS.map(s => { const sub = items.filter(x => (shiftFn(x) || '') === s); if (!sub.length) return '';
+    return `<h3 class="shift ${s ? 'sh-' + s.toLowerCase() : ''}">${esc(s ? shiftName(s, S.P) : (opt.none || shiftName('')))} <span class="small">· ${sub.length} ${opt.unit || 'chauffeur' + (sub.length > 1 ? 's' : '')}</span></h3>` + renderFn(sub, s || 'HC'); }).join('');
+  return out || `<div class="empty">${opt.empty || 'Aucune donnée sur la période'}</div>`;
+}
+function shiftBadge(s) { return s ? `<span class="badge sh-${s.toLowerCase()}">${s === 'Jour' ? 'Jour' : 'Nuit'}</span>` : '<span class="small">hors contrat</span>'; }
+/** Shift de chaque contrat (début du contrat), pour les trajets, événements et arrêts qui ne portent que le n° de contrat */
+async function contractShifts(nums) {
+  S.ctrShift = S.ctrShift || {};
+  const need = [...new Set(nums.filter(n => n && !(n in S.ctrShift)))];
+  for (let i = 0; i < need.length; i += 150) {
+    const rows = await all('contracts', 'num,start_at', q => q.in('num', need.slice(i, i + 150)));
+    rows.forEach(c => { S.ctrShift[c.num] = shiftOf(c.start_at, S.P); });
+  }
+  need.forEach(n => { if (!(n in S.ctrShift)) S.ctrShift[n] = ''; });
+  return n => (n && S.ctrShift[n]) || '';
+}
 function nmv(v) { return v === NM || v === 'km insuffisants' ? `<span class="nm">${v}</span>` : v; }
+/** Shift d'une alerte : heure de l'infraction (même règle que les contrats) ; vide pour une alerte de journée sans heure */
+function alertShift(a) { if (!a.time || !a.day) return ''; const p = String(a.day).slice(0, 10).split('-').map(Number), h = String(a.time).split(':').map(Number);
+  return shiftOf(localToDate(p[0], p[1], p[2], h[0] || 0, h[1] || 0), S.P); }
 function alertTable(id, rows, editable) {
-  return table(id, [['Date', a => fmtDay(a.day), a => a.day + (a.time || '')], ['Heure', a => esc(a.time || '')], ['Plaque', a => plate(a.plate), a => a.plate], ['Chauffeur', a => esc(a.driver_name || '')],
+  return table(id, [['Date', a => fmtDay(a.day), a => a.day + (a.time || '')], ['Heure', a => esc(a.time || '')], ['Shift', a => { const s = alertShift(a); return s ? shiftBadge(s) : ''; }, a => alertShift(a)],
+    ['Plaque', a => plate(a.plate), a => a.plate], ['Chauffeur', a => esc(a.driver_name || '')],
     ['Type', a => esc(a.type)], ['Gravité', a => badge(a.severity, GRAV_CLS[a.severity]), a => ({ Critique: 0, Haute: 1, Moyenne: 2, Info: 3 }[a.severity])],
     ['Valeur', a => esc(a.value || '')], ['Détail', a => linkify(a.detail), null, 'wide'],
     ['Statut', a => editable ? `<select data-al="${esc(a.id)}" class="alst">${['À traiter', 'En cours', 'Traité', 'Faux positif'].map(s => `<option ${s === a.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(a.status), a => a.status],
@@ -410,8 +435,8 @@ async function pageJour() {
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Journée du ${fmtDay(day)}</h1><div class="sub">Chaque ligne de contrat couvre toute la journée de travail, selon les horaires du contrat.</div></div>
     <div class="bar"><label>Date <input type="date" id="jday" value="${day}"></label><button class="ghost" id="jprev">Veille</button><button class="ghost" id="jnext">Lendemain</button></div>
-    <h2>Journées de travail actives (de la plus dangereuse à la moins dangereuse)</h2>
-    ${table('tjour', [['Plaque', r => plate(r.plate), r => r.plate], ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name)], ['Contrat', r => esc(r.contract_num || 'Hors contrat')],
+    <h2>Journées de travail actives, par shift (de la plus dangereuse à la moins dangereuse)</h2>
+    ${shiftSections(rows.sort((x, y) => y.score - x.score), r => shiftOf(r.contract_start, P), (sub, sfx) => table('tjour' + sfx, [['Plaque', r => plate(r.plate), r => r.plate], ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name)], ['Contrat', r => esc(r.contract_num || 'Hors contrat')],
       ['Début', r => fmtDT(r.contract_start), r => r.contract_start], ['Fin', r => r.contract_end ? fmtDT(r.contract_end) : (r.contract_num ? 'en cours' : '')],
       ['Km', r => f1(r.km), r => r.km, 'n'], ['Conduite', r => fH(r.drive_h), r => r.drive_h, 'n'], ['Ralenti', r => fH(r.idle_h), r => r.idle_h, 'n'],
       ['dont prolongé', r => fH(r.long_idle_h), r => r.long_idle_h, 'n'], ['Carburant (L)', r => r.fuel_l === null ? `<span class="nm">${NM}</span>` : f1(r.fuel_l), r => r.fuel_l, 'n'],
@@ -419,7 +444,7 @@ async function pageJour() {
       ['Pire dépassement', r => r.worst_over === null ? '' : '+' + f0(r.worst_over), r => r.worst_over, 'n'], ['Événements', r => r.n_events, null, 'n'],
       ['Score', r => f1(r.score), r => r.score, 'n'], ['Niveau', r => r.driver_code === HORS ? '' : badge(levelOf(r.score, P), LEVEL_CLS[levelOf(r.score, P)]), r => r.score],
       ['Pleins', r => r.n_fills, null, 'n'], ['Siphonages', r => r.n_siphon ? `<b class="red">${r.n_siphon}</b>` : '0', r => r.n_siphon, 'n']],
-      rows.sort((x, y) => y.score - x.score), { empty: 'Aucune journée de travail ce jour-là' })}
+      sub), { unit: 'journées', empty: 'Aucune journée de travail ce jour-là' })}
     <h2>Arrêts moteur allumé ≥ ${P.idleLongMin} min</h2>
     ${table('tidl', [['Début', r => fmtDT(r.start_at), r => r.start_at], ['Fin', r => fmtDT(r.end_at)], ['Durée arrêt', r => fH(r.stop_min / 60), r => r.stop_min, 'n'],
       ['Moteur tournant', r => r.engine_check === 'Régime moteur' ? fH(r.engine_min / 60) : 'non vérifiable', r => r.engine_min, 'n'], ['Plaque', r => plate(r.plate), r => r.plate],
@@ -437,25 +462,31 @@ async function pageChauffeurs() {
   const p = period(), P = S.P;
   const ok = inAgency();
   const [jrn0, rc] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAll('driver_rule_counts', { p_from: p.from, p_to: p.to })]);
-  const jrn = jrn0.filter(r => ok(r.vehicle_key)), agg = aggJournal(jrn, r => r.driver_code, P), used = {}, byD = {};
+  // un chauffeur par shift : ses journées de jour et de nuit sont classées séparément
+  const jrn = jrn0.filter(r => ok(r.vehicle_key)), agg = aggJournal(jrn, r => shiftOf(r.contract_start, P) + '|' + r.driver_code, P), used = {}, byD = {};
+  const ctrSh = {}; jrn.forEach(r => { if (r.contract_num) ctrSh[r.contract_num] = shiftOf(r.contract_start, P); });
   const okv = inAgency();
   // événements des seuls véhicules de l'agence choisie (lignes par chauffeur, règle et véhicule : cumulées)
-  rc.forEach(x => { if (!agg[x.driver_code] || (x.vehicle_key !== undefined && !okv(x.vehicle_key))) return;
-    used[x.rule_id] = (used[x.rule_id] || 0) + x.n; const d = byD[x.driver_code] = byD[x.driver_code] || {}; d[x.rule_id] = (d[x.rule_id] || 0) + x.n; });
+  // shift de l'événement : celui de son contrat (à défaut : le shift où le chauffeur a le plus de journées sur la période)
+  const mainSh = {}; Object.values(agg).forEach(a => { const [sh, c] = a.k.split('|'), n = Object.keys(a.ctr).length; if (!mainSh[c] || n > mainSh[c].n) mainSh[c] = { sh, n }; });
+  rc.forEach(x => { const k = (x.contract_num && ctrSh[x.contract_num] !== undefined ? ctrSh[x.contract_num] : (mainSh[x.driver_code] || {}).sh) + '|' + x.driver_code;
+    if (!agg[k] || (x.vehicle_key !== undefined && !okv(x.vehicle_key))) return;
+    used[x.rule_id] = (used[x.rule_id] || 0) + x.n; const d = byD[k] = byD[k] || {}; d[x.rule_id] = (d[x.rule_id] || 0) + x.n; });
   const ruleIds = Object.keys(used).sort((a, b) => used[b] - used[a]);
-  const list = Object.values(agg).map(a => { const sc = scoreOf(a, P); return { a, code: a.k, nom: S.drv[a.k] || Object.keys(a.names)[0] || a.k, score: sc, level: levelOf(sc, P), rules: byD[a.k] || {} }; })
+  const list = Object.values(agg).map(a => { const [sh, code] = a.k.split('|'), sc = scoreOf(a, P);
+    return { a, sh, code, nom: S.drv[code] || Object.keys(a.names)[0] || code, score: sc, level: levelOf(sc, P), rules: byD[a.k] || {} }; })
     .sort((x, y) => y.score - x.score || y.a.pts - x.a.pts);
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Classement des chauffeurs</h1><div class="sub">Score = points danger pour 100 km (poids des règles dans Réglages). Seuils : Modéré ${P.scoreY}, Élevé ${P.scoreO}, Dangereux ${P.scoreR}.</div></div>
     ${periodBar(go)}
-    ${table('trank', [['Rang', d => list.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${dlink(d.code, d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
+    ${shiftSections(list, d => d.sh, (sub, sfx) => table('trank' + sfx, [['Rang', d => sub.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${dlink(d.code, d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
       ['Niveau', d => badge(d.level, LEVEL_CLS[d.level]), d => d.score], ['Score /100 km', d => f1(d.score), d => d.score, 'n'], ['Points danger', d => f1(d.a.pts), d => d.a.pts, 'n'],
       ['Événements', d => d.a.evts, null, 'n'], ['Journées', d => Object.keys(d.a.ctr).length || Object.keys(d.a.days).length, null, 'n'], ['Heures sous contrat', d => fH(d.a.ctrH), d => d.a.ctrH, 'n'],
       ['Km', d => f1(d.a.km), d => d.a.km, 'n'], ['Conduite', d => fH(d.a.drive), d => d.a.drive, 'n'], ['Ralenti total', d => fH(d.a.idle), d => d.a.idle, 'n'],
       ['dont prolongé', d => fH(d.a.idleLong), d => d.a.idleLong, 'n'], ['Carburant (L)', d => nmv(fuelVal(d.a)), d => d.a.fuel, 'n'], ['L/100 km', d => nmv(l100Val(d.a)), d => d.a.l100 || 0, 'n'],
       ['Vmax', d => f0(d.a.vmax), d => d.a.vmax, 'n'], ['Pire dépassement', d => d.a.worst === null ? '' : '+' + f0(d.a.worst), d => d.a.worst || 0, 'n']]
       .concat(ruleIds.map(id => [esc((S.rules[id] || {}).name || id) + ` <span class="small">×${(S.rules[id] || {}).weight || ''}</span>`, d => d.rules[id] || 0, d => d.rules[id] || 0, 'n']))
-      .concat([['Pleins', d => d.a.fills, null, 'n'], ['Siphonages suspects', d => d.a.siph, null, 'n'], ['Véhicules', d => esc(Object.keys(d.a.plates).join(', '))]]), list)}`;
+      .concat([['Pleins', d => d.a.fills, null, 'n'], ['Siphonages suspects', d => d.a.siph, null, 'n'], ['Véhicules', d => esc(Object.keys(d.a.plates).join(', '))]]), sub))}`;
   };
   window.__rerender = render; render();
 }
@@ -680,14 +711,15 @@ async function pageFiches() {
       <span class="small">Colonnes reconnues : Code, Nom, Téléphone, Email, Agence. Un chauffeur déjà connu est mis à jour (téléphone, email, agence).</span></div>` : ''}
     <div id="dres">${info || ''}</div>
     <div class="bar"><input id="dsearch" placeholder="Rechercher (nom, code, téléphone…)" value="${esc(search)}" size="32"></div>
-    ${table('tfic', [['Code', d => esc(d.code)], ['Nom', d => `<b>${esc(d.name || '')}</b>` + (d.other_names ? `<div class="small">aussi ${esc(d.other_names)}</div>` : ''), d => d.name],
+    <div class="sub">Shift d'un chauffeur : celui de son dernier contrat (heure de début).</div>
+    ${shiftSections(list, d => shiftOf(d.last_contract, S.P), (sub, sfx) => table('tfic' + sfx, [['Code', d => esc(d.code)], ['Nom', d => `<b>${esc(d.name || '')}</b>` + (d.other_names ? `<div class="small">aussi ${esc(d.other_names)}</div>` : ''), d => d.name],
       ['Téléphone', d => canEdit() ? `<input class="ded" data-c="phone" data-k="${esc(d.code)}" value="${esc(d.phone || '')}" size="11">` : esc(d.phone || '')],
       ['Email', d => canEdit() ? `<input class="ded" data-c="email" data-k="${esc(d.code)}" value="${esc(d.email || '')}" size="18">` : esc(d.email || '')],
       ['Agence', d => canEdit() ? `<select class="ded" data-c="agency_id" data-k="${esc(d.code)}">${agOptions(d.agency_id, '—')}</select>` : agTxt(d.agency_id), d => S.agName[d.agency_id] || ''],
       ['Origine', d => d.source === 'manuel' ? '<span class="badge info">ajouté</span>' : 'contrats', d => d.source], ['Statut', d => badge(d.status, d.status === 'NOUVEAU' ? 'info' : ''), d => d.status],
       ['Contrats', d => d.n_contracts || 0, d => d.n_contracts || 0, 'n'], ['Dernier contrat', d => fmtDTY(d.last_contract), d => d.last_contract || ''],
       ['Note', d => canEdit() ? `<input class="ded" data-c="note" data-k="${esc(d.code)}" value="${esc(d.note || '')}" size="16">` : esc(d.note || '')],
-      ['', d => canEdit() && d.source === 'manuel' && !d.n_contracts ? `<button class="ghost small" data-ddel="${esc(d.code)}">Supprimer</button>` : '']], list, { empty: 'Aucun chauffeur' })}`;
+      ['', d => canEdit() && d.source === 'manuel' && !d.n_contracts ? `<button class="ghost small" data-ddel="${esc(d.code)}">Supprimer</button>` : '']], sub), { none: 'Sans contrat', empty: 'Aucun chauffeur' })}`;
     document.querySelectorAll('.ded').forEach(i => { i.onchange = async () => {
       const c = i.dataset.c, val = c === 'agency_id' ? (i.value ? +i.value : null) : (i.value.trim() || null);
       const { error } = await sb.from('drivers').update({ [c]: val }).eq('code', i.dataset.k);
@@ -736,7 +768,7 @@ async function pageRapports() {
   const p = period(), sel = agFilter();
   const keys = new Set(S.vehList.filter(v => !sel || String(v.agency_id) === sel).map(v => v.key));
   const [jrn, al] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to)), all('alerts', 'id,day,time,plate,vehicle_key,driver_name,type,severity,detail', q => q.gte('day', p.from).lte('day', p.to))]);
-  const rep = rptBuild({ journal: jrn, alerts: al, vehicles: S.vehList.filter(v => keys.has(v.key)), drivers: S.drv, P: S.P, from: p.from, to: p.to, agency: sel ? S.agName[sel] : (isAdmin() || S.agencies.length !== 1 ? '' : S.agencies[0].name) });
+  const rep = rptBuild({ journal: jrn, alerts: al, vehicles: S.vehList.filter(v => keys.has(v.key)), drivers: S.drv, P: S.P, from: p.from, to: p.to, hmOf: localHM, agency: sel ? S.agName[sel] : (isAdmin() || S.agencies.length !== 1 ? '' : S.agencies[0].name) });
   $('#page').innerHTML = `<div class="head"><h1>Rapports</h1><div class="sub">Rapport de la période et de l'agence choisies (agence : menu de gauche). ${isAdmin() ? 'Envoi automatique par e-mail : <a href="#/reglages">Réglages > Rapports automatiques</a>.' : ''}</div>
     <button id="rpdf">Télécharger le PDF</button></div>
     ${periodBar(go)}

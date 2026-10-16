@@ -101,7 +101,7 @@ test('arrêts moteur tournant : chaque arrêt de la base affiché, litres non me
     assert.ok(n > 0, 'aucun arrêt calculé');
     assert.strictEqual(await page.locator('#tstops tbody tr').count(), n);
     const nm = +env.psql("select count(*) from engine_stops where day between '2026-09-07' and '2026-10-06' and liters is null");
-    assert.strictEqual(await page.locator('#tstops tbody tr td:nth-child(7) .nm').count(), nm, 'litres non mesurés');
+    assert.strictEqual(await page.locator('#tstops tbody tr td:nth-child(8) .nm').count(), nm, 'litres non mesurés');
     assert.match(await page.innerText('.cards'), new RegExp(`${n - nm} / ${n}`));
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
@@ -151,7 +151,7 @@ test('en direct : chauffeur = contrat en cours maintenant, sinon « Hors contrat
     await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test(document.querySelector('#livest').innerText), null, { timeout: 15000 });
     const rows = await page.$$eval('#tlive tbody tr', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')));
     const r99 = rows.find(t => /WW968199/.test(t)), r94 = rows.find(t => /WW968194/.test(t));
-    assert.match(r99, /Chauffeur En Cours LIVE1/);
+    assert.match(r99, /Chauffeur En Cours (Jour|Nuit) LIVE1/);
     assert.match(r94, /Hors contrat/); assert.doesNotMatch(r94, /Contrat Terminé/);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); env.psql("delete from contracts where num in ('LIVE1', 'LIVE2')" + (open.length ? "; update contracts set end_at = null where num in ('" + open.join("','") + "')" : '')); }

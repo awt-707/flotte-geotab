@@ -123,10 +123,25 @@ function aggJournal(rows, keyFn, P) {
   return o;
 }
 const NM = 'non mesuré';
+/**
+ * Shift d'une journée de travail : heure de début du contrat comparée aux débuts de shift (Réglages : shiftDay, shiftNight),
+ * le plus proche l'emporte (un contrat pris à 06:55 est un shift de jour). Sans contrat : '' (hors contrat).
+ */
+function shiftOf(t, P) {
+  if (!t) return '';
+  const hm = localHM(t), h = +hm.slice(0, 2) + +hm.slice(3, 5) / 60, d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19);
+  const dist = (a, b) => { const x = Math.abs(a - b) % 24; return Math.min(x, 24 - x); };
+  return dist(h, d) <= dist(h, n) ? 'Jour' : 'Nuit';
+}
+const SHIFTS = ['Jour', 'Nuit', ''];
+function shiftName(s, P) {
+  const z = h => String(num(h)).padStart(2, '0') + ':00', d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19);
+  return s === 'Jour' ? 'Shift jour (' + z(d) + ' → ' + z(n) + ')' : s === 'Nuit' ? 'Shift nuit (' + z(n) + ' → ' + z(d) + ')' : 'Hors contrat';
+}
 function scoreOf(a, P) { return a.pts / Math.max(a.km, P.kmMin || 20) * 100; }
 function levelOf(score, P) { return score >= P.scoreR ? 'Dangereux' : score >= P.scoreO ? 'Élevé' : score >= P.scoreY ? 'Modéré' : 'Faible'; }
 function fuelVal(a) { return a.fuelN ? f1(a.fuel) : NM; }
 function l100Val(a) { return a.l100 !== null ? f1(a.l100) : (a.fuelN ? 'km insuffisants' : NM); }
 function srcTxt(a) { const s = Object.keys(a.srcs); return s.length ? (s.length > 1 ? 'Mixte' : s[0]) : 'Non mesuré'; }
 
-if (typeof module !== 'undefined') module.exports = { setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };
+if (typeof module !== 'undefined') module.exports = { shiftOf, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };

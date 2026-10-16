@@ -74,9 +74,9 @@ function buildReport_(from, to, agencyId, freq) {
   const drv = {}; dbSelect_('drivers', 'select=code,name', 'code').forEach(d => { drv[d.code] = d.name; });
   const ag = agencyId ? (dbSelect_('agencies', 'select=id,name&id=eq.' + agencyId, 'id')[0] || {}).name : '';
   return rptBuild({
-    journal: dbSelect_('journal', 'select=day,vehicle_key,driver_code,driver_name,contract_num,km,drive_h,idle_h,long_idle_h,n_trips,fuel_l,fuel_km,fuel_cost,n_events,danger_pts,n_siphon,siphon_l,km_off_contract,vmax&day=gte.' + from + '&day=lte.' + to, 'id'),
+    journal: dbSelect_('journal', 'select=day,vehicle_key,driver_code,driver_name,contract_num,contract_start,km,drive_h,idle_h,long_idle_h,n_trips,fuel_l,fuel_km,fuel_cost,n_events,danger_pts,n_siphon,siphon_l,km_off_contract,vmax&day=gte.' + from + '&day=lte.' + to, 'id'),
     alerts: dbSelect_('alerts', 'select=day,time,plate,vehicle_key,driver_name,type,severity,detail&day=gte.' + from + '&day=lte.' + to, 'id'),
-    vehicles: veh, drivers: drv, P: P, from: from, to: to, agency: ag, frequency: freq, generatedAt: new Date()
+    vehicles: veh, drivers: drv, P: P, from: from, to: to, agency: ag, frequency: freq, hmOf: localHM_, generatedAt: new Date()
   });
 }
 /** Rapport de consommation des journées from..to (heure du Maroc) et d'une agence (vide = toutes) */
@@ -85,15 +85,18 @@ function buildConso_(from, to, agencyId) {
   const veh = dbSelect_('vehicles', 'select=key,plate,model,fuel,active,agency_id,geotab_id', 'key').filter(v => !agencyId || v.agency_id === agencyId);
   const drv = {}; dbSelect_('drivers', 'select=code,name', 'code').forEach(d => { drv[d.code] = d.name; });
   let stops = null;
-  try { stops = dbSelect_('engine_stops', 'select=vehicle_key,start_at,dur_min,liters,driver_code&start_at=gte.' + enc_(aI) + '&start_at=lt.' + enc_(zI), 'id'); } catch (e) { stops = null; }
+  try { stops = dbSelect_('engine_stops', 'select=vehicle_key,start_at,dur_min,liters,driver_code,contract_num&start_at=gte.' + enc_(aI) + '&start_at=lt.' + enc_(zI), 'id'); } catch (e) { stops = null; }
   const have = {}; dbSelect_('vehicle_days', 'select=vehicle_key,day&day=gte.' + from + '&day=lte.' + to, 'id').forEach(x => { have[x.vehicle_key + '|' + x.day] = 1; });
   const missing = [];
   for (let d = from; d <= to; d = addDays_(d, 1)) veh.filter(v => v.geotab_id && v.active !== 'NON').forEach(v => { if (!have[v.key + '|' + d]) missing.push({ plate: v.plate, day: d }); });
   const ag = agencyId ? (dbSelect_('agencies', 'select=id,name&id=eq.' + agencyId, 'id')[0] || {}).name : '';
+  // shift jour / nuit de chaque contrat (heure de début, heure du Maroc) : contrats en cours pendant la période
+  const ctrSh = {}; dbSelect_('contracts', 'select=num,start_at&start_at=lt.' + enc_(zI) + '&or=(end_at.gte.' + enc_(new Date(A - 3 * 86400000).toISOString()) + ',end_at.is.null)', 'num')
+    .forEach(c => { ctrSh[c.num] = c.start_at ? rptShift(localHM_(c.start_at), P) : ''; });
   return rptConso({
     trips: dbSelect_('trips', 'select=vehicle_key,plate,start_at,km,drive_min,idle_min,fuel_l,fuel_source,idle_fuel_l,driver_code,driver_name,contract_num&start_at=gte.' + enc_(aI) + '&start_at=lt.' + enc_(zI), 'id'),
     fuel: dbSelect_('fuel', 'select=vehicle_key,plate,type,stop_start,stop_end,lvl_before,lvl_after,liters_gauge,liters_geotab,engine,status,driver_code,driver_name&stop_start=gte.' + enc_(aI) + '&stop_start=lt.' + enc_(zI), 'id'),
-    stops: stops, vehicles: veh, drivers: drv, P: P, a: A, z: Z, missing: missing, agency: ag, dayOf: localDay_, hmOf: localHM_, generatedAt: new Date()
+    stops: stops, vehicles: veh, drivers: drv, P: P, a: A, z: Z, missing: missing, agency: ag, dayOf: localDay_, hmOf: localHM_, ctrShift: n => ctrSh[n] || '', generatedAt: new Date()
   });
 }
 const pdfOf_ = rep => { const name = rptFileName(rep); return Utilities.newBlob(rptDoc(rep), 'text/html', name + '.html').getAs('application/pdf').setName(name + '.pdf'); };
