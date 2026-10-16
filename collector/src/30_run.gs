@@ -164,6 +164,8 @@ function collect() {
       if (live.n) props.setProperty('LIVE_COUNT', String(+(props.getProperty('LIVE_COUNT') || 0) + live.n));
       if (live.warn.length) msg.push(live.warn.join(' ; '));
     } catch (e) { msg.push('Erreur temps réel : ' + e.message); }
+    // Pleins calculés par Geotab après coup : relus à chaque passage pour les journées pas encore finalisées
+    try { if (liveFills_() && !(live && live.wrote)) markDirty_(localDay_(Date.now() - DAY)); } catch (e) { msg.push('Pleins : ' + e.message); }
     if (live && live.wrote) markDirty_(localDay_(Date.now() - DAY));
     // Demandes du site (contrats importés, plaques, synchro immédiate, recalcul)
     try { const j = processJobs_(t0); if (j) msg.push(j); } catch (e) { msg.push('Demandes du site : ' + e.message); }

@@ -18,7 +18,7 @@ test('sans nouvelle version : rien ne change', () => {
 });
 
 test('nouvelle version publiée : le collecteur remplace son code, une seule fois', () => {
-  assert.match(release('abc1234'), /Collecteur publié : version .*\.abc1234 \(12 fichiers\)/);
+  assert.match(release('abc1234'), new RegExp('Collecteur publié : version .*\\.abc1234 \\(' + (files().length + 1) + ' fichiers\\)'));   // fichiers de collector/src + 60_report
   B.setNow(NOW + 5 * 60000); B.run('collect()');
   assert.strictEqual(B.scriptApi.length, 1);
   const call = B.scriptApi[0], body = JSON.parse(call.opt.payload);
