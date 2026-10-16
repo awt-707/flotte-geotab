@@ -3,10 +3,10 @@ const test = require('node:test'), assert = require('node:assert'), fs = require
 const env = require('./lib/env'), { collector } = require('./lib/v6'), geo = require('./lib/geotab_fake');
 const NOW = Date.UTC(2026, 9, 3, 13, 55);
 const jwt = n => fs.readFileSync(path.join(__dirname, 'lib', n + '.jwt'), 'utf8').trim();
-let L, calls;
+let L, calls, roadReq = [];
 const fetchFn = async (url, opt) => {
   if (/geotab\.com\/apiv1$/.test(url)) {
-    const b = JSON.parse(opt.body); calls.push(b.method);
+    const b = JSON.parse(opt.body); calls.push(b.method); if (b.method === 'ExecuteMultiCall') b.params.calls.forEach(c => { if (c.method === 'GetRoadMaxSpeeds') roadReq.push(c.params.deviceSearch.id); });
     if (b.method === 'Authenticate') b.params.password = b.params.password === 'bon' ? 'secret' : 'faux';
     return new Response(JSON.stringify(geo.handle(b.method, b.params)));
   }
@@ -162,4 +162,15 @@ test('limite de la route sous chaque véhicule en route (alerte de dépassement 
     });
   }
   assert.ok(seen > 0, 'aucune limite de route relevée sur les instants testés');
+});
+
+test('limite de la route demandée seulement pour les véhicules qui roulent, au plus toutes les 20 s (Geotab ralentit sinon)', async () => {
+  L.resetMemory(); global.__NOW = NOW; roadReq = [];
+  const r1 = await call('admin', {}, NOW);
+  assert.strictEqual(roadReq.length, r1.body.vehicles.length, 'première lecture : tous les véhicules');
+  roadReq = []; await call('admin', {}, NOW + 5000);
+  assert.deepStrictEqual(roadReq, [], 'moins de 20 s : limites gardées');
+  roadReq = []; const r3 = await call('admin', {}, NOW + 25000);
+  const driving = r3.body.vehicles.filter(v => v.state === 'En route').map(v => gid(v.key)).sort();
+  assert.deepStrictEqual(roadReq.slice().sort(), driving, 'après 20 s : seulement les véhicules en route');
 });
