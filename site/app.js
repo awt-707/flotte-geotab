@@ -78,28 +78,83 @@ themeApply(themeGet());
 
 // ---------- Application Ludy (Mac / Windows, dossier desktop/) : elle injecte window.LUDY_APP dans le site ----------
 // Uber Fleet Hub interdit d'être affiché dans un cadre d'un autre site : seule l'application peut l'ouvrir dans sa fenêtre.
+/** Application plus ancienne que la dernière publiée : lien « Mettre à jour l'application » en bas du menu */
+function verNum(v) { return String(v || '0').split('.').map(x => +x || 0).reduce((a, x) => a * 1000 + x, 0); }
+async function appUpdateCheck() {
+  if (!window.LUDY_APP || S.appLatest !== undefined) return;
+  S.appLatest = null;
+  try { const r = await fetch(CFG.SUPABASE_URL + '/storage/v1/object/public/app/version.json?t=' + Date.now()); if (r.ok) S.appLatest = (await r.json()).version || null; } catch (e) { }
+  appUpdateShow();
+}
+function appUpdateShow() {
+  const f = $('.side .foot'); if (!f || !S.appLatest || !window.LUDY_APP || verNum(S.appLatest) <= verNum(window.LUDY_APP.version) || $('#appupd')) return;
+  f.insertAdjacentHTML('afterbegin', `<a id="appupd" class="dlapp" href="#/application">Nouvelle version de l'application (${esc(S.appLatest)}) : mettre à jour</a>`);
+}
 function appUber() { const u = window.LUDY_APP && window.LUDY_APP.uber; return /^https:\/\/([a-z0-9-]+\.)*uber\.com\//.test(u || '') ? u : ''; }
-/** Application 1.1 et suivantes : le volet Uber s'affiche dans la fenêtre, à droite du menu Ludy (sinon : lien, version 1.0) */
-function appEmbed() { return !!(window.LUDY_APP && window.LUDY_APP.embed && window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke); }
-function appInvoke(cmd, args) { if (!appEmbed()) return Promise.resolve(); return window.__TAURI_INTERNALS__.invoke(cmd, args || {}).catch(e => console.warn('Ludy app', cmd, e)); }
-/** Zone de contenu de la page (à droite du menu) : le volet Uber de l'application s'y pose */
-function uberPlace() {
-  const m = $('#page'); if (!m || !appEmbed()) return;
-  const r = m.getBoundingClientRect();
-  return appInvoke('uber_show', { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(window.innerHeight - r.top) });
+function appIpc() { return !!(window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke); }
+/** Mode de l'application : 'ext' (1.2 et suivantes : volets des Réglages), 'uber' (1.1 : Uber seul), 'link' (1.0 : lien plein écran), '' (navigateur) */
+function appMode() { const A = window.LUDY_APP; if (!A) return ''; if (A.ext && appIpc()) return 'ext'; if (A.embed && appIpc()) return 'uber'; return appUber() ? 'link' : ''; }
+function appEmbed() { return appMode() === 'ext' || appMode() === 'uber'; }
+function appInvoke(cmd, args) { if (!appIpc()) return Promise.resolve(); return window.__TAURI_INTERNALS__.invoke(cmd, args || {}); }
+/**
+ * Volets externes : sites affichés dans la fenêtre de l'application, à droite du menu Ludy (ils interdisent d'être affichés
+ * dans un cadre d'un autre site). Liste réglée dans Réglages > Volets externes (param appSites, JSON [{id, name, url}]).
+ */
+function extSlug(t) { return normTxt(t).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'site'; }
+function extSites() {
+  let l = null; try { l = JSON.parse((S.P && S.P.appSites) || 'null'); } catch (e) { l = null; }
+  if (!Array.isArray(l)) l = [{ id: 'uber', name: 'Uber Fleet', url: appUber() }, { id: 'clicar', name: 'Clicar', url: 'https://new.clicar.ma/' }];
+  const seen = {};
+  return l.map(x => ({ id: extSlug(x.id || x.name), name: String(x.name || x.url || '').trim(), url: String(x.url || '').trim() }))
+    .filter(x => /^https:\/\/[^\s/]+/.test(x.url) && !seen[x.id] && (seen[x.id] = 1));
 }
-async function pageUber() {
-  if (!appEmbed()) { $('#page').innerHTML = msg('Le volet Uber Fleet s\'affiche dans l\'application Ludy (Mac / Windows). <a href="#/application">Télécharger l\'application</a>', 'warn'); return; }
-  $('#page').innerHTML = '<div class="uberbox">Chargement d\'Uber Fleet…</div>';
-  await uberPlace();
+function navSites() { const m = appMode(); return m === 'ext' ? extSites() : m === 'uber' ? [{ id: 'uber', name: 'Uber Fleet', url: appUber() }] : []; }
+/** Zone du volet : sous sa barre (nom, Recharger, accès réservé), à droite du menu, jusqu'en bas de la fenêtre */
+function extPlace() {
+  const id = pageOf().slice(2), site = navSites().find(x => x.id === id), m = $('#page'), bar = $('#extbar');
+  if (!site || !m || !$('#extzone')) return Promise.resolve();
+  const r = m.getBoundingClientRect(), top = bar ? Math.round(bar.getBoundingClientRect().bottom + 8) : Math.round(r.top);
+  const box = { x: Math.round(r.left), y: top, w: Math.round(r.width), h: Math.round(window.innerHeight - top) };
+  return appMode() === 'ext' ? appInvoke('ext_show', Object.assign({ id: site.id, url: site.url }, box)) : appInvoke('uber_show', box);
 }
-window.addEventListener('resize', () => { if (pageOf() === 'uber') uberPlace(); });
+function extHide() { const m = appMode(); return m === 'ext' ? appInvoke('ext_hide').catch(() => { }) : m === 'uber' ? appInvoke('uber_hide').catch(() => { }) : Promise.resolve(); }
+async function pageExt(id) {
+  const site = navSites().find(x => x.id === id);
+  if (!appEmbed() || !site) { $('#page').innerHTML = msg(site || !appEmbed() ? 'Ce volet s\'affiche dans l\'application Ludy (Mac / Windows). <a href="#/application">Télécharger l\'application</a>' : 'Volet inconnu : il a été retiré dans Réglages.', 'warn'); return; }
+  const ext = appMode() === 'ext';
+  const show = () => {
+    $('#page').innerHTML = `<div class="extbar" id="extbar"><b>${esc(site.name)}</b><span class="small">${esc(site.url.replace(/^https:\/\//, '').replace(/\/$/, ''))}</span>
+      ${ext ? '<button class="ghost small" id="extrl">Recharger</button><button class="ghost small" id="extlog">Accès réservé…</button>' : ''}
+      <a class="small" href="${esc(site.url)}" target="_blank" rel="noopener">Ouvrir dans le navigateur</a></div><div class="uberbox" id="extzone">Chargement de ${esc(site.name)}…</div>`;
+    if (ext) {
+      $('#extrl').onclick = () => appInvoke('ext_reload', { id: site.id, url: site.url }).catch(e => alert(e));
+      $('#extlog').onclick = () => login();
+    }
+    return extPlace().catch(e => { $('#extzone').innerHTML = msg('Le volet n\'a pas pu s\'ouvrir : ' + esc(e), 'err'); });
+  };
+  // accès réservé (identifiant / mot de passe demandés par le site avant toute page) : enregistré sur cet ordinateur seulement
+  const login = async () => {
+    await extHide();
+    const st = await appInvoke('ext_status', { url: site.url }).catch(() => ({}));
+    $('#page').innerHTML = `<div class="extbar" id="extbar"><b>${esc(site.name)}</b><span class="small">Accès réservé</span></div>
+      <div class="panel" style="max-width:520px"><p>Si ${esc(site.name)} demande un <b>identifiant et un mot de passe</b> avant d'afficher sa page (« accès réservé »), saisissez-les ici.
+      Ils sont enregistrés <b>sur cet ordinateur seulement</b>, dans l'application.</p>
+      <div class="panel row" style="border:0;padding:0"><label>Identifiant <input id="exu" autocomplete="off" value="${esc(st.user || '')}"></label><label>Mot de passe <input id="exp" type="password" autocomplete="off"></label></div>
+      <p><button id="exsave">Enregistrer et ouvrir</button> <button class="ghost" id="exforget">Oublier</button> <button class="ghost" id="excancel">Annuler</button></p></div>`;
+    const done = async (u, pw) => { try { await appInvoke('ext_login', { url: site.url, user: u, pass: pw }); await appInvoke('ext_reload', { id: site.id, url: site.url }); } catch (e) { alert(e); } show(); };
+    $('#exsave').onclick = () => { const u = $('#exu').value.trim(); if (!u) { alert('Saisissez l\'identifiant.'); return; } done(u, $('#exp').value); };
+    $('#exforget').onclick = () => done('', '');
+    $('#excancel').onclick = () => show();
+  };
+  await show();
+}
+window.addEventListener('resize', () => { if (/^x-/.test(pageOf())) extPlace().catch(() => { }); });
 function pageOf() { return (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct'; }
 const APP_DL = { mac: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.dmg', win: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy-setup.exe' };
 async function pageApplication() {
   $('#page').innerHTML = `<div class="head"><h1>Application Ludy</h1><div class="sub">Le logiciel dans sa propre fenêtre, avec le volet <b>Uber Fleet</b> affiché à l'intérieur (impossible dans un navigateur : Uber l'interdit).
     Les mises à jour du logiciel arrivent toutes seules, sans réinstaller l'application.</div></div>
-    ${window.LUDY_APP ? msg('Vous êtes dans l\'application Ludy (version ' + esc(window.LUDY_APP.version || '') + ').', 'ok') : ''}
+    ${window.LUDY_APP ? (S.appLatest && verNum(S.appLatest) > verNum(window.LUDY_APP.version) ? msg('Vous avez la version ' + esc(window.LUDY_APP.version || '') + ' de l\'application : la version <b>' + esc(S.appLatest) + '</b> est disponible. Téléchargez-la ci-dessous et remplacez l\'ancienne (sur Mac : refaire la commande du Terminal).', 'warn') : msg('Vous êtes dans l\'application Ludy (version ' + esc(window.LUDY_APP.version || '') + ').', 'ok')) : ''}
     <div class="appdl">
       <div class="panel"><h2>Mac</h2><p><a class="btn" href="${APP_DL.mac}">Télécharger pour Mac</a></p>
         <ol><li>Ouvrir <b>Ludy.dmg</b> et glisser <b>Ludy</b> dans <b>Applications</b>.</li>
@@ -110,8 +165,18 @@ async function pageApplication() {
         <li>Si Windows affiche « Windows a protégé votre ordinateur » : <b>Informations complémentaires › Exécuter quand même</b> (une seule fois).</li>
         <li>Se connecter à Ludy, puis une fois à Uber dans le volet <b>Uber Fleet</b>.</li></ol></div>
     </div>
-    <div class="sub">Dans l'application : <b>Uber Fleet</b> dans le menu affiche Fleet Hub à droite du menu Ludy ; un clic sur un autre volet revient au logiciel, Uber reste ouvert en arrière-plan. Les PDF sont enregistrés dans Téléchargements et s'ouvrent tout seuls.</div>`;
+    <div class="sub">Dans l'application : <b>Uber Fleet</b>, <b>Clicar</b>… (liste dans Réglages) s'affichent à droite du menu Ludy ; un clic sur un autre volet revient au logiciel, ils restent ouverts en arrière-plan. Accès réservé (identifiant demandé par le site) : bouton « Accès réservé… » au-dessus du volet. Les PDF sont enregistrés dans Téléchargements et s'ouvrent tout seuls.</div>`;
 }
+
+// ---------- Volets visibles par utilisateur (Réglages > Utilisateurs) : profiles.pages = liste des volets, vide = tous ----------
+// Le menu ne montre que les volets choisis ; les données restent limitées par agence dans la base.
+const ALWAYS_PAGES = { vehicule: 1, chauffeur: 1, application: 1 };   // fiches ouvertes depuis les autres volets, page de téléchargement
+function allPages() { return NAV.filter(n => !ADMIN_PAGES[n[0]]).map(n => [n[0], n[1]]).concat(extSites().map(x => ['x-' + x.id, x.name + ' (application)'])); }
+function canSee(page) {
+  if (isAdmin() || ALWAYS_PAGES[page] || !S.profile || !Array.isArray(S.profile.pages)) return true;
+  return S.profile.pages.includes(page);
+}
+function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k] && canSee(k)); return p || 'application'; }
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
@@ -122,8 +187,9 @@ function shell() {
   $('#app').innerHTML = `<div class="layout">
   <aside class="side">
     ${BRAND}
-    <nav aria-label="Pages">${NAV.filter(n => !ADMIN_PAGES[n[0]] || isAdmin()).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
-      (n[0] === 'direct' && appEmbed() ? `<a href="#/uber" id="navuber" class="${page === 'uber' ? 'on' : ''}">Uber Fleet</a>` : n[0] === 'direct' && appUber() ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` : '')).join('')}</nav>
+    <nav aria-label="Pages">${NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && canSee(n[0])).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
+      (n[0] !== 'direct' ? '' : appMode() === 'link' ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` :
+        navSites().filter(x => canSee('x-' + x.id)).map(x => `<a href="#/x-${x.id}" class="navext${page === 'x-' + x.id ? ' on' : ''}" data-ext="${x.id}"${page === 'x-' + x.id ? ' aria-current="page"' : ''}>${esc(x.name)}</a>`).join(''))).join('')}</nav>
     <div class="foot">${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
       ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span>${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
@@ -132,7 +198,7 @@ function shell() {
   $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
   const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
   const nb = $('#notifon'); if (nb) nb.onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } nb.remove(); };
-  health(); openAlerts();
+  health(); openAlerts(); appUpdateCheck(); appUpdateShow();
   const on = $('.side nav a.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   return page;
 }
@@ -838,6 +904,40 @@ function reportPdf(rep) {
 
 // ---------- Réglages : alerte de dépassement de vitesse (seuil par limite de route) ----------
 const SPEED_LIMITS = [20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
+/** Réglages > Volets externes : sites affichés dans l'application (nom + adresse https), sans mise à jour de l'application */
+function extSettingsHtml(params) {
+  const has = params.some(p => p.key === 'appSites');
+  return `<h2>Volets externes (application Mac / Windows)</h2><div class="sub">Sites affichés dans l'application Ludy, à droite du menu (ex. Uber Fleet, Clicar).
+    Ajout ou retrait ici : visible au prochain chargement de l'application, sans la réinstaller. Adresse en https.</div>
+    ${has ? '' : msg('Pour modifier la liste, exécutez d\'abord le SQL <b>20261025000000_volets.sql</b> dans Supabase > SQL Editor. En attendant : Uber Fleet et Clicar.', 'warn')}
+    ${table('text', [['Nom', x => `<input class="exn" data-i="${x.i}" value="${esc(x.name)}" size="16"${has ? '' : ' disabled'}>`], ['Adresse', x => `<input class="exu" data-i="${x.i}" value="${esc(x.url)}" size="54"${has ? '' : ' disabled'}>`, null, 'wide'],
+      ['', x => has ? `<button class="ghost small" data-exdel="${x.i}">Retirer</button>` : '']], extSites().map((x, i) => Object.assign({ i }, x)), { empty: 'Aucun volet externe' })}
+    ${has ? `<div class="panel row"><label>Nom <input id="exnn" size="16" placeholder="Clicar"></label><label>Adresse <input id="exnu" size="40" placeholder="https://new.clicar.ma/"></label><button id="exadd">Ajouter le volet</button></div>` : ''}
+    <div id="exres"></div>`;
+}
+function bindExtSettings(params) {
+  if (!params.some(p => p.key === 'appSites')) return;
+  const save = async list => {
+    const bad = list.find(x => !/^https:\/\/[^\s/]+/.test(x.url) || !x.name);
+    if (bad) { $('#exres').innerHTML = msg('Nom et adresse en https obligatoires' + (bad.name ? ' (' + esc(bad.name) + ')' : '') + '.', 'err'); return false; }
+    const { error } = await sb.from('params').update({ value: JSON.stringify(list.map(x => ({ id: extSlug(x.id || x.name), name: x.name, url: x.url }))) }).eq('key', 'appSites');
+    if (error) { $('#exres').innerHTML = msg(esc(error.message), 'err'); return false; }
+    S.P = null; await loadRef(); return true;
+  };
+  const cur = () => extSites().map(x => ({ id: x.id, name: x.name, url: x.url }));
+  document.querySelectorAll('.exn, .exu').forEach(i => { i.onchange = async () => {
+    const l = cur(), x = l[+i.dataset.i]; if (!x) return;
+    if (i.classList.contains('exn')) x.name = i.value.trim(); else x.url = i.value.trim();
+    if (await save(l)) { shell(); pageReglages(); } }; });
+  document.querySelectorAll('[data-exdel]').forEach(b => { b.onclick = async () => {
+    const l = cur(); if (!confirm('Retirer le volet ' + (l[+b.dataset.exdel] || {}).name + ' ?')) return;
+    l.splice(+b.dataset.exdel, 1); if (await save(l)) { shell(); pageReglages(); } }; });
+  $('#exadd').onclick = async () => {
+    const name = $('#exnn').value.trim(), url = $('#exnu').value.trim();
+    const l = cur(); let id = extSlug(name); while (l.some(x => x.id === id)) id += '-2';
+    l.push({ id, name, url }); if (await save(l)) { shell(); pageReglages(); }
+  };
+}
 function speedSettingsHtml(params) {
   const pv = k => { const p = params.find(x => x.key === k); return p && p.value != null ? p.value : ''; };
   const P = { overByLimit: pv('overByLimit'), overAlert: pv('overAlert') || 30 }, exact = {}; rptOverTable(P).forEach(x => { exact[x[0]] = x[1]; });
@@ -910,12 +1010,16 @@ async function pageReglages() {
     all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), all('alerts', 'type', q => q.gte('day', addDays(today(), -60)))]);
   const alTypes = [...new Set(types.map(x => x.type))].sort();
   const SEVS = ['Critique', 'Haute', 'Moyenne', 'Info'], FREQ = { jour: 'Chaque jour (veille)', semaine: 'Chaque lundi (semaine passée)', mois: 'Le 1er du mois (mois passé)' };
-  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
+  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
   $('#page').innerHTML = `<div class="head"><h1>Réglages</h1></div>
     <h2>Utilisateurs</h2><div class="sub">Les nouveaux comptes attendent votre validation (rôle « En attente »). Gestionnaire = import des contrats, chauffeurs, plaques, statut des alertes. Lecture seule = consultation. Agences de chaque utilisateur : <a href="#/agences">Agences</a>.</div>
     ${table('tusr', [['Email', u => esc(u.email)], ['Créé le', u => fmtDTY(u.created_at)], ['Rôle', u => u.user_id === S.session.user.id ? ROLE_TXT[u.role] :
-      `<select class="urole" data-u="${u.user_id}">${Object.keys(ROLE_TXT).map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${ROLE_TXT[r]}</option>`).join('')}</select>`]], users)}
+      `<select class="urole" data-u="${u.user_id}">${Object.keys(ROLE_TXT).map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${ROLE_TXT[r]}</option>`).join('')}</select>`],
+      ['Volets visibles', u => u.role === 'admin' ? '<span class="small">tous (administrateur)</span>' : !('pages' in u) ? '<span class="small">tous (SQL 20261025000000_volets.sql à exécuter pour choisir)</span>' :
+        `<button class="ghost small" data-upg="${u.user_id}">${Array.isArray(u.pages) ? u.pages.filter(k => allPages().some(x => x[0] === k)).length + ' / ' + allPages().length : 'Tous'} · choisir</button>`]], users)}
+    <div id="upgbox"></div>
     ${speedSettingsHtml(params)}
+    ${extSettingsHtml(params)}
     <h2>Alertes par e-mail</h2><div class="sub">Chaque nouvelle alerte (veille et jour même) est envoyée une seule fois aux destinataires concernés, dans les minutes qui suivent son calcul par le collecteur.</div>
     <div class="panel row"><label>Email <input id="reml" type="email" size="22" placeholder="chef@clicar.fr"></label><label>Nom <input id="rnom" size="14"></label>
       <label>Agence <select id="rag">${agOptions('', 'Toutes')}</select></label><label>Gravité minimum <select id="rsev">${SEVS.map(x => `<option ${x === 'Haute' ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
@@ -940,6 +1044,23 @@ async function pageReglages() {
     ${table('tjob', [['Demande', j => esc(j.kind) + (j.arg ? ' (' + esc(j.arg) + ')' : '')], ['Le', j => fmtDTY(j.created_at)], ['Terminée', j => j.done_at ? fmtDTY(j.done_at) : '<span class="badge warn">en attente</span>'], ['Résultat', j => esc(j.result || ''), null, 'wide']], jobs.data || [])}
     <h2>Journal technique</h2>
     ${table('tlog', [['Le', l => fmtDTY(l.at)], ['Action', l => esc(l.action)], ['Détail', l => esc(l.detail), null, 'wide'], ['Durée (s)', l => l.dur_s == null ? '' : f1(l.dur_s), null, 'n']], logs.data || [])}`;
+  document.querySelectorAll('[data-upg]').forEach(b => { b.onclick = () => {
+    const u = users.find(x => x.user_id === b.dataset.upg), cur = Array.isArray(u.pages) ? u.pages : null;
+    $('#upgbox').innerHTML = `<div class="panel"><b>Volets visibles par ${esc(u.email)}</b> <span class="small">(${ROLE_TXT[u.role]})</span>
+      <div class="upgl">${allPages().map(x => `<label><input type="checkbox" class="upgc" value="${esc(x[0])}" ${!cur || cur.includes(x[0]) ? 'checked' : ''}> ${esc(x[1])}</label>`).join('')}</div>
+      <p><button id="upgsave">Enregistrer</button> <button class="ghost" id="upgall">Tout cocher</button> <button class="ghost" id="upgnone">Tout décocher</button> <button class="ghost" id="upgx">Fermer</button></p></div>`;
+    const boxes = () => [...document.querySelectorAll('.upgc')];
+    $('#upgall').onclick = () => boxes().forEach(c => { c.checked = true; });
+    $('#upgnone').onclick = () => boxes().forEach(c => { c.checked = false; });
+    $('#upgx').onclick = () => { $('#upgbox').innerHTML = ''; };
+    $('#upgsave').onclick = async () => {
+      const on = boxes().filter(c => c.checked).map(c => c.value), pages = on.length === boxes().length ? null : on;
+      if (pages && !pages.length && !confirm('Aucun volet coché : cet utilisateur ne verra que la page Application. Continuer ?')) return;
+      const { error } = await sb.from('profiles').update({ pages }).eq('user_id', u.user_id); if (error) { alert(error.message); return; }
+      u.pages = pages; b.textContent = (pages ? pages.length + ' / ' + allPages().length : 'Tous') + ' · choisir'; b.classList.add('saved'); $('#upgbox').innerHTML = msg('Volets enregistrés pour ' + esc(u.email) + ' : visibles à son prochain chargement de page.', 'ok');
+    };
+    $('#upgbox').scrollIntoView({ block: 'nearest' });
+  }; });
   document.querySelectorAll('.urole').forEach(s => { s.onchange = async () => { const { error } = await sb.from('profiles').update({ role: s.value }).eq('user_id', s.dataset.u); if (error) alert(error.message); else s.classList.add('saved'); }; });
   document.querySelectorAll('.ped').forEach(i => { i.onchange = async () => { const { error } = await sb.from('params').update({ value: i.value }).eq('key', i.dataset.k); if (error) alert(error.message); else { i.classList.add('saved'); S.P = null; await loadRef(); } }; });
   document.querySelectorAll('.red_').forEach(i => { i.onchange = async () => { const { error } = await sb.from('rules').update({ weight: num(i.value) }).eq('id', i.dataset.k); if (error) alert(error.message); else { i.classList.add('saved'); await job('recompute', addDays(today(), -31)); } }; });
@@ -949,6 +1070,7 @@ async function pageReglages() {
   $('#vhgo').onclick = async () => { await job('import_vehicles'); done('Mise à jour des véhicules demandée.'); };
   const reload = () => pageReglages().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message), 'err'); });
   bindSpeedSettings(params);
+  bindExtSettings(params);
   $('#radd').onclick = async () => {
     const email = $('#reml').value.trim(); if (!/@/.test(email)) { alert('Saisissez une adresse e-mail.'); return; }
     const types = [...$('#rtyp').selectedOptions].map(o => o.value).join(', ');
@@ -994,18 +1116,22 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, application: pageApplication, uber: pageUber, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
+  contrats: pageContrats, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
-  if (pageOf() !== 'uber' || !S.session) appInvoke('uber_hide');   // autre volet : Uber masqué (sa page reste chargée)
+  if (pageOf() === 'uber') { location.replace('#/x-uber'); return; }   // ancien lien (application 1.1)
+  if (!/^x-/.test(pageOf()) || !S.session) extHide();   // autre volet : volets externes masqués (leurs pages restent chargées)
   S.timers.forEach(clearInterval); S.timers = [];
   if (S.channel) { sb.removeChannel(S.channel); S.channel = null; }
   if (!S.session) { if (S.alertCh) { sb.removeChannel(S.alertCh); S.alertCh = null; } loginView(); return; }
   if (!S.profile) { const { data } = await sb.from('profiles').select('*').eq('user_id', S.session.user.id).maybeSingle(); S.profile = data || { email: S.session.user.email, role: 'pending' }; }
   if (S.profile.role === 'pending') { pendingView(); return; }
   try { await loadRef(); } catch (e) { $('#app').innerHTML = msg('Base inaccessible : ' + esc(e.message), 'err'); return; }
-  let page = shell(); if (!PAGES[page] || (ADMIN_PAGES[page] && !isAdmin())) page = 'direct';
+  if (!canSee(pageOf())) { location.replace('#/' + firstAllowed()); return; }   // volet non autorisé à cet utilisateur
+  let page = shell();
+  if (/^x-/.test(page)) { const id = page.slice(2); PAGES[page] = () => pageExt(id); }
+  if (!PAGES[page] || (ADMIN_PAGES[page] && !isAdmin())) page = 'direct';
   watchAlerts();
   window.__rerender = null;
   try { await PAGES[page](); } catch (e) { if (my === ROUTING) $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }

@@ -18,4 +18,10 @@ const fs = require('fs'), path = require('path');
     if (!r.ok) throw new Error(name + ' : ' + r.status + ' ' + await r.text());
     console.log(name + ' publié (' + Math.round(body.length / 1e5) / 10 + ' Mo) : ' + url + '/storage/v1/object/public/app/' + name);
   }
+  // version publiée : le site propose la mise à jour aux applications plus anciennes
+  const version = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'desktop', 'src-tauri', 'tauri.conf.json'), 'utf8')).version;
+  const v = await fetch(url + '/storage/v1/object/app/version.json', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json', 'x-upsert': 'true', 'cache-control': '60' }, h),
+    body: JSON.stringify({ version, at: new Date().toISOString() }) });
+  if (!v.ok) throw new Error('version.json : ' + v.status + ' ' + await v.text());
+  console.log('version ' + version + ' annoncée');
 })().catch(e => { console.error(e.message); process.exit(1); });

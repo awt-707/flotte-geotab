@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ext-show"
+description = "Enables the ext_show command without any pre-configured scope."
+commands.allow = ["ext_show"]
+
+[[permission]]
+identifier = "deny-ext-show"
+description = "Denies the ext_show command without any pre-configured scope."
+commands.deny = ["ext_show"]
