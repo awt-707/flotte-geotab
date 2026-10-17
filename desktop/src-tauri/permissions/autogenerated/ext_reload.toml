@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ext-reload"
+description = "Enables the ext_reload command without any pre-configured scope."
+commands.allow = ["ext_reload"]
+
+[[permission]]
+identifier = "deny-ext-reload"
+description = "Denies the ext_reload command without any pre-configured scope."
+commands.deny = ["ext_reload"]

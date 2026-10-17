@@ -1,8 +1,8 @@
-// Application Ludy (Mac / Windows) : une fenêtre avec deux vues.
+// Application Ludy (Mac / Windows) : une fenêtre et plusieurs vues.
 // - « ludy » : le site Ludy, sur toute la fenêtre (ses mises à jour arrivent sans réinstaller l'application) ;
-// - « uber » : Uber Fleet Hub, posée sur la zone de contenu du site, à droite du menu Ludy, quand le volet Uber Fleet est
-//   choisi dans le menu ; masquée (pas fermée : session et page gardées) quand on choisit un autre volet.
-// Uber interdit d'être affiché dans un cadre d'un autre site ; une vue de l'application peut l'ouvrir directement.
+// - une vue par volet externe (Uber Fleet, Clicar… : liste réglée sur le site, Réglages > Volets externes), posée sur la zone de contenu du site, à droite du menu Ludy, quand
+//   le volet est choisi dans le menu ; masquée (pas fermée : session et page gardées) quand on choisit un autre volet.
+// Ces sites interdisent d'être affichés dans un cadre d'un autre site ; une vue de l'application peut les ouvrir directement.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
@@ -16,16 +16,46 @@ use tauri_plugin_opener::OpenerExt;
 const HOME: &str = "https://ludy-flotte.pages.dev/";
 const UBER: &str = "https://fleethub.uber.com/orgs/692d0268-9766-4061-9c0e-85d7c124d10e/livemap?tab=4";
 
+/// Volets externes (Uber Fleet, Clicar…) : la liste est réglée sur le site (Réglages > Volets externes), l'application
+/// ouvre l'adresse demandée par le site Ludy (https seulement) : ajouter un site ne demande pas de nouvelle application.
+fn ext_label(id: &str) -> Result<String, String> {
+  let ok = !id.is_empty() && id.len() <= 40 && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+  if ok { Ok(format!("ext-{id}")) } else { Err(format!("volet invalide : {id}")) }
+}
+fn ext_parse(u: &str) -> Result<url::Url, String> {
+  let u: url::Url = u.parse().map_err(|_| format!("adresse invalide : {u}"))?;
+  if u.scheme() != "https" || u.host_str().is_none() { return Err(format!("adresse refusée (https seulement) : {u}")); }
+  Ok(u)
+}
+fn same_site(a: &url::Url, b: &url::Url) -> bool {
+  let (x, y) = (a.host_str().unwrap_or(""), b.host_str().unwrap_or(""));
+  let base = |h: &str| { let p: Vec<&str> = h.split('.').collect(); if p.len() >= 2 { p[p.len() - 2..].join(".") } else { h.to_string() } };
+  base(x) == base(y)
+}
+/// Adresse actuelle de chaque volet ouvert (pour le rouvrir à sa nouvelle adresse si elle change dans les Réglages)
+struct Opened(Mutex<std::collections::HashMap<String, String>>);
+
+/// Identifiants des accès réservés (identifiant / mot de passe demandés par le navigateur), par site : fichier logins.json
+/// du dossier de l'application, sur cet ordinateur seulement
+fn logins_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> { app.path().app_config_dir().ok().map(|d| d.join("logins.json")) }
+fn logins<R: Runtime>(app: &AppHandle<R>) -> serde_json::Map<String, serde_json::Value> {
+  logins_path(app).and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+/// Adresse du volet, avec l'identifiant de l'accès réservé s'il a été saisi pour ce site
+fn with_login<R: Runtime>(app: &AppHandle<R>, u: &url::Url) -> url::Url {
+  let mut u = u.clone();
+  if let Some(l) = logins(app).get(u.host_str().unwrap_or("")) {
+    let _ = u.set_username(l["user"].as_str().unwrap_or(""));
+    let _ = u.set_password(l["pass"].as_str());
+  }
+  u
+}
+
 /// Adresse du site : LUDY_HOME (essais en local, version de développement seulement), sinon le site en ligne
 fn home() -> String {
   #[cfg(debug_assertions)]
   if let Ok(h) = std::env::var("LUDY_HOME") { return h; }
   HOME.to_string()
-}
-
-fn is_uber(url: &url::Url) -> bool {
-  let h = url.host_str().unwrap_or("");
-  h == "uber.com" || h.ends_with(".uber.com")
 }
 
 /// Fichier libre dans le dossier Téléchargements : « nom.pdf », sinon « nom (2).pdf »…
@@ -61,48 +91,87 @@ fn with_downloads<R: Runtime>(b: WebviewBuilder<R>, app: &AppHandle<R>) -> Webvi
   })
 }
 
-/// Affiche le volet Uber Fleet sur la zone (x, y, w, h) de la page Ludy (pixels CSS = pixels logiques de la fenêtre)
+/// Affiche le volet `id` (adresse `url`) sur la zone (x, y, w, h) de la page Ludy (pixels CSS = pixels logiques) ; les autres sont masqués
 #[tauri::command]
-fn uber_show<R: Runtime>(app: AppHandle<R>, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: String, url: String, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+  let label = ext_label(&id)?;
+  let target = ext_parse(&url)?;
+  for v in app.webviews().values() { if v.label().starts_with("ext-") && v.label() != label { let _ = v.hide(); } }
   let (pos, size) = (LogicalPosition::new(x.max(0.0), y.max(0.0)), LogicalSize::new(w.max(100.0), h.max(100.0)));
-  if let Some(v) = app.get_webview("uber") {
+  let mut op = opened.0.lock().unwrap();
+  if let Some(v) = app.get_webview(&label) {
     v.set_position(pos).map_err(|e| e.to_string())?;
     v.set_size(size).map_err(|e| e.to_string())?;
+    if op.get(&label).map(|u| u != &url).unwrap_or(true) { let _ = v.navigate(with_login(&app, &target)); op.insert(label.clone(), url); }
     v.show().map_err(|e| e.to_string())?;
     let _ = v.set_focus();
     return Ok(());
   }
   let win = app.get_window("main").ok_or("fenêtre absente")?;
-  let h2 = app.clone();
-  let b = WebviewBuilder::new("uber", WebviewUrl::External(UBER.parse().unwrap()))
-    // nouvel onglet demandé par Uber : dans le volet s'il reste chez Uber, sinon dans le navigateur
-    .on_new_window(move |url, _f| {
-      if is_uber(&url) { if let Some(v) = h2.get_webview("uber") { let _ = v.navigate(url); } }
-      else { let _ = h2.opener().open_url(url.as_str(), None::<&str>); }
+  let (h2, l2, home) = (app.clone(), label.clone(), target.clone());
+  let b = WebviewBuilder::new(&label, WebviewUrl::External(with_login(&app, &target)))
+    // nouvel onglet demandé par le site : dans le volet s'il reste sur le même site, sinon dans le navigateur
+    .on_new_window(move |u, _f| {
+      if same_site(&u, &home) { if let Some(v) = h2.get_webview(&l2) { let _ = v.navigate(u); } }
+      else { let _ = h2.opener().open_url(u.as_str(), None::<&str>); }
       NewWindowResponse::Deny
     });
   let v = win.add_child(with_downloads(b, &app), pos, size).map_err(|e| e.to_string())?;
+  op.insert(label, url);
   let _ = v.set_focus();
   Ok(())
 }
 
-/// Masque le volet Uber Fleet (la page Uber reste chargée : retour instantané)
+/// Masque les volets externes (leurs pages restent chargées : retour instantané)
 #[tauri::command]
-fn uber_hide<R: Runtime>(app: AppHandle<R>) {
-  if let Some(v) = app.get_webview("uber") { let _ = v.hide(); }
+fn ext_hide<R: Runtime>(app: AppHandle<R>) {
+  for v in app.webviews().values() { if v.label().starts_with("ext-") { let _ = v.hide(); } }
   if let Some(v) = app.get_webview("ludy") { let _ = v.set_focus(); }
+}
+
+/// Recharge le volet à son adresse de départ (avec l'accès réservé enregistré)
+#[tauri::command]
+fn ext_reload<R: Runtime>(app: AppHandle<R>, id: String, url: String) -> Result<(), String> {
+  let (label, target) = (ext_label(&id)?, ext_parse(&url)?);
+  if let Some(v) = app.get_webview(&label) { v.navigate(with_login(&app, &target)).map_err(|e| e.to_string())?; }
+  Ok(())
+}
+
+/// Accès réservé du site : identifiant déjà saisi sur cet ordinateur ?
+#[tauri::command]
+fn ext_status<R: Runtime>(app: AppHandle<R>, url: String) -> Result<serde_json::Value, String> {
+  let u = ext_parse(&url)?;
+  let l = logins(&app);
+  let e = l.get(u.host_str().unwrap_or(""));
+  Ok(serde_json::json!({ "saved": e.is_some(), "user": e.and_then(|v| v["user"].as_str()).unwrap_or("") }))
+}
+
+/// Enregistre l'identifiant de l'accès réservé du site (sur cet ordinateur) ; identifiant vide = oublié
+#[tauri::command]
+fn ext_login<R: Runtime>(app: AppHandle<R>, url: String, user: String, pass: String) -> Result<(), String> {
+  let u = ext_parse(&url)?;
+  let host = u.host_str().unwrap_or("").to_string();
+  let mut l = logins(&app);
+  if user.is_empty() { l.remove(&host); } else { l.insert(host, serde_json::json!({ "user": user, "pass": pass })); }
+  let p = logins_path(&app).ok_or("dossier de l'application introuvable")?;
+  if let Some(d) = p.parent() { std::fs::create_dir_all(d).map_err(|e| e.to_string())?; }
+  std::fs::write(&p, serde_json::to_string(&l).unwrap()).map_err(|e| e.to_string())?;
+  #[cfg(unix)]
+  { use std::os::unix::fs::PermissionsExt; let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)); }
+  Ok(())
 }
 
 fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![uber_show, uber_hide])
+    .manage(Opened(Mutex::new(Default::default())))
+    .invoke_handler(tauri::generate_handler![ext_show, ext_hide, ext_reload, ext_status, ext_login])
     .setup(|app| {
       let home = home();
       let origin = { let u: url::Url = home.parse().expect("adresse du site"); u.origin().ascii_serialization() };
-      // seul le site Ludy peut demander d'afficher / masquer le volet Uber
+      // seul le site Ludy peut afficher / masquer les volets externes et enregistrer leurs accès réservés
       app.add_capability(CapabilityBuilder::new("ludy-site").webview("ludy").remote(format!("{origin}/*"))
-        .permission("allow-uber-show").permission("allow-uber-hide"))?;
+        .permission("allow-ext-show").permission("allow-ext-hide").permission("allow-ext-reload").permission("allow-ext-status").permission("allow-ext-login"))?;
       let win = WindowBuilder::new(app, "main")
         .title("Ludy · Supervision de flotte")
         .inner_size(1440.0, 900.0)

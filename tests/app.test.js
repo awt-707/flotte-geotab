@@ -14,9 +14,10 @@ test('application : seau « app » public créé (ou déjà là), Ludy.dmg et Lu
     const out = await new Promise((ok, ko) => execFile('node', ['scripts/publish-app.js', dir], { env: Object.assign({}, process.env, { SUPABASE_URL: 'http://localhost:' + srv.address().port, SUPABASE_SERVICE_KEY: 'sb_secret_' + '-faux' }) },
       (e, so, se) => e ? ko(new Error(se || e.message)) : ok(so)));
     assert.match(out, /Ludy\.dmg publié/); assert.match(out, /Ludy-setup\.exe publié/);
-    assert.deepStrictEqual(seen.map(s => s.m + ' ' + s.u), ['POST /storage/v1/bucket', 'POST /storage/v1/object/app/Ludy.dmg', 'POST /storage/v1/object/app/Ludy-setup.exe']);
+    assert.deepStrictEqual(seen.map(s => s.m + ' ' + s.u), ['POST /storage/v1/bucket', 'POST /storage/v1/object/app/Ludy.dmg', 'POST /storage/v1/object/app/Ludy-setup.exe', 'POST /storage/v1/object/app/version.json']);
+    assert.match(out, new RegExp('version ' + require('../desktop/src-tauri/tauri.conf.json').version.replace(/\./g, '\\.') + ' annoncée'));
     assert.ok(seen.every(s => s.key === 'sb_secret_-faux' && !s.auth), 'nouvelle clé sb_… : en-tête apikey seul');
-    assert.deepStrictEqual(seen.slice(1).map(s => [s.upsert, s.n]), [['true', 3000], ['true', 2000]]);
+    assert.deepStrictEqual(seen.slice(1, 3).map(s => [s.upsert, s.n]), [['true', 3000], ['true', 2000]]);
     assert.strictEqual(seen[1].type, 'application/x-apple-diskimage');
   } finally { srv.close(); }
 });

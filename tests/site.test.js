@@ -195,6 +195,12 @@ test('en direct : alertes à l\'instant (événements Geotab et vitesse au-dessu
     assert.match(fiche, /\d+ km\/h à \d{2}:\d{2}:\d{2}/, 'vitesse max lue dans Geotab');
     assert.ok((await page.getAttribute('#adlg svg path.spd', 'd')).length > 20, 'courbe de vitesse vide');
     assert.strictEqual(await page.locator('#admap.leaflet-container').count(), 1);
+    // partage : WhatsApp et e-mail avec le message détaillé (mêmes chiffres que la fiche)
+    const wa = decodeURIComponent((await page.getAttribute('#adwa', 'href')).replace('https://wa.me/?text=', ''));
+    assert.match(wa, /^⚠️ Ludy · Alerte \S+ : .*vitesse/i); assert.match(wa, /\nVéhicule : /); assert.match(wa, /\nVitesse max : \d+ km\/h à \d{2}:\d{2}:\d{2}/);
+    assert.match(wa, /\nSource : Geotab/);
+    const ml = await page.getAttribute('#admail', 'href');
+    assert.match(ml, /^mailto:\?subject=Ludy/); assert.ok(decodeURIComponent(ml.split('body=')[1]) === wa, 'même message par e-mail');
     await page.click('#adlg .adclose');
     assert.strictEqual(await page.locator('#adlg[open]').count(), 0);
     assert.deepStrictEqual(errors, []);
@@ -366,7 +372,7 @@ test('shift des alertes : contrat en cours à l\'heure de l\'alerte, sinon crén
 
 test('résultat de fin de shift : contrats du shift, totaux du journal, PDF général et PDF par chauffeur', async () => {
   const fs = require('fs');
-  // contrats du shift de jour du 03/10/2026 (début de contrat le plus proche de 07:00 que de 19:00, heure du Maroc)
+  // contrats du shift de jour du 03/10/2026 (début de contrat de 07:00 à 18:59, heure du Maroc)
   const rows = JSON.parse(env.psql("select coalesce(json_agg(j), '[]') from (select contract_num, driver_code, km, fuel_l, idle_fuel_l, contract_start from journal where contract_num is not null and day between '2026-10-02' and '2026-10-04') j"))
     .filter(r => { lib.setTzRules(env.MA_TZ); const x = lib.shiftOfCtr(r.contract_start, { shiftDay: 7, shiftNight: 19 }); return x.s === 'Jour' && x.day === '2026-10-03'; });
   assert.ok(rows.length >= 1, 'contrats de jour le 03/10 dans le jeu de test');

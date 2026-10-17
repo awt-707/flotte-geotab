@@ -723,7 +723,7 @@ async function pageFinShift() {
   const sel = { s: q.get('s') === 'Jour' || q.get('s') === 'Nuit' ? q.get('s') : prev.s, day: /^\d{4}-\d{2}-\d{2}$/.test(q.get('d') || '') ? q.get('d') : prev.day };
   const label = shiftName(sel.s, P).replace(/^Shift (jour|nuit)/, (m, x) => 'Shift ' + x + ' du ' + fmtDay(sel.day).slice(0, 5) + (sel.s === 'Nuit' ? ' au ' + fmtDay(addDays(sel.day, 1)).slice(0, 5) : ''));
   const running = sel.s === cur.s && sel.day === cur.day;
-  // contrats du shift : une ligne de journal par contrat (shift = début du contrat, début de shift le plus proche)
+  // contrats du shift : une ligne de journal par contrat (shift = heure de début du contrat : 7 h → 19 h jour, sinon nuit)
   const jrn = (await all('journal', '*', x => x.gte('day', addDays(sel.day, -1)).lte('day', addDays(sel.day, 1)).not('contract_num', 'is', null)))
     .filter(r => ok(r.vehicle_key) && r.contract_start && (sc => sc.s === sel.s && sc.day === sel.day)(shiftOfCtr(r.contract_start, P)));
   const nums = jrn.map(r => r.contract_num), byNums = async (t, cols) => { const out = []; for (let i = 0; i < nums.length; i += 150) out.push(...await all(t, cols, x => x.in('contract_num', nums.slice(i, i + 150)))); return out; };

@@ -1,6 +1,19 @@
 // Rapport de flotte (période, agence) : mêmes calculs sur le site (PDF téléchargé) et dans le collecteur (PDF envoyé par e-mail).
 // Données mesurées uniquement : « non mesuré » quand Geotab ne fournit pas la valeur. Aucun nom global commun avec le site ou le collecteur (préfixe rpt).
 var RPT_SEV = ['Critique', 'Haute', 'Moyenne', 'Info'];
+/** Noms des règles Geotab en français (affichage seulement : la base garde le nom Geotab). « (New) » = version récente de la règle chez Geotab. */
+var RPT_RULE_FR = [[/^speeding$/i, 'Excès de vitesse'], [/^posted speeding$/i, 'Dépassement de la limite affichée'], [/^max(imum)? speed$/i, 'Vitesse maximale'],
+  [/^harsh brak(e|ing)$/i, 'Freinage brusque'], [/^hard brak(e|ing)$/i, 'Freinage brusque'], [/^harsh acceleration$/i, 'Accélération brusque'], [/^hard acceleration$/i, 'Accélération brusque'],
+  [/^harsh cornering$/i, 'Virage brusque'], [/^hard cornering$/i, 'Virage brusque'], [/^seat ?belt.*$/i, 'Ceinture non bouclée'],
+  [/^possible collision.*$/i, 'Collision possible'], [/^major collision.*$/i, 'Collision grave'], [/^minor collision.*$/i, 'Collision légère'], [/^collision.*$/i, 'Collision'],
+  [/^engine fault exception$/i, 'Défaut moteur'], [/^engine light on$/i, 'Voyant moteur allumé'], [/^idling$/i, 'Ralenti prolongé'], [/^excessive idling$/i, 'Ralenti prolongé'],
+  [/^after hours usage$/i, 'Utilisation hors horaires'], [/^device unplugged$/i, 'Boîtier débranché'], [/^application exception$/i, 'Erreur du boîtier'],
+  [/^reverse$/i, 'Marche arrière'], [/^jackrabbit starts?$/i, 'Démarrage brusque'], [/^following too closely$/i, 'Distance de sécurité']];
+function rptRuleFr(name) {
+  var n = String(name == null ? '' : name).trim(), base = n.replace(/\s*\((new|nouveau)\)\s*$/i, '');
+  for (var i = 0; i < RPT_RULE_FR.length; i++) if (RPT_RULE_FR[i][0].test(base)) return RPT_RULE_FR[i][1];
+  return n;
+}
 var RPT_NM = 'non mesuré';
 var RPT_FREQ = { jour: 'quotidien', semaine: 'hebdomadaire', mois: 'mensuel' };
 function rptNum(v) { var n = typeof v === 'number' ? v : parseFloat(String(v === null || v === undefined ? '' : v).replace(',', '.')); return isFinite(n) ? n : 0; }
@@ -27,13 +40,13 @@ function rptAgg(rows, minKm) {
   a.l100 = a.fuelKm >= (minKm || 30) ? a.fuel / a.fuelKm * 100 : null;
   return a;
 }
-/** Shift d'un contrat d'après l'heure de début 'hh:mm' (heure du Maroc) : le début de shift le plus proche (jour shiftDay h, nuit shiftNight h) */
+/** Shift d'un contrat d'après l'heure de début 'hh:mm' (heure du Maroc), avancée de shiftAdvance h (2 par défaut) : de shiftDay h (inclus) à shiftNight h (exclu) = jour, sinon nuit */
 function rptShiftH(P, k, def) { return P && P[k] !== undefined && P[k] !== null && P[k] !== '' ? rptNum(P[k]) : def; }
 function rptShift(hm, P) {
   if (!hm) return '';
-  var h = rptNum(String(hm).slice(0, 2)) + rptNum(String(hm).slice(3, 5)) / 60, d = rptShiftH(P, 'shiftDay', 7), n = rptShiftH(P, 'shiftNight', 19);
-  var dist = function (a, b) { var x = Math.abs(a - b) % 24; return Math.min(x, 24 - x); };
-  return dist(h, d) <= dist(h, n) ? 'Jour' : 'Nuit';
+  var d = rptShiftH(P, 'shiftDay', 7), n = rptShiftH(P, 'shiftNight', 19);
+  var h = ((rptNum(String(hm).slice(0, 2)) + rptNum(String(hm).slice(3, 5)) / 60 + rptShiftH(P, 'shiftAdvance', 2)) % 24 + 24) % 24;
+  return (d < n ? h >= d && h < n : h >= d || h < n) ? 'Jour' : 'Nuit';
 }
 var RPT_SHIFTS = ['Jour', 'Nuit', ''];
 function rptShiftName(s, P) {
@@ -257,7 +270,7 @@ function rptDriver(o) {
     if (!worstT || rptNum(t.worst_over) > rptNum(worstT.worst_over)) worstT = t; } if (rptOverHit(t, P)) nOver++; if (rptNum(t.vmax) >= vAl) nVal++; });
   var speed = trips.filter(function (t) { return rptNum(t.worst_over) >= 10 || rptNum(t.vmax) >= vAl; }).sort(function (x, y) { return new Date(x.start_at) - new Date(y.start_at); });
   // événements par règle
-  var byR = {}; evts.forEach(function (e) { var r = rl(e.rule_id), x = byR[e.rule_id] = byR[e.rule_id] || { n: r.name || e.rule_name || e.rule_id, cat: r.category || '', w: rptNum(r.weight), c: 0, s: 0 }; x.c++; x.s += rptNum(e.dur_s); });
+  var byR = {}; evts.forEach(function (e) { var r = rl(e.rule_id), x = byR[e.rule_id] = byR[e.rule_id] || { n: rptRuleFr(r.name || e.rule_name || e.rule_id), cat: r.category || '', w: rptNum(r.weight), c: 0, s: 0 }; x.c++; x.s += rptNum(e.dur_s); });
   var rList = Object.keys(byR).map(function (k) { return byR[k]; }).sort(function (x, y) { return y.c * y.w - x.c * x.w || y.c - x.c; });
   // consommation par véhicule (trajets)
   var cv = {}; trips.forEach(function (t) { var x = cv[t.vehicle_key] = cv[t.vehicle_key] || { plate: t.plate || t.vehicle_key, n: 0, km: 0, l: 0, lkm: 0, ln: 0, il: 0, iln: 0 };
@@ -290,7 +303,7 @@ function rptDriver(o) {
       rows: rList.map(function (x) { return [x.n, x.cat, rptFmt(x.c), rptFmt(x.w, 1), rptFmt(x.c * x.w, 1), rptH(x.s / 3600)]; }) },
     { title: 'Détail des événements de conduite' + (evts.length > 300 ? ' (300 plus récents)' : ''), empty: 'Aucun événement de conduite',
       head: ['Date / heure', 'Véhicule', 'Règle', 'Durée (s)', 'Distance (km)'], num: [3, 4],
-      rows: evts.slice().sort(function (x, y) { return new Date(y.start_at) - new Date(x.start_at); }).slice(0, 300).map(function (e) { return [dt(e.start_at), e.plate || '', rl(e.rule_id).name || e.rule_name || e.rule_id, rptFmt(e.dur_s), e.km === null || e.km === undefined ? '' : rptFmt(e.km, 2)]; }) },
+      rows: evts.slice().sort(function (x, y) { return new Date(y.start_at) - new Date(x.start_at); }).slice(0, 300).map(function (e) { return [dt(e.start_at), e.plate || '', rptRuleFr(rl(e.rule_id).name || e.rule_name || e.rule_id), rptFmt(e.dur_s), e.km === null || e.km === undefined ? '' : rptFmt(e.km, 2)]; }) },
     { title: 'Consommation par véhicule (trajets)', empty: 'Aucun trajet sur la période',
       head: ['Véhicule', 'Trajets', 'Km', 'Carburant (L)', 'L/100 km', 'Litres au ralenti', 'Trajets mesurés'], num: [1, 2, 3, 4, 5],
       rows: Object.keys(cv).map(function (k) { var x = cv[k]; return [x.plate, rptFmt(x.n), rptFmt(x.km, 1), x.ln ? rptFmt(x.l, 1) : RPT_NM, x.lkm >= minKm ? rptFmt(x.l / x.lkm * 100, 1) : (x.ln ? 'km insuffisants' : RPT_NM),
@@ -594,4 +607,4 @@ function rptDoc(rep) { return '<!doctype html><html><head><meta charset="utf-8">
 /** Nom de fichier du rapport */
 function rptFileName(rep) { if (rep.fileName) return String(rep.fileName).replace(/[^A-Za-z0-9_\-]+/g, '_'); return ((rep.kind === 'conso' ? 'rapport_consommation_' : rep.kind === 'chauffeur' ? 'comportement_' : rep.kind === 'conduite' ? 'conduite_' : rep.kind === 'classement' ? 'classement_' : 'rapport_flotte_') + (rep.agency === 'Toutes les agences' ? 'toutes_agences' : rep.agency) + '_' + rep.from + (rep.to !== rep.from ? '_' + rep.to : '')).replace(/[^A-Za-z0-9_\-]+/g, '_'); }
 
-if (typeof module !== 'undefined') module.exports = { rptConso: rptConso, rptBuild: rptBuild, rptTables: rptTables, rptHtml: rptHtml, rptDoc: rptDoc, rptFileName: rptFileName, rptFmt: rptFmt, rptShift: rptShift, rptDriver: rptDriver, rptSimple: rptSimple, rptOverTol: rptOverTol, rptOverWorst: rptOverWorst, rptOverHit: rptOverHit, rptShiftEnd: rptShiftEnd, rptFuelCard: rptFuelCard };
+if (typeof module !== 'undefined') module.exports = { rptConso: rptConso, rptBuild: rptBuild, rptTables: rptTables, rptHtml: rptHtml, rptDoc: rptDoc, rptFileName: rptFileName, rptFmt: rptFmt, rptShift: rptShift, rptDriver: rptDriver, rptSimple: rptSimple, rptOverTol: rptOverTol, rptOverWorst: rptOverWorst, rptOverHit: rptOverHit, rptShiftEnd: rptShiftEnd, rptFuelCard: rptFuelCard, rptRuleFr: rptRuleFr };

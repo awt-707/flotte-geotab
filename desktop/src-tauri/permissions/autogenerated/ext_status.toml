@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ext-status"
+description = "Enables the ext_status command without any pre-configured scope."
+commands.allow = ["ext_status"]
+
+[[permission]]
+identifier = "deny-ext-status"
+description = "Denies the ext_status command without any pre-configured scope."
+commands.deny = ["ext_status"]

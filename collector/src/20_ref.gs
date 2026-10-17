@@ -23,7 +23,7 @@ function inList_(vals) { return 'in.' + enc_('(' + vals.map(v => '"' + String(v)
 // ---------- Paramètres ----------
 const NUM_PARAMS = ['priceDiesel', 'priceGas', 'siphonPct', 'siphonL', 'pleinPct', 'stopMin', 'idleLongMin', 'idleAlertMin', 'idleDayMin', 'engStopMin', 'minFuelKm',
   'vmaxAlert', 'overAlert', 'scoreY', 'scoreO', 'scoreR', 'kmMin', 'overConsPct', 'ctrTolMin', 'lvlDays',
-  'catchupDays', 'reportHour', 'rpmMin', 'fullPct', 'shiftDay', 'shiftNight', 'liveMin', 'autoRenderMin', 'retentionDays'];
+  'catchupDays', 'reportHour', 'rpmMin', 'fullPct', 'shiftDay', 'shiftNight', 'shiftAdvance', 'liveMin', 'autoRenderMin', 'retentionDays'];
 function params_() {
   if (MEMO_.__P) return Object.assign({}, MEMO_.__P);
   const P = {};

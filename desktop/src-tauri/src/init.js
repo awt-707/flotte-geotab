@@ -1,3 +1,4 @@
 // Injecté par l'application Ludy dans la page du site (avant ses scripts). Le site lit window.LUDY_APP :
-// « embed » = le volet Uber Fleet s'affiche dans la fenêtre, à droite du menu Ludy (commandes uber_show / uber_hide).
-window.LUDY_APP = { version: '__VERSION__', uber: '__UBER__', embed: true };
+// « ext » = volets externes (liste des Réglages) affichés dans la fenêtre, à droite du menu Ludy
+// (commandes ext_show / ext_hide / ext_reload / ext_status / ext_login) ; « uber » : adresse par défaut du volet Uber Fleet.
+window.LUDY_APP = { version: '__VERSION__', uber: '__UBER__', embed: true, ext: true };
