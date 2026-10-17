@@ -149,6 +149,11 @@ function shiftOfCtr(start, P) {
   const s = shiftOf(start, P), day = localDay(start), h = +localHM(start).slice(0, 2);
   return { s, day: s === 'Nuit' && h < num((P || {}).shiftDay, 7) ? addDays(day, -1) : day };
 }
+/** Début (Date) du shift { s, day } : day à shiftDay h (jour) ou shiftNight h (nuit), heure du Maroc */
+function shiftStart(x, P) {
+  const p = x.day.split('-').map(Number);
+  return localToDate(p[0], p[1], p[2], x.s === 'Jour' ? num((P || {}).shiftDay, 7) : num((P || {}).shiftNight, 19), 0);
+}
 /** « Jour du 16/10 » / « Nuit du 16/10 → 17/10 » */
 function shiftDayName(x) {
   if (!x) return '';
@@ -177,4 +182,4 @@ function fuelVal(a) { return a.fuelN ? f1(a.fuel) : NM; }
 function l100Val(a) { return a.l100 !== null ? f1(a.l100) : (a.fuelN ? 'km insuffisants' : NM); }
 function srcTxt(a) { const s = Object.keys(a.srcs); return s.length ? (s.length > 1 ? 'Mixte' : s[0]) : 'Non mesuré'; }
 
-if (typeof module !== 'undefined') module.exports = { ctrEffEnds, shiftOf, shiftAt, shiftOfCtr, shiftDayName, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };
+if (typeof module !== 'undefined') module.exports = { shiftStart, ctrEffEnds, shiftOf, shiftAt, shiftOfCtr, shiftDayName, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };

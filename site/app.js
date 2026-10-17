@@ -71,7 +71,7 @@ function agOptions(sel, emptyTxt) { return (emptyTxt !== undefined ? `<option va
 function agTxt(id) { return id ? esc(S.agName[id] || '') : '<span class="small">aucune</span>'; }
 
 // ---------- Mise en page ----------
-const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
+const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
   ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, reglages: 1 };
 function shell() {
@@ -256,6 +256,21 @@ async function contractShifts(nums) {
   return n => (n && S.ctrShift[n]) || '';
 }
 function nmv(v) { return v === NM || v === 'km insuffisants' ? `<span class="nm">${v}</span>` : v; }
+/**
+ * Contrats sans date de fin (jamais clôturés dans l'extract) : ajoute les contrats commencés après eux sur le même véhicule,
+ * même déjà terminés, pour que ctrEffEnds sache qu'ils ont été remplacés (sinon le chauffeur d'un contrat jamais clôturé
+ * resterait affiché alors que le véhicule n'a plus de contrat).
+ */
+async function withSuccessors(list) {
+  const open = list.filter(c => !c.end_at && c.vehicle_key); if (!open.length) return list;
+  const lim = new Date(Date.now() - 45 * DAY).toISOString(), first = open.map(c => c.start_at).sort()[0], from = first < lim ? lim : first;
+  const keys = [...new Set(open.map(c => c.vehicle_key))], have = new Set(list.map(c => c.num)), out = list.slice();
+  for (let i = 0; i < keys.length; i += 100) {
+    (await all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.in('vehicle_key', keys.slice(i, i + 100)).gt('start_at', from)
+      .lte('start_at', new Date(Date.now() + HOUR).toISOString()))).forEach(c => { if (!have.has(c.num)) { have.add(c.num); out.push(c); } });
+  }
+  return out;
+}
 /** Instant d'une alerte (jour + heure du Maroc), null pour une alerte de journée sans heure */
 function alertAt(a) { if (!a.time || !a.day) return null; const p = String(a.day).slice(0, 10).split('-').map(Number), h = String(a.time).split(':').map(Number);
   return localToDate(p[0], p[1], p[2], h[0] || 0, h[1] || 0); }
@@ -275,6 +290,7 @@ async function alertShifts(rows) {
       (await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('vehicle_key', veh.slice(i, i + 100))
         .lte('start_at', dayBounds(addDays(days[days.length - 1], 1)).end.toISOString()).or('end_at.is.null,end_at.gte.' + dayBounds(addDays(days[0], -1)).start.toISOString()))).forEach(add);
     }
+    (await withSuccessors(Object.values(byNum))).forEach(add);   // contrat jamais clôturé : son remplaçant, même terminé avant la période
     const miss = nums.filter(n => !byNum[n]);
     for (let i = 0; i < miss.length; i += 150) (await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('num', miss.slice(i, i + 150)))).forEach(add);
   } catch (e) { /* contrats illisibles : créneau horaire seul */ }
@@ -720,12 +736,11 @@ function reportPdf(rep) {
   const C = { ink: [20, 32, 43], mute: [93, 107, 120], line: [216, 222, 228], soft: [243, 245, 247], head: [15, 38, 51], acc: [91, 75, 214], zebra: [247, 248, 250],
     crit: [180, 35, 24], high: [180, 70, 26], warn: [154, 90, 0], ok: [24, 121, 74] };
   const LEVEL = { Dangereux: 'crit', Critique: 'crit', 'Élevé': 'high', Haute: 'high', 'Modéré': 'warn', Moyenne: 'warn', Faible: 'ok' };
-  const KIND = { conso: 'Rapport de consommation', chauffeur: 'Comportement chauffeur', conduite: 'Conduite des chauffeurs', classement: 'Classement des chauffeurs' };
   const col = (k, c) => doc['set' + k](c[0], c[1], c[2]), font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); col('TextColor', c || C.ink); };
   const sub = cl(rep.agency + ' · ' + rep.period);
   // première page : logo, type de document, titre, agence et période
   try { doc.addImage(RPT_LOGO, 'PNG', M, 9, 34, 8.3); } catch (e) { }
-  font('bold', 8, C.acc); doc.text(cl(KIND[rep.kind] || 'Rapport de la flotte').toUpperCase(), W - M, 12.5, { align: 'right' });
+  font('bold', 8, C.acc); doc.text(cl(RPT_KIND[rep.kind] || 'Rapport de la flotte').toUpperCase(), W - M, 12.5, { align: 'right' });
   font('normal', 8, C.mute); doc.text('Édité le ' + fmtDTY(rep.generatedAt), W - M, 17, { align: 'right' });
   font('bold', 17); const tl = doc.splitTextToSize(cl(rep.title), W - 2 * M); doc.text(tl, M, 29);
   let y = 29 + (tl.length - 1) * 6.5 + 6.5; font('normal', 10, C.mute); doc.text(sub, M, y);
@@ -933,7 +948,7 @@ function pendingView() {
 
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
-  conduite: pageConduite, comportement: pageComportement, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
+  conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
   contrats: pageContrats, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {

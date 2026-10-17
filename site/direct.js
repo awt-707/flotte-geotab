@@ -32,7 +32,7 @@ function liveAlertOf(e) {
   const c = contractAt(e.key, new Date(e.at).getTime());
   return { id: 'EV|' + e.id, ev: e.id, vehicle_key: e.key, plate: e.plate, at: e.at, end: e.end, cat, severity: LIVE_SEV[cat] || 'Moyenne', type: LIVE_TYPE[cat] || rl.name || 'Événement de conduite',
     detail: (rl.name || e.rule) + (e.dur_min != null ? ' · ' + Math.round(e.dur_min * 60) + ' s' : '') + (e.km ? ' · ' + f1(e.km) + ' km' : ''),
-    driver_name: c ? c.name : 'Hors contrat', driver_code: c ? c.client_code : '', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
+    driver_name: c ? c.name : 'Sans contrat', driver_code: c ? c.client_code : '', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
 }
 function processLive(j) {
   const now = Date.now(), lim = num(S.P.vmaxAlert, 130), fresh = [];
@@ -45,7 +45,7 @@ function processLive(j) {
     if (v.state === 'En route' && v.speed >= lim) {
       if (LIVE.fast[v.key]) { const a = LIVE.alerts.find(x => x.id === LIVE.fast[v.key]); if (a) { a.end = v.at || a.end; if (v.speed > a.vmax) { a.vmax = v.speed; a.detail = 'Vitesse max ' + v.speed + ' km/h (seuil ' + lim + ')'; } } return; }
       const c = contractAt(v.key, now), a = { id: 'VIT|' + v.key + '|' + (v.at || now), vehicle_key: v.key, plate: v.plate, at: v.at || new Date(now).toISOString(), end: v.at || null, cat: 'Vitesse', severity: 'Haute',
-        type: 'Vitesse excessive', vmax: v.speed, detail: v.speed + ' km/h (seuil ' + lim + ')', driver_name: c ? c.name : 'Hors contrat', driver_code: c ? c.client_code : '', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
+        type: 'Vitesse excessive', vmax: v.speed, detail: v.speed + ' km/h (seuil ' + lim + ')', driver_name: c ? c.name : 'Sans contrat', driver_code: c ? c.client_code : '', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
       LIVE.fast[v.key] = a.id; LIVE.alerts.push(a); fresh.push(a);
     } else if (v.state !== 'En route' || v.speed < lim - 10) delete LIVE.fast[v.key];   // 10 km/h de marge : pas d'alerte à répétition autour du seuil
     // dépassement de la limite de la route (limite Geotab sous le véhicule) au-delà du seuil réglé pour cette limite (Réglages)
@@ -55,7 +55,7 @@ function processLive(j) {
         const o = LIVE.over[v.key] && LIVE.alerts.find(x => x.id === LIVE.over[v.key]);
         if (o) { o.end = v.at || o.end; if (v.speed > o.vmax) { o.vmax = v.speed; o.detail = txt(v.speed); } }
         else { const c = contractAt(v.key, now), a = { id: 'DEP|' + v.key + '|' + (v.at || now), vehicle_key: v.key, plate: v.plate, at: v.at || new Date(now).toISOString(), end: v.at || null, cat: 'Vitesse',
-          severity: 'Haute', type: 'Dépassement limite', vmax: v.speed, detail: txt(v.speed), driver_name: c ? c.name : 'Hors contrat', driver_code: c ? c.client_code : '', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
+          severity: 'Haute', type: 'Dépassement limite', vmax: v.speed, detail: txt(v.speed), driver_name: c ? c.name : 'Sans contrat', driver_code: c ? c.client_code : '', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
           LIVE.over[v.key] = a.id; LIVE.alerts.push(a); fresh.push(a); }
       } else if (v.speed < thr - 5) delete LIVE.over[v.key];   // 5 km/h de marge
     } else if (v.state !== 'En route') delete LIVE.over[v.key];
@@ -67,30 +67,44 @@ function processLive(j) {
   LIVE.primed = true;
 }
 /** Contrat en cours sur le véhicule à l'instant t (même règle que le collecteur : contrat qui couvre t, sinon le plus proche
- *  dans la tolérance « ctrTolMin ») ; aucun : hors contrat */
-function contractAt(key, t) {
+ *  dans la tolérance « ctrTolMin ») ; aucun : sans contrat. strict : sans tolérance (chauffeur affiché « maintenant ») */
+function contractAt(key, t, strict) {
   // contrat jamais clôturé dans l'extract : il s'arrête au début du contrat suivant du véhicule (ctrEffEnds)
   const tol = num(S.P.ctrTolMin, 20) * MIN, list = ctrEffEnds(LIVE.ctr.filter(c => c.vehicle_key === key), t)
     .map(c => ({ c, a: new Date(c.start_at).getTime(), b: c._end !== null ? c._end : t + HOUR }));
   let best = null; list.forEach(x => { if (t >= x.a && t <= x.b) best = x; });
-  if (!best) { let bd = Infinity; list.forEach(x => { const d = t < x.a ? x.a - t : t > x.b ? t - x.b : 0; if (d <= tol && d < bd) { bd = d; best = x; } }); }
+  if (!best && !strict) { let bd = Infinity; list.forEach(x => { const d = t < x.a ? x.a - t : t > x.b ? t - x.b : 0; if (d <= tol && d < bd) { bd = d; best = x; } }); }
   return best ? best.c : null;
 }
 /** Contrats qui peuvent couvrir le moment présent (relus avec les totaux du collecteur, toutes les minutes) */
 async function loadLiveContracts() {
   const now = Date.now(), tol = num(S.P.ctrTolMin, 20) * MIN;
   // fenêtre des alertes en direct (30 min) comprise : une infraction d'il y a 25 min reste attribuée au bon contrat
-  LIVE.ctr = await all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.lte('start_at', new Date(now + tol).toISOString())
-    .or('end_at.is.null,end_at.gte.' + new Date(now - tol - 30 * MIN).toISOString()));
+  LIVE.ctr = await withSuccessors(await all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.lte('start_at', new Date(now + tol).toISOString())
+    .or('end_at.is.null,end_at.gte.' + new Date(now - tol - 30 * MIN).toISOString())));
+  // dernier import de l'extract (contrat ajouté ou modifié) : « Contrat dépassé » tant que les contrats du shift en cours ne sont pas injectés
+  const { data: li } = await sb.from('contracts').select('updated_at').not('updated_at', 'is', null).order('updated_at', { ascending: false }).limit(1);
+  LIVE.lastImport = li && li[0] ? new Date(li[0].updated_at).getTime() : 0;
+}
+/** Pas de nom de chauffeur : « Sans contrat » (extract du shift injecté, plaque absente) ou « Contrat dépassé » (extract pas encore injecté) */
+function noCtrHtml(r) {
+  return r.no_ctr === 'depasse' ? `<span class="badge warn" title="Contrats du shift en cours pas encore injectés${r.old_ctr ? ' (dernier contrat du véhicule : ' + esc(r.old_ctr) + ')' : ''} : importez l'extract (page Contrats)">Contrat dépassé</span>`
+    : '<span class="nm">Sans contrat</span>';
 }
 function liveRows() {
-  const ok = inAgency(), have = {}, now = Date.now();
+  const ok = inAgency(), have = {}, now = Date.now(), cur = shiftAt(now, S.P);
+  // extract injecté pendant le shift en cours (ou dans l'heure et demie qui précède son début : contrats pris en avance)
+  const fresh = (LIVE.lastImport || 0) >= shiftStart(cur, S.P).getTime() - 90 * MIN;
   LIVE.rows.forEach(r => { have[r.vehicle_key] = 1; });
   // véhicule vu en direct par Geotab mais pas encore par le collecteur : affiché quand même
   const extra = Object.values(LIVE.pos).filter(g => !have[g.key] && ok(g.key)).map(g => ({ vehicle_key: g.key, plate: g.plate, model: (S.veh[g.key] || {}).model || '' }));
   return LIVE.rows.concat(extra).map(r => {
-    const g = LIVE.pos[r.vehicle_key], c = contractAt(r.vehicle_key, now);
-    const who = { driver_name: c ? c.name : 'Hors contrat', contract_num: c ? c.num : '', driver_code: c ? c.client_code : HORS, shift: c ? shiftOf(c.start_at, S.P) : '', ctr_start: c ? c.start_at : null };
+    // chauffeur affiché maintenant : contrat qui couvre l'instant présent, sans tolérance (véhicule rendu = sans contrat) ;
+    // extract pas encore injecté pour le shift en cours : « Contrat dépassé » (contrat d'un shift précédent ou aucun contrat)
+    const g = LIVE.pos[r.vehicle_key], c0 = contractAt(r.vehicle_key, now, true), sc = c0 && shiftOfCtr(c0.start_at, S.P);
+    const c = c0 && (fresh || (sc.s === cur.s && sc.day === cur.day)) ? c0 : null, nc = c ? '' : fresh ? 'sans' : 'depasse';
+    const who = { driver_name: c ? c.name : nc === 'sans' ? 'Sans contrat' : 'Contrat dépassé', no_ctr: nc, old_ctr: !c && c0 ? c0.num : '', contract_num: c ? c.num : '',
+      driver_code: c ? c.client_code : HORS, shift: c ? shiftOf(c.start_at, S.P) : '', ctr_start: c ? c.start_at : null };
     return g && g.state ? Object.assign({}, r, who, { state: g.state, speed: g.speed, since_min: g.since_min, bearing: g.bearing,
       last_pos_at: g.at || r.last_pos_at, lat: g.lat != null ? g.lat : r.lat, lon: g.lon != null ? g.lon : r.lon, live: 1 }) : Object.assign({}, r, who); })
     .sort((a, b) => SHIFTS.indexOf(a.shift || '') - SHIFTS.indexOf(b.shift || '') || (LIVE_ORDER[a.state] ?? 9) - (LIVE_ORDER[b.state] ?? 9) || String(a.plate).localeCompare(String(b.plate)));   // shift jour, puis nuit, puis hors contrat
@@ -103,18 +117,42 @@ function ago(t) {
 }
 function liveClock() { document.querySelectorAll('#page .ago[data-t]').forEach(el => { el.textContent = ago(el.dataset.t); }); }
 
+// ---------- Consommation en direct (cadran) ----------
+/** Consommation moyenne réelle par modèle (journal des 30 derniers jours, compteur Geotab) : référence du cadran */
+async function loadConsoBase() {
+  const rows = await all('journal', 'id,model,fuel_l,fuel_km', q => q.gte('day', addDays(today(), -30)).not('fuel_l', 'is', null));
+  const m = {}; rows.forEach(r => { if (!r.model || !(num(r.fuel_km) > 0)) return; const o = m[r.model] = m[r.model] || { l: 0, km: 0 }; o.l += num(r.fuel_l); o.km += num(r.fuel_km); });
+  LIVE.base = {}; Object.keys(m).forEach(k => { if (m[k].km >= 200) LIVE.base[k] = m[k].l / m[k].km * 100; });
+}
+/** Cadran vert → rouge : consommation du contrat en cours (compteurs Geotab depuis son début, relus toutes les 30 s) comparée à la moyenne du modèle */
+function consoGauge(r) {
+  const d = r.contract_num && LIVE.drv[r.vehicle_key], base = (LIVE.base || {})[r.model];
+  if (!d) return '';
+  const km = d.km, l = d.fuel_l, ok = km != null && l != null && km >= 10 && base;
+  const v = ok ? l / km * 100 : null, ratio = ok ? v / base : null;
+  const zone = !ok ? 'mute' : ratio <= 1 ? 'ok' : ratio <= 1.15 ? 'warn' : 'crit';
+  const ang = ok ? Math.max(0, Math.min(180, (ratio - 0.6) / 0.8 * 180)) : 90, rad = (180 - ang) * Math.PI / 180, nx = 28 + 20 * Math.cos(rad), ny = 28 - 20 * Math.sin(rad);
+  const tip = ok ? `Consommation depuis le début du contrat : ${f1(v)} L/100 km sur ${f1(km)} km (moyenne des ${r.model} sur 30 jours : ${f1(base)} L/100). Compteurs Geotab.`
+    : km != null && km < 10 ? 'Moins de 10 km depuis le début du contrat' : 'Consommation non mesurée (compteur Geotab absent)';
+  return `<span class="cgauge z-${zone}" title="${esc(tip)}"><svg viewBox="0 0 56 32" aria-hidden="true">
+      <path d="M8.0 28.0A20 20 0 0 1 27.3 8.0" class="cg-ok"/><path d="M28.7 8.0A20 20 0 0 1 38.6 11.0" class="cg-warn"/><path d="M39.8 11.8A20 20 0 0 1 48.0 28.0" class="cg-crit"/>
+      <line x1="28" y1="28" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" class="cg-needle"/><circle cx="28" cy="28" r="2.6" class="cg-hub"/></svg>
+    <span class="cg-v">${ok ? f1(v) + '<small> L/100</small>' : km != null && km < 10 ? '<small>&lt; 10 km</small>' : '<small>' + NM + '</small>'}</span></span>`;
+}
+
 // ---------- Rendu ----------
 function kpisHtml(rows) {
   const n = s => rows.filter(r => r.state === s).length, off = n('Boîtier hors ligne') + n('Pas de réponse Geotab'), ctr = rows.filter(r => r.contract_num).length;
   return cards([['En route', n('En route'), 'ok'], ['Arrêtés contact mis', n('Arrêté, contact mis'), n('Arrêté, contact mis') ? 'warn' : ''], ['Garés', n('Garé')],
-    ['Boîtiers hors ligne', off, off ? 'crit' : ''], ['Sous contrat', ctr + ' / ' + rows.length], ['Alertes (30 min)', LIVE.alerts.filter(a => inAgency()(a.vehicle_key)).length, LIVE.alerts.length ? 'high' : '']]);
+    ['Boîtiers hors ligne', off, off ? 'crit' : ''], ['Sous contrat', ctr + ' / ' + rows.length],
+    ...(rows.some(r => r.no_ctr === 'depasse') ? [['Contrats dépassés (extract à injecter)', rows.filter(r => r.no_ctr === 'depasse').length, 'warn']] : []), ['Alertes (30 min)', LIVE.alerts.filter(a => inAgency()(a.vehicle_key)).length, LIVE.alerts.length ? 'high' : '']]);
 }
 function vcardsHtml(rows) {
   if (!rows.length) return '<div class="empty">Aucun véhicule actif</div>';
   return rows.map(r => `<button type="button" class="vcard st-${ST_CLS(r.state)}${LIVE.fast[r.vehicle_key] ? ' fast' : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
     <span class="vc-l1">${plate(r.plate)}<span class="vc-model">${esc(r.model || '')}</span><span class="vc-spd">${r.state === 'En route' ? f0(r.speed) + '<small> km/h</small>' : ''}</span></span>
-    <span class="vc-l2"><span class="sdot"></span>${esc(r.state || 'État inconnu')}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</span>
-    <span class="vc-l3">${r.contract_num ? `<b>${esc(r.driver_name)}</b> ${shiftBadge(r.shift)}` : '<span class="nm">Hors contrat</span>'}</span>
+    <span class="vc-l2"><span class="vc-st"><span class="sdot"></span>${esc(r.state || 'État inconnu')}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</span>${consoGauge(r)}</span>
+    <span class="vc-l3">${r.contract_num ? `<b>${esc(r.driver_name)}</b> ${shiftBadge(r.shift)}` : noCtrHtml(r)}</span>
     <span class="vc-l4">${r.live ? 'Position Geotab ' + esc(fmtHMS(r.last_pos_at).slice(6)) + ' · <span class="ago" data-t="' + esc(r.last_pos_at || '') + '">' + ago(r.last_pos_at) + '</span>'
       : r.last_pos_at ? 'Position du collecteur ' + esc(fmtDT(r.last_pos_at)) : 'Aucune position'}</span></button>`).join('');
 }
@@ -123,7 +161,7 @@ function liveAlertsHtml() {
   const body = list.length ? `<div id="tlal" class="alist">${list.map(a => `<button type="button" class="acard ${GRAV_CLS[a.severity] || ''}" data-la="${esc(a.id)}">
       <span class="a-time">${esc(fmtHMS(a.at))}</span>
       <span class="a-main">${badge(a.severity, GRAV_CLS[a.severity])} <b>${esc(a.type)}</b> ${plate(a.plate)}</span>
-      <span class="a-drv">${a.contract_num ? esc(a.driver_name) + ' ' + shiftBadge(a.shift) + ' <span class="small">contrat ' + esc(a.contract_num) + '</span>' : '<span class="nm">Hors contrat</span>'}</span>
+      <span class="a-drv">${a.contract_num ? esc(a.driver_name) + ' ' + shiftBadge(a.shift) + ' <span class="small">contrat ' + esc(a.contract_num) + '</span>' : '<span class="nm">Sans contrat</span>'}</span>
       <span class="a-det">${esc(a.detail)}</span><span class="a-go">Voir la fiche ›</span></button>`).join('')}</div>`
     : '<div class="empty">Aucune infraction ces 30 dernières minutes</div>';
   return `<div class="sechead"><h2>Alertes en direct</h2><span class="small">30 dernières minutes, à l'instant où Geotab les signale. Cliquer sur une alerte pour sa fiche détaillée (vitesse, limite de la route, trajet sur la carte).</span></div>` + body;
@@ -133,7 +171,7 @@ function vehTableHtml(rows) {
     ['Plaque', r => `<a class="fl" href="#/vehicule?k=${encodeURIComponent(r.vehicle_key)}">${plate(r.plate, S.veh[r.vehicle_key] && S.veh[r.vehicle_key].other_plates)}</a>`, r => r.plate],
     ['Modèle', r => esc(r.model)], ['État', r => badge(r.state, (STATE_CLS[r.state] || '') + ' dot'), r => LIVE_ORDER[r.state] ?? 9],
     ['Vitesse', r => r.speed ? f0(r.speed) + ' km/h' : '', r => r.speed, 'n'], ['Depuis', r => r.since_min != null ? fH(r.since_min / 60) : '', r => r.since_min, 'n'],
-    ['Dernière position', r => r.live ? fmtHMS(r.last_pos_at) : fmtDT(r.last_pos_at), r => r.last_pos_at], ['Chauffeur sous contrat (maintenant)', r => r.contract_num ? dlink(r.driver_code, r.driver_name) : '<span class="nm">Hors contrat</span>', r => r.driver_name],
+    ['Dernière position', r => r.live ? fmtHMS(r.last_pos_at) : fmtDT(r.last_pos_at), r => r.last_pos_at], ['Chauffeur sous contrat (maintenant)', r => r.contract_num ? dlink(r.driver_code, r.driver_name) : noCtrHtml(r), r => r.driver_name],
     ['Shift', r => r.contract_num ? shiftBadge(r.shift) : '', r => r.shift || 'z'], ['Contrat', r => esc(r.contract_num || '')],
     ['Km aujourd\'hui', r => f1(r.km_today), r => r.km_today, 'n'], ['Conduite', r => r.drive_min_today == null ? '' : fH(r.drive_min_today / 60), r => r.drive_min_today, 'n'],
     ['Ralenti', r => r.idle_min_today == null ? '' : fH(r.idle_min_today / 60), r => r.idle_min_today, 'n'], ['Carburant (L)', r => r.fuel_l_today === null ? `<span class="nm">${NM}</span>` : f1(r.fuel_l_today), r => r.fuel_l_today, 'n'],
@@ -174,7 +212,7 @@ function liveStatusTxt() {
 /** refresh = données du collecteur relues sans redessiner la carte */
 async function pageDirect(refresh) {
   const ok = inAgency();
-  [LIVE.rows] = await Promise.all([all('live_status', '*', null, ['plate']), loadLiveContracts()]);
+  [LIVE.rows] = await Promise.all([all('live_status', '*', null, ['plate']), loadLiveContracts(), refresh && LIVE.base ? null : loadConsoBase().catch(() => { LIVE.base = {}; })]);
   LIVE.rows = LIVE.rows.filter(r => ok(r.vehicle_key));
   if (refresh) { if ($('#tlive') && MAP) applyDirect(); return; }   // relecture : jamais de page redessinée (l'utilisateur a pu changer de page)
   const rows = liveRows(), last = LIVE.rows.reduce((m, r) => Math.max(m, new Date(r.updated_at || 0).getTime()), 0);
@@ -248,11 +286,11 @@ function vIcon(r) {
 }
 /** Info-bulle au survol : chauffeur sous contrat, plaque, état, vitesse */
 function tipHtml(r) {
-  return `<b>${r.contract_num ? esc(r.driver_name) : 'Hors contrat'}</b>${r.contract_num && r.shift ? ' · shift ' + esc(r.shift.toLowerCase()) : ''}<br>${esc(r.plate || '')} · ${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}`;
+  return `<b>${esc(r.driver_name)}</b>${r.contract_num && r.shift ? ' · shift ' + esc(r.shift.toLowerCase()) : ''}<br>${esc(r.plate || '')} · ${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}`;
 }
 function popupHtml(r) {
   return `<div class="vpop">${plate(r.plate)} <span class="small">${esc(r.model || '')}</span><div><b>${esc(r.state || '')}</b>${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</div>
-    <div>${r.contract_num ? esc(r.driver_name) + ' · ' + esc(r.shift ? 'shift ' + r.shift.toLowerCase() : '') + ' · contrat ' + esc(r.contract_num) : 'Hors contrat'}</div>
+    <div>${r.contract_num ? esc(r.driver_name) + ' · ' + esc(r.shift ? 'shift ' + r.shift.toLowerCase() : '') + ' · contrat ' + esc(r.contract_num) : noCtrHtml(r)}</div>
     <div class="small">Position ${r.live ? 'Geotab ' + esc(fmtHMS(r.last_pos_at)) : 'du collecteur ' + esc(fmtDT(r.last_pos_at))}</div>
     <div><a href="#/vehicule?k=${encodeURIComponent(r.vehicle_key)}">Fiche du véhicule</a>${r.contract_num && r.driver_code ? ` · <a href="#/chauffeur?c=${encodeURIComponent(r.driver_code)}">Fiche du chauffeur</a>` : ''}</div></div>`;
 }
@@ -322,7 +360,7 @@ async function openAlertDetail(a) {
   }
   const t0 = new Date(a.at).getTime(), t1 = a.end ? Math.max(t0, new Date(a.end).getTime()) : t0, tok = d._tok = (d._tok || 0) + 1;
   d.innerHTML = `<div class="adhead"><div>${badge(a.severity, GRAV_CLS[a.severity])} <b class="adtype">${esc(a.type)}</b> ${plate(a.plate)}
-      <div class="sub">${esc(fmtHMS(a.at))}${a.approx ? ' (heure de l\'alerte, à la minute)' : ''} · ${a.contract_num || (a.driver_code && a.driver_code !== HORS) ? esc(a.driver_name) + ' ' + shiftBadge(a.shift) + (a.contract_num ? ' · contrat ' + esc(a.contract_num) : '') : '<span class="nm">Hors contrat</span>'}</div></div>
+      <div class="sub">${esc(fmtHMS(a.at))}${a.approx ? ' (heure de l\'alerte, à la minute)' : ''} · ${a.contract_num || (a.driver_code && a.driver_code !== HORS) ? esc(a.driver_name) + ' ' + shiftBadge(a.shift) + (a.contract_num ? ' · contrat ' + esc(a.contract_num) : '') : '<span class="nm">Sans contrat</span>'}</div></div>
     <button type="button" class="ghost adclose" aria-label="Fermer">Fermer</button></div>
     <div id="adbody"><div class="loading">Lecture des données Geotab autour de l'instant…</div></div>`;
   if (!d.open) d.showModal();
