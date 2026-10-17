@@ -82,6 +82,7 @@ function fullToFull(fills, trips) {
 
 // ---------- CARBURANT (Carburant période, Pleins, plein à plein, siphonages, jauge) ----------
 async function pageCarburant() {
+  if (qs().get('t') === 'carte') return pageCarteCarburant();
   const p = period(), key = qs().get('k') || '', P = S.P, retFrom = addDays(today(), -Math.max(7, num(P.retentionDays, 62)));
   const TC = 'id,vehicle_key,plate,day,start_at,km,drive_min,idle_min,fuel_l,fuel_source,idle_fuel_l,driver_code,driver_name,contract_num';
   const [trips, fuel, lvls, allTrips] = await Promise.all([
@@ -119,6 +120,7 @@ async function pageCarburant() {
     o.n++; o.lj += num(f.liters_gauge); if (f.liters_geotab !== null) { o.lg += num(f.liters_geotab); o.ng++; } });
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Carburant</h1><div class="sub">Litres = compteur carburant du véhicule, trajet par trajet (aucune estimation). Pleins détectés par Geotab : à comparer aux tickets. Un trajet compte dans la période s'il y démarre.</div></div>
+    ${fuelTabs('')}
     ${periodBar(go)}<div class="bar">${vehSelect(key)}</div>
     ${cards([['Carburant consommé (L)', tot.fuelN ? f1(tot.fuel) : NM], ['Km', f0(tot.km)], ['Consommation (L/100 km)', l100(tot)], ['dont moteur allumé à l\'arrêt (L)', idleL(tot)],
       ['Pleins détectés', f0(tot.pleins)], ['Litres pleins (jauge)', f1(tot.pleinsL)], ['Coût (MAD)', cost(tot)], ['Trajets mesurés', cov(tot)],
@@ -171,6 +173,114 @@ async function pageCarburant() {
       s.classList.add('saved'); await job('recompute', addDays(today(), -31)).catch(() => { }); }; });
   };
   window.__rerender = render; render();
+}
+
+/** Onglets du volet Carburant */
+function fuelTabs(t) {
+  return `<nav class="tabs" aria-label="Carburant"><a href="#/carburant" class="${t ? '' : 'on'}">Consommation et pleins</a><a href="#/carburant?t=carte" class="${t === 'carte' ? 'on' : ''}">Anomalies carburant (carte Afriquia)</a></nav>`;
+}
+
+// ---------- ANOMALIES CARBURANT : achats de la carte carburant (Afriquia) croisés avec les pleins Geotab ----------
+const FC_STATUS = ['À vérifier', 'Justifié', 'Anomalie confirmée'];
+async function pageCarteCarburant() {
+  const p = period(), P = S.P, ok = inAgency(), MINS = 60000;
+  const go = () => { pageCarteCarburant().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }); };
+  // achats : 60 jours avant la période en plus (relation litres / jauge par modèle, ticket précédent) ; pleins Geotab : 3 jours avant (transmission en différé)
+  const [tx, fills, lvls] = await Promise.all([
+    dataRows('fuel_card_tx', '*', addDays(p.from, -60), p.to),
+    all('fuel', 'id,vehicle_key,plate,day,stop_start,lvl_before,lvl_after,liters_gauge,liters_geotab,driver_code,driver_name', q => q.eq('type', 'PLEIN').gte('day', addDays(p.from, -63)).lte('day', addDays(p.to, 1))).then(r => r.filter(x => ok(x.vehicle_key))),
+    dataRows('levels', 'vehicle_key,at,pct', addDays(p.from, -1), addDays(p.to, 1), { dayCol: 'vday' })]);
+  // chauffeur au moment du plein : contrat en cours sur le véhicule (contrat jamais clôturé : fin au début du suivant)
+  const keys = [...new Set(tx.map(x => x.vehicle_key).filter(Boolean))], ctr = {};
+  for (let i = 0; i < keys.length; i += 100) (await all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.in('vehicle_key', keys.slice(i, i + 100))
+    .lte('start_at', dayBounds(addDays(p.to, 1)).end.toISOString()).or('end_at.is.null,end_at.gte.' + dayBounds(addDays(p.from, -3)).start.toISOString())))
+    .forEach(c => { (ctr[c.vehicle_key] = ctr[c.vehicle_key] || []).push(c); });
+  Object.values(ctr).forEach(l => ctrEffEnds(l));
+  const who = (k, t) => { const c = (ctr[k] || []).filter(c => new Date(c.start_at).getTime() <= t && (c._end === null || t < c._end)).pop(); return c ? c.name || c.client_code : 'Sans contrat'; };
+  const V = {}; S.vehList.forEach(v => { V[v.key] = v; });
+  const res = rptFuelCard({ tx: tx.map(x => Object.assign({}, x, { at: new Date(x.at).getTime() })), fills, levels: lvls, vehicles: V, who });
+  const inP = t => { const d = localDay(t); return d >= p.from && d <= p.to; };
+  const rows = res.rows.filter(r => inP(r.at)), anom = rows.filter(r => r.anomalies.some(a => a.sev !== 'Info'));
+  const orphans = res.orphans.filter(f => inP(new Date(f.stop_start).getTime()));
+  const stOf = r => r.tx[0].status || 'À vérifier';
+  // litres et montant à justifier : achat sans plein = tout le ticket ; litres en trop = facturé - attendu (au prix du ticket)
+  const just = r => { if (stOf(r) === 'Justifié') return { l: 0, m: 0 };
+    if (r.anomalies.some(a => a.t === 'Achat sans plein dans le véhicule')) return { l: r.liters, m: r.amount };
+    if (r.anomalies.some(a => a.t === 'Litres facturés supérieurs au plein mesuré') && r.expected !== null) { const l = r.liters - r.expected; return { l, m: r.liters ? r.amount * l / r.liters : 0 }; }
+    return { l: 0, m: 0 }; };
+  const sumL = rows.reduce((s, r) => s + r.liters, 0), sumM = rows.reduce((s, r) => s + r.amount, 0), nTk = rows.reduce((s, r) => s + r.tx.length, 0);
+  const jL = anom.reduce((s, r) => s + just(r).l, 0), jM = anom.reduce((s, r) => s + just(r).m, 0);
+  const nCrit = anom.filter(r => r.sev === 'Critique' && stOf(r) !== 'Justifié').length;
+  const lastImp = tx.reduce((m, x) => x.imported_at > m ? x.imported_at : m, '');
+  const fitTxt = Object.keys(res.fit).map(m => m + ' : ' + rptFmt(res.fit[m].b, 0) + ' L pour 100 % de jauge (' + res.fit[m].n + ' pleins)').join(' · ');
+  const hm = t => fmtDTY(new Date(t).toISOString());
+  const lvTxt = r => r.lvlBefore === null ? `<span class="nm">${NM}</span>` : f0(r.lvlBefore) + ' % → ' + f0(r.lvlAfter) + ' %';
+  const fillTxt = r => r.fill ? hm(r.fillAt) + (r.late ? ' <span class="badge warn" title="La station a transmis la transaction plus tard que le plein">transmis ' + Math.round((r.at - r.fillAt) / 3600000) + ' h après</span>' : '') : '<span class="badge crit">aucun</span>';
+  const tkTxt = r => r.tx.map(x => esc(String(x.station || '').replace(/^\d+:/, '')) + (x.ticket ? ' · ticket ' + esc(x.ticket) : '')).join('<br>');
+  const cols = [['Achat (heure Afriquia)', r => hm(r.at) + `<div class="small">${tkTxt(r)}</div>`, r => r.at], ['Véhicule', r => vlink(r.key, r.plate), r => r.plate], ['Chauffeur', r => esc(r.driver)],
+    ['Litres facturés', r => `<b>${rptFmt(r.liters, 2)}</b>` + (r.tx.length > 1 ? ` <span class="small">(${r.tx.length} tickets)</span>` : ''), r => r.liters, 'n'],
+    ['Montant TTC (MAD)', r => rptFmt(r.amount, 2), r => r.amount, 'n'], ['Plein Geotab', fillTxt, r => r.fillAt || 0], ['Jauge', lvTxt],
+    ['Litres attendus', r => r.expected === null ? `<span class="nm">${NM}</span>` : '≈ ' + f0(r.expected), r => r.expected || 0, 'n']];
+  const sevCol = ['Gravité', r => badge(r.sev, GRAV_CLS[r.sev]), r => RPT_SEV.indexOf(r.sev)];
+  const anCol = ['Anomalie', r => r.anomalies.filter(a => a.sev !== 'Info').map(a => `<b>${esc(a.t)}</b><div class="small">${esc(a.d)}</div>`).join(''), null, 'wide'];
+  const stCol = ['Statut', r => canEdit() ? `<select class="fcst" data-ids="${esc(r.tx.map(x => x.id).join('\n'))}">${FC_STATUS.map(s => `<option ${s === stOf(r) ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(stOf(r)), stOf];
+  const render = info => {
+    $('#page').innerHTML = `<div class="head"><h1>Carburant</h1><div class="sub">Chaque achat de la carte carburant est comparé au plein détecté par Geotab (de 2 h 30 avant à 30 min après l'achat) et à la jauge du véhicule. Rien n'est estimé : chaque anomalie s'appuie sur une mesure Geotab.</div></div>
+    ${fuelTabs('carte')}
+    ${canEdit() ? `<div class="panel row"><label class="file">Extract des transactions Afriquia (.xlsx, .xls, .csv) <input type="file" id="fcfile" accept=".xlsx,.xls,.csv"></label>
+      <span class="small">${lastImp ? 'Dernier import : ' + fmtDTY(lastImp) + '. ' : ''}Un même ticket importé deux fois n'est compté qu'une fois.</span></div>` : ''}
+    <div id="fcres">${info || ''}</div>
+    ${periodBar(go)}
+    ${!tx.length ? msg('Aucun achat importé : importez l\'extract des transactions Afriquia ci-dessus.') : `
+    ${cards([['Achats (tickets)', f0(nTk)], ['Litres facturés', f1(sumL)], ['Montant TTC (MAD)', f0(sumM)], ['Pleins Geotab rapprochés', f0(rows.filter(r => r.fill).length) + ' / ' + f0(rows.length)],
+      ['Anomalies à vérifier', f0(anom.filter(r => stOf(r) === 'À vérifier').length), anom.some(r => stOf(r) === 'À vérifier') ? 'crit' : ''], ['dont critiques', f0(nCrit), nCrit ? 'crit' : ''],
+      ['Litres à justifier', f1(jL), jL > 0 ? 'crit' : ''], ['Montant à justifier (MAD)', f0(jM), jM > 0 ? 'crit' : '']])}
+    <div class="bar"><button id="fcpdf">PDF des anomalies</button><span class="hint">${esc(fitTxt || 'Litres attendus non mesurés : moins de 10 pleins rapprochés par modèle')}</span></div>
+    <h2>Anomalies relevées <span class="small">· ${anom.length}</span></h2>
+    ${table('tfca', [sevCol].concat(cols.slice(0, 3), [anCol], cols.slice(3, 7), [stCol]), anom.sort((a, b) => RPT_SEV.indexOf(a.sev) - RPT_SEV.indexOf(b.sev) || b.at - a.at), { empty: 'Aucune anomalie sur la période : chaque achat correspond à un plein mesuré par Geotab.' })}
+    <h2>Pleins détectés par Geotab sans achat sur la carte <span class="small">· ${orphans.length}</span></h2>
+    <div class="sub">Pleins mesurés par la jauge, sans ticket Afriquia du véhicule autour : payés autrement (espèces, autre carte) ou ticket absent de l'extract.</div>
+    ${table('tfco', [['Plein Geotab', f => fmtDTY(f.stop_start), f => f.stop_start], ['Véhicule', f => vlink(f.vehicle_key, f.plate), f => f.plate], ['Chauffeur', f => esc(f.driver_name || '')],
+      ['Jauge', f => f0(f.lvl_before) + ' % → ' + f0(f.lvl_after) + ' %'], ['Litres (jauge)', f => f1(f.liters_gauge), f => num(f.liters_gauge), 'n']], orphans, { empty: 'Aucun' })}
+    <details><summary><h2>Tous les achats de la période <span class="small">· ${rows.length}</span></h2></summary>
+    ${table('tfct', cols.concat([['Contrôle', r => r.anomalies.some(a => a.sev !== 'Info') ? badge(r.sev, GRAV_CLS[r.sev]) : '<span class="badge ok">conforme</span>', r => RPT_SEV.indexOf(r.sev)]]),
+      rows.slice().sort((a, b) => b.at - a.at))}</details>`}`;
+    const fi = $('#fcfile'); if (fi) fi.onchange = () => importFuelCard(fi.files[0]).then(t => { if (t) pageCarteCarburant().then(() => { const o = $('#fcres'); if (o) o.innerHTML = t; }); });
+    document.querySelectorAll('.fcst').forEach(sel => { sel.onchange = async () => {
+      const ids = sel.dataset.ids.split('\n'), { error } = await sb.from('fuel_card_tx').update({ status: sel.value }).in('id', ids);
+      if (error) { alert(error.message); return; } tx.filter(x => ids.includes(x.id)).forEach(x => { x.status = sel.value; }); sel.classList.add('saved'); }; });
+    const pb = $('#fcpdf'); if (pb) pb.onclick = () => { try {
+      const pc = [['Gravité', r => r.sev], ['Achat', r => hm(r.at)], ['Véhicule', r => r.plate], ['Chauffeur', r => r.driver], ['Anomalie', r => r.anomalies.filter(a => a.sev !== 'Info').map(a => a.t + ' : ' + a.d).join(' / ')],
+        ['Litres facturés', r => rptFmt(r.liters, 2), null, 'n'], ['Montant TTC', r => rptFmt(r.amount, 2), null, 'n'], ['Plein Geotab', r => r.fill ? hm(r.fillAt) + (r.late ? ' (transmis en différé)' : '') : 'aucun'],
+        ['Jauge', r => r.lvlBefore === null ? NM : f0(r.lvlBefore) + ' % → ' + f0(r.lvlAfter) + ' %'], ['Litres attendus', r => r.expected === null ? NM : f0(r.expected), null, 'n'], ['Statut', stOf]];
+      reportPdf(rptSimple({ kind: 'carte', title: 'Anomalies carburant (carte Afriquia)', fileName: 'anomalies_carburant_' + p.from + (p.to !== p.from ? '_' + p.to : ''), period: p.from === p.to ? 'du ' + fmtDay(p.from) : 'du ' + fmtDay(p.from) + ' au ' + fmtDay(p.to), from: p.from, to: p.to,
+        agency: agFilter() ? S.agName[agFilter()] : 'Toutes les agences',
+        summary: [['Achats (tickets)', f0(nTk)], ['Litres facturés', f1(sumL)], ['Montant TTC (MAD)', f0(sumM)], ['Anomalies', f0(anom.length)], ['dont critiques', f0(nCrit)],
+          ['Litres à justifier', f1(jL)], ['Montant à justifier (MAD)', f0(jM)], ['Méthode', 'plein Geotab de 2 h 30 avant à 30 min après l\'achat ; jauge du véhicule' + (fitTxt ? ' ; ' + fitTxt : '')]],
+        tables: [colsTable('Anomalies relevées', pc, anom, 'Aucune anomalie sur la période'),
+          colsTable('Pleins détectés par Geotab sans achat sur la carte', [['Plein Geotab', f => fmtDTY(f.stop_start)], ['Véhicule', f => f.plate], ['Chauffeur', f => f.driver_name || ''],
+            ['Jauge', f => f0(f.lvl_before) + ' % → ' + f0(f.lvl_after) + ' %'], ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n']], orphans, 'Aucun')] }));
+      } catch (e) { alert('PDF impossible : ' + e.message); } };
+  };
+  window.__rerender = render; render();
+}
+/** Import de l'extract Afriquia : lecture, rattachement des plaques, enregistrement (un ticket déjà importé n'est pas compté deux fois) */
+async function importFuelCard(file) {
+  const out = $('#fcres'); if (!file) return '';
+  out.innerHTML = msg('Lecture du fichier…');
+  try {
+    const rows = await readSheet(file), pc = await all('plate_changes', 'old_plate,new_plate'), res = parseFuelCard(rows, buildCanonMap(S.vehList, pc));
+    if (!res.rows.length) throw new Error('aucune transaction lue (' + res.invalid + ' lignes sans date, quantité ou plaque).');
+    out.innerHTML = msg('Enregistrement de ' + res.rows.length + ' transactions…');
+    let r = { added: 0, updated: 0, same: 0, skipped: 0 };
+    for (let i = 0; i < res.rows.length; i += 500) { const x = await rpc('import_fuel_card', { p_rows: res.rows.slice(i, i + 500) }); Object.keys(r).forEach(k => { r[k] += x[k] || 0; }); }
+    const unknown = [...new Set(res.rows.filter(x => !S.veh[x.vehicle_key]).map(x => x.plate))];
+    const days = res.rows.map(x => x.day).sort();
+    return msg(`<b>Transactions lues : ${res.read}</b> (du ${fmtDay(days[0])} au ${fmtDay(days[days.length - 1])}) : ${r.added} nouvelles, ${r.updated} mises à jour, ${r.same + res.dup} déjà importées` +
+      (res.invalid ? `, ${res.invalid} lignes ignorées (sans date, quantité ou plaque)` : '') + (r.skipped ? `, ${r.skipped} ignorées (véhicules d'une autre agence)` : '') + '.' +
+      (unknown.length ? `<br><b>Plaques non reconnues (${unknown.length}) :</b> ${unknown.map(esc).join(', ')} : ajoutez-les dans <a href="#/plaques">Plaques</a> puis réimportez le fichier.` : '') +
+      '<br>Choisissez la période ci-dessous pour voir les anomalies.', unknown.length ? 'warn' : 'ok');
+  } catch (e) { out.innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); return ''; }
 }
 
 // ---------- RALENTI (moteur allumé à l'arrêt) ----------

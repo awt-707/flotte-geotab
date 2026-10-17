@@ -17,7 +17,7 @@ const PAGES = [['direct', 'En direct', /En route|Garé|Arrêté/], ['tableau', '
   ['chauffeurs', 'Classement des chauffeurs', /Score/], ['alertes', 'Alertes', /Gravité/], ['contrats', 'Contrats', /Contrats des 40 derniers jours/],
   ['plaques', 'Changements de plaque', /Ancienne plaque/], ['vehicules', 'Véhicules', /WW968194/], ['reglages', 'Réglages', /Journal technique/],
   ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/],
-  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['conso', 'Consommation', /Rapport de consommation/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/], ['comportement', 'Comportement chauffeur', /Choisissez un chauffeur/], ['finshift?d=2026-10-03&s=Jour', 'Résultat de fin de shift', /Par chauffeur : consommation et conduite/],
+  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['carburant?t=carte', 'Carburant', /Aucun achat importé/], ['conso', 'Consommation', /Rapport de consommation/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/], ['comportement', 'Comportement chauffeur', /Choisissez un chauffeur/], ['finshift?d=2026-10-03&s=Jour', 'Résultat de fin de shift', /Par chauffeur : consommation et conduite/],
   ['vehicule?k=968199WW', 'WW968199', /Journées de travail/], ['chauffeur?c=C038', 'Compte rendu', /Par journée de travail/]];
 
 for (const [viewport, size] of [['ordinateur', { width: 1440, height: 900 }], ['téléphone', { width: 390, height: 844, isMobile: true, hasTouch: true }]]) {
@@ -388,6 +388,57 @@ test('résultat de fin de shift : contrats du shift, totaux du journal, PDF gén
       const f = require('path').join(env.OUT, dl.suggestedFilename()); await dl.saveAs(f);
       const pdf = fs.readFileSync(f); assert.strictEqual(pdf.slice(0, 5).toString(), '%PDF-'); assert.ok(pdf.length > 5000);
     }
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});
+
+test('anomalies carburant : import de l\'extract Afriquia, achats rapprochés des pleins Geotab, achat sans plein relevé, statut, PDF', async () => {
+  const fs = require('fs'), XLSX = require('xlsx');
+  lib.setTzRules(env.MA_TZ);
+  // un ticket 5 min après chaque plein détecté par Geotab (litres = montée de jauge × réservoir) + un achat sans aucun plein (synthétique)
+  const fills = JSON.parse(env.psql("select coalesce(json_agg(j order by j.stop_start), '[]') from (select f.vehicle_key, f.stop_start, f.lvl_before, f.lvl_after, v.plate, v.fuel, coalesce(v.tank_l, 60) tank from fuel f join vehicles v on v.key = f.vehicle_key where f.type = 'PLEIN' and f.day between '2026-09-29' and '2026-10-05') j"));
+  assert.ok(fills.length >= 3, 'pleins dans le jeu de test');
+  const dt = ms => lib.localDay(ms) + ' ' + lib.localHM(ms) + ':00';
+  const row = (ms, f, q, tk) => ['7000000000000' + f.vehicle_key.slice(0, 3), dt(ms), 'SOCIETE TEST', 'WW' + f.vehicle_key.replace(/\D/g, ''), /GO/.test(f.fuel || '') ? 'GASOIL   ' : 'SUPER SP   ', q.toFixed(2).replace('.', ','), (q * 14.9).toFixed(2), tk, '25:STATION TEST'];
+  const rows = [['Carte', 'Date Transaction', 'Libellé 1', 'Libellé 2', 'Produit', 'Quantité', 'Montant Transaction TTC', 'Ticket', 'Station de service']];
+  fills.forEach((f, i) => rows.push(row(new Date(f.stop_start).getTime() + 5 * 60000, f, Math.max(5, f.tank * (f.lvl_after - f.lvl_before) / 100), '00' + (1000 + i))));
+  const g = fills[0], phantom = Date.parse('2026-10-05T23:30:00Z');
+  assert.ok(!fills.some(f => f.vehicle_key === g.vehicle_key && Math.abs(new Date(f.stop_start).getTime() - phantom) < 50 * 3600000), 'aucun plein Geotab autour de l\'achat fantôme');
+  rows.push(row(phantom, g, 45, '009999'));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Sheet1');
+  const file = path.join(env.OUT, 'afriquia_test.xlsx'); XLSX.writeFile(wb, file);
+  const { br, page, errors } = await openBrowser({ acceptDownloads: true });
+  await page.clock.setFixedTime(new Date('2026-10-06T09:18:00Z'));
+  try {
+    await login(page, '#/reglages');
+    await page.evaluate(() => localStorage.setItem('periode', JSON.stringify({ sel: 'Personnalisé', from: '2026-09-29', to: '2026-10-06' })));
+    await page.goto('http://localhost:8080/#/carburant?t=carte');
+    await page.waitForSelector('#fcfile', { state: 'attached' });
+    await page.setInputFiles('#fcfile', file);
+    await page.waitForSelector('#fcres .msg.ok, #fcres .msg.warn, #fcres .msg.err', { timeout: 30000 });
+    assert.match(await page.innerText('#fcres'), new RegExp('Transactions lues : ' + (fills.length + 1) + '.*' + (fills.length + 1) + ' nouvelles'));
+    assert.strictEqual(+env.psql('select count(*) from fuel_card_tx'), fills.length + 1);
+    await page.waitForSelector('#tfca');
+    const txt = await page.innerText('#tfca');
+    assert.match(txt, /Achat sans plein dans le véhicule|Aucun plein détecté par Geotab/);
+    assert.ok(!/ticket 001\d{3}[^]*(Achat sans plein|Aucun plein détecté)/.test(await page.$$eval('#tfca tbody tr', trs => trs.filter(tr => /Achat sans plein|Aucun plein détecté/.test(tr.innerText)).map(tr => tr.innerText).join('\n'))),
+      'les tickets des vrais pleins ne sont jamais « sans plein »');
+    const card = async l => (await page.locator('.card', { hasText: l }).first().locator('.cv').innerText()).replace(/\s/g, '');
+    assert.strictEqual(await card('Pleins Geotab rapprochés'), fills.length + '/' + (fills.length + 1));
+    assert.strictEqual(await card('Achats (tickets)'), String(fills.length + 1));
+    // statut enregistré, jamais écrasé par un nouvel import du même fichier
+    const sel = page.locator('#tfca tr', { hasText: '009999' }).locator('select.fcst');
+    await sel.selectOption('Justifié');
+    await page.waitForFunction(() => document.querySelector('select.fcst.saved'));
+    assert.strictEqual(env.psql("select status from fuel_card_tx where ticket = '009999'"), 'Justifié');
+    await page.setInputFiles('#fcfile', file);
+    await page.waitForFunction(n => /déjà importées/.test((document.querySelector('#fcres') || {}).innerText || '') && new RegExp('0 nouvelles').test(document.querySelector('#fcres').innerText), fills.length);
+    assert.strictEqual(env.psql("select status from fuel_card_tx where ticket = '009999'"), 'Justifié');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#fcpdf')]);
+    assert.match(dl.suggestedFilename(), /^anomalies_carburant_2026-09-29_2026-10-06\.pdf$/);
+    const f = path.join(env.OUT, dl.suggestedFilename()); await dl.saveAs(f);
+    assert.strictEqual(fs.readFileSync(f).slice(0, 5).toString(), '%PDF-');
+    await page.screenshot({ path: path.join(env.OUT, 'site_carte_carburant.png'), fullPage: true });
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
