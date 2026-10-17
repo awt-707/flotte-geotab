@@ -183,8 +183,12 @@ export async function handle(req, deps) {
       return json(200, Object.assign({ at: nowIso }, await detail(deps, v, from, Math.min(to, now))));
     }
     if (mode === 'drivers') {
-      const items = String(q.get('c') || '').split(',').map(x => { const i = x.lastIndexOf('@'), v = veh.find(y => y.key === x.slice(0, i)), f = ms(x.slice(i + 1));
-        return v && !isNaN(f) && f < now ? { v, from: Math.max(f, now - DRV_MAX_H * 3600000) } : null; }).filter(Boolean).slice(0, 60);
+      // un seul chauffeur par véhicule (le dernier demandé), début arrondi à la minute : la demande reste bornée à la flotte
+      // de l'utilisateur et le cache sert les demandes voisines (sinon une liste répétée multiplierait les appels Geotab)
+      const one = {};
+      String(q.get('c') || '').split(',').forEach(x => { const i = x.lastIndexOf('@'), v = veh.find(y => y.key === x.slice(0, i)), f = ms(x.slice(i + 1));
+        if (v && !isNaN(f) && f < now) one[v.key] = { v, from: Math.max(Math.floor(f / 60000) * 60000, now - DRV_MAX_H * 3600000) }; });
+      const items = Object.values(one);
       return json(200, { at: nowIso, drivers: items.length ? await drivers(deps, items, now) : {} });
     }
     if (!veh.length) return json(200, { at: nowIso, vehicles: [], events: [] });

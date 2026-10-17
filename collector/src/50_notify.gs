@@ -150,31 +150,43 @@ function jobSendReport_(args) {
 }
 
 /** Comportement d'un chauffeur entre deux jours (même calcul que la page du site : rptDriver de site/report.js) */
-function buildDriver_(code, from, to) {
+function buildDriver_(code, from, to, keys) {
   const P = params_(), c = enc_(code), dr = '&driver_code=eq.' + c + '&day=gte.' + from + '&day=lte.' + to;
   const d = dbSelect_('drivers', 'select=*&code=eq.' + c, 'code')[0] || {};
   const ag = d.agency_id ? (dbSelect_('agencies', 'select=id,name&id=eq.' + d.agency_id, 'id')[0] || {}).name : '';
   let stops = null;
   try { stops = dbSelect_('engine_stops', 'select=*' + dr, 'id'); } catch (e) { stops = null; }
   const rules = {}; Object.keys(rulesMap_()).forEach(id => { const r = rulesMap_()[id]; rules[id] = { name: r.name, weight: r.w, category: r.cat }; });
+  // keys : véhicules des agences du demandeur (gestionnaire) ; absent = administrateur, toute la flotte
+  const mine = l => keys ? (l || []).filter(r => keys[r.vehicle_key]) : l;
   return rptDriver({
     driver: { code, name: d.name || code, phone: d.phone, email: d.email, agency: ag },
-    journal: dbSelect_('journal', 'select=*' + dr, 'id'),
-    trips: dbSelect_('trips', 'select=*' + dr, 'id'),
-    events: dbSelect_('events', 'select=id,vehicle_key,plate,day,start_at,dur_s,km,rule_id,rule_name,driver_code' + dr, 'id'),
-    fuel: dbSelect_('fuel', 'select=*&type=in.(PLEIN,SIPHONAGE_SUSPECT)&day=gte.' + from + '&day=lte.' + to, 'id'),
-    stops, idles: dbSelect_('idles', 'select=*' + dr, 'id'), alerts: dbSelect_('alerts', 'select=*' + dr, 'id'),
-    rules, P, from, to, rankJournal: dbSelect_('journal', 'select=id,driver_code,day,km,danger_pts&day=gte.' + from + '&day=lte.' + to, 'id'),
+    journal: mine(dbSelect_('journal', 'select=*' + dr, 'id')),
+    trips: mine(dbSelect_('trips', 'select=*' + dr, 'id')),
+    events: mine(dbSelect_('events', 'select=id,vehicle_key,plate,day,start_at,dur_s,km,rule_id,rule_name,driver_code' + dr, 'id')),
+    fuel: mine(dbSelect_('fuel', 'select=*&type=in.(PLEIN,SIPHONAGE_SUSPECT)&day=gte.' + from + '&day=lte.' + to, 'id')),
+    stops: stops && mine(stops), idles: mine(dbSelect_('idles', 'select=*' + dr, 'id')), alerts: mine(dbSelect_('alerts', 'select=*' + dr, 'id')),
+    rules, P, from, to, rankJournal: mine(dbSelect_('journal', 'select=id,driver_code,day,km,danger_pts,vehicle_key&day=gte.' + from + '&day=lte.' + to, 'id')),
     dayOf: localDay_, hmOf: localHM_, generatedAt: new Date()
   });
 }
 /** Demande du site : PDF du comportement d'un chauffeur envoyé à une adresse e-mail. arg = {"code","from","to","email"} */
-function jobDriverReport_(arg) {
+function jobDriverReport_(arg, by) {
   let a; try { a = JSON.parse(arg || '{}'); } catch (e) { return 'Erreur : demande illisible'; }
   const day = /^\d{4}-\d{2}-\d{2}$/;
   if (!a.code || !day.test(a.from || '') || !day.test(a.to || '') || a.from > a.to) return 'Erreur : chauffeur ou période invalide';
   if (!/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(a.email || '')) return 'Erreur : adresse e-mail invalide';
-  const rep = buildDriver_(a.code, a.from, a.to);
+  // demandé par un gestionnaire : seulement les véhicules de ses agences (comme sur le site)
+  let keys = null;
+  if (by) {
+    const pr = dbSelect_('profiles', 'select=user_id,role&user_id=eq.' + enc_(by), 'user_id')[0];
+    if (!pr || pr.role !== 'admin') {
+      const ags = dbSelect_('user_agencies', 'select=user_id,agency_id&user_id=eq.' + enc_(by), 'user_id,agency_id').map(x => x.agency_id);
+      keys = {}; if (ags.length) dbSelect_('vehicles', 'select=key&agency_id=in.(' + ags.join(',') + ')', 'key').forEach(v => { keys[v.key] = 1; });
+      if (!Object.keys(keys).length) return 'Erreur : aucun véhicule dans vos agences';
+    }
+  }
+  const rep = buildDriver_(a.code, a.from, a.to, keys);
   MailApp.sendEmail({ to: a.email, subject: 'Ludy : ' + rep.title.toLowerCase().replace('comportement du chauffeur : ', 'comportement de ') + ' ' + rep.period,
     htmlBody: '<p>Bonjour,</p><p>Ci-joint le rapport de comportement de <b>' + rptEsc(rep.title.replace('Comportement du chauffeur : ', '')) + '</b> ' + rptEsc(rep.period) + '.</p>' +
       '<p>' + rep.summary.slice(2, 14).map(x => rptEsc(x[0]) + ' : <b>' + rptEsc(x[1]) + '</b>').join('<br>') + '</p><p style="color:#5d6b74">Données mesurées par Geotab uniquement ; « non mesuré » quand Geotab ne fournit pas la valeur.</p>',

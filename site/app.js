@@ -11,8 +11,8 @@ const PARAM_DEFAULTS = { minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, score
 // ---------- Accès aux données ----------
 const PK = { vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key' };
 async function all(table, cols, build, order) {
-  const out = []; const page = 1000;
-  for (let i = 0; ; i += page) {
+  const page = 1000;
+  const get = async i => {
     let q = sb.from(table).select(cols || '*');
     if (build) q = build(q);
     if (order) q = q.order(order[0], { ascending: order[1] !== false });
@@ -20,16 +20,24 @@ async function all(table, cols, build, order) {
     (PK[table] || 'id').split(',').forEach(c => { if (!order || order[0] !== c) q = q.order(c, { ascending: true }); });
     const { data, error } = await q.range(i, i + page - 1);
     if (error) throw new Error(table + ' : ' + error.message);
-    out.push(...data); if (data.length < page) break;
+    return data;
+  };
+  // 1re page seule ; au-delà, 4 pages demandées en même temps (longues périodes : plusieurs milliers de lignes)
+  const out = [];
+  for (let i = 0; ;) {
+    const batch = await Promise.all((i ? [0, 1, 2, 3] : [0]).map(k => get(i + k * page)));
+    for (const d of batch) { out.push(...d); if (d.length < page) return out; }
+    i += batch.length * page;
   }
-  return out;
 }
 async function rpc(fn, args) { const { data, error } = await sb.rpc(fn, args || {}); if (error) throw new Error(fn + ' : ' + error.message); return data; }
-/** Fonction de lecture renvoyant des lignes : paginée comme all() (PostgREST renvoie 1 000 lignes au plus) */
-async function rpcAll(fn, args) {
+/** Fonction de lecture renvoyant des lignes : paginée comme all() (PostgREST renvoie 1 000 lignes au plus).
+ *  keys : colonnes qui identifient une ligne, toujours triées (sans ordre fixe, les pages peuvent répéter ou sauter des lignes) */
+async function rpcAll(fn, args, keys) {
   const out = [];
   for (let i = 0; ; i += 1000) {
-    const { data, error } = await sb.rpc(fn, args || {}).range(i, i + 999);
+    let q = sb.rpc(fn, args || {}); (keys || []).forEach(k => { q = q.order(k, { ascending: true, nullsFirst: true }); });
+    const { data, error } = await q.range(i, i + 999);
     if (error) throw new Error(fn + ' : ' + error.message);
     out.push(...(data || [])); if (!data || data.length < 1000) return out;
   }
@@ -182,7 +190,7 @@ async function pageTableau() {
   const p = period(), P = S.P, ok = inAgency();
   let [jrn, ac, tne, top] = await Promise.all([
     all('journal', '*', q => q.gte('day', p.from).lte('day', p.to)),
-    rpcAll('alert_counts', { p_from: p.from, p_to: p.to }),
+    rpcAll('alert_counts', { p_from: p.from, p_to: p.to }, ['vehicle_key', 'type', 'severity', 'status']),
     all('fuel', 'vehicle_key', q => q.eq('type', 'TRAJET_NON_ENREGISTRE').gte('day', p.from).lte('day', p.to)),
     all('alerts', '*', q => q.in('severity', ['Critique', 'Haute']).gte('day', p.from).lte('day', p.to))]);
   // filtre agence AVANT de garder les 25 plus récentes
@@ -192,7 +200,8 @@ async function pageTableau() {
   const cnt = f => ac.filter(f).reduce((s, x) => s + x.n, 0);
   const crit = cnt(x => x.severity === 'Critique'), high = cnt(x => x.severity === 'Haute'), ntne = tne.count || 0;
   const byV = aggJournal(jrn, r => r.vehicle_key, P);
-  const vrows = S.vehList.filter(v => v.active !== 'NON' && ok(v.key)).map(v => ({ v, a: byV[v.key] || emptyAgg(), al: cnt(x => x.vehicle_key === v.key) }));
+  // véhicule retiré du parc mais qui a roulé sur la période : listé (le total des cartes le compte)
+  const vrows = S.vehList.filter(v => (v.active !== 'NON' || byV[v.key]) && ok(v.key)).map(v => ({ v, a: byV[v.key] || emptyAgg(), al: cnt(x => x.vehicle_key === v.key) }));
   const byD = aggJournal(jrn.filter(r => r.driver_code !== HORS), r => shiftOf(r.contract_start, P) + '|' + r.driver_code, P);
   const drows0 = Object.values(byD).map(a => { const [sh, code] = a.k.split('|'), sc = scoreOf(a, P); return { a, sh, code, nom: S.drv[code] || Object.keys(a.names)[0] || code, score: sc, level: levelOf(sc, P) }; })
     .sort((x, y) => y.score - x.score || y.a.pts - x.a.pts);
@@ -269,13 +278,15 @@ async function alertShifts(rows) {
     const miss = nums.filter(n => !byNum[n]);
     for (let i = 0; i < miss.length; i += 150) (await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('num', miss.slice(i, i + 150)))).forEach(add);
   } catch (e) { /* contrats illisibles : créneau horaire seul */ }
+  Object.values(byVeh).forEach(l => ctrEffEnds(l));   // contrat jamais clôturé : fin au début du suivant
   rows.forEach(a => {
     const t = alertAt(a); let c = byNum[alertCtrNum(a)] || null;
     if (!c && t) {
-      const live = (byVeh[a.vehicle_key] || []).filter(x => new Date(x.start_at) <= t && (!x.end_at || new Date(x.end_at) >= t));
+      const live = (byVeh[a.vehicle_key] || []).filter(x => new Date(x.start_at) <= t && (x._end === null || x._end >= t));
       c = live.find(x => a.driver_code && x.client_code === a.driver_code) || live.sort((x, y) => new Date(y.start_at) - new Date(x.start_at))[0] || null;
     }
-    a._sh = c ? shiftOfCtr(c.start_at, S.P) : shiftAt(t, S.P);
+    // contrat de plusieurs jours (location longue) : son shift ne vaut que pour la première journée, ensuite le créneau horaire
+    a._sh = c && (!t || t - new Date(c.start_at) < 20 * HOUR) ? shiftOfCtr(c.start_at, S.P) : shiftAt(t, S.P);
   });
   return rows;
 }
@@ -307,7 +318,7 @@ function linkify(t) { return esc(t).replace(/https:\/\/maps\.google\.com\/\?q=(-
 
 // ---------- DU JOUR ----------
 async function pageJour() {
-  const qs = new URLSearchParams(location.hash.split('?')[1] || ''), day = qs.get('jour') || today(), P = S.P;
+  const qs = new URLSearchParams(location.hash.split('?')[1] || ''), P = S.P, day = qs.get('jour') || shiftAt(new Date(), P).day;   // la nuit en cours (avant 7 h) appartient à la journée de la veille
   // journée d'exploitation : shift jour (shiftDay h → shiftNight h) puis shift nuit jusqu'au lendemain shiftDay h ; une nuit appartient au jour où elle commence
   const ok = inAgency(), dp = day.split('-').map(Number), d1 = addDays(day, 1).split('-').map(Number), sd = num(P.shiftDay, 7);
   const w0 = localToDate(dp[0], dp[1], dp[2], sd, 0), w1 = localToDate(d1[0], d1[1], d1[2], sd, 0);
@@ -347,7 +358,7 @@ async function pageJour() {
 async function pageChauffeurs() {
   const p = period(), P = S.P;
   const ok = inAgency();
-  const [jrn0, rc] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAll('driver_rule_counts', { p_from: p.from, p_to: p.to })]);
+  const [jrn0, rc] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAll('driver_rule_counts', { p_from: p.from, p_to: p.to }, ['driver_code', 'rule_id', 'vehicle_key', 'contract_num'])]);
   // un chauffeur par shift : ses journées de jour et de nuit sont classées séparément
   const jrn = jrn0.filter(r => ok(r.vehicle_key)), agg = aggJournal(jrn, r => shiftOf(r.contract_start, P) + '|' + r.driver_code, P), used = {}, byD = {};
   const ctrSh = {}; jrn.forEach(r => { if (r.contract_num) ctrSh[r.contract_num] = shiftOf(r.contract_start, P); });
@@ -428,7 +439,20 @@ async function saveAlert(id, patch, rows) {
 
 // ---------- CONTRATS ----------
 async function pageContrats() {
-  const ok = inAgency(), recent = (await all('contracts', '*', q => q.gte('start_at', new Date(Date.now() - 40 * DAY).toISOString()), ['start_at', false])).filter(c => ok(c.vehicle_key) || (!agFilter() && !c.vehicle_key));
+  const ok = inAgency(), keep = c => ok(c.vehicle_key) || (!agFilter() && !c.vehicle_key);
+  // contrats des 40 derniers jours, plus ceux restés ouverts (sans date de fin) même plus anciens
+  const [rec0, open0] = await Promise.all([all('contracts', '*', q => q.gte('start_at', new Date(Date.now() - 40 * DAY).toISOString()), ['start_at', false]),
+    all('contracts', '*', q => q.is('end_at', null))]);
+  const seen = {}, recent = rec0.concat(open0).filter(c => !seen[c.num] && (seen[c.num] = 1) && keep(c)).sort((a, b) => String(b.start_at).localeCompare(String(a.start_at)));
+  // fin effective par véhicule ; contrats à vérifier : jamais clôturés alors qu'un contrat plus récent a commencé, ou qui se chevauchent
+  const byV = {}; recent.forEach(c => { if (c.vehicle_key) (byV[c.vehicle_key] = byV[c.vehicle_key] || []).push(c); });
+  const check = [];
+  Object.values(byV).forEach(l => ctrEffEnds(l).forEach((c, i, a) => {
+    const nx = a[i + 1];
+    if (c._next) check.push({ c, why: 'Jamais clôturé dans l\'extract : remplacé par ' + esc(c._next) + ' le ' + fmtDTY(nx.start_at) + '. Trajets comptés jusqu\'à cette heure.' });
+    else if (nx && c._end !== null && new Date(nx.start_at).getTime() < c._end - MIN) check.push({ c, why: 'Chevauche ' + esc(nx.num) + ' (' + esc(nx.name || '') + ', début ' + fmtDTY(nx.start_at) + ') sur le même véhicule : les trajets vont au contrat le plus récent.' });
+  }));
+  const finTxt = c => c._next ? `<span class="badge warn">non clôturé</span> remplacé par ${esc(c._next)}` : c.end_at ? fmtDTY(c.end_at) : 'en cours';
   const jobs = (await sb.from('jobs').select('*').eq('kind', 'after_inject').order('id', { ascending: false }).limit(5)).data || [];
   let search = '';
   const render = () => {
@@ -437,10 +461,15 @@ async function pageContrats() {
     ${canEdit() ? `<div class="panel"><label class="file">Extract des contrats (.xlsx, .xls, .csv) <input type="file" id="cfile" accept=".xlsx,.xls,.csv"></label><div id="cres"></div></div>` : ''}
     ${jobs.length ? `<h2>Derniers calculs après import</h2>${table('tjobs', [['Demandé le', j => fmtDTY(j.created_at)], ['Terminé le', j => j.done_at ? fmtDTY(j.done_at) : '<span class="badge warn">en attente du collecteur</span>'],
       ['Résultat', j => esc(j.result || ''), null, 'wide']], jobs)}` : ''}
+    ${check.length ? `<h2>Contrats à vérifier dans l'extract <span class="small">· ${check.length}</span></h2>
+    <div class="sub">À corriger dans le logiciel de location puis réimporter l'extract. Un véhicule n'a qu'un chauffeur à la fois : en attendant, chaque trajet va au contrat le plus récent.</div>
+    ${table('tctrchk', [['N° contrat', x => esc(x.c.num)], ['Chauffeur', x => `<b>${esc(x.c.name || '')}</b>`, x => x.c.name], ['Véhicule', x => S.veh[x.c.vehicle_key] ? plate(S.veh[x.c.vehicle_key].plate) : esc(x.c.plate || ''), x => x.c.vehicle_key],
+      ['Début', x => fmtDTY(x.c.start_at), x => x.c.start_at], ['Fin', x => x.c.end_at ? fmtDTY(x.c.end_at) : 'aucune', x => x.c.end_at || 'z'], ['Problème', x => x.why, null, 'wide']],
+      check.sort((a, b) => String(b.c.start_at).localeCompare(String(a.c.start_at))))}` : ''}
     <h2>Contrats des 40 derniers jours <input id="csearch" placeholder="Rechercher (nom, plaque, n°…)" value="${esc(search)}"></h2>
     ${table('tctr', [['N° contrat', c => esc(c.num)], ['Chauffeur', c => `<b>${esc(c.name)}</b>`, c => c.name], ['Code', c => esc(c.client_code)], ['Plaque', c => plate(c.plate), c => c.plate],
       ['Véhicule', c => S.veh[c.vehicle_key] ? plate(S.veh[c.vehicle_key].plate) : `<span class="badge high">inconnu</span>`, c => c.vehicle_key], ['Début', c => fmtDTY(c.start_at), c => c.start_at],
-      ['Fin', c => c.end_at ? fmtDTY(c.end_at) : 'en cours', c => c.end_at || 'z'], ['Statut', c => esc(c.status || '')], ['Téléphone', c => esc(c.phone || '')]], list.slice(0, 500))}`;
+      ['Fin', finTxt, c => c.end_at || (c._next ? 'y' : 'z')], ['Statut', c => esc(c.status || '')], ['Téléphone', c => esc(c.phone || '')]], list.slice(0, 500))}`;
     const fi = $('#cfile'); if (fi) fi.onchange = () => importFile(fi.files[0]);
     const cs = $('#csearch'); cs.oninput = () => { search = cs.value; const pos = cs.selectionStart; render(); const n = $('#csearch'); n.focus(); n.setSelectionRange(pos, pos); };
   };
@@ -685,27 +714,65 @@ function colsTable(title, cols, rows, empty) {
 function reportPdf(rep) {
   if (!window.jspdf) throw new Error('bibliothèque PDF non chargée, réessayez dans un instant');
   if (window.applyPlugin && !window.jspdf.jsPDF.API.autoTable) window.applyPlugin(window.jspdf.jsPDF);
-  const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }), cl = v => String(v == null ? '' : v).replace(/ /g, ' ').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/→/g, '->');   // signes absents de la police Helvetica du PDF
-  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
-  try { doc.addImage(RPT_LOGO, 'PNG', W - 14 - 36, 8, 36, 8.8); } catch (e) { }   // logo Ludy en haut à droite
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(20, 32, 43); doc.text(cl(rep.title), 14, 16);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(93, 107, 120); doc.text(cl(rep.agency + ' · ' + rep.period), 14, 22);
-  doc.autoTable({ startY: 26, body: rep.summary.map(r => r.map(cl)), theme: 'plain', tableWidth: 160, styles: { fontSize: 9, cellPadding: 0.8 },
-    columnStyles: { 0: { textColor: [93, 107, 120], cellWidth: 60 }, 1: { fontStyle: 'bold' } } });
-  let y = doc.lastAutoTable.finalY;
+  // signes absents de la police Helvetica du PDF (espaces fines des nombres, flèches, ≥ ≤)
+  const cl = v => String(v == null ? '' : v).replace(/[\u202f\u00a0]/g, ' ').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/\s*→\s*/g, ' – ');
+  const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }), W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 12, TOP = 22;
+  const C = { ink: [20, 32, 43], mute: [93, 107, 120], line: [216, 222, 228], soft: [243, 245, 247], head: [15, 38, 51], acc: [91, 75, 214], zebra: [247, 248, 250],
+    crit: [180, 35, 24], high: [180, 70, 26], warn: [154, 90, 0], ok: [24, 121, 74] };
+  const LEVEL = { Dangereux: 'crit', Critique: 'crit', 'Élevé': 'high', Haute: 'high', 'Modéré': 'warn', Moyenne: 'warn', Faible: 'ok' };
+  const KIND = { conso: 'Rapport de consommation', chauffeur: 'Comportement chauffeur', conduite: 'Conduite des chauffeurs', classement: 'Classement des chauffeurs' };
+  const col = (k, c) => doc['set' + k](c[0], c[1], c[2]), font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); col('TextColor', c || C.ink); };
+  const sub = cl(rep.agency + ' · ' + rep.period);
+  // première page : logo, type de document, titre, agence et période
+  try { doc.addImage(RPT_LOGO, 'PNG', M, 9, 34, 8.3); } catch (e) { }
+  font('bold', 8, C.acc); doc.text(cl(KIND[rep.kind] || 'Rapport de la flotte').toUpperCase(), W - M, 12.5, { align: 'right' });
+  font('normal', 8, C.mute); doc.text('Édité le ' + fmtDTY(rep.generatedAt), W - M, 17, { align: 'right' });
+  font('bold', 17); const tl = doc.splitTextToSize(cl(rep.title), W - 2 * M); doc.text(tl, M, 29);
+  let y = 29 + (tl.length - 1) * 6.5 + 6.5; font('normal', 10, C.mute); doc.text(sub, M, y);
+  y += 4; col('DrawColor', C.acc); doc.setLineWidth(0.6); doc.line(M, y, W - M, y); y += 6;
+  const newPage = () => { doc.addPage(); return TOP + 2; };
+  // résumé : cartes de 4 par ligne (libellé, valeur)
+  const N = 4, gap = 3, cw = (W - 2 * M - (N - 1) * gap) / N;
+  for (let i = 0; i < rep.summary.length; i += N) {
+    const row = rep.summary.slice(i, i + N).map(s => { doc.setFontSize(7.2); const l = doc.splitTextToSize(cl(s[0]), cw - 6); doc.setFontSize(10.5); return { l, v: doc.splitTextToSize(cl(s[1]), cw - 6) }; });
+    const h = Math.max(...row.map(c => 4.2 + c.l.length * 3 + c.v.length * 4.4 + 1.6));
+    if (y + h > H - 16) y = newPage();
+    row.forEach((c, j) => { const x = M + j * (cw + gap);
+      col('FillColor', C.soft); doc.roundedRect(x, y, cw, h, 1.6, 1.6, 'F');
+      font('normal', 7.2, C.mute); doc.text(c.l, x + 3, y + 4.2);
+      font('bold', 10.5); doc.text(c.v, x + 3, y + 4.2 + c.l.length * 3 + 3.6); });
+    y += h + gap;
+  }
+  // sections : titre (et nombre de lignes), tableau ; un titre n'est jamais laissé seul en bas de page
   rptTables(rep).forEach(t => {
-    y += 9; if (y > H - 30) { doc.addPage(); y = 16; }
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(20, 32, 43); doc.text(cl(t.title), 14, y);
-    if (!t.rows.length) { doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(93, 107, 120); doc.text(cl(t.empty), 14, y + 6); y += 6; return; }
+    if (y > H - 34) y = newPage();
+    y += 6; col('FillColor', C.acc); doc.rect(M, y - 3.7, 1.3, 4.8, 'F');
+    font('bold', 11.5); const tt = cl(t.title); doc.text(tt, M + 3.5, y);
+    if (t.rows.length) { const w = doc.getTextWidth(tt); font('normal', 8.5, C.mute); doc.text('· ' + t.rows.length + (t.rows.length > 1 ? ' lignes' : ' ligne'), M + 3.5 + w + 2.5, y); }
+    if (!t.rows.length) { font('normal', 9, C.mute); doc.text(cl(t.empty), M + 3.5, y + 6); y += 9; return; }
     const cs = {}; t.num.forEach(i => { cs[i] = { halign: 'right' }; });
-    doc.autoTable({ startY: y + 3, head: [t.head], body: t.rows.map(r => r.map(cl)), styles: { fontSize: 8, cellPadding: 1.4, overflow: 'linebreak' },
-      headStyles: { fillColor: [91, 75, 214], textColor: 255 }, alternateRowStyles: { fillColor: [245, 246, 250] }, columnStyles: cs, margin: { left: 14, right: 14 } });
-    y = doc.lastAutoTable.finalY;
+    doc.autoTable({ startY: y + 2.5, head: [t.head.map(cl)], body: t.rows.map(r => r.map(cl)), theme: 'striped', margin: { left: M, right: M, top: TOP, bottom: 16 },
+      styles: { font: 'helvetica', fontSize: 7.8, cellPadding: { top: 1.5, bottom: 1.5, left: 1.8, right: 1.8 }, textColor: C.ink, overflow: 'linebreak', valign: 'middle' },
+      headStyles: { fillColor: C.head, textColor: 255, fontStyle: 'bold', fontSize: 7.6 }, bodyStyles: { fillColor: [255, 255, 255] }, alternateRowStyles: { fillColor: C.zebra },
+      columnStyles: cs,
+      didParseCell: d => {
+        if (d.section === 'head') { if (t.num.indexOf(d.column.index) >= 0) d.cell.styles.halign = 'right'; return; }
+        const v = String(d.cell.raw), lv = LEVEL[v];
+        if (lv) { d.cell.styles.textColor = C[lv]; d.cell.styles.fontStyle = 'bold'; }
+        else if (v === RPT_NM || v === 'prix non saisi' || v === 'km insuffisants') { d.cell.styles.textColor = C.mute; d.cell.styles.fontStyle = 'italic'; }
+      } });
+    y = doc.lastAutoTable.finalY + 2;
   });
+  // en-tête rappelé à partir de la page 2, pied de page partout
   const n = doc.getNumberOfPages();
-  for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(93, 107, 120);
-    doc.text('Données mesurées par Geotab uniquement ; « non mesuré » quand Geotab ne fournit pas la valeur. Édité le ' + fmtDTY(rep.generatedAt), 14, H - 7);
-    doc.text(i + ' / ' + n, W - 14, H - 7, { align: 'right' }); }
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i); col('DrawColor', C.line); doc.setLineWidth(0.2);
+    if (i > 1) { try { doc.addImage(RPT_LOGO, 'PNG', M, 7.5, 22, 5.4); } catch (e) { }
+      font('normal', 8, C.mute); doc.text(doc.splitTextToSize(cl(rep.title), 150)[0] + '  ·  ' + sub, W - M, 11.5, { align: 'right' }); doc.line(M, 15.5, W - M, 15.5); }
+    doc.line(M, H - 11, W - M, H - 11);
+    font('normal', 7, C.mute); doc.text('Ludy · Supervision de flotte — données mesurées par Geotab uniquement ; « ' + RPT_NM + ' » quand Geotab ne fournit pas la valeur.', M, H - 7);
+    doc.text('Page ' + i + ' / ' + n, W - M, H - 7, { align: 'right' });
+  }
   doc.save(rptFileName(rep) + '.pdf');
 }
 

@@ -183,11 +183,19 @@ td input { width: 100%; min-width: 90px; }
 .toast.crit { border-left-color: var(--crit); } .toast.high { border-left-color: var(--high); } .toast.warn { border-left-color: var(--warn); }
 .toast .x { position: absolute; top: 4px; right: 4px; background: transparent; color: var(--mute); padding: 2px 8px; font-size: 18px; line-height: 1; }
 .rptview { overflow-x: auto; }
-.rpt h1 { font-size: 22px; margin: 0 0 2px; } .rpt .rsub { color: var(--mute); margin: 0 0 12px; }
-.rpt h2 { font-size: 16px; margin: 18px 0 6px; } .rpt table { border-collapse: collapse; width: 100%; font-size: 13px; }
-.rpt .rsum { width: auto; } .rpt .rsum th { text-align: left; font-weight: 400; color: var(--mute); padding: 2px 16px 2px 0; } .rpt .rsum td { font-weight: 600; }
-.rpt .rtab th { text-align: left; background: var(--acc-soft); padding: 4px 6px; white-space: nowrap; } .rpt .rtab td { border-bottom: 1px solid var(--line2); padding: 4px 6px; }
-.rpt .n { text-align: right; } .rpt .rempty, .rpt .rfoot { color: var(--mute); }
+.rpt .rhead { width: 100%; border-collapse: collapse; border-bottom: 2px solid var(--acc); margin-bottom: 12px; } .rpt .rhead td { vertical-align: bottom; padding: 0 0 8px; }
+.rpt h1 { font-size: 22px; margin: 0 0 2px; } .rpt .rsub { color: var(--mute); margin: 0; }
+.rpt .rkind { text-align: right; color: var(--acc); font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+.rpt .rkpi { border-collapse: separate; border-spacing: 8px; margin: 0 -8px 4px; width: calc(100% + 16px); table-layout: fixed; }
+.rpt .rkpi td { background: var(--bg); border-radius: var(--r); padding: 8px 12px; vertical-align: top; } .rpt .rkpi td.kempty { background: none; }
+.rpt .kl { display: block; color: var(--mute); font-size: 12px; margin-bottom: 2px; } .rpt .kv { display: block; font-size: 16px; }
+.rpt h2 { font-size: 16px; margin: 20px 0 8px; border-left: 3px solid var(--acc); padding-left: 8px; } .rpt .rcount { color: var(--mute); font-weight: 400; font-size: 13px; }
+.rpt table.rtab { border-collapse: collapse; width: 100%; font-size: 13px; }
+.rpt .rtab th { text-align: left; background: var(--side); color: #fff; padding: 5px 7px; white-space: nowrap; } .rpt .rtab td { border-bottom: 1px solid var(--line2); padding: 4px 7px; }
+.rpt .rtab tr:nth-child(even) td { background: var(--bg); }
+.rpt .n { text-align: right; } .rpt .rempty, .rpt .rfoot, .rpt .nm { color: var(--mute); } .rpt .nm { font-style: italic; }
+.rpt .lv-crit { color: var(--crit); font-weight: 700; } .rpt .lv-high { color: var(--high); font-weight: 700; } .rpt .lv-warn { color: var(--warn); font-weight: 700; } .rpt .lv-ok { color: var(--ok); font-weight: 700; }
+@media (max-width: 700px) { .rpt .rkpi, .rpt .rkpi tbody, .rpt .rkpi tr { display: block; width: auto; margin: 0; } .rpt .rkpi td { display: block; margin: 0 0 6px; } .rpt .rkpi td.kempty { display: none; } }
 
 /* ---------- Graphiques, cartes de chaleur, liens vers les fiches ---------- */
 .chart { width: 100%; max-width: 760px; height: auto; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 8px; margin: 8px 0 14px; }

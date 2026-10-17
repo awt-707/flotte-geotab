@@ -122,7 +122,7 @@ async function pageCarburant() {
     ${periodBar(go)}<div class="bar">${vehSelect(key)}</div>
     ${cards([['Carburant consommé (L)', tot.fuelN ? f1(tot.fuel) : NM], ['Km', f0(tot.km)], ['Consommation (L/100 km)', l100(tot)], ['dont moteur allumé à l\'arrêt (L)', idleL(tot)],
       ['Pleins détectés', f0(tot.pleins)], ['Litres pleins (jauge)', f1(tot.pleinsL)], ['Coût (MAD)', cost(tot)], ['Trajets mesurés', cov(tot)],
-      ['Siphonages suspects', f0(siph.filter(f => inP(f.day)).length), siph.some(f => inP(f.day)) ? 'crit' : '']])}
+      ['Siphonages suspects', f0(siph.filter(f => inP(f.day) && f.status !== 'Faux positif').length), siph.some(f => inP(f.day) && f.status !== 'Faux positif') ? 'crit' : '']])}
     <h2>Jauge en ce moment</h2>
     ${table('tjauge', [['Véhicule', k => vlink(k), k => vehOf(k).plate], ['Modèle', k => esc(vehOf(k).model || '')],
       ['Jauge (%)', k => { const a = lv[k]; return a && a.length ? `<b>${f0(a[a.length - 1].v)} %</b>` : `<span class="nm">${NM}</span>`; }, k => (lv[k] || []).slice(-1).map(x => x.v)[0] || -1, 'n'],
@@ -377,7 +377,8 @@ async function pageFicheVehicule() {
     all('fuel', '*', q => q.eq('vehicle_key', key).gte('day', from31)),
     all('levels', 'at,pct', q => q.eq('vehicle_key', key).gte('vday', addDays(today(), -3))),
     sb.from('alerts').select('*').eq('vehicle_key', key).order('day', { ascending: false }).order('time', { ascending: false }).limit(30),
-    sb.from('contracts').select('num,name,client_code,start_at,end_at').eq('vehicle_key', key).order('start_at', { ascending: false }).limit(1)]);
+    // contrat en cours : le plus récent déjà commencé (une réservation future ne masque pas le contrat en cours)
+    sb.from('contracts').select('num,name,client_code,start_at,end_at').eq('vehicle_key', key).lte('start_at', new Date().toISOString()).order('start_at', { ascending: false }).limit(1)]);
   const a = aggJournal(jrn.filter(r => r.day >= p.from && r.day <= p.to), () => 'A', P).A || emptyAgg();
   const lv = lvls.map(x => ({ t: new Date(x.at).getTime(), v: num(x.pct) })).sort((x, y) => x.t - y.t), last = lv[lv.length - 1];
   const c0 = (ctr.data || [])[0], cur = c0 && new Date(c0.start_at) <= new Date() && (!c0.end_at || new Date(c0.end_at) >= new Date()) ? c0 : null;
@@ -450,7 +451,7 @@ async function pageFicheChauffeur() {
       <button id="cprint" class="ghost">Imprimer / PDF</button> <a class="btnlink" href="#/comportement?c=${encodeURIComponent(code)}">Comportement entre deux dates (PDF, e-mail)</a></div>
     ${cards([['Classement danger', pos >= 0 ? (pos + 1) + ' / ' + rk.length + ' (' + esc(rk[pos].level) + ')' : '—'], ['Score /100 km', f1(scoreOf(all0, P))], ['Km', f0(all0.km)], ['Heures sous contrat', fH(all0.ctrH)],
       ['Conduite', fH(all0.drive)], ['Ralenti', fH(all0.idle)], ['dont prolongé', fH(all0.idleLong) + ' (' + all0.nLong + ')', all0.idleLong ? 'crit' : ''], ['Carburant mesuré', all0.fuelN ? f1(all0.fuel) + ' L' : NM],
-      ['Consommation', all0.l100 !== null ? f1(all0.l100) + ' L/100' : NM], ['Vmax', f0(all0.vmax) + ' km/h'], ['Événements', f0(all0.evts)], ['Siphonages suspects', f0(all0.siph), all0.siph ? 'crit' : ''], ['Alertes', f0(al.length)]])}
+      ['Consommation', all0.l100 !== null ? f1(all0.l100) + ' L/100' : NM], ['Vmax', f0(all0.vmax) + ' km/h'], ['Événements', f0(all0.evts)], ['Siphonages suspects', f0(all0.siph), all0.siph ? 'crit' : ''], ['Alertes', f0(alS.filter(x => x.status !== 'Faux positif').length)]])}
     <h2>Par mois</h2>${table('tccm', LINE, mRows)}
     <h2>Par semaine</h2>${table('tccw', LINE, wRows)}
     <h2>Par journée de travail (horaires du contrat)</h2>

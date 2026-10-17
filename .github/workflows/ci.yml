@@ -72,10 +72,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # relance d'une ancienne exécution : rien n'est publié (sinon le site et le collecteur reviendraient à une version plus ancienne)
+      - name: Dernière version de main ?
+        id: head
+        run: |
+          git fetch -q origin main --depth=1
+          if [ "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"
+          else echo "::warning::$GITHUB_SHA n'est plus la dernière version de main : rien n'est publié"; echo "ok=0" >> "$GITHUB_OUTPUT"; fi
       # chaque partie est publiée même si une autre échoue (le travail reste en échec, avec la raison)
       # site : Cloudflare Pages (gratuit, publication directe des fichiers de site/, en-têtes de site/_headers) ;
       # Netlify abandonné le 16/10/2026 (crédit du compte épuisé : publications bloquées)
       - name: Site (Cloudflare Pages)
+        if: ${{ !cancelled() && steps.head.outputs.ok == '1' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -85,18 +93,18 @@ jobs:
           npx --yes wrangler@4.147.0 pages project create "$CF_PROJECT" --production-branch main || true
           npx --yes wrangler@4.147.0 pages deploy site --project-name "$CF_PROJECT" --branch main --commit-hash "$(git rev-parse HEAD)" --commit-message "$(git log -1 --format=%s | head -c 200)"
       - name: Collecteur (installé automatiquement par Apps Script au passage suivant)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.head.outputs.ok == '1' }}
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           if [ -z "$SUPABASE_SERVICE_KEY" ]; then echo "::warning::Secret SUPABASE_SERVICE_KEY absent : collecteur non publié (voir README)"; exit 0; fi
           node scripts/publish-collector.js
       - uses: supabase/setup-cli@v1
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.head.outputs.ok == '1' }}
         with:
-          version: latest
+          version: 2.119.0
       - name: Relais Geotab en direct (fonction Supabase geotab-live)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.head.outputs.ok == '1' }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
