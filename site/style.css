@@ -308,3 +308,13 @@ a.btnlink { display: inline-block; font-weight: 600; font-size: 14px; padding: 8
 .lbox .brand { align-items: center; } .lbox .brand .logo { width: 200px; }
 @media (max-width: 900px) { .brand { flex-direction: row; align-items: center; } .brand .logo { width: 104px; } }
 .dprof + .cards { grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); }
+
+/* cadran de consommation (carte véhicule, sous la vitesse) : vert = sous la moyenne du modèle, orange = un peu au-dessus, rouge = bien au-dessus */
+.vc-l2 { display: flex; align-items: center; gap: 8px; } .vc-st { flex: 1; min-width: 0; }
+.cgauge { display: inline-flex; flex-direction: column; align-items: center; margin-left: auto; line-height: 1; }
+.cgauge svg { width: 56px; height: 32px; } .cgauge path { fill: none; stroke-width: 5; stroke-linecap: round; }
+.cgauge .cg-ok { stroke: var(--ok); } .cgauge .cg-warn { stroke: var(--warn); } .cgauge .cg-crit { stroke: var(--crit); }
+.cgauge.z-mute path { stroke: var(--line); } .cgauge .cg-needle { stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; } .cgauge .cg-hub { fill: var(--ink); }
+.cgauge.z-mute .cg-needle, .cgauge.z-mute .cg-hub { stroke: var(--mute); fill: var(--mute); opacity: .5; }
+.cg-v { font: 700 13px/1.1 var(--fc); margin-top: 1px; white-space: nowrap; } .cg-v small { font: 500 10px var(--f); color: var(--mute); }
+.cgauge.z-ok .cg-v { color: var(--ok); } .cgauge.z-warn .cg-v { color: var(--warn); } .cgauge.z-crit .cg-v { color: var(--crit); }

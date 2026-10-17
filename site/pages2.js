@@ -595,3 +595,54 @@ async function pageComportement() {
     sb2.disabled = false;
   };
 }
+
+// ---------- RÉSULTAT DE FIN DE SHIFT ----------
+/** Contrats d'un shift (jour J 07:00 → 19:00, nuit J 19:00 → J+1 07:00) : PDF général du shift ou PDF par chauffeur */
+async function pageFinShift() {
+  const P = S.P, q = qs(), cur = shiftAt(new Date(), P), ok = inAgency();
+  // par défaut : le dernier shift terminé
+  const prev = cur.s === 'Jour' ? { s: 'Nuit', day: addDays(cur.day, -1) } : { s: 'Jour', day: cur.day };
+  const sel = { s: q.get('s') === 'Jour' || q.get('s') === 'Nuit' ? q.get('s') : prev.s, day: /^\d{4}-\d{2}-\d{2}$/.test(q.get('d') || '') ? q.get('d') : prev.day };
+  const label = shiftName(sel.s, P).replace(/^Shift (jour|nuit)/, (m, x) => 'Shift ' + x + ' du ' + fmtDay(sel.day).slice(0, 5) + (sel.s === 'Nuit' ? ' au ' + fmtDay(addDays(sel.day, 1)).slice(0, 5) : ''));
+  const running = sel.s === cur.s && sel.day === cur.day;
+  // contrats du shift : une ligne de journal par contrat (shift = début du contrat, début de shift le plus proche)
+  const jrn = (await all('journal', '*', x => x.gte('day', addDays(sel.day, -1)).lte('day', addDays(sel.day, 1)).not('contract_num', 'is', null)))
+    .filter(r => ok(r.vehicle_key) && r.contract_start && (sc => sc.s === sel.s && sc.day === sel.day)(shiftOfCtr(r.contract_start, P)));
+  const nums = jrn.map(r => r.contract_num), byNums = async (t, cols) => { const out = []; for (let i = 0; i < nums.length; i += 150) out.push(...await all(t, cols, x => x.in('contract_num', nums.slice(i, i + 150)))); return out; };
+  const [trips, evts, stops, idles, fuel, al0] = await Promise.all([
+    byNums('trips', '*'), byNums('events', 'id,vehicle_key,plate,day,start_at,dur_s,km,rule_id,rule_name,driver_code,contract_num'),
+    byNums('engine_stops', '*').catch(() => null), byNums('idles', '*').catch(() => []),
+    all('fuel', '*', x => x.gte('day', sel.day).lte('day', addDays(sel.day, 1)).in('type', ['PLEIN', 'SIPHONAGE_SUSPECT'])),
+    all('alerts', '*', x => x.gte('day', sel.day).lte('day', addDays(sel.day, 1)))]);
+  // alertes du shift (contrat en cours à leur heure, sinon créneau horaire), véhicules de l'agence
+  const al = (await alertShifts(al0.filter(a => ok(a.vehicle_key)))).filter(a => { const x = alertShiftDay(a); return x && x.s === sel.s && x.day === sel.day; });
+  const agency = agFilter() ? S.agName[agFilter()] : (isAdmin() || S.agencies.length !== 1 ? '' : S.agencies[0].name);
+  const tag = sel.day + '_' + sel.s.toLowerCase();
+  const rep = rptShiftEnd({ journal: jrn, events: evts, trips, alerts: al, rules: S.rules, P, title: 'Résultat de fin de shift', period: label + (running ? ' (shift en cours : résultats provisoires)' : ''),
+    from: sel.day, agency: agency || 'Toutes les agences', fileTag: tag, dayOf: localDay, hmOf: localHM });
+  const drvRep = r => {
+    const mine = x => x.contract_num === r.contract_num;
+    const d = rptDriver({ driver: { code: r.driver_code, name: S.drv[r.driver_code] || r.driver_name }, journal: [r], trips: trips.filter(mine), events: evts.filter(mine),
+      fuel: fuel.filter(f => f.driver_code === r.driver_code || f.next_driver === r.driver_name), stops: stops ? stops.filter(mine) : null, idles: idles.filter(mine),
+      alerts: al.filter(a => a.driver_code === r.driver_code), rules: S.rules, P, from: sel.day, to: addDays(sel.day, 1), rankJournal: jrn, dayOf: localDay, hmOf: localHM });
+    return Object.assign(d, { kind: 'finshift_chauffeur', title: 'Fin de shift : ' + (S.drv[r.driver_code] || r.driver_name), period: label + ' · contrat ' + r.contract_num + ' · ' + (r.plate || ''),
+      fileName: 'fin_de_shift_' + tag + '_' + r.driver_code });
+  };
+  const list = jrn.slice().sort((a, b) => String(a.driver_name).localeCompare(String(b.driver_name)));
+  $('#page').innerHTML = `<div class="head"><h1>Résultat de fin de shift</h1><div class="sub">Contrats commencés dans le shift choisi (shift = heure de début du contrat). Données Geotab uniquement, « ${NM} » quand Geotab ne fournit pas la valeur.</div></div>
+    <div class="bar"><label>Jour <input type="date" id="fsday" value="${esc(sel.day)}" max="${esc(today())}"></label>
+      <label>Shift <select id="fss"><option value="Jour"${sel.s === 'Jour' ? ' selected' : ''}>${esc(shiftName('Jour', P))}</option><option value="Nuit"${sel.s === 'Nuit' ? ' selected' : ''}>${esc(shiftName('Nuit', P))}</option></select></label>
+      <button id="fspdf"${jrn.length ? '' : ' disabled'}>PDF général du shift</button><button id="fsall" class="ghost"${jrn.length ? '' : ' disabled'}>Un PDF par chauffeur (${jrn.length})</button></div>
+    ${running ? msg('Shift en cours : les trajets terminés sont comptés au fil de la collecte (toutes les 5 min).', 'warn') : ''}
+    ${list.length ? `<h2>PDF par chauffeur</h2>${table('tfsd', [['Chauffeur', r => `<b>${dlink(r.driver_code, S.drv[r.driver_code] || r.driver_name)}</b>`, r => r.driver_name], ['Véhicule', r => vlink(r.vehicle_key, r.plate)],
+      ['Contrat', r => esc(r.contract_num)], ['Début', r => fmtDT(r.contract_start), r => r.contract_start], ['Km', r => f1(r.km), r => r.km, 'n'],
+      ['PDF', r => `<button class="ghost fsone" data-c="${esc(r.contract_num)}">PDF</button>`]], list)}` : ''}
+    <div class="panel rptview">${rptHtml(rep)}</div>`;
+  const go = () => { location.hash = '#/finshift?d=' + encodeURIComponent($('#fsday').value || sel.day) + '&s=' + encodeURIComponent($('#fss').value); };
+  $('#fsday').onchange = go; $('#fss').onchange = go;
+  const pdf = r => { try { reportPdf(r); } catch (e) { alert('PDF impossible : ' + e.message); } };
+  $('#fspdf').onclick = () => pdf(rep);
+  document.querySelectorAll('.fsone').forEach(b => { b.onclick = () => pdf(drvRep(jrn.find(r => r.contract_num === b.dataset.c))); });
+  // un fichier par chauffeur (le navigateur peut demander d'autoriser les téléchargements multiples)
+  $('#fsall').onclick = async () => { for (const r of list) { pdf(drvRep(r)); await new Promise(z => setTimeout(z, 400)); } };
+}

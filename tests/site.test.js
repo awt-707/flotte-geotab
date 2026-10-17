@@ -1,6 +1,6 @@
 // Le site sur une base remplie par le collecteur : chaque page s'affiche sans erreur, sur ordinateur et sur téléphone
 const test = require('node:test'), assert = require('node:assert'), path = require('path');
-const env = require('./lib/env'), { sheetV6, collector, copyContracts } = require('./lib/v6'), { startSite, openBrowser, login } = require('./lib/browser');
+const lib = require('../site/lib.js'), env = require('./lib/env'), { sheetV6, collector, copyContracts } = require('./lib/v6'), { startSite, openBrowser, login } = require('./lib/browser');
 const NOW = Date.UTC(2026, 9, 6, 9, 0);
 let srv, B, A;
 
@@ -17,7 +17,7 @@ const PAGES = [['direct', 'En direct', /En route|Garé|Arrêté/], ['tableau', '
   ['chauffeurs', 'Classement des chauffeurs', /Score/], ['alertes', 'Alertes', /Gravité/], ['contrats', 'Contrats', /Contrats des 40 derniers jours/],
   ['plaques', 'Changements de plaque', /Ancienne plaque/], ['vehicules', 'Véhicules', /WW968194/], ['reglages', 'Réglages', /Journal technique/],
   ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/],
-  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['conso', 'Consommation', /Rapport de consommation/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/], ['comportement', 'Comportement chauffeur', /Choisissez un chauffeur/],
+  ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['conso', 'Consommation', /Rapport de consommation/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/], ['comportement', 'Comportement chauffeur', /Choisissez un chauffeur/], ['finshift?d=2026-10-03&s=Jour', 'Résultat de fin de shift', /Par chauffeur : consommation et conduite/],
   ['vehicule?k=968199WW', 'WW968199', /Journées de travail/], ['chauffeur?c=C038', 'Compte rendu', /Par journée de travail/]];
 
 for (const [viewport, size] of [['ordinateur', { width: 1440, height: 900 }], ['téléphone', { width: 390, height: 844, isMobile: true, hasTouch: true }]]) {
@@ -112,7 +112,7 @@ test('en direct : positions Geotab lues toutes les 5 s, les véhicules bougent s
   const { br, page, errors } = await openBrowser();
   try {
     await login(page, '#/direct');
-    await page.waitForFunction(() => /Temps réel Geotab : actualisé toutes les 5 s/.test(document.querySelector('#livest').innerText), null, { timeout: 15000 });
+    await page.waitForFunction(() => /Temps réel Geotab : actualisé toutes les 5 s/.test((document.querySelector('#livest') || {}).innerText || ''), null, { timeout: 15000 });
     const pos = () => page.evaluate(() => Object.fromEntries(Object.entries(LIVE.markers).map(([k, m]) => [k, m.getLatLng().lat + ',' + m.getLatLng().lng])));
     const p1 = await pos();
     assert.deepStrictEqual(Object.keys(p1).sort(), ['968194WW', '968199WW']);
@@ -132,30 +132,42 @@ test('en direct : relais Geotab pas encore installé, positions du collecteur et
   const { br, page, errors } = await openBrowser();
   try {
     await login(page, '#/direct');
-    await page.waitForFunction(() => /indisponible/.test(document.querySelector('#livest').innerText), null, { timeout: 15000 });
+    await page.waitForFunction(() => /indisponible/.test((document.querySelector('#livest') || {}).innerText || ''), null, { timeout: 15000 });
     assert.match(await page.innerText('#livest'), /Temps réel Geotab indisponible \(Requested function was not found\) : positions du collecteur/);
     assert.ok(await page.locator('#tlive tbody tr').count() > 0);
     assert.deepStrictEqual(errors.filter(e => !/404/.test(e)), []);
   } finally { await br.close(); srv.kill(); srv = await startSite(); }
 });
 
-test('en direct : chauffeur = contrat en cours maintenant, sinon « Hors contrat »', async () => {
-  env.psql(`insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at, status)
-    values ('LIVE1', 'CLIVE', 'Chauffeur En Cours', 'WW968199', '968199WW', now() - interval '2 hours', null, 'En cours'),
-           ('LIVE2', 'COLD', 'Contrat Terminé', 'WW968194', '968194WW', now() - interval '9 hours', now() - interval '3 hours', 'Clôturé')`);
+test('en direct : chauffeur = contrat en cours maintenant, sinon « Sans contrat » (contrat jamais clôturé remplacé, contrat rendu il y a 10 min)', async () => {
+  env.psql(`insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at, status, updated_at)
+    values ('LIVE1', 'CLIVE', 'Chauffeur En Cours', 'WW968199', '968199WW', now() - interval '2 hours', null, 'En cours', now()),
+           ('LIVE2', 'COLD', 'Contrat Terminé', 'WW968194', '968194WW', now() - interval '9 hours', now() - interval '3 hours', 'Clôturé', now())`);
   // contrats sans date de retour (toujours en cours) du 968194WW clos pour le test, rouverts à la fin
   const open = env.psql("select coalesce(string_agg(num, ','), '') from contracts where vehicle_key = '968194WW' and end_at is null").split(',').filter(Boolean);
   env.psql("update contracts set end_at = now() - interval '4 hours' where vehicle_key = '968194WW' and end_at is null");
+  // contrat jamais clôturé (sans fin) remplacé par un contrat terminé il y a 5 h, puis un contrat rendu il y a 10 min (dans la tolérance du collecteur)
+  env.psql(`insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at, status)
+    values ('LIVE3', 'COPEN', 'Jamais Cloture', 'WW968194', '968194WW', now() - interval '2 days', null, 'En cours'),
+           ('LIVE4', 'CNEXT', 'Contrat Suivant', 'WW968194', '968194WW', now() - interval '1 day', now() - interval '5 hours', 'Terminé'),
+           ('LIVE5', 'CRET', 'Rendu Recemment', 'WW968194', '968194WW', now() - interval '2 hours', now() - interval '10 minutes', 'Terminé')`);
   const { br, page, errors } = await openBrowser();
   try {
     await login(page, '#/direct');
-    await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test(document.querySelector('#livest').innerText), null, { timeout: 15000 });
+    await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test((document.querySelector('#livest') || {}).innerText || ''), null, { timeout: 15000 });
     const rows = await page.$$eval('#tlive tbody tr', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')));
     const r99 = rows.find(t => /WW968199/.test(t)), r94 = rows.find(t => /WW968194/.test(t));
     assert.match(r99, /Chauffeur En Cours (Jour|Nuit) LIVE1/);
-    assert.match(r94, /Hors contrat/); assert.doesNotMatch(r94, /Contrat Terminé/);
+    assert.match(r94, /Sans contrat/); assert.doesNotMatch(r94, /Contrat Terminé|Jamais Cloture|Rendu Recemment/);
+    // extract pas encore injecté pour le shift en cours (dernier import il y a 2 jours) : « Contrat dépassé » au lieu de « Sans contrat »
+    env.psql("update contracts set updated_at = now() - interval '2 days' where updated_at > now() - interval '2 days'");
+    await page.goto('http://localhost:8080/#/tableau'); await page.waitForSelector('#page h1');
+    await page.goto('http://localhost:8080/#/direct'); await page.waitForFunction(() => { const e = document.querySelector('#livest'); return e && /Temps réel Geotab : actualisé/.test(e.innerText); }, null, { timeout: 15000 });
+    const r94b = (await page.$$eval('#tlive tbody tr', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')))).find(t => /WW968194/.test(t));
+    assert.match(r94b, /Contrat dépassé/); assert.doesNotMatch(r94b, /Sans contrat/);
+    assert.match(await page.innerText('#livecards'), /Contrats dépassés/);
     assert.deepStrictEqual(errors, []);
-  } finally { await br.close(); env.psql("delete from contracts where num in ('LIVE1', 'LIVE2')" + (open.length ? "; update contracts set end_at = null where num in ('" + open.join("','") + "')" : '')); }
+  } finally { await br.close(); env.psql("delete from contracts where num in ('LIVE1', 'LIVE2', 'LIVE3', 'LIVE4', 'LIVE5')" + (open.length ? "; update contracts set end_at = null where num in ('" + open.join("','") + "')" : '')); }
 });
 
 test('en direct : alertes à l\'instant (événements Geotab et vitesse au-dessus du seuil), notification des nouvelles', async () => {
@@ -164,7 +176,7 @@ test('en direct : alertes à l\'instant (événements Geotab et vitesse au-dessu
   const { br, page, errors } = await openBrowser();
   try {
     await login(page, '#/direct');
-    await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test(document.querySelector('#livest').innerText), null, { timeout: 15000 });
+    await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test((document.querySelector('#livest') || {}).innerText || ''), null, { timeout: 15000 });
     await page.waitForFunction(() => document.querySelectorAll('#toasts .toast').length > 0, null, { timeout: 30000 });
     const txt = await page.innerText('#livealerts');
     assert.match(txt, /Alertes en direct/);
@@ -207,6 +219,13 @@ test('en direct : chauffeurs en ce moment, compteurs Geotab depuis le début du 
     assert.strictEqual(st.d.km, km); assert.strictEqual(st.d.fuel_l, fuel); assert.ok(km > 0);
     const txt = (await page.innerText('#livedrv')).replace(/\s+/g, ' ');
     assert.match(txt, /Chauffeurs en ce moment/); assert.match(txt, /Chauffeur Compteurs/);
+    // cadran sous la vitesse : L/100 du contrat en cours (mêmes compteurs), couleur selon la moyenne réelle du modèle sur 30 jours
+    const base = await page.evaluate(() => (LIVE.base || {}).STARIA), gauge = (await page.innerText('[data-vk="968199WW"] .cgauge')).replace(/\s+/g, ' ');
+    if (km >= 10 && base) {
+      const v = fuel / km * 100, cls = await page.getAttribute('[data-vk="968199WW"] .cgauge', 'class');
+      assert.ok(gauge.includes(new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1, minimumFractionDigits: 1 }).format(v)), 'cadran : ' + gauge + ' / ' + v);
+      assert.match(cls, v / base <= 1 ? /z-ok/ : v / base <= 1.15 ? /z-warn/ : /z-crit/);
+    } else assert.match(gauge, /10 km|non mesuré/);
     const nf = v => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1, minimumFractionDigits: 1 }).format(v).replace(/\s/g, ' ');
     assert.ok(txt.replace(/\s/g, ' ').includes(nf(km)), 'km affichés : ' + nf(km));
     assert.deepStrictEqual(errors, []);
@@ -343,4 +362,32 @@ test('shift des alertes : contrat en cours à l\'heure de l\'alerte, sinon crén
     assert.match(row('TESTSHIFT-A4'), /02:30 Nuit 04\/10 → 05\/10 /);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); env.psql("delete from alerts where id like 'TSH|%'; delete from contracts where num = 'SHJ1'"); }
+});
+
+test('résultat de fin de shift : contrats du shift, totaux du journal, PDF général et PDF par chauffeur', async () => {
+  const fs = require('fs');
+  // contrats du shift de jour du 03/10/2026 (début de contrat le plus proche de 07:00 que de 19:00, heure du Maroc)
+  const rows = JSON.parse(env.psql("select coalesce(json_agg(j), '[]') from (select contract_num, driver_code, km, fuel_l, idle_fuel_l, contract_start from journal where contract_num is not null and day between '2026-10-02' and '2026-10-04') j"))
+    .filter(r => { lib.setTzRules(env.MA_TZ); const x = lib.shiftOfCtr(r.contract_start, { shiftDay: 7, shiftNight: 19 }); return x.s === 'Jour' && x.day === '2026-10-03'; });
+  assert.ok(rows.length >= 1, 'contrats de jour le 03/10 dans le jeu de test');
+  const { br, page, errors } = await openBrowser({ acceptDownloads: true });
+  await page.clock.setFixedTime(new Date('2026-10-06T09:18:00Z'));
+  try {
+    await login(page, '#/finshift?d=2026-10-03&s=Jour');
+    await page.waitForSelector('#fspdf');
+    assert.strictEqual(await page.locator('#tfsd tbody tr').count(), rows.length, 'un chauffeur par contrat du shift');
+    const sum = {}; (await page.$$eval('.rkpi td:not(.kempty)', tds => tds.map(td => [td.querySelector('.kl').innerText, td.querySelector('.kv').innerText]))).forEach(([k, v]) => { sum[k] = v; });
+    const nf = v => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1, minimumFractionDigits: 1 }).format(v).replace(/\s/g, ' ');
+    assert.strictEqual(sum['Chauffeurs (contrats)'], String(rows.length));
+    assert.strictEqual(sum['Km parcourus'].replace(/\s/g, ' '), nf(rows.reduce((t, r) => t + r.km, 0)));
+    const il = rows.filter(r => r.idle_fuel_l !== null);
+    if (il.length) assert.ok(sum['Litres consommés à l\'arrêt (moteur tournant)'].replace(/\s/g, ' ').startsWith(nf(il.reduce((t, r) => t + r.idle_fuel_l, 0))));
+    for (const [btn, re] of [['#fspdf', /^fin_de_shift_2026-10-03_jour\.pdf$/], ['.fsone >> nth=0', /^fin_de_shift_2026-10-03_jour_C\w+\.pdf$/]]) {
+      const [dl] = await Promise.all([page.waitForEvent('download'), page.click(btn)]);
+      assert.match(dl.suggestedFilename(), re);
+      const f = require('path').join(env.OUT, dl.suggestedFilename()); await dl.saveAs(f);
+      const pdf = fs.readFileSync(f); assert.strictEqual(pdf.slice(0, 5).toString(), '%PDF-'); assert.ok(pdf.length > 5000);
+    }
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
 });
