@@ -707,27 +707,65 @@ function colsTable(title, cols, rows, empty) {
 function reportPdf(rep) {
   if (!window.jspdf) throw new Error('bibliothèque PDF non chargée, réessayez dans un instant');
   if (window.applyPlugin && !window.jspdf.jsPDF.API.autoTable) window.applyPlugin(window.jspdf.jsPDF);
-  const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }), cl = v => String(v == null ? '' : v).replace(/ /g, ' ').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/→/g, '->');   // signes absents de la police Helvetica du PDF
-  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
-  try { doc.addImage(RPT_LOGO, 'PNG', W - 14 - 36, 8, 36, 8.8); } catch (e) { }   // logo Ludy en haut à droite
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(20, 32, 43); doc.text(cl(rep.title), 14, 16);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(93, 107, 120); doc.text(cl(rep.agency + ' · ' + rep.period), 14, 22);
-  doc.autoTable({ startY: 26, body: rep.summary.map(r => r.map(cl)), theme: 'plain', tableWidth: 160, styles: { fontSize: 9, cellPadding: 0.8 },
-    columnStyles: { 0: { textColor: [93, 107, 120], cellWidth: 60 }, 1: { fontStyle: 'bold' } } });
-  let y = doc.lastAutoTable.finalY;
+  // signes absents de la police Helvetica du PDF (espaces fines des nombres, flèches, ≥ ≤)
+  const cl = v => String(v == null ? '' : v).replace(/[\u202f\u00a0]/g, ' ').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/\s*→\s*/g, ' – ');
+  const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }), W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 12, TOP = 22;
+  const C = { ink: [20, 32, 43], mute: [93, 107, 120], line: [216, 222, 228], soft: [243, 245, 247], head: [15, 38, 51], acc: [91, 75, 214], zebra: [247, 248, 250],
+    crit: [180, 35, 24], high: [180, 70, 26], warn: [154, 90, 0], ok: [24, 121, 74] };
+  const LEVEL = { Dangereux: 'crit', Critique: 'crit', 'Élevé': 'high', Haute: 'high', 'Modéré': 'warn', Moyenne: 'warn', Faible: 'ok' };
+  const KIND = { conso: 'Rapport de consommation', chauffeur: 'Comportement chauffeur', conduite: 'Conduite des chauffeurs', classement: 'Classement des chauffeurs' };
+  const col = (k, c) => doc['set' + k](c[0], c[1], c[2]), font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); col('TextColor', c || C.ink); };
+  const sub = cl(rep.agency + ' · ' + rep.period);
+  // première page : logo, type de document, titre, agence et période
+  try { doc.addImage(RPT_LOGO, 'PNG', M, 9, 34, 8.3); } catch (e) { }
+  font('bold', 8, C.acc); doc.text(cl(KIND[rep.kind] || 'Rapport de la flotte').toUpperCase(), W - M, 12.5, { align: 'right' });
+  font('normal', 8, C.mute); doc.text('Édité le ' + fmtDTY(rep.generatedAt), W - M, 17, { align: 'right' });
+  font('bold', 17); const tl = doc.splitTextToSize(cl(rep.title), W - 2 * M); doc.text(tl, M, 29);
+  let y = 29 + (tl.length - 1) * 6.5 + 6.5; font('normal', 10, C.mute); doc.text(sub, M, y);
+  y += 4; col('DrawColor', C.acc); doc.setLineWidth(0.6); doc.line(M, y, W - M, y); y += 6;
+  const newPage = () => { doc.addPage(); return TOP + 2; };
+  // résumé : cartes de 4 par ligne (libellé, valeur)
+  const N = 4, gap = 3, cw = (W - 2 * M - (N - 1) * gap) / N;
+  for (let i = 0; i < rep.summary.length; i += N) {
+    const row = rep.summary.slice(i, i + N).map(s => { doc.setFontSize(7.2); const l = doc.splitTextToSize(cl(s[0]), cw - 6); doc.setFontSize(10.5); return { l, v: doc.splitTextToSize(cl(s[1]), cw - 6) }; });
+    const h = Math.max(...row.map(c => 4.2 + c.l.length * 3 + c.v.length * 4.4 + 1.6));
+    if (y + h > H - 16) y = newPage();
+    row.forEach((c, j) => { const x = M + j * (cw + gap);
+      col('FillColor', C.soft); doc.roundedRect(x, y, cw, h, 1.6, 1.6, 'F');
+      font('normal', 7.2, C.mute); doc.text(c.l, x + 3, y + 4.2);
+      font('bold', 10.5); doc.text(c.v, x + 3, y + 4.2 + c.l.length * 3 + 3.6); });
+    y += h + gap;
+  }
+  // sections : titre (et nombre de lignes), tableau ; un titre n'est jamais laissé seul en bas de page
   rptTables(rep).forEach(t => {
-    y += 9; if (y > H - 30) { doc.addPage(); y = 16; }
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(20, 32, 43); doc.text(cl(t.title), 14, y);
-    if (!t.rows.length) { doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(93, 107, 120); doc.text(cl(t.empty), 14, y + 6); y += 6; return; }
+    if (y > H - 34) y = newPage();
+    y += 6; col('FillColor', C.acc); doc.rect(M, y - 3.7, 1.3, 4.8, 'F');
+    font('bold', 11.5); const tt = cl(t.title); doc.text(tt, M + 3.5, y);
+    if (t.rows.length) { const w = doc.getTextWidth(tt); font('normal', 8.5, C.mute); doc.text('· ' + t.rows.length + (t.rows.length > 1 ? ' lignes' : ' ligne'), M + 3.5 + w + 2.5, y); }
+    if (!t.rows.length) { font('normal', 9, C.mute); doc.text(cl(t.empty), M + 3.5, y + 6); y += 9; return; }
     const cs = {}; t.num.forEach(i => { cs[i] = { halign: 'right' }; });
-    doc.autoTable({ startY: y + 3, head: [t.head], body: t.rows.map(r => r.map(cl)), styles: { fontSize: 8, cellPadding: 1.4, overflow: 'linebreak' },
-      headStyles: { fillColor: [91, 75, 214], textColor: 255 }, alternateRowStyles: { fillColor: [245, 246, 250] }, columnStyles: cs, margin: { left: 14, right: 14 } });
-    y = doc.lastAutoTable.finalY;
+    doc.autoTable({ startY: y + 2.5, head: [t.head.map(cl)], body: t.rows.map(r => r.map(cl)), theme: 'striped', margin: { left: M, right: M, top: TOP, bottom: 16 },
+      styles: { font: 'helvetica', fontSize: 7.8, cellPadding: { top: 1.5, bottom: 1.5, left: 1.8, right: 1.8 }, textColor: C.ink, overflow: 'linebreak', valign: 'middle' },
+      headStyles: { fillColor: C.head, textColor: 255, fontStyle: 'bold', fontSize: 7.6 }, bodyStyles: { fillColor: [255, 255, 255] }, alternateRowStyles: { fillColor: C.zebra },
+      columnStyles: cs,
+      didParseCell: d => {
+        if (d.section === 'head') { if (t.num.indexOf(d.column.index) >= 0) d.cell.styles.halign = 'right'; return; }
+        const v = String(d.cell.raw), lv = LEVEL[v];
+        if (lv) { d.cell.styles.textColor = C[lv]; d.cell.styles.fontStyle = 'bold'; }
+        else if (v === RPT_NM || v === 'prix non saisi' || v === 'km insuffisants') { d.cell.styles.textColor = C.mute; d.cell.styles.fontStyle = 'italic'; }
+      } });
+    y = doc.lastAutoTable.finalY + 2;
   });
+  // en-tête rappelé à partir de la page 2, pied de page partout
   const n = doc.getNumberOfPages();
-  for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(93, 107, 120);
-    doc.text('Données mesurées par Geotab uniquement ; « non mesuré » quand Geotab ne fournit pas la valeur. Édité le ' + fmtDTY(rep.generatedAt), 14, H - 7);
-    doc.text(i + ' / ' + n, W - 14, H - 7, { align: 'right' }); }
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i); col('DrawColor', C.line); doc.setLineWidth(0.2);
+    if (i > 1) { try { doc.addImage(RPT_LOGO, 'PNG', M, 7.5, 22, 5.4); } catch (e) { }
+      font('normal', 8, C.mute); doc.text(doc.splitTextToSize(cl(rep.title), 150)[0] + '  ·  ' + sub, W - M, 11.5, { align: 'right' }); doc.line(M, 15.5, W - M, 15.5); }
+    doc.line(M, H - 11, W - M, H - 11);
+    font('normal', 7, C.mute); doc.text('Ludy · Supervision de flotte — données mesurées par Geotab uniquement ; « ' + RPT_NM + ' » quand Geotab ne fournit pas la valeur.', M, H - 7);
+    doc.text('Page ' + i + ' / ' + n, W - M, H - 7, { align: 'right' });
+  }
   doc.save(rptFileName(rep) + '.pdf');
 }
 

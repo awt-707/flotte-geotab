@@ -238,7 +238,7 @@ test('page Consommation : entre deux instants (à la minute), mêmes totaux que 
   try {
     await login(page, '#/conso');
     await page.waitForSelector('#page .rptview');
-    const sum = {}; (await page.$$eval('.rsum tr', trs => trs.map(tr => [tr.cells[0].innerText, tr.cells[1].innerText]))).forEach(([k, v]) => { sum[k] = v; });
+    const sum = {}; (await page.$$eval('.rkpi td:not(.kempty)', tds => tds.map(td => [td.querySelector('.kl').innerText, td.querySelector('.kv').innerText]))).forEach(([k, v]) => { sum[k] = v; });
     const n = s => +String(s).replace(/[\s ]/g, '').replace(',', '.').match(/^[\d.]+/)[0];
     assert.strictEqual(n(sum['Carburant consommé (L)']), +m[1]);
     assert.strictEqual(Math.round(n(sum['Km parcourus'])), +m[2]);
@@ -264,7 +264,7 @@ test('comportement chauffeur : profil et historique entre deux dates, PDF, envoi
   try {
     await login(page, '#/comportement');
     await page.waitForSelector('.dprof', { timeout: 20000 });
-    const sum = {}; (await page.$$eval('.rsum tr', trs => trs.map(tr => [tr.cells[0].innerText, tr.cells[1].innerText]))).forEach(([k, v]) => { sum[k] = v; });
+    const sum = {}; (await page.$$eval('.rkpi td:not(.kempty)', tds => tds.map(td => [td.querySelector('.kl').innerText, td.querySelector('.kv').innerText]))).forEach(([k, v]) => { sum[k] = v; });
     const n = v => +String(v).replace(/[\s\u202f\u00a0]/g, '').replace(',', '.').match(/^-?[\d.]+/)[0];
     assert.strictEqual(n(sum['Km parcourus']), km);
     assert.strictEqual(n(sum['Événements de conduite']), nEv);

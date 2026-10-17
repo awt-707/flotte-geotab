@@ -362,26 +362,45 @@ function rptTables(rep) {
 }
 
 /** Corps HTML du rapport (affiché sur le site, converti en PDF par le collecteur) */
+var RPT_KIND = { conso: 'Rapport de consommation', chauffeur: 'Comportement chauffeur', conduite: 'Conduite des chauffeurs', classement: 'Classement des chauffeurs' };
+var RPT_LEVEL = { 'Dangereux': 'crit', 'Critique': 'crit', 'Élevé': 'high', 'Haute': 'high', 'Modéré': 'warn', 'Moyenne': 'warn', 'Faible': 'ok' };
+/** Rapport en HTML (page Rapports du site, PDF du collecteur) : en-tête, résumé en cartes (4 par ligne), une section par tableau */
 function rptHtml(rep) {
-  var h = '<div class="rpt"><h1>' + rptEsc(rep.title) + '</h1><p class="rsub">' + rptEsc(rep.agency) + ' · ' + rptEsc(rep.period) + '</p>';
-  h += '<table class="rsum">' + rep.summary.map(function (s) { return '<tr><th>' + rptEsc(s[0]) + '</th><td>' + rptEsc(s[1]) + '</td></tr>'; }).join('') + '</table>';
+  var h = '<div class="rpt"><table class="rhead"><tr><td><h1>' + rptEsc(rep.title) + '</h1><p class="rsub">' + rptEsc(rep.agency) + ' · ' + rptEsc(rep.period) + '</p></td>' +
+    '<td class="rkind">' + rptEsc(RPT_KIND[rep.kind] || 'Rapport de la flotte') + '</td></tr></table>';
+  if (rep.summary.length) {
+    h += '<table class="rkpi">';
+    for (var i = 0; i < rep.summary.length; i += 4) {
+      h += '<tr>' + [0, 1, 2, 3].map(function (j) { var s = rep.summary[i + j];
+        return s ? '<td><span class="kl">' + rptEsc(s[0]) + '</span><b class="kv">' + rptEsc(s[1]) + '</b></td>' : '<td class="kempty"></td>'; }).join('') + '</tr>';
+    }
+    h += '</table>';
+  }
   rptTables(rep).forEach(function (t) {
-    h += '<h2>' + rptEsc(t.title) + '</h2>';
+    h += '<h2>' + rptEsc(t.title) + (t.rows.length ? ' <span class="rcount">· ' + t.rows.length + (t.rows.length > 1 ? ' lignes' : ' ligne') + '</span>' : '') + '</h2>';
     if (!t.rows.length) { h += '<p class="rempty">' + rptEsc(t.empty) + '</p>'; return; }
     h += '<table class="rtab"><thead><tr>' + t.head.map(function (c, i) { return '<th' + (t.num.indexOf(i) >= 0 ? ' class="n"' : '') + '>' + rptEsc(c) + '</th>'; }).join('') + '</tr></thead><tbody>' +
-      t.rows.map(function (r) { return '<tr>' + r.map(function (c, i) { return '<td' + (t.num.indexOf(i) >= 0 ? ' class="n"' : '') + '>' + rptEsc(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
+      t.rows.map(function (r) { return '<tr>' + r.map(function (c, i) { var cls = [], v = String(c == null ? '' : c);
+        if (t.num.indexOf(i) >= 0) cls.push('n'); if (RPT_LEVEL[v]) cls.push('lv-' + RPT_LEVEL[v]); if (v === RPT_NM || v === 'prix non saisi' || v === 'km insuffisants') cls.push('nm');
+        return '<td' + (cls.length ? ' class="' + cls.join(' ') + '"' : '') + '>' + rptEsc(v) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
   });
-  return h + '<p class="rfoot">Données mesurées par Geotab uniquement ; « ' + RPT_NM + ' » quand Geotab ne fournit pas la valeur.</p></div>';
+  return h + '<p class="rfoot">Ludy · Supervision de flotte — données mesurées par Geotab uniquement ; « ' + RPT_NM + ' » quand Geotab ne fournit pas la valeur.</p></div>';
 }
 /** Logo Ludy (version foncée, fond transparent) pour l'en-tête des PDF */
 var RPT_LOGO = 'data:image/png;base64,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';
-var RPT_CSS = 'body{font-family:Arial,Helvetica,sans-serif;font-size:10px;color:#1b2a33;margin:18px}.rpt h1{font-size:18px;margin:0 0 2px}.rsub{color:#5d6b74;margin:0 0 12px}' +
-  '.rpt h2{font-size:13px;margin:16px 0 6px;border-bottom:2px solid #5b4bd6;padding-bottom:2px}table{border-collapse:collapse;width:100%}' +
-  '.rsum{width:auto}.rsum th{text-align:left;font-weight:normal;color:#5d6b74;padding:2px 14px 2px 0}.rsum td{font-weight:bold;padding:2px 0}' +
-  '.rtab th{background:#eef0f7;text-align:left;padding:3px 4px;font-size:9px}.rtab td{border-bottom:1px solid #e3e6ea;padding:3px 4px;font-size:9px}' +
-  '.rtab .n{text-align:right}.rempty{color:#5d6b74}.rfoot{color:#5d6b74;margin-top:14px;font-size:8px}';
+var RPT_CSS = '@page{size:A4 landscape;margin:12mm}body{font-family:Arial,Helvetica,sans-serif;font-size:10px;color:#14202b;margin:0}' +
+  '.rlogo{height:28px;margin:0 0 8px}table{border-collapse:collapse;width:100%}' +
+  '.rhead{border-bottom:2px solid #5b4bd6;margin-bottom:10px}.rhead td{vertical-align:bottom;padding:0 0 8px}.rpt h1{font-size:19px;margin:0 0 3px}.rsub{color:#5d6b78;margin:0;font-size:11px}' +
+  '.rkind{text-align:right;color:#5b4bd6;font-weight:bold;font-size:9px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}' +
+  '.rkpi{border-collapse:separate;border-spacing:5px;margin:0 -5px 6px;width:auto}.rkpi td{background:#f3f5f7;border-radius:4px;padding:6px 9px;width:25%;vertical-align:top}' +
+  '.rkpi td.kempty{background:none}.kl{display:block;color:#5d6b78;font-size:8px;margin-bottom:2px}.kv{display:block;font-size:12px}' +
+  '.rpt h2{font-size:13px;margin:16px 0 6px;border-left:3px solid #5b4bd6;padding-left:7px;page-break-after:avoid}.rcount{color:#5d6b78;font-weight:normal;font-size:10px}' +
+  '.rtab th{background:#0f2633;color:#fff;text-align:left;padding:4px 5px;font-size:8.5px}.rtab td{border-bottom:1px solid #e8ecef;padding:3px 5px;font-size:8.5px}' +
+  '.rtab tr:nth-child(even) td{background:#f7f8fa}.rtab tr{page-break-inside:avoid}.rtab .n{text-align:right}' +
+  '.lv-crit{color:#b42318;font-weight:bold}.lv-high{color:#b4461a;font-weight:bold}.lv-warn{color:#9a5a00;font-weight:bold}.lv-ok{color:#18794a;font-weight:bold}.nm{color:#5d6b78;font-style:italic}' +
+  '.rempty{color:#5d6b78}.rfoot{color:#5d6b78;margin-top:16px;font-size:8px;border-top:1px solid #d8dee4;padding-top:5px}';
 /** Document HTML complet (conversion PDF par Apps Script) */
-function rptDoc(rep) { return '<!doctype html><html><head><meta charset="utf-8"><style>' + RPT_CSS + '</style></head><body><img src="' + RPT_LOGO + '" alt="Ludy" style="height:30px;float:right">' + rptHtml(rep) + '</body></html>'; }
+function rptDoc(rep) { return '<!doctype html><html><head><meta charset="utf-8"><style>' + RPT_CSS + '</style></head><body><img class="rlogo" src="' + RPT_LOGO + '" alt="Ludy">' + rptHtml(rep) + '</body></html>'; }
 /** Nom de fichier du rapport */
 function rptFileName(rep) { return ((rep.kind === 'conso' ? 'rapport_consommation_' : rep.kind === 'chauffeur' ? 'comportement_' : rep.kind === 'conduite' ? 'conduite_' : rep.kind === 'classement' ? 'classement_' : 'rapport_flotte_') + (rep.agency === 'Toutes les agences' ? 'toutes_agences' : rep.agency) + '_' + rep.from + (rep.to !== rep.from ? '_' + rep.to : '')).replace(/[^A-Za-z0-9_\-]+/g, '_'); }
 
