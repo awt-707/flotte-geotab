@@ -186,10 +186,11 @@ async function pageCarteCarburant() {
   const p = period(), P = S.P, ok = inAgency(), MINS = 60000;
   const go = () => { pageCarteCarburant().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }); };
   // achats : 60 jours avant la période en plus (relation litres / jauge par modèle, ticket précédent) ; pleins Geotab : 3 jours avant (transmission en différé)
-  const [tx, fills, lvls] = await Promise.all([
+  const [tx, fills, lvls, trips] = await Promise.all([
     dataRows('fuel_card_tx', '*', addDays(p.from, -60), p.to),
     all('fuel', 'id,vehicle_key,plate,day,stop_start,lvl_before,lvl_after,liters_gauge,liters_geotab,driver_code,driver_name', q => q.eq('type', 'PLEIN').gte('day', addDays(p.from, -63)).lte('day', addDays(p.to, 1))).then(r => r.filter(x => ok(x.vehicle_key))),
-    dataRows('levels', 'vehicle_key,at,pct', addDays(p.from, -1), addDays(p.to, 1), { dayCol: 'vday' })]);
+    dataRows('levels', 'vehicle_key,at,pct', addDays(p.from, -1), addDays(p.to, 1), { dayCol: 'vday' }),
+    dataRows('trips', 'vehicle_key,start_at,km,fuel_l', addDays(p.from, -10), addDays(p.to, 1))]);
   // chauffeur au moment du plein : contrat en cours sur le véhicule (contrat jamais clôturé : fin au début du suivant)
   const keys = [...new Set(tx.map(x => x.vehicle_key).filter(Boolean))], ctr = {};
   for (let i = 0; i < keys.length; i += 100) (await all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.in('vehicle_key', keys.slice(i, i + 100))
@@ -198,7 +199,7 @@ async function pageCarteCarburant() {
   Object.values(ctr).forEach(l => ctrEffEnds(l));
   const who = (k, t) => { const c = (ctr[k] || []).filter(c => new Date(c.start_at).getTime() <= t && (c._end === null || t < c._end)).pop(); return c ? c.name || c.client_code : 'Sans contrat'; };
   const V = {}; S.vehList.forEach(v => { V[v.key] = v; });
-  const res = rptFuelCard({ tx: tx.map(x => Object.assign({}, x, { at: new Date(x.at).getTime() })), fills, levels: lvls, vehicles: V, who });
+  const res = rptFuelCard({ tx: tx.map(x => Object.assign({}, x, { at: new Date(x.at).getTime() })), fills, levels: lvls, trips, vehicles: V, who });
   const inP = t => { const d = localDay(t); return d >= p.from && d <= p.to; };
   const rows = res.rows.filter(r => inP(r.at)), anom = rows.filter(r => r.anomalies.some(a => a.sev !== 'Info'));
   const orphans = res.orphans.filter(f => inP(new Date(f.stop_start).getTime()));
@@ -206,13 +207,17 @@ async function pageCarteCarburant() {
   // litres et montant à justifier : achat sans plein = tout le ticket ; litres en trop = facturé - attendu (au prix du ticket)
   const just = r => { if (stOf(r) === 'Justifié') return { l: 0, m: 0 };
     if (r.anomalies.some(a => a.t === 'Achat sans plein dans le véhicule')) return { l: r.liters, m: r.amount };
-    if (r.anomalies.some(a => a.t === 'Litres facturés supérieurs au plein mesuré') && r.expected !== null) { const l = r.liters - r.expected; return { l, m: r.liters ? r.amount * l / r.liters : 0 }; }
+    // litres en trop : au-delà de la plus haute des mesures (jauge, moteur, capacité du réservoir)
+    if (r.anomalies.some(a => a.t === 'Litres facturés supérieurs au plein mesuré' || a.t === 'Plus que la capacité du réservoir')) {
+      const ref = Math.max(...[r.expected, r.engine, r.anomalies.some(a => a.t === 'Plus que la capacité du réservoir') ? r.tank : null].filter(x => x !== null && x !== undefined));
+      const l = Math.max(0, r.liters - ref); return { l, m: r.liters ? r.amount * l / r.liters : 0 }; }
     return { l: 0, m: 0 }; };
   const sumL = rows.reduce((s, r) => s + r.liters, 0), sumM = rows.reduce((s, r) => s + r.amount, 0), nTk = rows.reduce((s, r) => s + r.tx.length, 0);
   const jL = anom.reduce((s, r) => s + just(r).l, 0), jM = anom.reduce((s, r) => s + just(r).m, 0);
   const nCrit = anom.filter(r => r.sev === 'Critique' && stOf(r) !== 'Justifié').length;
   const lastImp = tx.reduce((m, x) => x.imported_at > m ? x.imported_at : m, '');
-  const fitTxt = Object.keys(res.fit).map(m => m + ' : ' + rptFmt(res.fit[m].b, 0) + ' L pour 100 % de jauge (' + res.fit[m].n + ' pleins)').join(' · ');
+  const fitTxt = Object.keys(res.fit).length ? 'Litres attendus pour une montée de jauge calés sur les pleins mesurés de chaque modèle (' + Object.keys(res.fit).map(m => m + ' : ' + res.fit[m].n).join(', ') + ') : la jauge Geotab n\'est pas proportionnelle.' : '';
+  const eng = rows.filter(r => r.engine !== null && r.engine > 0 && !r.anomalies.some(a => a.sev !== 'Info')), engR = eng.length ? eng.reduce((s, r) => s + r.liters, 0) / eng.reduce((s, r) => s + r.engine, 0) : null;
   const hm = t => fmtDTY(new Date(t).toISOString());
   const lvTxt = r => r.lvlBefore === null ? `<span class="nm">${NM}</span>` : f0(r.lvlBefore) + ' % → ' + f0(r.lvlAfter) + ' %';
   const fillTxt = r => r.fill ? hm(r.fillAt) + (r.late ? ' <span class="badge warn" title="La station a transmis la transaction plus tard que le plein">transmis ' + Math.round((r.at - r.fillAt) / 3600000) + ' h après</span>' : '') : '<span class="badge crit">aucun</span>';
@@ -220,12 +225,13 @@ async function pageCarteCarburant() {
   const cols = [['Achat (heure Afriquia)', r => hm(r.at) + `<div class="small">${tkTxt(r)}</div>`, r => r.at], ['Véhicule', r => vlink(r.key, r.plate), r => r.plate], ['Chauffeur', r => esc(r.driver)],
     ['Litres facturés', r => `<b>${rptFmt(r.liters, 2)}</b>` + (r.tx.length > 1 ? ` <span class="small">(${r.tx.length} tickets)</span>` : ''), r => r.liters, 'n'],
     ['Montant TTC (MAD)', r => rptFmt(r.amount, 2), r => r.amount, 'n'], ['Plein Geotab', fillTxt, r => r.fillAt || 0], ['Jauge', lvTxt],
-    ['Litres attendus', r => r.expected === null ? `<span class="nm">${NM}</span>` : '≈ ' + f0(r.expected), r => r.expected || 0, 'n']];
+    ['Litres attendus (jauge)', r => r.expected === null ? `<span class="nm">${NM}</span>` : '≈ ' + f0(r.expected), r => r.expected || 0, 'n'],
+    ['Consommé moteur depuis le plein précédent', r => r.engine === null ? `<span class="nm">${NM}</span>` : f1(r.engine), r => r.engine || 0, 'n']];
   const sevCol = ['Gravité', r => badge(r.sev, GRAV_CLS[r.sev]), r => RPT_SEV.indexOf(r.sev)];
   const anCol = ['Anomalie', r => r.anomalies.filter(a => a.sev !== 'Info').map(a => `<b>${esc(a.t)}</b><div class="small">${esc(a.d)}</div>`).join(''), null, 'wide'];
   const stCol = ['Statut', r => canEdit() ? `<select class="fcst" data-ids="${esc(r.tx.map(x => x.id).join('\n'))}">${FC_STATUS.map(s => `<option ${s === stOf(r) ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(stOf(r)), stOf];
   const render = info => {
-    $('#page').innerHTML = `<div class="head"><h1>Carburant</h1><div class="sub">Chaque achat de la carte carburant est comparé au plein détecté par Geotab (de 2 h 30 avant à 30 min après l'achat) et à la jauge du véhicule. Rien n'est estimé : chaque anomalie s'appuie sur une mesure Geotab.</div></div>
+    $('#page').innerHTML = `<div class="head"><h1>Carburant</h1><div class="sub">Chaque achat de la carte carburant est comparé au plein détecté par Geotab (de 2 h 30 avant à 1 h 30 après l'achat : l'heure Afriquia est parfois décalée d'1 h), à la jauge du véhicule et au carburant consommé par le moteur depuis le plein précédent. Rien n'est estimé : chaque anomalie s'appuie sur une mesure Geotab.</div></div>
     ${fuelTabs('carte')}
     ${canEdit() ? `<div class="panel row"><label class="file">Extract des transactions Afriquia (.xlsx, .xls, .csv) <input type="file" id="fcfile" accept=".xlsx,.xls,.csv"></label>
       <span class="small">${lastImp ? 'Dernier import : ' + fmtDTY(lastImp) + '. ' : ''}Un même ticket importé deux fois n'est compté qu'une fois.</span></div>` : ''}
@@ -234,7 +240,8 @@ async function pageCarteCarburant() {
     ${!tx.length ? msg('Aucun achat importé : importez l\'extract des transactions Afriquia ci-dessus.') : `
     ${cards([['Achats (tickets)', f0(nTk)], ['Litres facturés', f1(sumL)], ['Montant TTC (MAD)', f0(sumM)], ['Pleins Geotab rapprochés', f0(rows.filter(r => r.fill).length) + ' / ' + f0(rows.length)],
       ['Anomalies à vérifier', f0(anom.filter(r => stOf(r) === 'À vérifier').length), anom.some(r => stOf(r) === 'À vérifier') ? 'crit' : ''], ['dont critiques', f0(nCrit), nCrit ? 'crit' : ''],
-      ['Litres à justifier', f1(jL), jL > 0 ? 'crit' : ''], ['Montant à justifier (MAD)', f0(jM), jM > 0 ? 'crit' : '']])}
+      ['Litres à justifier', f1(jL), jL > 0 ? 'crit' : ''], ['Montant à justifier (MAD)', f0(jM), jM > 0 ? 'crit' : ''],
+      ['Facturé / consommé moteur (pleins conformes, plein à plein)', engR === null ? `<span class="nm">${NM}</span>` : f0(engR * 100) + ' %']])}
     <div class="bar"><button id="fcpdf">PDF des anomalies</button><span class="hint">${esc(fitTxt || 'Litres attendus non mesurés : moins de 10 pleins rapprochés par modèle')}</span></div>
     <h2>Anomalies relevées <span class="small">· ${anom.length}</span></h2>
     ${table('tfca', [sevCol].concat(cols.slice(0, 3), [anCol], cols.slice(3, 7), [stCol]), anom.sort((a, b) => RPT_SEV.indexOf(a.sev) - RPT_SEV.indexOf(b.sev) || b.at - a.at), { empty: 'Aucune anomalie sur la période : chaque achat correspond à un plein mesuré par Geotab.' })}
@@ -252,11 +259,12 @@ async function pageCarteCarburant() {
     const pb = $('#fcpdf'); if (pb) pb.onclick = () => { try {
       const pc = [['Gravité', r => r.sev], ['Achat', r => hm(r.at)], ['Véhicule', r => r.plate], ['Chauffeur', r => r.driver], ['Anomalie', r => r.anomalies.filter(a => a.sev !== 'Info').map(a => a.t + ' : ' + a.d).join(' / ')],
         ['Litres facturés', r => rptFmt(r.liters, 2), null, 'n'], ['Montant TTC', r => rptFmt(r.amount, 2), null, 'n'], ['Plein Geotab', r => r.fill ? hm(r.fillAt) + (r.late ? ' (transmis en différé)' : '') : 'aucun'],
-        ['Jauge', r => r.lvlBefore === null ? NM : f0(r.lvlBefore) + ' % → ' + f0(r.lvlAfter) + ' %'], ['Litres attendus', r => r.expected === null ? NM : f0(r.expected), null, 'n'], ['Statut', stOf]];
+        ['Jauge', r => r.lvlBefore === null ? NM : f0(r.lvlBefore) + ' % → ' + f0(r.lvlAfter) + ' %'], ['Litres attendus (jauge)', r => r.expected === null ? NM : f0(r.expected), null, 'n'], ['Consommé moteur', r => r.engine === null ? NM : f1(r.engine), null, 'n'], ['Statut', stOf]];
       reportPdf(rptSimple({ kind: 'carte', title: 'Anomalies carburant (carte Afriquia)', fileName: 'anomalies_carburant_' + p.from + (p.to !== p.from ? '_' + p.to : ''), period: p.from === p.to ? 'du ' + fmtDay(p.from) : 'du ' + fmtDay(p.from) + ' au ' + fmtDay(p.to), from: p.from, to: p.to,
         agency: agFilter() ? S.agName[agFilter()] : 'Toutes les agences',
         summary: [['Achats (tickets)', f0(nTk)], ['Litres facturés', f1(sumL)], ['Montant TTC (MAD)', f0(sumM)], ['Anomalies', f0(anom.length)], ['dont critiques', f0(nCrit)],
-          ['Litres à justifier', f1(jL)], ['Montant à justifier (MAD)', f0(jM)], ['Méthode', 'plein Geotab de 2 h 30 avant à 30 min après l\'achat ; jauge du véhicule' + (fitTxt ? ' ; ' + fitTxt : '')]],
+          ['Litres à justifier', f1(jL)], ['Montant à justifier (MAD)', f0(jM)], ['Facturé / consommé moteur', engR === null ? NM : f0(engR * 100) + ' %'],
+          ['Méthode', 'plein Geotab de 2 h 30 avant à 1 h 30 après l\'achat (heure Afriquia parfois décalée d\'1 h) ; jauge du véhicule ; carburant consommé par le moteur depuis le plein complet précédent']],
         tables: [colsTable('Anomalies relevées', pc, anom, 'Aucune anomalie sur la période'),
           colsTable('Pleins détectés par Geotab sans achat sur la carte', [['Plein Geotab', f => fmtDTY(f.stop_start)], ['Véhicule', f => f.plate], ['Chauffeur', f => f.driver_name || ''],
             ['Jauge', f => f0(f.lvl_before) + ' % → ' + f0(f.lvl_after) + ' %'], ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n']], orphans, 'Aucun')] }));

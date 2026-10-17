@@ -3,7 +3,7 @@ const test = require('node:test'), assert = require('node:assert');
 const lib = require('../site/lib.js'), rpt = require('../site/report.js'), env = require('./lib/env');
 lib.setTzRules(env.MA_TZ);
 const H = 3600000, MIN = 60000, T0 = Date.UTC(2026, 8, 1, 8, 0);
-const V = { '111111WW': { plate: '11111-A-1', model: 'STARIA', fuel: 'GO' }, '222222WW': { plate: '22222-A-1', model: 'SONATA', fuel: 'EH' } };
+const V = { '111111WW': { plate: '11111-A-1', model: 'STARIA', fuel: 'GO', tank_l: 75 }, '222222WW': { plate: '22222-A-1', model: 'SONATA', fuel: 'EH', tank_l: 50 } };
 // 12 pleins « normaux » du Staria : 85 L pour 100 % de jauge, ticket 5 min après le plein Geotab
 function base() {
   const tx = [], fills = [];
@@ -14,7 +14,7 @@ function base() {
   }
   return { tx, fills, levels: [] };
 }
-const run = d => rpt.rptFuelCard({ tx: d.tx, fills: d.fills, levels: d.levels, vehicles: V, who: () => 'Chauffeur test' });
+const run = d => rpt.rptFuelCard({ tx: d.tx, fills: d.fills, levels: d.levels, trips: d.trips, vehicles: V, who: () => 'Chauffeur test' });
 const anOf = (res, id) => { const r = res.rows.find(r => r.tx.some(x => x.id === id)); assert.ok(r, 'ticket ' + id + ' absent'); return r.anomalies.map(a => a.t); };
 
 test('achats normaux : rapprochés de leur plein Geotab, relation litres / jauge mesurée, aucune anomalie', () => {
@@ -38,7 +38,7 @@ test('achat sans plein : aucun plein Geotab et jauge qui ne monte pas = Critique
   assert.deepStrictEqual(anOf(res, 'X2'), ['Aucun plein détecté par Geotab']);
 });
 
-test('plein payé en deux tickets : regroupé ; deux tickets pour un seul plein trop petit = litres en trop', () => {
+test('plein payé en deux tickets : regroupé ; deux tickets pour un seul plein = plus que la capacité du réservoir', () => {
   const d = base(), t = T0 + 13 * 24 * H;
   d.fills.push({ id: 'G1', vehicle_key: '111111WW', stop_start: new Date(t).toISOString(), lvl_before: 20, lvl_after: 100 });
   d.tx.push({ id: 'S1', vehicle_key: '111111WW', at: t + 4 * MIN, liters: 8, product: 'GASOIL' }, { id: 'S2', vehicle_key: '111111WW', at: t + 9 * MIN, liters: 60, product: 'GASOIL' });
@@ -48,7 +48,7 @@ test('plein payé en deux tickets : regroupé ; deux tickets pour un seul plein 
   const res = run(d), r1 = res.rows.find(r => r.tx[0].id === 'S1'), r2 = res.rows.find(r => r.tx[0].id === 'S3');
   assert.strictEqual(r1.tx.length, 2); assert.strictEqual(r1.liters, 68); assert.deepStrictEqual(r1.anomalies, []);
   assert.strictEqual(r2.tx.length, 2);
-  assert.deepStrictEqual(r2.anomalies.map(a => a.t), ['Litres facturés supérieurs au plein mesuré']);
+  assert.deepStrictEqual(r2.anomalies.map(a => a.t), ['Plus que la capacité du réservoir'], '114 L pour un réservoir de 75 L');
   assert.ok(Math.abs(r2.expected - 0.7 * res.fit.STARIA.b - res.fit.STARIA.a) < 0.01);
 });
 
@@ -77,6 +77,42 @@ test('carburant non conforme, deux pleins rapprochés, plein Geotab sans achat',
   assert.ok(res.rows.find(r => r.tx[0].id === 'N3').late);
   assert.deepStrictEqual(anOf(res, 'N4'), []);
   assert.deepStrictEqual(res.orphans.map(f => f.id), ['P4'], 'P4 : plus de 48 h avant N4, aucun ticket');
+});
+
+test('heure Afriquia décalée d\'1 h (dans un sens ou dans l\'autre) : ticket toujours rapproché de son plein', () => {
+  const d = base(), t = T0 + 13 * 24 * H;
+  d.fills.push({ id: 'H1', vehicle_key: '111111WW', stop_start: new Date(t).toISOString(), lvl_before: 20, lvl_after: 100 },
+    { id: 'H2', vehicle_key: '111111WW', stop_start: new Date(t + 2 * 24 * H).toISOString(), lvl_before: 20, lvl_after: 100 });
+  d.tx.push({ id: 'A1', vehicle_key: '111111WW', at: t + 65 * MIN, liters: 68, product: 'GASOIL' }, { id: 'A2', vehicle_key: '111111WW', at: t + 2 * 24 * H - 55 * MIN, liters: 68, product: 'GASOIL' });
+  const res = run(d);
+  ['A1', 'A2'].forEach(id => { const r = res.rows.find(x => x.tx[0].id === id); assert.ok(r.fill && !r.late, id); assert.deepStrictEqual(r.anomalies, []); });
+  assert.deepStrictEqual(res.orphans, []);
+});
+
+test('plein à plein : facturé comparé au carburant consommé par le moteur ; plus que la capacité du réservoir', () => {
+  // Sonata : moins de 10 pleins, pas de relation de jauge : seul le moteur mesure
+  const iso = x => new Date(x).toISOString(), t = T0, d = { tx: [], fills: [], levels: [], trips: [] };
+  [0, 1, 2, 3].forEach(i => d.fills.push({ id: 'S' + i, vehicle_key: '222222WW', stop_start: iso(t + i * 48 * H), lvl_before: 20, lvl_after: 100 }));
+  [[0, 40], [1, 41], [2, 54], [3, 70]].forEach(([i, q]) => d.tx.push({ id: 'Q' + i, vehicle_key: '222222WW', at: t + i * 48 * H + 5 * MIN, liters: q, product: 'SUPER SP' }));
+  [1, 2, 3].forEach(i => { d.trips.push({ vehicle_key: '222222WW', start_at: iso(t + (i - 1) * 48 * H + 3 * H), km: 300, fuel_l: 20 }, { vehicle_key: '222222WW', start_at: iso(t + (i - 1) * 48 * H + 20 * H), km: 300, fuel_l: 20 }); });
+  const res = run(d), r = id => res.rows.find(x => x.tx[0].id === id);
+  assert.strictEqual(r('Q0').engine, null, 'premier plein : pas de plein précédent');
+  assert.strictEqual(r('Q1').engine, 40); assert.deepStrictEqual(r('Q1').anomalies, []);
+  assert.deepStrictEqual(r('Q2').anomalies.map(a => a.t), ['Litres facturés supérieurs au plein mesuré']);
+  assert.match(r('Q2').anomalies[0].d, /moteur : 40,0 L consommés/);
+  assert.deepStrictEqual(r('Q3').anomalies.map(a => a.t), ['Plus que la capacité du réservoir'], '70 L dans un réservoir de 50 L');
+  // un trajet sans mesure de carburant entre les deux pleins : moteur non mesuré
+  d.trips.push({ vehicle_key: '222222WW', start_at: iso(t + 48 * H + 30 * H), km: 50, fuel_l: null });
+  assert.strictEqual(run(d).rows.find(x => x.tx[0].id === 'Q2').engine, null);
+});
+
+test('Staria : un plein de 77 L après 77 L consommés par le moteur n\'est pas une anomalie (réservoir 75 L + goulot)', () => {
+  const d = base(), t = T0 + 13 * 24 * H, iso = x => new Date(x).toISOString();
+  d.trips = [{ vehicle_key: '111111WW', start_at: iso(t - 10 * H), km: 700, fuel_l: 77.5 }];
+  d.fills.push({ id: 'R1', vehicle_key: '111111WW', stop_start: iso(t), lvl_before: 9.5, lvl_after: 100 });
+  d.tx.push({ id: 'R1t', vehicle_key: '111111WW', at: t + 5 * MIN, liters: 77.1, product: 'GASOIL' });
+  const r = run(d).rows.find(x => x.tx[0].id === 'R1t');
+  assert.ok(Math.abs(r.engine - 77.5) < 1e-9); assert.deepStrictEqual(r.anomalies, []);
 });
 
 test('lecture de l\'extract Afriquia : plaque WW, date au Maroc, nombres, produit, doublons', () => {
