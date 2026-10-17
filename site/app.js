@@ -11,8 +11,8 @@ const PARAM_DEFAULTS = { minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, score
 // ---------- Accès aux données ----------
 const PK = { vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key' };
 async function all(table, cols, build, order) {
-  const out = []; const page = 1000;
-  for (let i = 0; ; i += page) {
+  const page = 1000;
+  const get = async i => {
     let q = sb.from(table).select(cols || '*');
     if (build) q = build(q);
     if (order) q = q.order(order[0], { ascending: order[1] !== false });
@@ -20,9 +20,15 @@ async function all(table, cols, build, order) {
     (PK[table] || 'id').split(',').forEach(c => { if (!order || order[0] !== c) q = q.order(c, { ascending: true }); });
     const { data, error } = await q.range(i, i + page - 1);
     if (error) throw new Error(table + ' : ' + error.message);
-    out.push(...data); if (data.length < page) break;
+    return data;
+  };
+  // 1re page seule ; au-delà, 4 pages demandées en même temps (longues périodes : plusieurs milliers de lignes)
+  const out = [];
+  for (let i = 0; ;) {
+    const batch = await Promise.all((i ? [0, 1, 2, 3] : [0]).map(k => get(i + k * page)));
+    for (const d of batch) { out.push(...d); if (d.length < page) return out; }
+    i += batch.length * page;
   }
-  return out;
 }
 async function rpc(fn, args) { const { data, error } = await sb.rpc(fn, args || {}); if (error) throw new Error(fn + ' : ' + error.message); return data; }
 /** Fonction de lecture renvoyant des lignes : paginée comme all() (PostgREST renvoie 1 000 lignes au plus).
