@@ -193,3 +193,34 @@ function jobDriverReport_(arg, by) {
     attachments: [pdfOf_(rep)], name: 'Ludy' });
   return 'PDF envoyé à ' + a.email;
 }
+
+/**
+ * Manifeste de passagers par e-mail avec le PDF joint (demande « manifest_mail » du site : {id, to}).
+ * Le PDF est celui créé sur le site (stockage privé « manifestes ») ; un gestionnaire : seulement les véhicules de ses agences.
+ */
+function jobManifestMail_(arg, by) {
+  let a; try { a = JSON.parse(arg || '{}'); } catch (e) { return 'Erreur : demande illisible'; }
+  const to = String(a.to || '').split(/[,;\s]+/).filter(Boolean);
+  if (!to.length || to.length > 10 || to.some(x => !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(x))) return 'Erreur : adresse e-mail invalide';
+  const m = dbSelect_('manifests', 'select=id,vehicle_key,plate,driver_name,file_name,file_path,message,data&id=eq.' + enc_(a.id), 'id')[0];
+  if (!m) return 'Erreur : manifeste introuvable';
+  if (!m.file_path) return 'Erreur : PDF du manifeste non enregistré (à regénérer)';
+  if (by) {
+    const pr = dbSelect_('profiles', 'select=user_id,role&user_id=eq.' + enc_(by), 'user_id')[0];
+    if (!pr || pr.role !== 'admin') {
+      const ags = dbSelect_('user_agencies', 'select=user_id,agency_id&user_id=eq.' + enc_(by), 'user_id,agency_id').map(x => x.agency_id);
+      const ok = ags.length && dbSelect_('vehicles', 'select=key&key=eq.' + enc_(m.vehicle_key) + '&agency_id=in.(' + ags.join(',') + ')', 'key').length;
+      if (!pr || pr.role !== 'manager' || !ok) return 'Erreur : véhicule hors de vos agences';
+    }
+  }
+  const c = sbConf_();
+  const r = UrlFetchApp.fetch(c.url + '/storage/v1/object/manifestes/' + String(m.file_path).split('/').map(enc_).join('/'),
+    { method: 'get', muteHttpExceptions: true, headers: Object.assign({ apikey: c.key }, /^sb_/.test(c.key) ? {} : { Authorization: 'Bearer ' + c.key }) });
+  if (r.getResponseCode() >= 300) return 'Erreur : PDF illisible dans le stockage (HTTP ' + r.getResponseCode() + ')';
+  const d = (m.data && m.data.d) || {}, name = m.file_name || 'Manifeste.pdf';
+  const body = String(m.message || '').replace(/\n?Manifeste PDF : \S+ \(lien valable \d+ jours\)/, '');
+  MailApp.sendEmail({ to: to.join(','), subject: 'Manifeste mission du ' + (d.dateDepart || '') + ' · ' + (m.plate || ''),
+    body: 'Bonjour,\n\nCi-joint le manifeste de passagers.\n\n' + body.replace(/^📄 Ludy · Manifeste de passagers\n/, '') + '\n\nLuxury & Discovery (envoyé par Ludy)',
+    attachments: [r.getBlob().setName(name).setContentType('application/pdf')], name: 'Ludy' });
+  return 'Manifeste envoyé à ' + to.join(', ');
+}

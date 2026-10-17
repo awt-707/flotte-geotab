@@ -4,7 +4,7 @@ const ROOT = path.join(__dirname, '..'), read = f => fs.readFileSync(path.join(R
 const errors = [], ok = m => console.log('  ok  ' + m), fail = m => errors.push(m);
 
 // 1. Syntaxe
-for (const f of ['collector/dist/Collecteur.gs', 'site/app.js', 'site/lib.js', 'site/report.js', 'site/pages2.js', 'site/direct.js', 'site/config.js', 'collector/loader/Code.gs']) {
+for (const f of ['collector/dist/Collecteur.gs', 'site/app.js', 'site/lib.js', 'site/report.js', 'site/pages2.js', 'site/direct.js', 'site/manifeste.js', 'site/config.js', 'collector/loader/Code.gs']) {
   try { new vm.Script(read(f), { filename: f }); ok('syntaxe ' + f); } catch (e) { fail('syntaxe ' + f + ' : ' + e.message); }
 }
 
@@ -32,7 +32,7 @@ role === 'anon' ? ok('site/config.js : clé publique (anon)') : fail('site/confi
 // 5. Aucune clé secrète dans les fichiers suivis
 const walk = d => fs.readdirSync(path.join(ROOT, d), { withFileTypes: true }).flatMap(e => {
   const p = path.join(d, e.name);
-  if (/^(node_modules|\.git|tests\/out|collector\/dist)$/.test(p) || /\.(gz|png|xlsx)$/.test(p)) return [];
+  if (/^(node_modules|\.git|tests\/out|collector\/dist)$/.test(p) || /\.(gz|png|jpg|xlsx)$/.test(p)) return [];
   return e.isDirectory() ? walk(p) : [p];
 });
 const leaks = walk('.').filter(f => !/^tests\/lib\/.*\.jwt$/.test(f)).filter(f => {
