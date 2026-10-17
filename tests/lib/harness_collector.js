@@ -71,6 +71,15 @@ function dbFetch(url, opt) {
   const i = out.lastIndexOf('\n'), body = out.slice(0, i), code = +out.slice(i + 1);
   if (process.env.DBLOG) console.log('DB', opt.method, url.slice(0, 160), code, body.length);
   return { getContentText: () => body, getResponseCode: () => code };
+}
+/** Supabase Storage : faux stockage du serveur de test du site (port 8080), contenu binaire */
+function storageFetch(url, opt) {
+  const u = 'http://localhost:' + (process.env.SITE_PORT || 8080) + url.slice(url.indexOf('/storage/v1/'));
+  const args = ['-s', '-o', '-', '-w', '%{http_code}', '-X', String(opt.method || 'get').toUpperCase(), u];
+  Object.entries(opt.headers || {}).forEach(([k, v]) => args.push('-H', k + ': ' + v));
+  const out = execFileSync('curl', args, { maxBuffer: 1 << 30 }), code = +out.slice(-3).toString(), bytes = out.slice(0, -3);
+  const blob = { bytes, name: '', type: '', setName(n) { this.name = n; return this; }, setContentType(t) { this.type = t; return this; }, getBytes() { return this.bytes; } };
+  return { getResponseCode: () => code, getContentText: () => bytes.toString(), getBlob: () => blob };
 } const books = {}; const props = {}, triggers = [], folders = [], cache = {};
 const ctx = vm.createContext({ console, Utilities, Date: FakeDate, Math, JSON,
   SpreadsheetApp: { getActive: () => main, openById: id => (id && books[id]) || parc, create: n => { const b = new SS(); b.name = n; b.id = 'ARCH' + Object.keys(books).length; b.getId = () => b.id; b.getUrl = () => 'https://archive/' + b.id; books[b.id] = b; return b; }, getUi: () => { throw new Error('no ui'); }, newConditionalFormatRule: () => chain(), newDataValidation: () => chain(), InterpolationType: { PERCENTILE: 'P' }, BorderStyle: { SOLID: 1, SOLID_THICK: 2 } },
@@ -83,7 +92,7 @@ const ctx = vm.createContext({ console, Utilities, Date: FakeDate, Math, JSON,
       getFiles: () => { const l = files.filter(x => !x.trashed); let k = 0; return { hasNext: () => k < l.length, next: () => l[k++] }; } }; folders.push(f); return f; } },
   CacheService: { getScriptCache: () => ({ get: k => k in cache ? cache[k] : null, put: (k, v) => { cache[k] = v; } }) },
   // comme Google : adresse de plus de 2 Ko refusée
-  UrlFetchApp: { fetch: (url, opt) => { if (url.length > 2048) throw new Error('Limite dépassée : Longueur d\'URL URLFetch.'); if (url.indexOf('script.googleapis.com') >= 0) { scriptApi.push({ url, opt }); return scriptApiReply(url, opt); } if (url.indexOf('/apiv1') < 0) return dbFetch(url, opt); stats.calls++; global.__NOW = NOW0; const req = JSON.parse(opt.payload); const res = require('./geotab_fake.js').handle(req.method, req.params); const txt = JSON.stringify(res); stats.bytes += txt.length; return { getContentText: () => txt, getResponseCode: () => 200 }; }, fetchAll: reqs => { stats.batches++; return reqs.map(r => ctx.UrlFetchApp.fetch(r.url, r)); } }
+  UrlFetchApp: { fetch: (url, opt) => { if (url.length > 2048) throw new Error('Limite dépassée : Longueur d\'URL URLFetch.'); if (url.indexOf('script.googleapis.com') >= 0) { scriptApi.push({ url, opt }); return scriptApiReply(url, opt); } if (url.indexOf('/storage/v1/') >= 0) return storageFetch(url, opt); if (url.indexOf('/apiv1') < 0) return dbFetch(url, opt); stats.calls++; global.__NOW = NOW0; const req = JSON.parse(opt.payload); const res = require('./geotab_fake.js').handle(req.method, req.params); const txt = JSON.stringify(res); stats.bytes += txt.length; return { getContentText: () => txt, getResponseCode: () => 200 }; }, fetchAll: reqs => { stats.batches++; return reqs.map(r => ctx.UrlFetchApp.fetch(r.url, r)); } }
 });
 vm.runInContext(fs.readFileSync(process.env.CODE, 'utf8'), ctx, { filename: 'Collecteur.gs' });
 module.exports = { scriptApi, setScriptApiReply: f => { scriptApiReply = f; }, folders, triggers, books, stats, ctx, main, toasts, mails, props, pdfs, setNow, run: c => vm.runInContext(c, ctx) };

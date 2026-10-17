@@ -14,7 +14,7 @@ test.before(async () => {
 test.after(() => { if (srv) srv.kill(); });
 
 const PAGES = [['direct', 'En direct', /En route|Garé|Arrêté/], ['tableau', 'Tableau de bord', /Km parcourus/], ['jour', 'Journée du', /Journées de travail actives/],
-  ['chauffeurs', 'Classement des chauffeurs', /Score/], ['alertes', 'Alertes', /Gravité/], ['contrats', 'Contrats', /Contrats des 40 derniers jours/],
+  ['chauffeurs', 'Classement des chauffeurs', /Score/], ['alertes', 'Alertes', /Gravité/], ['manifeste', 'Manifestes', /Derniers manifestes/], ['contrats', 'Contrats', /Contrats des 40 derniers jours/],
   ['plaques', 'Changements de plaque', /Ancienne plaque/], ['vehicules', 'Véhicules', /WW968194/], ['reglages', 'Réglages', /Journal technique/],
   ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/],
   ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['carburant?t=carte', 'Carburant', /Aucun achat importé/], ['conso', 'Consommation', /Rapport de consommation/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/], ['comportement', 'Comportement chauffeur', /Choisissez un chauffeur/], ['finshift?d=2026-10-03&s=Jour', 'Résultat de fin de shift', /Par chauffeur : consommation et conduite/],
@@ -445,6 +445,87 @@ test('anomalies carburant : import de l\'extract Afriquia, achats rapprochés de
     const f = path.join(env.OUT, dl.suggestedFilename()); await dl.saveAs(f);
     assert.strictEqual(fs.readFileSync(f).slice(0, 5).toString(), '%PDF-');
     await page.screenshot({ path: path.join(env.OUT, 'site_carte_carburant.png'), fullPage: true });
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});
+
+test('manifeste : véhicule et chauffeur du contrat en cours, PDF, lien dans le message WhatsApp, historique, e-mail avec le PDF joint', async () => {
+  const fs = require('fs');
+  lib.setTzRules(env.MA_TZ);
+  env.psql("update manifest_config set stamp = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', email_to = 'dret@exemple.ma'; truncate manifests restart identity; delete from jobs");
+  const c = JSON.parse(env.psql("select row_to_json(c) from (select num, name, vehicle_key, start_at, end_at from contracts where vehicle_key is not null and end_at is not null and end_at - start_at > interval '3 hours' and start_at > '2026-10-01' order by start_at limit 1) c"));
+  const t = new Date(c.start_at).getTime() + 2 * 3600000, dep = lib.localDay(t) + 'T' + lib.localHM(t);
+  const { br, page, errors } = await openBrowser();
+  await page.clock.setFixedTime(new Date('2026-10-06T09:18:00Z'));
+  try {
+    await login(page, '#/manifeste');
+    await page.waitForSelector('#mfveh');
+    await page.selectOption('#mfveh', c.vehicle_key);
+    await page.fill('#mfdep', dep); await page.dispatchEvent('#mfdep', 'change');
+    await page.waitForFunction(n => new RegExp('Contrat ' + n).test(document.querySelector('#mfdinfo').innerText), c.num);
+    assert.strictEqual(await page.inputValue('#mfdrv'), c.name);
+    assert.match(await page.innerText('#mfvinfo'), /places autorisées/);
+    await page.fill('#mfdon', 'Karim Bennani'); await page.fill('#mfcin', 'bk123456');
+    await page.fill('#mfa', 'Aéroport Mohammed V, Casablanca'); await page.fill('#mfb', 'Hôtel Sofitel, Rabat');
+    await page.click('#mfadd'); await page.fill('#mfpass input >> nth=0', 'Sara Alami');
+    await page.click('#mfgen');
+    await page.waitForSelector('#mfwa');
+    const wa = decodeURIComponent((await page.getAttribute('#mfwa', 'href')).split('text=')[1]);
+    assert.match(wa, /^📄 Ludy · Manifeste de passagers\nMission du \d\d\/\d\d\/2026 à \d\d:\d\d\nChauffeur : /);
+    assert.ok(wa.includes('Client : Karim Bennani (résident)\nPassagers (2) : Karim Bennani, Sara Alami\nTrajet : Aéroport Mohammed V, Casablanca → Hôtel Sofitel, Rabat'), wa);
+    assert.match(wa, /Manifeste PDF : http:\/\/localhost:8080\/storage\/v1\/object\/sign\/manifestes\/2026-10\/[\w-]+\.pdf\?token=jeton-604800&download= \(lien valable 7 jours\)$/);
+    assert.match(await page.getAttribute('#mfmail', 'href'), /^mailto:dret@exemple\.ma\?subject=Manifeste/);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#mfdl')]);
+    assert.match(dl.suggestedFilename(), /^Manifeste-Mission-\d{6}-\d\dh\d\d-[A-Za-z0-9-]+\.pdf$/);
+    const f = path.join(env.OUT, 'site_manifeste.pdf'); await dl.saveAs(f);
+    assert.strictEqual(fs.readFileSync(f).slice(0, 5).toString(), '%PDF-');
+    // historique enregistré, PDF lisible par son lien
+    await page.waitForSelector('#mfh');
+    const row = JSON.parse(env.psql('select row_to_json(m) from (select vehicle_key, driver_name, client, file_path, data from manifests) m'));
+    assert.strictEqual(row.vehicle_key, c.vehicle_key); assert.strictEqual(row.driver_name, c.name); assert.strictEqual(row.data.d.cin, 'BK123456');
+    const pdf = await page.evaluate(async u => (await (await fetch(u)).text()).slice(0, 5), wa.match(/(http:\S+)/)[1]);
+    assert.strictEqual(pdf, '%PDF-');
+    // e-mail avec le PDF joint : demande au collecteur
+    B.mails.length = 0;
+    await page.fill('#mfto', 'dret@exemple.ma, chef@exemple.ma'); await page.click('#mfsend');
+    await page.waitForFunction(() => /Envoi demandé/.test(document.querySelector('#mfsendr').innerText));
+    assert.deepStrictEqual(JSON.parse(env.psql("select arg from jobs where kind = 'manifest_mail'")), { id: 1, to: 'dret@exemple.ma,chef@exemple.ma' });
+    B.run('processJobs_(Date.now())');
+    assert.strictEqual(B.mails.length, 1);
+    const m = B.mails[0];
+    assert.strictEqual(m.to, 'dret@exemple.ma,chef@exemple.ma'); assert.match(m.subject, /^Manifeste mission du .* · /);
+    assert.match(m.body, /Client : Karim Bennani \(résident\)/); assert.ok(!/lien valable/.test(m.body));
+    assert.strictEqual(m.attachments.length, 1); assert.match(m.attachments[0].name, /^Manifeste-Mission-.*\.pdf$/);
+    assert.strictEqual(m.attachments[0].bytes.slice(0, 5).toString(), '%PDF-');
+    assert.match(env.psql("select result from jobs where kind = 'manifest_mail'"), /^Manifeste envoyé à dret@exemple\.ma, chef@exemple\.ma$/);
+    // course retour : départ et terminus inversés
+    await page.click('#mfret2');
+    await page.waitForFunction(() => document.querySelector('#mfa') && /Sofitel/.test(document.querySelector('#mfa').value));
+    assert.strictEqual(await page.inputValue('#mfb'), 'Aéroport Mohammed V, Casablanca');
+    await page.screenshot({ path: path.join(env.OUT, 'site_manifeste.png'), fullPage: true });
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});
+
+test('manifeste : réglages de l\'administrateur (entreprise, cachet rendu transparent, agrément et places par véhicule)', async () => {
+  const { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/manifeste');
+    await page.waitForSelector('#mfset');
+    await page.click('#mfset summary');
+    const key = JSON.parse(env.psql("select json_agg(key order by plate) from vehicles"))[0];
+    await page.fill(`[data-mfag="${key}"]`, 'TT/99999/2026'); await page.fill(`[data-mfse="${key}"]`, '7');
+    await page.fill('[data-mfc="dossier"]', '1234/TOUR/2026');
+    await page.setInputFiles('#mfsf', path.join(__dirname, '..', 'site', 'logo-ludy-sombre.png'));
+    await page.waitForSelector('#mfsp img');
+    await page.click('#mfsave');
+    await page.waitForFunction(() => /Réglages enregistrés/.test(document.querySelector('#mfsres').innerText));
+    const plateOf = env.psql(`select plate from vehicles where key = '${key}'`);
+    assert.strictEqual(env.psql(`select agrement || '|' || seats from parc where regexp_replace(upper(plate), '[^0-9A-Z]', '', 'g') = regexp_replace(upper('${plateOf}'), '[^0-9A-Z]', '', 'g')`), 'TT/99999/2026|7');
+    assert.strictEqual(env.psql("select company->>'dossier' from manifest_config"), '1234/TOUR/2026');
+    assert.match(env.psql('select left(stamp, 22) from manifest_config'), /^data:image\/png;base64,/);
+    await page.selectOption('#mfveh', key);
+    assert.match(await page.innerText('#mfvinfo'), /7 places autorisées · N° d'agrément TT\/99999\/2026/);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
