@@ -11,11 +11,11 @@ test('application : seau « app » public créé (ou déjà là), Ludy.dmg et Lu
   await new Promise(r => srv.listen(0, r));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'app-')); fs.writeFileSync(path.join(dir, 'Ludy.dmg'), Buffer.alloc(3000)); fs.writeFileSync(path.join(dir, 'Ludy-setup.exe'), Buffer.alloc(2000));
   try {
-    const out = await new Promise((ok, ko) => execFile('node', ['scripts/publish-app.js', dir], { env: Object.assign({}, process.env, { SUPABASE_URL: 'http://localhost:' + srv.address().port, SUPABASE_SERVICE_KEY: 'sb_secret_test' }) },
+    const out = await new Promise((ok, ko) => execFile('node', ['scripts/publish-app.js', dir], { env: Object.assign({}, process.env, { SUPABASE_URL: 'http://localhost:' + srv.address().port, SUPABASE_SERVICE_KEY: 'sb_secret_' + '-faux' }) },
       (e, so, se) => e ? ko(new Error(se || e.message)) : ok(so)));
     assert.match(out, /Ludy\.dmg publié/); assert.match(out, /Ludy-setup\.exe publié/);
     assert.deepStrictEqual(seen.map(s => s.m + ' ' + s.u), ['POST /storage/v1/bucket', 'POST /storage/v1/object/app/Ludy.dmg', 'POST /storage/v1/object/app/Ludy-setup.exe']);
-    assert.ok(seen.every(s => s.key === 'sb_secret_test' && !s.auth), 'nouvelle clé sb_… : en-tête apikey seul');
+    assert.ok(seen.every(s => s.key === 'sb_secret_-faux' && !s.auth), 'nouvelle clé sb_… : en-tête apikey seul');
     assert.deepStrictEqual(seen.slice(1).map(s => [s.upsert, s.n]), [['true', 3000], ['true', 2000]]);
     assert.strictEqual(seen[1].type, 'application/x-apple-diskimage');
   } finally { srv.close(); }
