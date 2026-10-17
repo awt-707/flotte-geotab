@@ -361,9 +361,11 @@ async function openAlertDetail(a) {
   const t0 = new Date(a.at).getTime(), t1 = a.end ? Math.max(t0, new Date(a.end).getTime()) : t0, tok = d._tok = (d._tok || 0) + 1;
   d.innerHTML = `<div class="adhead"><div>${badge(a.severity, GRAV_CLS[a.severity])} <b class="adtype">${esc(a.type)}</b> ${plate(a.plate)}
       <div class="sub">${esc(fmtHMS(a.at))}${a.approx ? ' (heure de l\'alerte, à la minute)' : ''} · ${a.contract_num || (a.driver_code && a.driver_code !== HORS) ? esc(a.driver_name) + ' ' + shiftBadge(a.shift) + (a.contract_num ? ' · contrat ' + esc(a.contract_num) : '') : '<span class="nm">Sans contrat</span>'}</div></div>
-    <button type="button" class="ghost adclose" aria-label="Fermer">Fermer</button></div>
+    <div class="adact"><a class="btn small" id="adwa" target="_blank" rel="noopener">WhatsApp</a><a class="btn small ghostb" id="admail" target="_blank" rel="noopener">E-mail</a>
+      <button type="button" class="ghost small" id="adcopy">Copier</button><button type="button" class="ghost adclose" aria-label="Fermer">Fermer</button></div></div>
     <div id="adbody"><div class="loading">Lecture des données Geotab autour de l'instant…</div></div>`;
   if (!d.open) d.showModal();
+  alertShare(a, null);
   try {
     const j = await relay({ mode: 'detail', key: a.vehicle_key, from: new Date(t0).toISOString(), to: new Date(a.approx ? t0 + MIN : t1).toISOString() });
     if (d._tok === tok && d.open) renderDetail(d, a, j, t0, a.approx ? t0 + MIN : t1);
@@ -393,6 +395,8 @@ function renderDetail(d, a, j, t0, t1) {
     ['Durée de l\'événement (Geotab)', ev && ev.dur_min != null ? Math.round(ev.dur_min * 60) + ' s' : t1 > t0 ? Math.round((t1 - t0) / 1000) + ' s' : '—'],
     ['Distance pendant l\'événement', ev && ev.km != null ? f1(ev.km) + ' km' : '—'],
     ['Lieu', at ? `<a target="_blank" rel="noopener" href="${osmUrl(at[2], at[3])}">${(+at[2]).toFixed(5)}, ${(+at[3]).toFixed(5)}</a>` : `<span class="nm">${NM}</span>`]];
+  alertShare(a, { pk, lim, over, above: known ? Math.round(above / 1000) : null, src, at,
+    dur: ev && ev.dur_min != null ? Math.round(ev.dur_min * 60) : t1 > t0 ? Math.round((t1 - t0) / 1000) : null, km: ev && ev.km != null ? ev.km : null });
   $('#adbody').innerHTML = `<div class="adgrid">${c.map(x => `<div class="adkv"><span>${x[0]}</span><div>${x[1]}</div></div>`).join('')}</div>
     <h3>Vitesse autour de l'instant</h3>${speedChart(spd, road, j, t0, t1, pk)}
     <h3>Trajet sur la carte</h3><div id="admap"></div>
@@ -407,6 +411,32 @@ function renderDetail(d, a, j, t0, t1) {
     if (at) L.circleMarker([at[2], at[3]], { radius: 8, className: 'adpk', weight: 2, fillOpacity: 1 }).bindTooltip(pk ? f0(pk[1]) + ' km/h' + (lim ? ' (limite ' + lim + ')' : '') : esc(a.type), { permanent: true, direction: 'top' }).addTo(m);
     m.fitBounds(L.latLngBounds(all).pad(0.15), { maxZoom: 16 }); setTimeout(() => m.invalidateSize(), 50);
   } else { const el = $('#admap'); if (el) el.outerHTML = '<div class="empty">Aucune position GPS transmise par Geotab sur ce moment</div>'; }
+}
+/**
+ * Partage de l'alerte : message détaillé (mêmes chiffres que la fiche, lus dans Geotab) envoyé par WhatsApp, par e-mail ou copié.
+ * m = mesures de la fiche (null tant que Geotab n'a pas répondu : message avec les seules infos de l'alerte)
+ */
+function alertShareText(a, m) {
+  const v = vehOf(a.vehicle_key), L = [];
+  L.push('⚠️ Ludy · Alerte ' + (a.severity || '') + ' : ' + a.type);
+  L.push('Véhicule : ' + (a.plate || '') + (v.model ? ' (' + v.model + ')' : ''));
+  L.push('Chauffeur : ' + (a.contract_num || (a.driver_code && a.driver_code !== HORS) ? (a.driver_name || a.driver_code) + (a.shift ? ' · shift ' + String(a.shift).toLowerCase() : '') + (a.contract_num ? ' · contrat ' + a.contract_num : '') : 'sans contrat'));
+  L.push('Heure : ' + fmtHMS(a.at) + (a.approx ? ' (à la minute)' : ''));
+  if (m) {
+    if (m.pk) L.push('Vitesse max : ' + f0(m.pk[1]) + ' km/h à ' + fmtHMS(m.pk[0]).slice(6) + (m.src === 'capteur' ? ' (capteur du véhicule)' : ' (GPS)'));
+    if (m.lim) L.push('Limite de la route : ' + f0(m.lim) + ' km/h' + (m.over != null ? (m.over > 0 ? ' → dépassement +' + f0(m.over) + ' km/h' : ' (pas de dépassement)') : ''));
+    const x = [m.above != null ? 'au-dessus de la limite ' + m.above + ' s' : '', m.dur != null ? 'durée ' + m.dur + ' s' : '', m.km != null ? f1(m.km) + ' km' : ''].filter(Boolean);
+    if (x.length) L.push('Événement : ' + x.join(' · '));
+    if (m.at) L.push('Lieu : https://maps.google.com/?q=' + (+m.at[2]).toFixed(5) + ',' + (+m.at[3]).toFixed(5));
+  } else if (a.detail) L.push(String(a.detail));
+  L.push('Source : Geotab (rien n\'est estimé).');
+  return L.join('\n');
+}
+function alertShare(a, m) {
+  const txt = alertShareText(a, m), wa = $('#adwa'), ml = $('#admail'), cp = $('#adcopy');
+  if (wa) wa.href = 'https://wa.me/?text=' + encodeURIComponent(txt);
+  if (ml) ml.href = 'mailto:?subject=' + encodeURIComponent('Ludy · ' + a.type + ' · ' + (a.plate || '') + ' · ' + fmtHMS(a.at)) + '&body=' + encodeURIComponent(txt);
+  if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(txt); cp.textContent = 'Copié'; } catch (e) { prompt('Copiez le message :', txt); } };
 }
 /** Courbe de vitesse (SVG) : vitesse, limite de la route (pointillés), événement (zone colorée), pic */
 function speedChart(spd, road, j, t0, t1, pk) {

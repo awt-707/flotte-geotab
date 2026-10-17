@@ -55,7 +55,7 @@ async function loadRef(force) {
   // Heures à l'heure réelle du Maroc publiée par le collecteur (même règle partout, quelle que soit la table des fuseaux du navigateur)
   setTzRules(S.P.tzRules);
   S.vehList = veh; S.veh = {}; veh.forEach(v => { S.veh[v.key] = v; });
-  S.rules = {}; rules.forEach(r => { S.rules[r.id] = r; });
+  S.rules = {}; rules.forEach(r => { r.name_geotab = r.name; r.name = rptRuleFr(r.name); S.rules[r.id] = r; });   // noms des règles en français partout
   S.drv = { [HORS]: 'Hors contrat' }; drv.forEach(d => { S.drv[d.code] = d.name; });
 }
 
@@ -1039,7 +1039,7 @@ async function pageReglages() {
     <h2>Paramètres</h2>
     ${table('tpar', [['Paramètre', p => esc(p.label)], ['Valeur', p => `<input class="ped" data-k="${esc(p.key)}" value="${esc(p.value == null ? '' : p.value)}" size="22">`], ['Note', p => esc(p.note || ''), null, 'wide']], params.filter(p => !hidden[p.key]))}
     <h2>Règles Geotab (poids dans le score de danger)</h2>
-    ${table('trul', [['Règle', r => esc(r.name)], ['Catégorie', r => esc(r.category || '')], ['Poids', r => `<input class="red_" data-k="${esc(r.id)}" value="${esc(r.weight)}" size="4">`, r => r.weight], ['Note', r => esc(r.note || ''), null, 'wide']], rules)}
+    ${table('trul', [['Règle', r => esc(rptRuleFr(r.name)) + (rptRuleFr(r.name) !== r.name ? ` <span class="small">(Geotab : ${esc(r.name)})</span>` : '')], ['Catégorie', r => esc(r.category || '')], ['Poids', r => `<input class="red_" data-k="${esc(r.id)}" value="${esc(r.weight)}" size="4">`, r => r.weight], ['Note', r => esc(r.note || ''), null, 'wide']], rules)}
     <h2>Demandes au collecteur</h2>
     ${table('tjob', [['Demande', j => esc(j.kind) + (j.arg ? ' (' + esc(j.arg) + ')' : '')], ['Le', j => fmtDTY(j.created_at)], ['Terminée', j => j.done_at ? fmtDTY(j.done_at) : '<span class="badge warn">en attente</span>'], ['Résultat', j => esc(j.result || ''), null, 'wide']], jobs.data || [])}
     <h2>Journal technique</h2>

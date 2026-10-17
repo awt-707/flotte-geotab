@@ -156,7 +156,7 @@ function buildDriver_(code, from, to, keys) {
   const ag = d.agency_id ? (dbSelect_('agencies', 'select=id,name&id=eq.' + d.agency_id, 'id')[0] || {}).name : '';
   let stops = null;
   try { stops = dbSelect_('engine_stops', 'select=*' + dr, 'id'); } catch (e) { stops = null; }
-  const rules = {}; Object.keys(rulesMap_()).forEach(id => { const r = rulesMap_()[id]; rules[id] = { name: r.name, weight: r.w, category: r.cat }; });
+  const rules = {}; Object.keys(rulesMap_()).forEach(id => { const r = rulesMap_()[id]; rules[id] = { name: rptRuleFr(r.name), weight: r.w, category: r.cat }; });
   // keys : véhicules des agences du demandeur (gestionnaire) ; absent = administrateur, toute la flotte
   const mine = l => keys ? (l || []).filter(r => keys[r.vehicle_key]) : l;
   return rptDriver({

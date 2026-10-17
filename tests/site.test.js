@@ -195,6 +195,12 @@ test('en direct : alertes à l\'instant (événements Geotab et vitesse au-dessu
     assert.match(fiche, /\d+ km\/h à \d{2}:\d{2}:\d{2}/, 'vitesse max lue dans Geotab');
     assert.ok((await page.getAttribute('#adlg svg path.spd', 'd')).length > 20, 'courbe de vitesse vide');
     assert.strictEqual(await page.locator('#admap.leaflet-container').count(), 1);
+    // partage : WhatsApp et e-mail avec le message détaillé (mêmes chiffres que la fiche)
+    const wa = decodeURIComponent((await page.getAttribute('#adwa', 'href')).replace('https://wa.me/?text=', ''));
+    assert.match(wa, /^⚠️ Ludy · Alerte \S+ : .*Vitesse/); assert.match(wa, /\nVéhicule : /); assert.match(wa, /\nVitesse max : \d+ km\/h à \d{2}:\d{2}:\d{2}/);
+    assert.match(wa, /\nSource : Geotab/);
+    const ml = await page.getAttribute('#admail', 'href');
+    assert.match(ml, /^mailto:\?subject=Ludy/); assert.ok(decodeURIComponent(ml.split('body=')[1]) === wa, 'même message par e-mail');
     await page.click('#adlg .adclose');
     assert.strictEqual(await page.locator('#adlg[open]').count(), 0);
     assert.deepStrictEqual(errors, []);
