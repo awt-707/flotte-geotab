@@ -32,7 +32,7 @@ role === 'anon' ? ok('site/config.js : clé publique (anon)') : fail('site/confi
 // 5. Aucune clé secrète dans les fichiers suivis
 const walk = d => fs.readdirSync(path.join(ROOT, d), { withFileTypes: true }).flatMap(e => {
   const p = path.join(d, e.name);
-  if (/^(node_modules|\.git|tests\/out|collector\/dist)$/.test(p) || /\.(gz|png|jpg|xlsx)$/.test(p)) return [];
+  if (/^(node_modules|\.git|tests\/out|collector\/dist|desktop\/src-tauri\/target)$/.test(p) || /\.(gz|png|jpg|xlsx)$/.test(p)) return [];
   return e.isDirectory() ? walk(p) : [p];
 });
 const leaks = walk('.').filter(f => !/^tests\/lib\/.*\.jwt$/.test(f)).filter(f => {

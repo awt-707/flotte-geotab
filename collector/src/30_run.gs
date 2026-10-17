@@ -298,7 +298,7 @@ function dailyStep_(t0) {
   let st = JSON.parse(props.getProperty('DAILY') || 'null');
   if (!st || st.day !== today) {
     if (h < 2 && st) return '';                                        // la nuit, après 2 h
-    st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size'] };
+    st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size', 'manifests'] };
     const month = today.slice(0, 7);
     if (props.getProperty('ARCH_MONTH') !== month) st.steps.push('arch:trips', 'arch:idles', 'arch:engine_stops', 'arch:events', 'arch:fuel', 'arch:levels',
       'arch:vehicle_days', 'arch:journal', 'arch:alerts', 'arch:done');
@@ -313,6 +313,7 @@ function dailyStep_(t0) {
       else if (s === 'backup') out.push(backup_());
       else if (s === 'prune') { dbRpc_('purge_before', { p_table: 'logs', p_before: addDays_(today, -30) }); dbRpc_('purge_before', { p_table: 'jobs', p_before: addDays_(today, -30) }); }
       else if (s === 'size') { const z = dbRpc_('db_size'); if (z && z.total_mb > 400) out.push('Base : ' + z.total_mb + ' Mo sur 500 Mo gratuits, réduire « Données détaillées conservées »'); props.setProperty('DB_MB', String(z ? z.total_mb : '')); }
+      else if (s === 'manifests') { const m = pruneManifests_(); if (m) out.push(m); }
       else if (s === 'arch:done') props.setProperty('ARCH_MONTH', today.slice(0, 7));
       else if (s.indexOf('arch:') === 0) { const m = archiveTable_(s.slice(5)); if (m) out.push(m); }
     } catch (e) { out.push(s + ' : ' + e.message); }
@@ -321,6 +322,29 @@ function dailyStep_(t0) {
     memoClear_();
   }
   return out.join(' | ');
+}
+/**
+ * PDF des manifestes plus anciens que « manifestKeepDays » (30 j ; 0 = jamais) effacés du stockage (quota de l'offre Supabase) ;
+ * l'historique du manifeste reste (sans PDF). Sans la table (migration pas encore exécutée) : rien à faire.
+ */
+function pruneManifests_() {
+  const days = +params_().manifestKeepDays;
+  if (!(days > 0)) return '';
+  let rows;
+  try { rows = dbSelect_('manifests', 'select=id,file_path&file_path=not.is.null&created_at=lt.' + enc_(new Date(Date.now() - days * 86400000).toISOString()), 'id'); }
+  catch (e) { if (/HTTP 404|PGRST205|does not exist/.test(e.message)) return ''; throw e; }
+  if (!rows.length) return '';
+  const c = sbConf_(), h = Object.assign({ apikey: c.key }, /^sb_/.test(c.key) ? {} : { Authorization: 'Bearer ' + c.key });
+  let n = 0;
+  for (let i = 0; i < rows.length; i += 100) {
+    const part = rows.slice(i, i + 100);
+    const r = UrlFetchApp.fetch(c.url + '/storage/v1/object/manifestes', { method: 'delete', muteHttpExceptions: true, contentType: 'application/json', headers: h,
+      payload: JSON.stringify({ prefixes: part.map(x => x.file_path) }) });
+    if (r.getResponseCode() >= 300) throw new Error('stockage : HTTP ' + r.getResponseCode() + ' ' + String(r.getContentText()).slice(0, 200));
+    sbReq_('patch', 'manifests?id=in.(' + part.map(x => x.id).join(',') + ')', { file_path: null }, { Prefer: 'return=minimal' });
+    n += part.length;
+  }
+  return n + ' PDF de manifestes de plus de ' + days + ' jours effacés du stockage';
 }
 function driveFolder_(name) {
   const it = DriveApp.getFoldersByName(name);

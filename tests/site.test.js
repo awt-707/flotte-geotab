@@ -529,3 +529,27 @@ test('manifeste : réglages de l\'administrateur (entreprise, cachet rendu trans
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
+
+test('limites de l\'hébergement : mesures dans Réglages, avertissement à 80 % ; En direct ralenti sans activité', async () => {
+  env.psql(`truncate usage_daily; insert into usage_daily (day, kind, n) values ((now() + interval '1 hour')::date, 'live', 450000)`);
+  const { br, page, errors } = await openBrowser();
+  let calls = 0; page.on('request', r => { if (/functions\/v1\/geotab-live(\?|$)/.test(r.url()) && !/mode=/.test(r.url())) calls++; });
+  try {
+    await login(page, '#/reglages');
+    await page.waitForSelector('.usage .ub');
+    const txt = await page.innerText('.usage');
+    assert.match(txt, /Base de données[\s\S]*Mo \/ 500 Mo/); assert.match(txt, /Stockage[\s\S]*\/ 1\s?024 Mo/); assert.match(txt, /Appels En direct ce mois[\s\S]*450\s?000 \/ 500\s?000 \(90\s?%\)/);
+    assert.strictEqual(await page.locator('.ubar span.warn, .ubar span.crit').count() >= 1, true);
+    assert.match(await page.innerText('#usewarn'), /Limite de l'hébergement bientôt atteinte : appels en direct ce mois/);
+    // En direct : sans souris ni clavier depuis 10 min, une lecture par minute au lieu de toutes les 5 s
+    await page.goto('http://localhost:8080/#/direct');
+    await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test((document.querySelector('#page') || {}).innerText || ''), null, { timeout: 20000 });
+    await page.evaluate(() => { LIVE_ACT = Date.now() - 11 * 60000; LIVE.lastCall = Date.now(); });
+    const c0 = calls; await page.waitForTimeout(11000);
+    assert.strictEqual(calls, c0, 'aucune lecture pendant la minute d\'inactivité');
+    await page.mouse.move(200, 300); await page.mouse.move(220, 310);
+    await page.waitForTimeout(1500);
+    assert.ok(calls > c0, 'reprise aussitôt après un mouvement de souris');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); env.psql('truncate usage_daily'); }
+});
