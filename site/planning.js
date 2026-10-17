@@ -26,7 +26,7 @@ function mineFoot() {
 }
 
 async function pagePlanning() {
-  const q = qs(), ags = S.agencies;
+  const q = qs(), ags = S.agencies, my = ROUTING;
   if (!ags.length) { $('#page').innerHTML = `<div class="head"><h1>Planning des gestionnaires</h1></div>` + msg('Aucune agence : créez-en une dans <a href="#/agences">Agences</a> et rattachez-lui des véhicules et des gestionnaires.', 'warn'); return; }
   const ag = ags.some(a => String(a.id) === q.get('a')) ? q.get('a') : (agFilter() || String(ags[0].id));
   const cur = planNow(), monday = mondayOf(/^\d{4}-\d{2}-\d{2}$/.test(q.get('w') || '') ? q.get('w') : cur.day);
@@ -39,6 +39,7 @@ async function pagePlanning() {
   } catch (e) {
     $('#page').innerHTML = `<div class="head"><h1>Planning des gestionnaires</h1></div>` + msg('Planning pas encore installé : exécuter <b>supabase/migrations/20261029000000_planning.sql</b> dans Supabase &gt; SQL Editor. (' + esc(e.message) + ')', 'err'); return;
   }
+  if (my !== ROUTING) return;   // autre page demandée pendant le chargement
   // gestionnaires de l'agence (accès coché dans Agences) ; un ancien gestionnaire encore au planning reste affiché
   const inAg = new Set(links.filter(l => String(l.agency_id) === ag).map(l => l.user_id));
   const team = users.filter(u => (u.role === 'manager' && inAg.has(u.user_id)) || shifts.some(s => s.user_id === u.user_id));

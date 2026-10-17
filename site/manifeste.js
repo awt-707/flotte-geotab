@@ -167,7 +167,7 @@ async function mfImage(url) {
 function mfRatio(src) { return new Promise(res => { const i = new Image(); i.onload = () => res(i.height / i.width || 1); i.onerror = () => res(1); i.src = src; }); }
 
 async function pageManifeste() {
-  const P = S.P, q = qs();
+  const P = S.P, q = qs(), my = ROUTING;
   let cfgErr = '';
   try {
     const [c, parc] = await Promise.all([sb.from('manifest_config').select('*').eq('id', 1).maybeSingle(), all('parc', '*').catch(() => [])]);
@@ -176,6 +176,7 @@ async function pageManifeste() {
   } catch (e) { cfgErr = e.message; MF.cfg = { company: {}, email_to: '', stamp: null }; }
   const since = new Date(Date.now() - 60 * DAY).toISOString();
   MF.hist = cfgErr ? [] : await all('manifests', 'id,created_at,vehicle_key,plate,driver_name,driver_phone,client,depart_at,file_name,file_path,data', x => x.gte('created_at', since), ['created_at', false]).catch(() => []);
+  if (my !== ROUTING) return;   // autre page demandée pendant le chargement
   const vs = mfVehicles(), edit = canEdit();
   const st = MF.draft || { type: 'resident', nb: 1, prestation: 'Transfert', nature: 'Transfert', passengers: [''], donneurVoyage: true, dateDep: mfNowLocal(), vehicle: q.get('k') || '' };
   MF.draft = st;

@@ -1071,13 +1071,14 @@ async function pageAgences() {
 
 // ---------- RÉGLAGES (admin) ----------
 async function pageReglages() {
-  const [params, rules, users, logs, jobs, recs, scheds, types] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
+  const my = ROUTING;
+  const [params, rules, users, logs, jobs, recs, scheds, types, usage] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
     sb.from('logs').select('*').order('id', { ascending: false }).limit(150), sb.from('jobs').select('*').order('id', { ascending: false }).limit(30),
-    all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), all('alerts', 'type', q => q.gte('day', addDays(today(), -60)))]);
+    all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), all('alerts', 'type', q => q.gte('day', addDays(today(), -60))), usageLoad(true)]);
+  if (my !== ROUTING) return;   // autre page demandée pendant le chargement : ne pas l'écraser
   const alTypes = [...new Set(types.map(x => x.type))].sort();
   const SEVS = ['Critique', 'Haute', 'Moyenne', 'Info'], FREQ = { jour: 'Chaque jour (veille)', semaine: 'Chaque lundi (semaine passée)', mois: 'Le 1er du mois (mois passé)' };
   const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
-  const usage = await usageLoad(true);
   $('#page').innerHTML = `<div class="head"><h1>Réglages</h1></div>
     <h2>Limites de l'hébergement</h2><div class="sub">Offre Supabase (base, stockage, appels du temps réel). Le site lui-même (Cloudflare) n'a pas de limite. À 80 % : avertissement en bas du menu. Limites à changer dans les paramètres ci-dessous si l'offre change (Pro : 8 000 Mo, 102 400 Mo, 2 000 000 appels).</div>
     ${usageHtml(usage, S.P)}
