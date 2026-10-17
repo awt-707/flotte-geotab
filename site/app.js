@@ -70,6 +70,12 @@ function inAgency() {
 function agOptions(sel, emptyTxt) { return (emptyTxt !== undefined ? `<option value="">${esc(emptyTxt)}</option>` : '') + S.agencies.map(a => `<option value="${a.id}" ${String(sel) === String(a.id) ? 'selected' : ''}>${esc(a.name)}</option>`).join(''); }
 function agTxt(id) { return id ? esc(S.agName[id] || '') : '<span class="small">aucune</span>'; }
 
+// ---------- Thème : clair par défaut, sombre ou celui de l'appareil au choix (mémorisé dans ce navigateur) ----------
+const THEMES = [['light', 'Clair'], ['dark', 'Sombre'], ['auto', 'Auto (appareil)']];
+function themeGet() { let t = ''; try { t = localStorage.getItem('theme') || ''; } catch (e) { } return THEMES.some(x => x[0] === t) ? t : 'light'; }
+function themeApply(t) { if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t); }
+themeApply(themeGet());
+
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
   ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
@@ -81,10 +87,11 @@ function shell() {
     ${BRAND}
     <nav aria-label="Pages">${NAV.filter(n => !ADMIN_PAGES[n[0]] || isAdmin()).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>`).join('')}</nav>
     <div class="foot">${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
-      ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span><span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><button class="ghost" id="logout">Déconnexion</button></div>
+      ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span><span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
   <main id="page"><div class="loading">Chargement…</div></main></div>`;
   $('#logout').onclick = async () => { await sb.auth.signOut(); location.hash = ''; };
+  $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
   const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
   const nb = $('#notifon'); if (nb) nb.onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } nb.remove(); };
   health(); openAlerts();

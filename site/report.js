@@ -403,15 +403,21 @@ function rptShiftEnd(o) {
 /**
  * Anomalies carburant : achats de la carte carburant (extract Afriquia) croisés avec les pleins détectés par Geotab et la jauge.
  * o = { tx: [{ id, vehicle_key, plate, at (ms), liters, product, amount_ttc, station, ticket }], fills: lignes PLEIN de la table fuel,
- *       levels: [{ vehicle_key, at, pct }], vehicles: { clé: { plate, model, fuel } }, who: (clé, ms) -> nom du chauffeur ou '' }
- * 1. Chaque ticket est rapproché du plein Geotab le plus proche, de 2 h 30 avant à 30 min après l'achat (un plein Geotab pour un ticket).
+ *       levels: [{ vehicle_key, at, pct }], trips: [{ vehicle_key, start_at, km, fuel_l }] (facultatif),
+ *       vehicles: { clé: { plate, model, fuel, tank_l } }, who: (clé, ms) -> nom du chauffeur ou '' }
+ * 1. Chaque ticket est rapproché du plein Geotab le plus proche, de 2 h 30 avant à 1 h 30 après l'achat (un plein Geotab pour un ticket) :
+ *    l'heure Afriquia peut être décalée d'1 h (constaté du 10 au 19/09/2026 : ticket 1 h 05 après le plein, confirmé par Afriquia).
  * 2. Ticket resté seul : plein Geotab encore libre dans les 48 h avant, après le ticket précédent du véhicule = transaction transmise en
  *    différé par la station (constaté : tickets de 4 stations à la même minute) ; sinon ticket à moins de 45 min d'un ticket rapproché =
  *    même plein payé en plusieurs tickets ; sinon aucun plein Geotab : la courbe de jauge dit si du carburant est entré.
- * Litres attendus pour une montée de jauge = relation mesurée sur les pleins rapprochés du même modèle (la jauge n'est pas linéaire :
- * environ 86 L de 0 à 100 % sur un Staria de 75 L) ; non mesuré avec moins de 10 pleins rapprochés. Rien n'est estimé autrement.
+ * Litres en trop : facturé au-delà de deux mesures indépendantes (les deux doivent le confirmer quand elles existent) :
+ * - jauge : litres attendus pour la montée de jauge, relation mesurée sur les pleins rapprochés du même modèle (la jauge Geotab n'est
+ *   pas proportionnelle : un Staria de 75 L à « 20 % » prend ~68 L) ; non mesuré avec moins de 10 pleins rapprochés ;
+ * - moteur, plein à plein : carburant consommé par le moteur (trajets Geotab) depuis le plein complet précédent, sans autre plein ni
+ *   ticket entre les deux (sur les Staria : facturé / consommé = 0,98 en médiane, un plein de 77 L après 77,5 L consommés).
+ * Plus que la capacité : facturé au-delà de la capacité du réservoir (Véhicules) + 10 % (goulot).
  */
-var RPT_FC = { group: 45, before: 150, after: 30, late: 48 * 60, twice: 180, minFit: 10 };
+var RPT_FC = { group: 45, before: 150, after: 90, late: 48 * 60, twice: 180, minFit: 10 };
 function rptFuelCard(o) {
   var V = o.vehicles || {}, MIN = 60000, byV = {}, lvByV = {}, fillOf = {}, tkOf = {};
   var has = function (v) { return v !== null && v !== undefined && v !== '' && isFinite(+v); };
@@ -475,26 +481,39 @@ function rptFuelCard(o) {
     var r2 = fitOf(ptsBy[m].filter(function (p) { return Math.abs(p[1] - (r1.a + r1.b * p[0])) <= 15; })); if (r2) fit[m] = r2; });
   var diesel = function (v) { return /^GO$|GAS ?OIL|GAZOIL|DIESEL/i.test(String(v.fuel || '').trim()); };
   var essence = function (v) { var f = String(v.fuel || '').trim(); return !!f && !diesel(v) && /^E|ESS|SP|SUPER|HYB/i.test(f); };
+  var trByV = {}, lastFull = {}, lastAny = {};
+  (o.trips || []).forEach(function (r) { (trByV[r.vehicle_key] = trByV[r.vehicle_key] || []).push({ t: new Date(r.start_at).getTime(), km: rptNum(r.km), l: r.fuel_l }); });
+  // carburant consommé par le moteur depuis le plein complet précédent (null si un autre plein / ticket entre les deux ou un trajet non mesuré)
+  var engineOf = function (g) {
+    var a = lastFull[g.key]; if (!a || lastAny[g.key] !== a || !g.fill || !(g.lvlAfter >= 97) || !trByV[g.key]) return null;
+    if ((byV[g.key] || []).some(function (f) { return f.t > a.fillT && f.t < g.fillT; })) return null;
+    var tr = trByV[g.key].filter(function (r) { return r.t >= a.fillT && r.t < g.fillT; });
+    if (tr.some(function (r) { return (r.l === null || r.l === undefined) && r.km > 1; })) return null;
+    return tr.reduce(function (s, r) { return s + rptNum(r.l); }, 0);
+  };
   var out = [], prev = {};
   G.forEach(function (g) {
     var v = V[g.key] || {}, an = [], q = g.liters, has2 = g.lvlBefore !== undefined, lb = has2 ? g.lvlBefore : null, la = has2 ? g.lvlAfter : null, ft = fit[v.model || '?'];
     var t = g.fillT || g.at;
     var row = { key: g.key, at: g.at, fillAt: g.fillT, late: g.late, tx: g.tx, liters: q, amount: g.amount, plate: v.plate || g.tx[0].plate, model: v.model || '',
-      driver: o.who ? o.who(g.key, t) : '', fill: g.fill, lvlBefore: lb, lvlAfter: la, src: g.src || '', expected: null, anomalies: an };
+      driver: o.who ? o.who(g.key, t) : '', fill: g.fill, lvlBefore: lb, lvlAfter: la, src: g.src || '', expected: null, engine: engineOf(g), tank: rptNum(v.tank_l) || null, anomalies: an };
+    lastAny[g.key] = g; if (g.fill && g.lvlAfter >= 97) lastFull[g.key] = g;
     var P = g.tx.map(function (x) { return String(x.product || '').toUpperCase(); }).join(' ');
     if (diesel(v) && /SUPER|\bSP\b|ESSENCE/.test(P)) an.push({ sev: 'Critique', t: 'Carburant non conforme', d: 'Essence achetée pour un véhicule diesel' });
     if (essence(v) && /GASOIL|GAZOIL|DIESEL/.test(P)) an.push({ sev: 'Critique', t: 'Carburant non conforme', d: 'Gasoil acheté pour un véhicule essence' });
     var lv = has2 ? rptFmt(lb) + ' % → ' + rptFmt(la) + ' %' : '';
     if (!g.fill) {
       if (!has2) an.push({ sev: 'Moyenne', t: 'Aucun plein détecté par Geotab', d: 'Jauge non relevée autour de l\'achat : à vérifier' });
-      else if (la - lb < 5) an.push({ sev: 'Critique', t: 'Achat sans plein dans le véhicule', d: 'Aucun plein détecté par Geotab dans les 48 h et la jauge n\'a pas monté (' + lv + ') pour ' + rptFmt(q, 2) + ' L facturés' });
+      else if (la - lb < 5) an.push({ sev: 'Critique', t: 'Achat sans plein dans le véhicule', d: 'Aucun plein détecté par Geotab et la jauge n\'a pas monté (' + lv + ') pour ' + rptFmt(q, 2) + ' L facturés' });
       else an.push({ sev: 'Info', t: 'Plein non détecté par Geotab', d: 'La jauge a monté (' + lv + ') sans plein enregistré par Geotab' });
     }
-    if (ft && has2 && la - lb >= 5) {
-      row.expected = ft.a + ft.b * (la - lb) / 100;
-      if (q > row.expected + Math.max(10, row.expected * 0.15))
-        an.push({ sev: 'Haute', t: 'Litres facturés supérieurs au plein mesuré', d: rptFmt(q, 2) + ' L facturés' + (g.tx.length > 1 ? ' (' + g.tx.length + ' tickets)' : '') + ' pour une jauge ' + lv + ' (' + row.src + ') : environ ' + rptFmt(row.expected, 0) + ' L d\'après les ' + ft.n + ' pleins mesurés du ' + (v.model || 'modèle') });
-    }
+    if (row.tank && q > row.tank * 1.1) an.push({ sev: 'Critique', t: 'Plus que la capacité du réservoir', d: rptFmt(q, 2) + ' L facturés' + (g.tx.length > 1 ? ' (' + g.tx.length + ' tickets)' : '') + ' pour un réservoir de ' + rptFmt(row.tank) + ' L' });
+    if (ft && has2 && la - lb >= 5) row.expected = ft.a + ft.b * (la - lb) / 100;
+    var overG = row.expected !== null && q > row.expected + Math.max(10, row.expected * 0.15), overE = row.engine !== null && q > row.engine + Math.max(8, row.engine * 0.12);
+    if ((overG || overE) && (row.expected === null || overG) && (row.engine === null || overE) && !an.some(function (a) { return a.t === 'Plus que la capacité du réservoir'; }))
+      an.push({ sev: 'Haute', t: 'Litres facturés supérieurs au plein mesuré', d: rptFmt(q, 2) + ' L facturés' + (g.tx.length > 1 ? ' (' + g.tx.length + ' tickets)' : '') +
+        (row.expected !== null ? ' ; jauge ' + lv + ' (' + row.src + ') : environ ' + rptFmt(row.expected, 0) + ' L d\'après les ' + ft.n + ' pleins mesurés du ' + (v.model || 'modèle') : '') +
+        (row.engine !== null ? ' ; moteur : ' + rptFmt(row.engine, 1) + ' L consommés depuis le plein complet précédent' : '') });
     var p = prev[g.key];
     if (p && t - p < RPT_FC.twice * MIN) an.push({ sev: 'Moyenne', t: 'Deux pleins rapprochés', d: 'Autre plein ' + Math.round((t - p) / MIN) + ' min avant' });
     prev[g.key] = t;
