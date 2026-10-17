@@ -44,10 +44,18 @@ function flush_(acc) {
  */
 function updateDerived_(fromDay) {
   const t0 = Date.now(), P = params_(), veh = vehicles_(), rules = rulesMap_(), cidx = contractIndex_();
-  const cut = addDays_(fromDay, -3), dataFrom = addDays_(fromDay, -4);
+  const cut = addDays_(fromDay, -3), c0 = dayBounds_(cut).start.getTime(), lim = addDays_(fromDay, -31), longs = {};
+  // contrat long encore en cours à « cut » : sa ligne de journal (datée du début du contrat) est recalculée en entier,
+  // données relues depuis son début (31 jours au plus) ; sinon elle resterait figée à ses premiers jours
+  let dataFrom = addDays_(fromDay, -4);
+  Object.keys(cidx).forEach(k => cidx[k].forEach(c => {
+    if (c.start >= c0 || c.end < c0) return;
+    longs[c.num] = 1; const d = addDays_(localDay_(new Date(c.start)), -1); if (d < dataFrom) dataFrom = d < lim ? lim : d;
+  }));
   const T = readData_(S.TRIP, dataFrom), E = readData_(S.EVT, dataFrom), F = readData_(S.FUEL, dataFrom), Il = readData_(S.IDL, dataFrom);
   const IJ = idx_(H.JRN);
-  const jrn = buildJournalier_(T, E, F, veh, rules, P, fauxPositifs_(), contractInfoFor_([T, E, F])).filter(r => toDayStr_(r[IJ['Date']]) >= cut);
+  const jrn = buildJournalier_(T, E, F, veh, rules, P, fauxPositifs_(), contractInfoFor_([T, E, F]))
+    .filter(r => toDayStr_(r[IJ['Date']]) >= cut || longs[String(r[IJ['Contrat']] || '')]);
   dbRpc_('replace_journal', { p_cut: cut, p_rows: jrn.map(r => toDb_('JRN', r)) });
   const al = buildAlerts_(T, E, F, Il, jrn, veh, rules, P, cidx, cut);
   dbRpc_('replace_alerts', { p_cut: cut, p_rows: al.map(r => toDb_('ALERT', r)) });
@@ -203,7 +211,7 @@ function collecterMaintenant() { collect(); }
 
 /** Demandes déposées par le site (table jobs). Les demandes du même type sont traitées ensemble. */
 function processJobs_(t0) {
-  const jobs = dbSelect_('jobs', 'select=id,kind,arg&done_at=is.null', 'id');
+  const jobs = dbSelect_('jobs', 'select=id,kind,arg,created_by&done_at=is.null', 'id');
   if (!jobs.length) return '';
   const by = {}, out = [];
   jobs.forEach(j => { (by[j.kind] = by[j.kind] || []).push(j); });
@@ -213,7 +221,7 @@ function processJobs_(t0) {
     if (kind === 'driver_report') {   // une réponse par demande (chaque utilisateur voit le résultat de la sienne)
       by[kind].forEach(j => {
         if (Date.now() - t0 > 240000) return;
-        let res; try { res = jobDriverReport_(j.arg); } catch (e) { res = 'Erreur : ' + mailErr_(e); }
+        let res; try { res = jobDriverReport_(j.arg, j.created_by); } catch (e) { res = 'Erreur : ' + mailErr_(e); }
         sbReq_('patch', 'jobs?id=eq.' + j.id, { done_at: new Date().toISOString(), result: String(res).slice(0, 2000) }, { Prefer: 'return=minimal' });
         out.push(kind + ' : ' + res);
       });

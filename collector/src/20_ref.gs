@@ -159,7 +159,10 @@ function contractIndex_() {
     (map[key] = map[key] || []).push({ start: st, end: en !== null ? en : now + HOUR, open: en === null,
       code: String(r.client_code || ''), nom: String(r.name || ''), num: String(r.num) });
   });
-  Object.keys(map).forEach(k => map[k].sort((a, b) => a.start - b.start));
+  // contrat resté « en cours » dans l'extract (jamais clôturé) alors qu'un contrat plus récent a commencé sur le même véhicule :
+  // il s'arrête au début du suivant (un véhicule n'a qu'un chauffeur) ; sinon il prendrait les trajets hors contrat qui suivent
+  Object.keys(map).forEach(k => { const l = map[k].sort((a, b) => a.start - b.start);
+    l.forEach((c, i) => { if (c.open && l[i + 1] && l[i + 1].start < c.end) { c.end = l[i + 1].start; c.replacedBy = l[i + 1].num; } }); });
   return (MEMO_.__cidx = map);
 }
 /** Contrats par numéro (horaires réels), seulement ceux présents dans les lignes données */
@@ -173,6 +176,10 @@ function contractInfoFor_(sets) {
         code: String(r.client_code || ''), nom: String(r.name || ''), key: String(r.vehicle_key || '') };
     });
   }
+  // contrat jamais clôturé mais remplacé par un contrat plus récent du véhicule : fin = début du suivant (même règle que contractIndex_)
+  const cidx = contractIndex_(), cm = canonMap_();
+  Object.keys(m).forEach(n => { const c = m[n]; if (c.end || !c.start) return;
+    const x = (cidx[canonKey_(c.key, cm)] || []).find(y => y.num === n); if (x && x.replacedBy) c.end = new Date(x.end); });
   return m;
 }
 /** Journées de contrat (véhicule relié à Geotab) jamais téléchargées depuis sinceDay. Retourne ['clé|jour', ...]. */

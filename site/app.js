@@ -25,11 +25,13 @@ async function all(table, cols, build, order) {
   return out;
 }
 async function rpc(fn, args) { const { data, error } = await sb.rpc(fn, args || {}); if (error) throw new Error(fn + ' : ' + error.message); return data; }
-/** Fonction de lecture renvoyant des lignes : paginée comme all() (PostgREST renvoie 1 000 lignes au plus) */
-async function rpcAll(fn, args) {
+/** Fonction de lecture renvoyant des lignes : paginée comme all() (PostgREST renvoie 1 000 lignes au plus).
+ *  keys : colonnes qui identifient une ligne, toujours triées (sans ordre fixe, les pages peuvent répéter ou sauter des lignes) */
+async function rpcAll(fn, args, keys) {
   const out = [];
   for (let i = 0; ; i += 1000) {
-    const { data, error } = await sb.rpc(fn, args || {}).range(i, i + 999);
+    let q = sb.rpc(fn, args || {}); (keys || []).forEach(k => { q = q.order(k, { ascending: true, nullsFirst: true }); });
+    const { data, error } = await q.range(i, i + 999);
     if (error) throw new Error(fn + ' : ' + error.message);
     out.push(...(data || [])); if (!data || data.length < 1000) return out;
   }
@@ -182,7 +184,7 @@ async function pageTableau() {
   const p = period(), P = S.P, ok = inAgency();
   let [jrn, ac, tne, top] = await Promise.all([
     all('journal', '*', q => q.gte('day', p.from).lte('day', p.to)),
-    rpcAll('alert_counts', { p_from: p.from, p_to: p.to }),
+    rpcAll('alert_counts', { p_from: p.from, p_to: p.to }, ['vehicle_key', 'type', 'severity', 'status']),
     all('fuel', 'vehicle_key', q => q.eq('type', 'TRAJET_NON_ENREGISTRE').gte('day', p.from).lte('day', p.to)),
     all('alerts', '*', q => q.in('severity', ['Critique', 'Haute']).gte('day', p.from).lte('day', p.to))]);
   // filtre agence AVANT de garder les 25 plus récentes
@@ -269,13 +271,15 @@ async function alertShifts(rows) {
     const miss = nums.filter(n => !byNum[n]);
     for (let i = 0; i < miss.length; i += 150) (await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('num', miss.slice(i, i + 150)))).forEach(add);
   } catch (e) { /* contrats illisibles : créneau horaire seul */ }
+  Object.values(byVeh).forEach(l => ctrEffEnds(l));   // contrat jamais clôturé : fin au début du suivant
   rows.forEach(a => {
     const t = alertAt(a); let c = byNum[alertCtrNum(a)] || null;
     if (!c && t) {
-      const live = (byVeh[a.vehicle_key] || []).filter(x => new Date(x.start_at) <= t && (!x.end_at || new Date(x.end_at) >= t));
+      const live = (byVeh[a.vehicle_key] || []).filter(x => new Date(x.start_at) <= t && (x._end === null || x._end >= t));
       c = live.find(x => a.driver_code && x.client_code === a.driver_code) || live.sort((x, y) => new Date(y.start_at) - new Date(x.start_at))[0] || null;
     }
-    a._sh = c ? shiftOfCtr(c.start_at, S.P) : shiftAt(t, S.P);
+    // contrat de plusieurs jours (location longue) : son shift ne vaut que pour la première journée, ensuite le créneau horaire
+    a._sh = c && (!t || t - new Date(c.start_at) < 20 * HOUR) ? shiftOfCtr(c.start_at, S.P) : shiftAt(t, S.P);
   });
   return rows;
 }
@@ -347,7 +351,7 @@ async function pageJour() {
 async function pageChauffeurs() {
   const p = period(), P = S.P;
   const ok = inAgency();
-  const [jrn0, rc] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAll('driver_rule_counts', { p_from: p.from, p_to: p.to })]);
+  const [jrn0, rc] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAll('driver_rule_counts', { p_from: p.from, p_to: p.to }, ['driver_code', 'rule_id', 'vehicle_key', 'contract_num'])]);
   // un chauffeur par shift : ses journées de jour et de nuit sont classées séparément
   const jrn = jrn0.filter(r => ok(r.vehicle_key)), agg = aggJournal(jrn, r => shiftOf(r.contract_start, P) + '|' + r.driver_code, P), used = {}, byD = {};
   const ctrSh = {}; jrn.forEach(r => { if (r.contract_num) ctrSh[r.contract_num] = shiftOf(r.contract_start, P); });
@@ -428,7 +432,20 @@ async function saveAlert(id, patch, rows) {
 
 // ---------- CONTRATS ----------
 async function pageContrats() {
-  const ok = inAgency(), recent = (await all('contracts', '*', q => q.gte('start_at', new Date(Date.now() - 40 * DAY).toISOString()), ['start_at', false])).filter(c => ok(c.vehicle_key) || (!agFilter() && !c.vehicle_key));
+  const ok = inAgency(), keep = c => ok(c.vehicle_key) || (!agFilter() && !c.vehicle_key);
+  // contrats des 40 derniers jours, plus ceux restés ouverts (sans date de fin) même plus anciens
+  const [rec0, open0] = await Promise.all([all('contracts', '*', q => q.gte('start_at', new Date(Date.now() - 40 * DAY).toISOString()), ['start_at', false]),
+    all('contracts', '*', q => q.is('end_at', null))]);
+  const seen = {}, recent = rec0.concat(open0).filter(c => !seen[c.num] && (seen[c.num] = 1) && keep(c)).sort((a, b) => String(b.start_at).localeCompare(String(a.start_at)));
+  // fin effective par véhicule ; contrats à vérifier : jamais clôturés alors qu'un contrat plus récent a commencé, ou qui se chevauchent
+  const byV = {}; recent.forEach(c => { if (c.vehicle_key) (byV[c.vehicle_key] = byV[c.vehicle_key] || []).push(c); });
+  const check = [];
+  Object.values(byV).forEach(l => ctrEffEnds(l).forEach((c, i, a) => {
+    const nx = a[i + 1];
+    if (c._next) check.push({ c, why: 'Jamais clôturé dans l\'extract : remplacé par ' + esc(c._next) + ' le ' + fmtDTY(nx.start_at) + '. Trajets comptés jusqu\'à cette heure.' });
+    else if (nx && c._end !== null && new Date(nx.start_at).getTime() < c._end - MIN) check.push({ c, why: 'Chevauche ' + esc(nx.num) + ' (' + esc(nx.name || '') + ', début ' + fmtDTY(nx.start_at) + ') sur le même véhicule : les trajets vont au contrat le plus récent.' });
+  }));
+  const finTxt = c => c._next ? `<span class="badge warn">non clôturé</span> remplacé par ${esc(c._next)}` : c.end_at ? fmtDTY(c.end_at) : 'en cours';
   const jobs = (await sb.from('jobs').select('*').eq('kind', 'after_inject').order('id', { ascending: false }).limit(5)).data || [];
   let search = '';
   const render = () => {
@@ -437,10 +454,15 @@ async function pageContrats() {
     ${canEdit() ? `<div class="panel"><label class="file">Extract des contrats (.xlsx, .xls, .csv) <input type="file" id="cfile" accept=".xlsx,.xls,.csv"></label><div id="cres"></div></div>` : ''}
     ${jobs.length ? `<h2>Derniers calculs après import</h2>${table('tjobs', [['Demandé le', j => fmtDTY(j.created_at)], ['Terminé le', j => j.done_at ? fmtDTY(j.done_at) : '<span class="badge warn">en attente du collecteur</span>'],
       ['Résultat', j => esc(j.result || ''), null, 'wide']], jobs)}` : ''}
+    ${check.length ? `<h2>Contrats à vérifier dans l'extract <span class="small">· ${check.length}</span></h2>
+    <div class="sub">À corriger dans le logiciel de location puis réimporter l'extract. Un véhicule n'a qu'un chauffeur à la fois : en attendant, chaque trajet va au contrat le plus récent.</div>
+    ${table('tctrchk', [['N° contrat', x => esc(x.c.num)], ['Chauffeur', x => `<b>${esc(x.c.name || '')}</b>`, x => x.c.name], ['Véhicule', x => S.veh[x.c.vehicle_key] ? plate(S.veh[x.c.vehicle_key].plate) : esc(x.c.plate || ''), x => x.c.vehicle_key],
+      ['Début', x => fmtDTY(x.c.start_at), x => x.c.start_at], ['Fin', x => x.c.end_at ? fmtDTY(x.c.end_at) : 'aucune', x => x.c.end_at || 'z'], ['Problème', x => x.why, null, 'wide']],
+      check.sort((a, b) => String(b.c.start_at).localeCompare(String(a.c.start_at))))}` : ''}
     <h2>Contrats des 40 derniers jours <input id="csearch" placeholder="Rechercher (nom, plaque, n°…)" value="${esc(search)}"></h2>
     ${table('tctr', [['N° contrat', c => esc(c.num)], ['Chauffeur', c => `<b>${esc(c.name)}</b>`, c => c.name], ['Code', c => esc(c.client_code)], ['Plaque', c => plate(c.plate), c => c.plate],
       ['Véhicule', c => S.veh[c.vehicle_key] ? plate(S.veh[c.vehicle_key].plate) : `<span class="badge high">inconnu</span>`, c => c.vehicle_key], ['Début', c => fmtDTY(c.start_at), c => c.start_at],
-      ['Fin', c => c.end_at ? fmtDTY(c.end_at) : 'en cours', c => c.end_at || 'z'], ['Statut', c => esc(c.status || '')], ['Téléphone', c => esc(c.phone || '')]], list.slice(0, 500))}`;
+      ['Fin', finTxt, c => c.end_at || (c._next ? 'y' : 'z')], ['Statut', c => esc(c.status || '')], ['Téléphone', c => esc(c.phone || '')]], list.slice(0, 500))}`;
     const fi = $('#cfile'); if (fi) fi.onchange = () => importFile(fi.files[0]);
     const cs = $('#csearch'); cs.oninput = () => { search = cs.value; const pos = cs.selectionStart; render(); const n = $('#csearch'); n.focus(); n.setSelectionRange(pos, pos); };
   };

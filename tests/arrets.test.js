@@ -79,6 +79,10 @@ test('migration des arrêts pas encore exécutée : la collecte continue, consig
     assert.ok(+env.psql("select count(*) from trips where vday = '2026-10-04' and final") > 0, 'journée non finalisée');
     assert.strictEqual(env.psql("select count(*) from logs where detail ~ 'exécuter supabase/migrations/20261017000000'"), '1');
     assert.strictEqual(env.psql("select coalesce(string_agg(detail, ' | '), '') from logs where detail ~* 'erreur'"), '');
-  } finally { env.psql(mig + "\nnotify pgrst, 'reload schema';"); execSleep(1500); }
+  } finally {
+    // migration rejouée, puis les suivantes (rejouables) : elles redéfinissent certaines de ses fonctions (rekey_vehicle…)
+    const dir = path.join(env.ROOT, 'supabase', 'migrations'), later = fs.readdirSync(dir).filter(f => f > '20261017000000_arrets_moteur.sql' && f.endsWith('.sql')).sort();
+    env.psql([mig].concat(later.map(f => fs.readFileSync(path.join(dir, f), 'utf8'))).join('\n') + "\nnotify pgrst, 'reload schema';"); execSleep(1500);
+  }
 });
 function execSleep(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }

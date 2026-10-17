@@ -155,6 +155,17 @@ function shiftDayName(x) {
   const f = d => d.slice(8, 10) + '/' + d.slice(5, 7);
   return x.s === 'Jour' ? 'Jour du ' + f(x.day) : 'Nuit du ' + f(x.day) + ' → ' + f(addDays(x.day, 1));
 }
+/**
+ * Fin effective des contrats d'un même véhicule (même règle que le collecteur, contractIndex_) : un contrat sans date de fin
+ * (jamais clôturé dans l'extract) s'arrête au début du contrat suivant du véhicule s'il a déjà commencé ; sinon il reste ouvert.
+ * Ajoute à chaque contrat _end (ms, null = ouvert) et _next (n° du contrat qui l'a remplacé). Retourne la liste triée par début.
+ */
+function ctrEffEnds(list, now) {
+  const l = list.slice().sort((a, b) => new Date(a.start_at) - new Date(b.start_at)), lim = (now || Date.now()) + HOUR;
+  l.forEach((c, i) => { const nx = l[i + 1], ns = nx ? new Date(nx.start_at).getTime() : Infinity;
+    c._next = !c.end_at && ns < lim ? nx.num : ''; c._end = c.end_at ? new Date(c.end_at).getTime() : c._next ? ns : null; });
+  return l;
+}
 const SHIFTS = ['Jour', 'Nuit', ''];
 function shiftName(s, P) {
   const z = h => String(num(h)).padStart(2, '0') + ':00', d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19);
@@ -166,4 +177,4 @@ function fuelVal(a) { return a.fuelN ? f1(a.fuel) : NM; }
 function l100Val(a) { return a.l100 !== null ? f1(a.l100) : (a.fuelN ? 'km insuffisants' : NM); }
 function srcTxt(a) { const s = Object.keys(a.srcs); return s.length ? (s.length > 1 ? 'Mixte' : s[0]) : 'Non mesuré'; }
 
-if (typeof module !== 'undefined') module.exports = { shiftOf, shiftAt, shiftOfCtr, shiftDayName, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };
+if (typeof module !== 'undefined') module.exports = { ctrEffEnds, shiftOf, shiftAt, shiftOfCtr, shiftDayName, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };

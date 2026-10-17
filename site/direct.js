@@ -69,8 +69,9 @@ function processLive(j) {
 /** Contrat en cours sur le véhicule à l'instant t (même règle que le collecteur : contrat qui couvre t, sinon le plus proche
  *  dans la tolérance « ctrTolMin ») ; aucun : hors contrat */
 function contractAt(key, t) {
-  const tol = num(S.P.ctrTolMin, 20) * MIN, list = LIVE.ctr.filter(c => c.vehicle_key === key)
-    .map(c => ({ c, a: new Date(c.start_at).getTime(), b: c.end_at ? new Date(c.end_at).getTime() : t + HOUR })).sort((x, y) => x.a - y.a);
+  // contrat jamais clôturé dans l'extract : il s'arrête au début du contrat suivant du véhicule (ctrEffEnds)
+  const tol = num(S.P.ctrTolMin, 20) * MIN, list = ctrEffEnds(LIVE.ctr.filter(c => c.vehicle_key === key), t)
+    .map(c => ({ c, a: new Date(c.start_at).getTime(), b: c._end !== null ? c._end : t + HOUR }));
   let best = null; list.forEach(x => { if (t >= x.a && t <= x.b) best = x; });
   if (!best) { let bd = Infinity; list.forEach(x => { const d = t < x.a ? x.a - t : t > x.b ? t - x.b : 0; if (d <= tol && d < bd) { bd = d; best = x; } }); }
   return best ? best.c : null;
