@@ -329,3 +329,12 @@ details > summary::-webkit-details-marker { display: none; }
 details > summary h2 { display: inline-block; }
 details > summary h2::before { content: '▸ '; color: var(--mute); }
 details[open] > summary h2::before { content: '▾ '; }
+
+/* Application Ludy : lien de téléchargement (menu) et page Application */
+.side .foot a.dlapp { color: var(--side-ink); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
+.side .foot a.dlapp:hover { color: var(--side-hi); }
+.appdl { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.appdl h2 { margin-top: 0; }
+.appdl ol { padding-left: 20px; line-height: 1.6; }
+a.btn { display: inline-block; font: 600 14px var(--f); background: var(--acc); color: var(--acc-ink); border-radius: 6px; padding: 9px 16px; text-decoration: none; }
+a.btn:hover { filter: brightness(1.07); }

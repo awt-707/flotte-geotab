@@ -25,3 +25,24 @@ test('appareil en mode sombre : site clair par défaut, choix Sombre puis Auto m
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
+
+test('application Ludy : volet Uber Fleet seulement dans l\'application (window.LUDY_APP), page de téléchargement', async () => {
+  const { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/application');
+    await page.waitForFunction(() => /Application Ludy/.test((document.querySelector('#page h1') || {}).innerText || ''));
+    assert.strictEqual(await page.locator('#navuber').count(), 0, 'pas de volet Uber dans un navigateur');
+    assert.strictEqual(await page.locator('.side .foot a.dlapp').count(), 1);
+    const links = await page.$$eval('.appdl a.btn', as => as.map(a => a.href));
+    assert.deepStrictEqual(links.map(h => h.replace(/^.*\/public\//, '')), ['app/Ludy.dmg', 'app/Ludy-setup.exe']);
+    // dans l'application : script injecté avant le site
+    await page.context().addInitScript(() => { window.LUDY_APP = { version: '1.0.0', uber: 'https://fleethub.uber.com/orgs/test/livemap?tab=4' }; });
+    await page.context().route(/fleethub\.uber\.com/, r => r.fulfill({ status: 200, contentType: 'text/html', body: '<title>Uber</title><h1>Fleet Hub</h1>' }));
+    await page.reload(); await page.waitForSelector('#navuber');
+    assert.strictEqual(await page.locator('.side .foot a.dlapp').count(), 0);
+    assert.match(await page.innerText('#page'), /Vous êtes dans l'application Ludy \(version 1\.0\.0\)/);
+    await Promise.all([page.waitForURL(/fleethub\.uber\.com/), page.click('#navuber')]);
+    assert.strictEqual(await page.innerText('h1'), 'Fleet Hub');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});
