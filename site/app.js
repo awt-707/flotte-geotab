@@ -79,6 +79,22 @@ themeApply(themeGet());
 // ---------- Application Ludy (Mac / Windows, dossier desktop/) : elle injecte window.LUDY_APP dans le site ----------
 // Uber Fleet Hub interdit d'être affiché dans un cadre d'un autre site : seule l'application peut l'ouvrir dans sa fenêtre.
 function appUber() { const u = window.LUDY_APP && window.LUDY_APP.uber; return /^https:\/\/([a-z0-9-]+\.)*uber\.com\//.test(u || '') ? u : ''; }
+/** Application 1.1 et suivantes : le volet Uber s'affiche dans la fenêtre, à droite du menu Ludy (sinon : lien, version 1.0) */
+function appEmbed() { return !!(window.LUDY_APP && window.LUDY_APP.embed && window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke); }
+function appInvoke(cmd, args) { if (!appEmbed()) return Promise.resolve(); return window.__TAURI_INTERNALS__.invoke(cmd, args || {}).catch(e => console.warn('Ludy app', cmd, e)); }
+/** Zone de contenu de la page (à droite du menu) : le volet Uber de l'application s'y pose */
+function uberPlace() {
+  const m = $('#page'); if (!m || !appEmbed()) return;
+  const r = m.getBoundingClientRect();
+  return appInvoke('uber_show', { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(window.innerHeight - r.top) });
+}
+async function pageUber() {
+  if (!appEmbed()) { $('#page').innerHTML = msg('Le volet Uber Fleet s\'affiche dans l\'application Ludy (Mac / Windows). <a href="#/application">Télécharger l\'application</a>', 'warn'); return; }
+  $('#page').innerHTML = '<div class="uberbox">Chargement d\'Uber Fleet…</div>';
+  await uberPlace();
+}
+window.addEventListener('resize', () => { if (pageOf() === 'uber') uberPlace(); });
+function pageOf() { return (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct'; }
 const APP_DL = { mac: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.dmg', win: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy-setup.exe' };
 async function pageApplication() {
   $('#page').innerHTML = `<div class="head"><h1>Application Ludy</h1><div class="sub">Le logiciel dans sa propre fenêtre, avec le volet <b>Uber Fleet</b> affiché à l'intérieur (impossible dans un navigateur : Uber l'interdit).
@@ -94,7 +110,7 @@ async function pageApplication() {
         <li>Si Windows affiche « Windows a protégé votre ordinateur » : <b>Informations complémentaires › Exécuter quand même</b> (une seule fois).</li>
         <li>Se connecter à Ludy, puis une fois à Uber dans le volet <b>Uber Fleet</b>.</li></ol></div>
     </div>
-    <div class="sub">Dans l'application : <b>Uber Fleet</b> dans le menu ouvre Fleet Hub dans la fenêtre ; le bouton <b>← Ludy</b> en bas à gauche ramène au logiciel. Les PDF sont enregistrés dans Téléchargements et s'ouvrent tout seuls.</div>`;
+    <div class="sub">Dans l'application : <b>Uber Fleet</b> dans le menu affiche Fleet Hub à droite du menu Ludy ; un clic sur un autre volet revient au logiciel, Uber reste ouvert en arrière-plan. Les PDF sont enregistrés dans Téléchargements et s'ouvrent tout seuls.</div>`;
 }
 
 // ---------- Mise en page ----------
@@ -107,7 +123,7 @@ function shell() {
   <aside class="side">
     ${BRAND}
     <nav aria-label="Pages">${NAV.filter(n => !ADMIN_PAGES[n[0]] || isAdmin()).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
-      (n[0] === 'direct' && appUber() ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` : '')).join('')}</nav>
+      (n[0] === 'direct' && appEmbed() ? `<a href="#/uber" id="navuber" class="${page === 'uber' ? 'on' : ''}">Uber Fleet</a>` : n[0] === 'direct' && appUber() ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` : '')).join('')}</nav>
     <div class="foot">${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
       ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span>${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
@@ -978,10 +994,11 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
+  contrats: pageContrats, application: pageApplication, uber: pageUber, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
+  if (pageOf() !== 'uber' || !S.session) appInvoke('uber_hide');   // autre volet : Uber masqué (sa page reste chargée)
   S.timers.forEach(clearInterval); S.timers = [];
   if (S.channel) { sb.removeChannel(S.channel); S.channel = null; }
   if (!S.session) { if (S.alertCh) { sb.removeChannel(S.alertCh); S.alertCh = null; } loginView(); return; }

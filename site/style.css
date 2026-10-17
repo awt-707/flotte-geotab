@@ -338,3 +338,4 @@ details[open] > summary h2::before { content: '▾ '; }
 .appdl ol { padding-left: 20px; line-height: 1.6; }
 a.btn { display: inline-block; font: 600 14px var(--f); background: var(--acc); color: var(--acc-ink); border-radius: 6px; padding: 9px 16px; text-decoration: none; }
 a.btn:hover { filter: brightness(1.07); }
+.uberbox { display: grid; place-items: center; min-height: 60vh; color: var(--mute); }
