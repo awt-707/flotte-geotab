@@ -158,14 +158,13 @@ function aggJournal(rows, keyFn, P) {
 }
 const NM = 'non mesuré';
 /**
- * Shift d'une journée de travail : heure de début du contrat comparée aux débuts de shift (Réglages : shiftDay, shiftNight),
- * le plus proche l'emporte (un contrat pris à 06:55 est un shift de jour). Sans contrat : '' (hors contrat).
+ * Shift d'une journée de travail : heure de début du contrat (Réglages : shiftDay, shiftNight). Contrat pris de shiftDay h
+ * (inclus) à shiftNight h (exclu) = shift jour, sinon shift nuit (demande d'Ahmed, 17/10 : 07:00 → 18:59 jour). Sans contrat : '' (hors contrat).
  */
 function shiftOf(t, P) {
   if (!t) return '';
   const hm = localHM(t), h = +hm.slice(0, 2) + +hm.slice(3, 5) / 60, d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19);
-  const dist = (a, b) => { const x = Math.abs(a - b) % 24; return Math.min(x, 24 - x); };
-  return dist(h, d) <= dist(h, n) ? 'Jour' : 'Nuit';
+  return (d < n ? h >= d && h < n : h >= d || h < n) ? 'Jour' : 'Nuit';
 }
 /**
  * Shift auquel appartient un instant (alerte, événement) : jour de shiftDay h à shiftNight h, sinon nuit.
@@ -177,7 +176,7 @@ function shiftAt(t, P) {
   if (d < n ? h >= d && h < n : h >= d || h < n) return { s: 'Jour', day };
   return { s: 'Nuit', day: h < d ? addDays(day, -1) : day };
 }
-/** Shift d'un contrat avec son jour : règle de shiftOf (début de shift le plus proche) ; une nuit prise après minuit appartient à la veille */
+/** Shift d'un contrat avec son jour : règle de shiftOf (heure de début du contrat) ; une nuit prise après minuit appartient à la veille */
 function shiftOfCtr(start, P) {
   if (!start) return null;
   const s = shiftOf(start, P), day = localDay(start), h = +localHM(start).slice(0, 2);

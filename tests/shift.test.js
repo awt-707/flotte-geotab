@@ -1,20 +1,21 @@
 // Shift jour / nuit : un chauffeur est classé d'après l'heure de début de son contrat (heure du Maroc),
-// début de shift le plus proche (jour shiftDay h, nuit shiftNight h). Même règle sur le site et dans les rapports PDF.
+// de shiftDay h (inclus) à shiftNight h (exclu) = shift jour, sinon nuit. Même règle sur le site et dans les rapports PDF.
 const test = require('node:test'), assert = require('node:assert');
 const env = require('./lib/env'), lib = require('../site/lib.js'), rpt = require('../site/report.js');
 const P = { shiftDay: 7, shiftNight: 19, kmMin: 20, minFuelKm: 30, scoreY: 5, scoreO: 10, scoreR: 20 };
 // heure du Maroc 'hh:mm' le 14/10/2026 (UTC+1) -> instant UTC
 const at = hm => new Date(Date.UTC(2026, 9, 14, +hm.slice(0, 2) - 1, +hm.slice(3, 5))).toISOString();
 
-test('shift d\'un contrat : début de shift le plus proche, heure du Maroc', () => {
+test('shift d\'un contrat : pris de 07:00 à 18:59 = jour, sinon nuit, heure du Maroc', () => {
   lib.setTzRules(env.MA_TZ);
-  const cases = { '07:00': 'Jour', '06:00': 'Jour', '12:59': 'Jour', '13:00': 'Jour', '13:01': 'Nuit', '19:00': 'Nuit', '23:30': 'Nuit', '00:59': 'Nuit', '01:01': 'Jour' };
+  const cases = { '07:00': 'Jour', '06:59': 'Nuit', '06:00': 'Nuit', '12:59': 'Jour', '15:30': 'Jour', '18:59': 'Jour', '19:00': 'Nuit', '23:30': 'Nuit', '00:59': 'Nuit', '01:01': 'Nuit' };
   Object.entries(cases).forEach(([hm, s]) => {
     assert.strictEqual(lib.shiftOf(at(hm), P), s, 'site ' + hm);
     assert.strictEqual(rpt.rptShift(lib.localHM(at(hm)), P), s, 'rapport ' + hm);
   });
   assert.strictEqual(lib.shiftOf(at('13:00'), { shiftDay: 8, shiftNight: 20 }), 'Jour');
-  assert.strictEqual(lib.shiftOf(at('15:00'), { shiftDay: 8, shiftNight: 20 }), 'Nuit');
+  assert.strictEqual(lib.shiftOf(at('07:30'), { shiftDay: 8, shiftNight: 20 }), 'Nuit');
+  assert.strictEqual(lib.shiftOf(at('19:30'), { shiftDay: 8, shiftNight: 20 }), 'Jour');
   assert.strictEqual(lib.shiftOf(null, P), '');
   assert.strictEqual(lib.shiftName('Nuit', P), 'Shift nuit (19:00 → 07:00)');
   lib.setTzRules(null);
@@ -23,7 +24,7 @@ test('shift d\'un contrat : début de shift le plus proche, heure du Maroc', () 
 test('rapport de la flotte : chauffeurs séparés en shift jour et shift nuit', () => {
   lib.setTzRules(env.MA_TZ);
   const row = (code, num, hm, km) => ({ day: '2026-10-14', vehicle_key: 'V1', driver_code: code, driver_name: 'Nom ' + code, contract_num: num, contract_start: at(hm), km, drive_h: 1, idle_h: 0, n_events: 0, danger_pts: 0 });
-  const rep = rpt.rptBuild({ journal: [row('A', 'C1', '07:05', 50), row('B', 'C2', '19:10', 60), row('A', 'C3', '18:50', 40)], alerts: [],
+  const rep = rpt.rptBuild({ journal: [row('A', 'C1', '07:05', 50), row('B', 'C2', '19:10', 60), row('A', 'C3', '06:50', 40)], alerts: [],
     vehicles: [{ key: 'V1', plate: 'V1' }], P, from: '2026-10-14', to: '2026-10-14', hmOf: lib.localHM });
   const t = rpt.rptTables(rep).filter(x => /^Chauffeurs/.test(x.title));
   assert.deepStrictEqual(t.map(x => x.title.split(' : ')[1]), ['Shift jour (07:00 → 19:00)', 'Shift nuit (19:00 → 07:00)']);
@@ -52,9 +53,10 @@ test('shift d\'un instant (alerte) : jour de 07:00 à 19:00, sinon nuit ; la nui
   const cases = [[16, '14:06', 'Jour du 16/10'], [16, '07:00', 'Jour du 16/10'], [16, '18:59', 'Jour du 16/10'], [16, '06:59', 'Nuit du 15/10 → 16/10'],
     [16, '19:00', 'Nuit du 16/10 → 17/10'], [17, '00:00', 'Nuit du 16/10 → 17/10'], [17, '02:30', 'Nuit du 16/10 → 17/10']];
   cases.forEach(([d, hm, txt]) => assert.strictEqual(lib.shiftDayName(lib.shiftAt(at2(d, hm), P)), txt, d + ' ' + hm));
-  // contrat : début de shift le plus proche ; nuit prise après minuit = nuit de la veille
-  assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(16, '06:31'), P)), 'Jour du 16/10');
-  assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(16, '18:58'), P)), 'Nuit du 16/10 → 17/10');
+  // contrat : heure de début (07:00 → 18:59 jour) ; nuit prise après minuit = nuit de la veille
+  assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(16, '06:31'), P)), 'Nuit du 15/10 → 16/10');
+  assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(16, '18:58'), P)), 'Jour du 16/10');
+  assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(16, '15:20'), P)), 'Jour du 16/10');
   assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(17, '00:08'), P)), 'Nuit du 16/10 → 17/10');
   assert.strictEqual(lib.shiftAt(null, P), null);
   lib.setTzRules(null);
