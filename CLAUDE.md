@@ -1,6 +1,6 @@
 # CLAUDE.md : contexte du projet pour Claude Code
 
-Répondre à Ahmed **en français**, de façon courte et directe. Il veut des données fiables : **rien d'inventé ni d'estimé** ; « non mesuré » quand Geotab ne fournit pas la valeur.
+Répondre à Ahmed **en français**, de façon courte et directe. **À chaque nouvelle version de l'application, lui donner les liens de téléchargement** (Mac : https://cgiiwumbblimvmrypxlc.supabase.co/storage/v1/object/public/app/Ludy.dmg ; Windows : https://cgiiwumbblimvmrypxlc.supabase.co/storage/v1/object/public/app/Ludy-setup.exe), une fois `version.json` vérifié en ligne. Il veut des données fiables : **rien d'inventé ni d'estimé** ; « non mesuré » quand Geotab ne fournit pas la valeur.
 
 ## Le projet
 
