@@ -76,6 +76,27 @@ function themeGet() { let t = ''; try { t = localStorage.getItem('theme') || '';
 function themeApply(t) { if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t); }
 themeApply(themeGet());
 
+// ---------- Application Ludy (Mac / Windows, dossier desktop/) : elle injecte window.LUDY_APP dans le site ----------
+// Uber Fleet Hub interdit d'être affiché dans un cadre d'un autre site : seule l'application peut l'ouvrir dans sa fenêtre.
+function appUber() { const u = window.LUDY_APP && window.LUDY_APP.uber; return /^https:\/\/([a-z0-9-]+\.)*uber\.com\//.test(u || '') ? u : ''; }
+const APP_DL = { mac: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.dmg', win: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy-setup.exe' };
+async function pageApplication() {
+  $('#page').innerHTML = `<div class="head"><h1>Application Ludy</h1><div class="sub">Le logiciel dans sa propre fenêtre, avec le volet <b>Uber Fleet</b> affiché à l'intérieur (impossible dans un navigateur : Uber l'interdit).
+    Les mises à jour du logiciel arrivent toutes seules, sans réinstaller l'application.</div></div>
+    ${window.LUDY_APP ? msg('Vous êtes dans l\'application Ludy (version ' + esc(window.LUDY_APP.version || '') + ').', 'ok') : ''}
+    <div class="appdl">
+      <div class="panel"><h2>Mac</h2><p><a class="btn" href="${APP_DL.mac}">Télécharger pour Mac</a></p>
+        <ol><li>Ouvrir <b>Ludy.dmg</b> et glisser <b>Ludy</b> dans <b>Applications</b>.</li>
+        <li>Premier lancement : macOS indique que l'application ne peut pas être vérifiée. Aller dans <b>Réglages Système › Confidentialité et sécurité</b>, en bas : <b>Ouvrir quand même</b> (une seule fois).</li>
+        <li>Se connecter à Ludy, puis une fois à Uber dans le volet <b>Uber Fleet</b>.</li></ol></div>
+      <div class="panel"><h2>Windows</h2><p><a class="btn" href="${APP_DL.win}">Télécharger pour Windows</a></p>
+        <ol><li>Lancer <b>Ludy-setup.exe</b>.</li>
+        <li>Si Windows affiche « Windows a protégé votre ordinateur » : <b>Informations complémentaires › Exécuter quand même</b> (une seule fois).</li>
+        <li>Se connecter à Ludy, puis une fois à Uber dans le volet <b>Uber Fleet</b>.</li></ol></div>
+    </div>
+    <div class="sub">Dans l'application : <b>Uber Fleet</b> dans le menu ouvre Fleet Hub dans la fenêtre ; le bouton <b>← Ludy</b> en bas à gauche ramène au logiciel. Les PDF sont enregistrés dans Téléchargements et s'ouvrent tout seuls.</div>`;
+}
+
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
   ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
@@ -85,9 +106,10 @@ function shell() {
   $('#app').innerHTML = `<div class="layout">
   <aside class="side">
     ${BRAND}
-    <nav aria-label="Pages">${NAV.filter(n => !ADMIN_PAGES[n[0]] || isAdmin()).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>`).join('')}</nav>
+    <nav aria-label="Pages">${NAV.filter(n => !ADMIN_PAGES[n[0]] || isAdmin()).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
+      (n[0] === 'direct' && appUber() ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` : '')).join('')}</nav>
     <div class="foot">${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
-      ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span><span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
+      ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span>${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
   <main id="page"><div class="loading">Chargement…</div></main></div>`;
   $('#logout').onclick = async () => { await sb.auth.signOut(); location.hash = ''; };
@@ -956,7 +978,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
+  contrats: pageContrats, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Ludy",
+  "version": "1.0.0",
+  "identifier": "com.ludy.flotte",
+  "build": { "frontendDist": "../dist" },
+  "app": { "windows": [], "security": { "csp": null } },
+  "bundle": {
+    "active": true,
+    "category": "Business",
+    "shortDescription": "Ludy · Supervision de flotte",
+    "copyright": "Luxury Discovery",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "macOS": { "signingIdentity": "-", "minimumSystemVersion": "11.0" },
+    "windows": { "webviewInstallMode": { "type": "downloadBootstrapper" }, "nsis": { "installMode": "currentUser", "languages": ["French"] } }
+  }
+}

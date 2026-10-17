@@ -1,0 +1,93 @@
+name: Application Mac et Windows
+
+# Application Ludy (dossier desktop/, Tauri) : fabriquée sur Mac et sur Windows quand desktop/ change, puis mise en
+# téléchargement (seau public « app » de Supabase Storage, liens sur la page Application du site).
+# Le site lui-même n'est pas dans l'application : ses mises à jour arrivent sans la réinstaller.
+on:
+  push:
+    branches: [main]
+    paths: ['desktop/**', 'scripts/publish-app.js', '.github/workflows/app.yml']
+  pull_request:
+    paths: ['desktop/**', 'scripts/publish-app.js', '.github/workflows/app.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Application (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Mac
+            os: macos-14
+            args: --target universal-apple-darwin --bundles dmg
+            file: desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            out: Ludy.dmg
+          - name: Windows
+            os: windows-2022
+            args: --bundles nsis
+            file: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            out: Ludy-setup.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Rust
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal
+          rustup default 1.97.0
+          if [ "${{ matrix.name }}" = "Mac" ]; then rustup target add aarch64-apple-darwin x86_64-apple-darwin; fi
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: tauri-${{ matrix.os }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+      - name: Fabrication
+        working-directory: desktop
+        shell: bash
+        run: npx --yes @tauri-apps/cli@2.12.1 build ${{ matrix.args }}
+      - name: Fichier à télécharger
+        shell: bash
+        run: |
+          mkdir -p out
+          cp ${{ matrix.file }} out/${{ matrix.out }}
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ matrix.name }}
+          path: out/*
+          retention-days: 30
+
+  publish:
+    name: Mise en téléchargement
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Supabase Storage (seau public « app »)
+        env:
+          SUPABASE_URL: https://cgiiwumbblimvmrypxlc.supabase.co
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_SERVICE_KEY" ]; then echo "::warning::Secret SUPABASE_SERVICE_KEY absent : application non publiée"; exit 0; fi
+          node scripts/publish-app.js out
