@@ -115,3 +115,31 @@ test('application plus ancienne que la dernière publiée : mise à jour propos�
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
+
+test('application : liens WhatsApp et e-mail ouverts par le système (1.3), message copié avec l\'application 1.2', async () => {
+  for (const [ver, open] of [['1.3.0', true], ['1.2.0', false]]) {
+    const o = await openBrowser();
+    const { br, page, errors } = o;
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.context().addInitScript(([v, op]) => {
+      window.LUDY_APP = { version: v, uber: 'https://fleethub.uber.com/orgs/test/livemap?tab=4', embed: true, ext: true, open: op };
+      window.__calls = []; window.__TAURI_INTERNALS__ = { invoke: (c, a) => { window.__calls.push([c, a]); return Promise.resolve(null); } };
+    }, [ver, open]);
+    try {
+      await login(page, '#/tableau');
+      await page.waitForSelector('#page h1');
+      const wa = 'https://wa.me/212612345678?text=' + encodeURIComponent('📄 Ludy · Manifeste\nTrajet : A → B'), ml = 'mailto:dret@exemple.ma?subject=Manifeste&body=' + encodeURIComponent('Bonjour\nCi-joint');
+      await page.evaluate(([w, m]) => { document.querySelector('#page').insertAdjacentHTML('beforeend', `<a id="lwa" href="${w}" target="_blank" rel="noopener">WA</a> <a id="lml" href="${m}">Mail</a>`); }, [wa, ml]);
+      await page.click('#lwa'); await page.click('#lml');
+      await page.waitForTimeout(300);
+      assert.strictEqual(page.url().startsWith('http://localhost:8080/'), true, 'la page Ludy reste affichée');
+      if (open) assert.deepStrictEqual(await page.evaluate(() => window.__calls.filter(c => c[0] === 'open_external').map(c => c[1].url)), [wa, ml]);
+      else {
+        assert.strictEqual(await page.evaluate(() => window.__calls.filter(c => c[0] === 'open_external').length), 0);
+        assert.match(await page.innerText('#toasts'), /Message copié : collez-le dans votre messagerie/);
+        assert.strictEqual(await page.evaluate(() => navigator.clipboard.readText()), 'Bonjour\nCi-joint');
+      }
+      assert.deepStrictEqual(errors, []);
+    } finally { await br.close(); }
+  }
+});

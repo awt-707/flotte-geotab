@@ -97,6 +97,36 @@ function appMode() { const A = window.LUDY_APP; if (!A) return ''; if (A.ext && 
 function appEmbed() { return appMode() === 'ext' || appMode() === 'uber'; }
 function appInvoke(cmd, args) { if (!appIpc()) return Promise.resolve(); return window.__TAURI_INTERNALS__.invoke(cmd, args || {}); }
 /**
+ * Liens vers l'extérieur dans l'application (WhatsApp, e-mail, cartes, PDF) : la vue web ne sait pas ouvrir WhatsApp ni la messagerie.
+ * Application 1.3 : ouverts par le système (application WhatsApp si installée, sinon navigateur ; Mail / Outlook) ;
+ * avant 1.3 : message copié, à coller dans WhatsApp ou la messagerie. Navigateur : comportement normal.
+ */
+function openOut(url) {
+  if (window.LUDY_APP && window.LUDY_APP.open && appIpc()) { appInvoke('open_external', { url }).catch(e => alert('Ouverture impossible : ' + (e.message || e))); return true; }
+  if (window.LUDY_APP && /^(mailto:|https:\/\/(wa\.me|api\.whatsapp\.com)\/)/i.test(url)) {
+    let txt = ''; try { const u = new URL(url); txt = u.searchParams.get(u.protocol === 'mailto:' ? 'body' : 'text') || ''; } catch (e) { }
+    const where = /^mailto:/i.test(url) ? 'votre messagerie' : 'WhatsApp';
+    const done = ok => appNotice((ok ? 'Message copié : collez-le dans ' + where + '. ' : '') + 'Pour ouvrir ' + where + ' directement depuis Ludy, installez la nouvelle version de l\'application (page Application).');
+    if (navigator.clipboard && txt) navigator.clipboard.writeText(txt).then(() => done(true), () => done(false)); else done(false);
+    return true;
+  }
+  if (window.LUDY_APP) return false;   // application avant 1.3 : lien « nouvel onglet » transmis au navigateur par l'application
+  window.open(url, '_blank', 'noopener'); return true;
+}
+function appNotice(text) {
+  let box = $('#toasts'); if (!box) { box = document.createElement('div'); box.id = 'toasts'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
+  const t = document.createElement('div'); t.className = 'toast info'; t.innerHTML = `<button class="x" aria-label="Fermer">×</button>${esc(text)}`;
+  t.querySelector('.x').onclick = () => t.remove(); box.prepend(t); setTimeout(() => t.remove(), 15000);
+}
+// dans l'application : liens WhatsApp, e-mail et autres sites ouverts par le système
+document.addEventListener('click', e => {
+  if (!window.LUDY_APP || e.defaultPrevented) return;
+  const a = e.target.closest && e.target.closest('a[href]'); if (!a) return;
+  const href = a.href || '';
+  const out = /^(mailto|tel|whatsapp):/i.test(href) || (/^https?:/i.test(href) && a.target === '_blank' && new URL(href).origin !== location.origin);
+  if (out && openOut(href)) e.preventDefault();
+});
+/**
  * Volets externes : sites affichés dans la fenêtre de l'application, à droite du menu Ludy (ils interdisent d'être affichés
  * dans un cadre d'un autre site). Liste réglée dans Réglages > Volets externes (param appSites, JSON [{id, name, url}]).
  */
