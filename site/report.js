@@ -400,8 +400,116 @@ function rptShiftEnd(o) {
     tables: tables
   };
 }
+/**
+ * Anomalies carburant : achats de la carte carburant (extract Afriquia) croisés avec les pleins détectés par Geotab et la jauge.
+ * o = { tx: [{ id, vehicle_key, plate, at (ms), liters, product, amount_ttc, station, ticket }], fills: lignes PLEIN de la table fuel,
+ *       levels: [{ vehicle_key, at, pct }], vehicles: { clé: { plate, model, fuel } }, who: (clé, ms) -> nom du chauffeur ou '' }
+ * 1. Chaque ticket est rapproché du plein Geotab le plus proche, de 2 h 30 avant à 30 min après l'achat (un plein Geotab pour un ticket).
+ * 2. Ticket resté seul : plein Geotab encore libre dans les 48 h avant, après le ticket précédent du véhicule = transaction transmise en
+ *    différé par la station (constaté : tickets de 4 stations à la même minute) ; sinon ticket à moins de 45 min d'un ticket rapproché =
+ *    même plein payé en plusieurs tickets ; sinon aucun plein Geotab : la courbe de jauge dit si du carburant est entré.
+ * Litres attendus pour une montée de jauge = relation mesurée sur les pleins rapprochés du même modèle (la jauge n'est pas linéaire :
+ * environ 86 L de 0 à 100 % sur un Staria de 75 L) ; non mesuré avec moins de 10 pleins rapprochés. Rien n'est estimé autrement.
+ */
+var RPT_FC = { group: 45, before: 150, after: 30, late: 48 * 60, twice: 180, minFit: 10 };
+function rptFuelCard(o) {
+  var V = o.vehicles || {}, MIN = 60000, byV = {}, lvByV = {}, fillOf = {}, tkOf = {};
+  var has = function (v) { return v !== null && v !== undefined && v !== '' && isFinite(+v); };
+  (o.fills || []).forEach(function (f) { (byV[f.vehicle_key] = byV[f.vehicle_key] || []).push({ f: f, t: new Date(f.stop_start).getTime(), id: String(f.id) }); });
+  (o.levels || []).forEach(function (l) { (lvByV[l.vehicle_key] = lvByV[l.vehicle_key] || []).push({ t: new Date(l.at).getTime(), p: rptNum(l.pct) }); });
+  Object.keys(lvByV).forEach(function (k) { lvByV[k].sort(function (a, b) { return a.t - b.t; }); });
+  var tx = (o.tx || []).slice().sort(function (a, b) { return a.at - b.at || String(a.id).localeCompare(String(b.id)); });
+  // 1. rapprochement direct : paires les plus proches d'abord
+  var pairs = [];
+  tx.forEach(function (x, i) { (byV[x.vehicle_key] || []).forEach(function (f) {
+    if (f.t >= x.at - RPT_FC.before * MIN && f.t <= x.at + RPT_FC.after * MIN) pairs.push({ i: i, f: f, d: Math.abs(f.t - x.at) }); }); });
+  pairs.sort(function (a, b) { return a.d - b.d; });
+  pairs.forEach(function (p) { if (tkOf[p.i] || fillOf[p.f.id]) return; tkOf[p.i] = { f: p.f, how: 'direct' }; fillOf[p.f.id] = [p.i]; });
+  // 2. tickets restés seuls : transmis en différé, puis tickets complémentaires d'un même plein
+  tx.forEach(function (x, i) {
+    if (tkOf[i]) return; var prevT = -Infinity;
+    for (var k = i - 1; k >= 0; k--) if (tx[k].vehicle_key === x.vehicle_key && x.at - tx[k].at > RPT_FC.group * MIN) { prevT = tx[k].at; break; }
+    var best = null; (byV[x.vehicle_key] || []).forEach(function (f) {
+      if (!fillOf[f.id] && f.t < x.at && f.t > prevT && f.t >= x.at - RPT_FC.late * MIN && (!best || f.t > best.t)) best = f; });
+    if (best) { tkOf[i] = { f: best, how: 'late' }; fillOf[best.id] = [i]; }
+  });
+  tx.forEach(function (x, i) {
+    if (tkOf[i]) return; var near = null;
+    tx.forEach(function (y, j) { if (tkOf[j] && tkOf[j].how !== 'split' && y.vehicle_key === x.vehicle_key && Math.abs(y.at - x.at) <= RPT_FC.group * MIN && (!near || Math.abs(y.at - x.at) < Math.abs(near.at - x.at))) near = { at: y.at, j: j }; });
+    if (near) { tkOf[i] = { f: tkOf[near.j].f, how: 'split' }; fillOf[tkOf[near.j].f.id].push(i); }
+  });
+  // pleins payés : un plein Geotab et ses tickets, ou un ticket sans plein Geotab
+  var G = [], done = {};
+  tx.forEach(function (x, i) {
+    if (done[i]) return; var m = tkOf[i], idx = m ? fillOf[m.f.id] : [i];
+    idx.forEach(function (j) { done[j] = 1; });
+    var tks = idx.map(function (j) { return tx[j]; }).sort(function (a, b) { return a.at - b.at; });
+    G.push({ key: x.vehicle_key, at: tks[0].at, tx: tks, fill: m ? m.f.f : null, fillT: m ? m.f.t : null, late: !!(m && tkOf[idx[0]].how === 'late'),
+      liters: tks.reduce(function (s, y) { return s + rptNum(y.liters); }, 0), amount: tks.reduce(function (s, y) { return s + rptNum(y.amount_ttc); }, 0) });
+  });
+  G.sort(function (a, b) { return (a.fillT || a.at) - (b.fillT || b.at); });
+  // niveaux de jauge : ceux du plein Geotab, sinon la courbe (dernier relevé 15 min à 6 h avant l'achat, plus haut relevé dans les 3 h qui suivent, avant le plein ou le ticket suivant)
+  G.forEach(function (g) {
+    var f = g.fill;
+    if (f && has(f.lvl_before) && has(f.lvl_after)) { g.lvlBefore = rptNum(f.lvl_before); g.lvlAfter = rptNum(f.lvl_after); g.src = 'plein Geotab'; return; }
+    if (f) return;
+    // fin de la fenêtre : 3 h, sans dépasser le plein Geotab ou le ticket suivant du véhicule
+    var end = g.at + 180 * MIN, b = null, a = null;
+    (byV[g.key] || []).forEach(function (h) { if (h.t > g.at - 10 * MIN && h.t < end) end = h.t; });
+    tx.forEach(function (y) { if (y.vehicle_key === g.key && y.at > g.tx[g.tx.length - 1].at && y.at < end) end = y.at; });
+    (lvByV[g.key] || []).forEach(function (r) { if (r.t <= g.at - 15 * MIN && r.t >= g.at - 360 * MIN) b = r; if (r.t >= g.at - 10 * MIN && r.t < end && (!a || r.p > a.p)) a = r; });
+    if (b && a) { g.lvlBefore = b.p; g.lvlAfter = a.p; g.src = 'courbe de jauge'; }
+  });
+  // relation litres / montée de jauge par modèle, sur les pleins rapprochés à un seul ticket (moindres carrés, 2e passe sans les écarts > 15 L)
+  var fitOf = function (pts) {
+    if (pts.length < RPT_FC.minFit) return null;
+    var n = pts.length, mx = 0, my = 0, sxy = 0, sxx = 0;
+    pts.forEach(function (p) { mx += p[0] / n; my += p[1] / n; });
+    pts.forEach(function (p) { sxy += (p[0] - mx) * (p[1] - my); sxx += (p[0] - mx) * (p[0] - mx); });
+    if (!sxx) return null; var B = sxy / sxx; return { a: my - B * mx, b: B, n: n };
+  };
+  var fit = {}, ptsBy = {};
+  G.forEach(function (g) { if (!g.fill || g.tx.length > 1 || g.lvlBefore === undefined || g.lvlAfter - g.lvlBefore < 10) return; var m = (V[g.key] || {}).model || '?';
+    (ptsBy[m] = ptsBy[m] || []).push([(g.lvlAfter - g.lvlBefore) / 100, g.liters]); });
+  Object.keys(ptsBy).forEach(function (m) { var r1 = fitOf(ptsBy[m]); if (!r1) return;
+    var r2 = fitOf(ptsBy[m].filter(function (p) { return Math.abs(p[1] - (r1.a + r1.b * p[0])) <= 15; })); if (r2) fit[m] = r2; });
+  var diesel = function (v) { return /^GO$|GAS ?OIL|GAZOIL|DIESEL/i.test(String(v.fuel || '').trim()); };
+  var essence = function (v) { var f = String(v.fuel || '').trim(); return !!f && !diesel(v) && /^E|ESS|SP|SUPER|HYB/i.test(f); };
+  var out = [], prev = {};
+  G.forEach(function (g) {
+    var v = V[g.key] || {}, an = [], q = g.liters, has2 = g.lvlBefore !== undefined, lb = has2 ? g.lvlBefore : null, la = has2 ? g.lvlAfter : null, ft = fit[v.model || '?'];
+    var t = g.fillT || g.at;
+    var row = { key: g.key, at: g.at, fillAt: g.fillT, late: g.late, tx: g.tx, liters: q, amount: g.amount, plate: v.plate || g.tx[0].plate, model: v.model || '',
+      driver: o.who ? o.who(g.key, t) : '', fill: g.fill, lvlBefore: lb, lvlAfter: la, src: g.src || '', expected: null, anomalies: an };
+    var P = g.tx.map(function (x) { return String(x.product || '').toUpperCase(); }).join(' ');
+    if (diesel(v) && /SUPER|\bSP\b|ESSENCE/.test(P)) an.push({ sev: 'Critique', t: 'Carburant non conforme', d: 'Essence achetée pour un véhicule diesel' });
+    if (essence(v) && /GASOIL|GAZOIL|DIESEL/.test(P)) an.push({ sev: 'Critique', t: 'Carburant non conforme', d: 'Gasoil acheté pour un véhicule essence' });
+    var lv = has2 ? rptFmt(lb) + ' % → ' + rptFmt(la) + ' %' : '';
+    if (!g.fill) {
+      if (!has2) an.push({ sev: 'Moyenne', t: 'Aucun plein détecté par Geotab', d: 'Jauge non relevée autour de l\'achat : à vérifier' });
+      else if (la - lb < 5) an.push({ sev: 'Critique', t: 'Achat sans plein dans le véhicule', d: 'Aucun plein détecté par Geotab dans les 48 h et la jauge n\'a pas monté (' + lv + ') pour ' + rptFmt(q, 2) + ' L facturés' });
+      else an.push({ sev: 'Info', t: 'Plein non détecté par Geotab', d: 'La jauge a monté (' + lv + ') sans plein enregistré par Geotab' });
+    }
+    if (ft && has2 && la - lb >= 5) {
+      row.expected = ft.a + ft.b * (la - lb) / 100;
+      if (q > row.expected + Math.max(10, row.expected * 0.15))
+        an.push({ sev: 'Haute', t: 'Litres facturés supérieurs au plein mesuré', d: rptFmt(q, 2) + ' L facturés' + (g.tx.length > 1 ? ' (' + g.tx.length + ' tickets)' : '') + ' pour une jauge ' + lv + ' (' + row.src + ') : environ ' + rptFmt(row.expected, 0) + ' L d\'après les ' + ft.n + ' pleins mesurés du ' + (v.model || 'modèle') });
+    }
+    var p = prev[g.key];
+    if (p && t - p < RPT_FC.twice * MIN) an.push({ sev: 'Moyenne', t: 'Deux pleins rapprochés', d: 'Autre plein ' + Math.round((t - p) / MIN) + ' min avant' });
+    prev[g.key] = t;
+    row.sev = an.reduce(function (m, a) { return RPT_SEV.indexOf(a.sev) < RPT_SEV.indexOf(m) ? a.sev : m; }, 'Info');
+    out.push(row);
+  });
+  // pleins Geotab sans achat sur la carte (période de l'extract, véhicules présents dans l'extract) : payés autrement ?
+  var t0 = tx.length ? tx[0].at - 6 * 60 * MIN : 0, t1 = tx.length ? tx[tx.length - 1].at : 0, keys = {}; tx.forEach(function (x) { keys[x.vehicle_key] = 1; });
+  var orphans = [];
+  Object.keys(byV).forEach(function (k) { if (keys[k]) byV[k].forEach(function (f) { if (!fillOf[f.id] && f.t >= t0 && f.t <= t1) orphans.push(f.f); }); });
+  orphans.sort(function (a, b) { return new Date(a.stop_start) - new Date(b.stop_start); });
+  return { rows: out, orphans: orphans, fit: fit };
+}
 /** Rapport fait de tableaux déjà prêts (pages Conduite, Classement) : { title, period, agency, summary, tables } */
-function rptSimple(o) { return { kind: o.kind || 'tableau', title: o.title, period: o.period, from: o.from, to: o.to, agency: o.agency || 'Toutes les agences', generatedAt: o.generatedAt || new Date(), summary: o.summary || [], tables: o.tables || [] }; }
+function rptSimple(o) { return { kind: o.kind || 'tableau', title: o.title, period: o.period, from: o.from, to: o.to, agency: o.agency || 'Toutes les agences', generatedAt: o.generatedAt || new Date(), summary: o.summary || [], tables: o.tables || [], fileName: o.fileName }; }
 
 /** Tableaux du rapport (colonnes + lignes de texte), utilisés pour le HTML et pour le PDF du site */
 function rptTables(rep) {
@@ -425,7 +533,7 @@ function rptTables(rep) {
 }
 
 /** Corps HTML du rapport (affiché sur le site, converti en PDF par le collecteur) */
-var RPT_KIND = { conso: 'Rapport de consommation', chauffeur: 'Comportement chauffeur', conduite: 'Conduite des chauffeurs', classement: 'Classement des chauffeurs', finshift: 'Résultat de fin de shift', finshift_chauffeur: 'Fin de shift · chauffeur' };
+var RPT_KIND = { conso: 'Rapport de consommation', chauffeur: 'Comportement chauffeur', conduite: 'Conduite des chauffeurs', classement: 'Classement des chauffeurs', finshift: 'Résultat de fin de shift', finshift_chauffeur: 'Fin de shift · chauffeur', carte: 'Anomalies carburant' };
 var RPT_LEVEL = { 'Dangereux': 'crit', 'Critique': 'crit', 'Élevé': 'high', 'Haute': 'high', 'Modéré': 'warn', 'Moyenne': 'warn', 'Faible': 'ok' };
 /** Rapport en HTML (page Rapports du site, PDF du collecteur) : en-tête, résumé en cartes (4 par ligne), une section par tableau */
 function rptHtml(rep) {
@@ -467,4 +575,4 @@ function rptDoc(rep) { return '<!doctype html><html><head><meta charset="utf-8">
 /** Nom de fichier du rapport */
 function rptFileName(rep) { if (rep.fileName) return String(rep.fileName).replace(/[^A-Za-z0-9_\-]+/g, '_'); return ((rep.kind === 'conso' ? 'rapport_consommation_' : rep.kind === 'chauffeur' ? 'comportement_' : rep.kind === 'conduite' ? 'conduite_' : rep.kind === 'classement' ? 'classement_' : 'rapport_flotte_') + (rep.agency === 'Toutes les agences' ? 'toutes_agences' : rep.agency) + '_' + rep.from + (rep.to !== rep.from ? '_' + rep.to : '')).replace(/[^A-Za-z0-9_\-]+/g, '_'); }
 
-if (typeof module !== 'undefined') module.exports = { rptConso: rptConso, rptBuild: rptBuild, rptTables: rptTables, rptHtml: rptHtml, rptDoc: rptDoc, rptFileName: rptFileName, rptFmt: rptFmt, rptShift: rptShift, rptDriver: rptDriver, rptSimple: rptSimple, rptOverTol: rptOverTol, rptOverWorst: rptOverWorst, rptOverHit: rptOverHit, rptShiftEnd: rptShiftEnd };
+if (typeof module !== 'undefined') module.exports = { rptConso: rptConso, rptBuild: rptBuild, rptTables: rptTables, rptHtml: rptHtml, rptDoc: rptDoc, rptFileName: rptFileName, rptFmt: rptFmt, rptShift: rptShift, rptDriver: rptDriver, rptSimple: rptSimple, rptOverTol: rptOverTol, rptOverWorst: rptOverWorst, rptOverHit: rptOverHit, rptShiftEnd: rptShiftEnd, rptFuelCard: rptFuelCard };

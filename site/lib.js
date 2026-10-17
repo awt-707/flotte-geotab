@@ -97,6 +97,40 @@ function parseContracts(rows, cm) {
   });
   return { rows: out, read, dup, invalid };
 }
+/** Nombre écrit à la française ou à l'anglaise : « 1 077,27 », « 1,077.27 », « 49.47 » */
+function numAny(v) {
+  if (typeof v === 'number') return v;
+  let t = String(v == null ? '' : v).replace(/[\s ]/g, ''); if (!t) return null;
+  const c = t.lastIndexOf(','), d = t.lastIndexOf('.');
+  t = c > d ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  const n = parseFloat(t); return isNaN(n) ? null : n;
+}
+/**
+ * Lecture de l'extract de la carte carburant (Afriquia : « Transaction_afripay… .xlsx ») : une ligne par ticket.
+ * Plaque = « Libellé 2 » (WW968194), sinon « Matricule » / « Libellé 1 » si c'est une plaque. Date de transaction = heure du Maroc.
+ */
+function parseFuelCard(rows, cm) {
+  if (!rows || rows.length < 2) throw new Error('Fichier vide.');
+  let hr = rows.findIndex(r => r.some(c => /^quantite/.test(normTxt(c)))); if (hr < 0) throw new Error('Colonne « Quantité » introuvable : est-ce bien l\'extract des transactions Afriquia ?');
+  const head = rows[hr].map(normTxt), col = (...res) => { for (const re of res) { const j = head.findIndex(h => re.test(h)); if (j >= 0) return j; } return -1; };
+  const c = { card: col(/^carte$/, /^n.*carte/), date: col(/date transaction/, /^date$/), p2: col(/libelle 2/), p1: col(/libelle 1/), mat: col(/^matricule/, /immatriculation/),
+    product: col(/^produit/), qty: col(/^quantite/), price: col(/prix/), ttc: col(/montant.*ttc/, /^montant/), station: col(/station/), ticket: col(/ticket/), mode: col(/mode/), invoice: col(/num.*facture/) };
+  if (c.date < 0) throw new Error('Colonne « Date Transaction » introuvable.');
+  const g = (r, k) => c[k] >= 0 ? String(r[c[k]] == null ? '' : r[c[k]]).replace(/\s+/g, ' ').trim() : '';
+  const isPlate = x => /\d{4,}/.test(x) && normPlate(x).length >= 6;
+  const out = [], seen = {}; let read = 0, dup = 0, invalid = 0;
+  rows.slice(hr + 1).forEach(r => {
+    if (!r.some(v => String(v).trim() !== '')) return; read++;
+    const at = parseLocalDT(g(r, 'date')), q = numAny(g(r, 'qty')), plate = [g(r, 'p2'), g(r, 'mat'), g(r, 'p1')].find(isPlate) || '';
+    if (!at || !(q > 0) || !plate) { invalid++; return; }
+    const id = [g(r, 'card') || plate, g(r, 'ticket'), localDay(at) + ' ' + localHM(at)].join('|');
+    if (seen[id]) { dup++; return; } seen[id] = 1;
+    out.push({ id, card: g(r, 'card'), vehicle_key: canonKey(normPlate(plate), cm), plate: plate.toUpperCase().replace(/\s+/g, ''), at: at.toISOString(), day: localDay(at),
+      product: g(r, 'product'), liters: q, unit_price: numAny(g(r, 'price')), amount_ttc: numAny(g(r, 'ttc')), station: g(r, 'station'), ticket: g(r, 'ticket'),
+      mode: g(r, 'mode'), invoice: g(r, 'invoice') });
+  });
+  return { rows: out, read, dup, invalid };
+}
 /** Signature d'un contrat : un contrat déjà importé identique est ignoré */
 function ctrSig(x) { return [x.client_code, x.name, x.vehicle_key, x.start_at ? new Date(x.start_at).getTime() : '', x.end_at ? new Date(x.end_at).getTime() : '', x.status || ''].join('|'); }
 
@@ -182,4 +216,4 @@ function fuelVal(a) { return a.fuelN ? f1(a.fuel) : NM; }
 function l100Val(a) { return a.l100 !== null ? f1(a.l100) : (a.fuelN ? 'km insuffisants' : NM); }
 function srcTxt(a) { const s = Object.keys(a.srcs); return s.length ? (s.length > 1 ? 'Mixte' : s[0]) : 'Non mesuré'; }
 
-if (typeof module !== 'undefined') module.exports = { shiftStart, ctrEffEnds, shiftOf, shiftAt, shiftOfCtr, shiftDayName, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };
+if (typeof module !== 'undefined') module.exports = { shiftStart, ctrEffEnds, shiftOf, shiftAt, shiftOfCtr, shiftDayName, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, parseFuelCard, numAny, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };

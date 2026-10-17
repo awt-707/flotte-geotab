@@ -318,3 +318,14 @@ a.btnlink { display: inline-block; font-weight: 600; font-size: 14px; padding: 8
 .cgauge.z-mute .cg-needle, .cgauge.z-mute .cg-hub { stroke: var(--mute); fill: var(--mute); opacity: .5; }
 .cg-v { font: 700 13px/1.1 var(--fc); margin-top: 1px; white-space: nowrap; } .cg-v small { font: 500 10px var(--f); color: var(--mute); }
 .cgauge.z-ok .cg-v { color: var(--ok); } .cgauge.z-warn .cg-v { color: var(--warn); } .cgauge.z-crit .cg-v { color: var(--crit); }
+
+/* Onglets d'un volet (Carburant : consommation / anomalies carte carburant) */
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin: 6px 0 10px; }
+.tabs a { padding: 8px 14px; border: 1px solid transparent; border-bottom: 0; border-radius: var(--r) var(--r) 0 0; color: var(--mute); text-decoration: none; font-weight: 600; margin-bottom: -1px; }
+.tabs a:hover { color: var(--ink); }
+.tabs a.on { color: var(--ink); background: var(--panel); border-color: var(--line); }
+details > summary { cursor: pointer; list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary h2 { display: inline-block; }
+details > summary h2::before { content: '▸ '; color: var(--mute); }
+details[open] > summary h2::before { content: '▾ '; }
