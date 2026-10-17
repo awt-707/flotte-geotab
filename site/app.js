@@ -194,7 +194,8 @@ async function pageTableau() {
   const cnt = f => ac.filter(f).reduce((s, x) => s + x.n, 0);
   const crit = cnt(x => x.severity === 'Critique'), high = cnt(x => x.severity === 'Haute'), ntne = tne.count || 0;
   const byV = aggJournal(jrn, r => r.vehicle_key, P);
-  const vrows = S.vehList.filter(v => v.active !== 'NON' && ok(v.key)).map(v => ({ v, a: byV[v.key] || emptyAgg(), al: cnt(x => x.vehicle_key === v.key) }));
+  // véhicule retiré du parc mais qui a roulé sur la période : listé (le total des cartes le compte)
+  const vrows = S.vehList.filter(v => (v.active !== 'NON' || byV[v.key]) && ok(v.key)).map(v => ({ v, a: byV[v.key] || emptyAgg(), al: cnt(x => x.vehicle_key === v.key) }));
   const byD = aggJournal(jrn.filter(r => r.driver_code !== HORS), r => shiftOf(r.contract_start, P) + '|' + r.driver_code, P);
   const drows0 = Object.values(byD).map(a => { const [sh, code] = a.k.split('|'), sc = scoreOf(a, P); return { a, sh, code, nom: S.drv[code] || Object.keys(a.names)[0] || code, score: sc, level: levelOf(sc, P) }; })
     .sort((x, y) => y.score - x.score || y.a.pts - x.a.pts);
@@ -311,7 +312,7 @@ function linkify(t) { return esc(t).replace(/https:\/\/maps\.google\.com\/\?q=(-
 
 // ---------- DU JOUR ----------
 async function pageJour() {
-  const qs = new URLSearchParams(location.hash.split('?')[1] || ''), day = qs.get('jour') || today(), P = S.P;
+  const qs = new URLSearchParams(location.hash.split('?')[1] || ''), P = S.P, day = qs.get('jour') || shiftAt(new Date(), P).day;   // la nuit en cours (avant 7 h) appartient à la journée de la veille
   // journée d'exploitation : shift jour (shiftDay h → shiftNight h) puis shift nuit jusqu'au lendemain shiftDay h ; une nuit appartient au jour où elle commence
   const ok = inAgency(), dp = day.split('-').map(Number), d1 = addDays(day, 1).split('-').map(Number), sd = num(P.shiftDay, 7);
   const w0 = localToDate(dp[0], dp[1], dp[2], sd, 0), w1 = localToDate(d1[0], d1[1], d1[2], sd, 0);
