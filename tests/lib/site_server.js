@@ -61,6 +61,11 @@ function storage(req, res, u) {
     const body = Buffer.concat(chunks), p = decodeURIComponent(u.pathname.replace(/^\/storage\/v1\/object\//, ''));
     res.setHeader('Content-Type', 'application/json');
     if (process.env.STORAGE_OFF) { res.statusCode = 400; return res.end('{"statusCode":"404","error":"Bucket not found","message":"Bucket not found"}'); }
+    if (req.method === 'DELETE') {   // effacement groupé : { prefixes: [chemins] } dans le seau
+      const b = p.replace(/\/$/, ''), list = (JSON.parse(body.toString() || '{}').prefixes || []).map(x => b + '/' + x).filter(k => STORE.delete(k));
+      return res.end(JSON.stringify(list.map(k => ({ name: k.slice(b.length + 1) }))));
+    }
+    if (req.method === 'GET' && p === '__liste') return res.end(JSON.stringify([...STORE.keys()]));
     if (req.method === 'POST' && p.startsWith('sign/')) {
       const k = p.slice(5); if (!STORE.has(k)) { res.statusCode = 400; return res.end('{"error":"not_found","message":"Object not found"}'); }
       return res.end(JSON.stringify({ signedURL: '/object/sign/' + k + '?token=jeton-' + JSON.parse(body.toString() || '{}').expiresIn }));

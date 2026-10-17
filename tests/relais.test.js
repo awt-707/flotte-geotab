@@ -174,3 +174,14 @@ test('limite de la route demandée seulement pour les véhicules qui roulent, au
   const driving = r3.body.vehicles.filter(v => v.state === 'En route').map(v => gid(v.key)).sort();
   assert.deepStrictEqual(roadReq.slice().sort(), driving, 'après 20 s : seulement les véhicules en route');
 });
+
+test('chaque appel du relais est compté pour le suivi du quota (Réglages > Limites)', async () => {
+  env.psql('truncate usage_daily');
+  L.resetMemory();
+  await call('admin'); await call('admin');
+  assert.strictEqual(env.psql("select sum(n) from usage_daily where kind = 'live'"), '2');
+  // sans clé service (secret absent) : rien n'est compté, la réponse reste servie
+  const r = await call('admin', { SUPABASE_SERVICE_ROLE_KEY: '' });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(env.psql("select sum(n) from usage_daily where kind = 'live'"), '2');
+});

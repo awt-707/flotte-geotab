@@ -368,3 +368,20 @@ a.btn.ghostb { background: transparent; color: var(--ink); border: 1px solid var
 @media (max-width: 600px) { .mfrow input[size] { width: 100%; } }
 .mfgrid .panel > h2:first-child, #mfset summary h2 { margin-top: 0; }
 .panel label.chk { flex-direction: row; color: var(--ink); font-size: 14px; }
+/* Limites de l'hébergement */
+.usage { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 20px; margin: 8px 0 16px; }
+.ub .ul { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+.ubar { height: 8px; background: var(--line2); border-radius: 4px; overflow: hidden; margin: 5px 0 3px; }
+.ubar span { display: block; height: 100%; background: var(--ok); }
+.ubar span.warn { background: var(--warn); } .ubar span.crit { background: var(--crit); }
+/* Planning des gestionnaires */
+table.plan td.c, table.plan th { text-align: center; }
+table.plan td:first-child { text-align: left; white-space: nowrap; }
+table.plan th.today { background: var(--acc-soft); }
+table.plan tr.tot td { font-weight: 600; }
+table.plan .crit { color: var(--crit); }
+.plsplit { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 14px; }
+.plsplit .plate { margin: 3px 3px 0 0; }
+.agsel.mine { display: flex; gap: 6px; align-items: center; font-weight: 600; }
+table.plan input[type="checkbox"] { min-height: 0; min-width: 0; width: 18px; height: 18px; padding: 0; margin: 0; }
+table.plan td, table.plan th { padding-left: 6px; padding-right: 6px; }

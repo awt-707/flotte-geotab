@@ -10,6 +10,15 @@
 // =============================================================================
 let MAP = null;
 const LIVE_SEC = 5, DRV_SEC = 30, TRAIL_MAX = 240;
+// Économie des appels (quota de l'offre Supabase) : sans souris ni clavier depuis LIVE_IDLE_MIN minutes, positions toutes les minutes
+// et chauffeurs toutes les 5 minutes ; la moindre activité relance aussitôt le rythme normal.
+const LIVE_IDLE_MIN = 10, LIVE_IDLE_SEC = 60, DRV_IDLE_SEC = 300;
+let LIVE_ACT = Date.now();
+function liveIdle() { return Date.now() - LIVE_ACT > LIVE_IDLE_MIN * MIN; }
+['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'].forEach(ev => document.addEventListener(ev, () => {
+  const was = liveIdle(); LIVE_ACT = Date.now();
+  if (was && typeof pageOf === 'function' && pageOf() === 'direct') { liveTick(ROUTING); liveDrvTick(ROUTING); }
+}, { passive: true }));
 const LIVE = { rows: [], pos: {}, at: 0, err: '', markers: {}, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {},
   drv: {}, drvAt: 0, drvErr: '', drvFallback: '', drvBusy: false, sel: '' };
 // Alertes en direct : événements Geotab des règles de conduite (dès que Geotab les signale) + vitesse en direct au-dessus du seuil
@@ -204,7 +213,7 @@ function liveDriversHtml(rows) {
     + `<p class="small">Km, carburant et litres au ralenti : compteurs du véhicule (Geotab) au début du contrat et maintenant. Conduite, ralenti et Vmax : trajets Geotab et vitesse du trajet en cours. Événements : règles de conduite Geotab (poids des Réglages). « ${NM} » : compteur non transmis par le véhicule.</p>`;
 }
 function liveStatusTxt() {
-  if (LIVE.at) return `<span class="livedot" aria-hidden="true"></span>Temps réel Geotab : actualisé toutes les ${LIVE_SEC} s, dernière lecture ${fmtHMS(LIVE.at).slice(6)}.`;
+  if (LIVE.at) return `<span class="livedot" aria-hidden="true"></span>Temps réel Geotab : actualisé toutes les ${liveIdle() ? 'minutes (aucune activité depuis ' + LIVE_IDLE_MIN + ' min : bougez la souris pour revenir à ' + LIVE_SEC + ' s)' : LIVE_SEC + ' s'}, dernière lecture ${fmtHMS(LIVE.at).slice(6)}.`;
   if (LIVE.err) return 'Temps réel Geotab indisponible (' + esc(LIVE.err) + ') : positions du collecteur, toutes les ' + (S.P.liveMin || 5) + ' min.';
   return 'Connexion au temps réel Geotab…';
 }
@@ -245,6 +254,8 @@ function applyDirect() {
 /** Lecture Geotab en direct par le relais ; arrêt du relais (non installé, erreur) : nouvel essai dans 1 min */
 async function liveTick(my) {
   if (document.hidden || my !== ROUTING || Date.now() < (LIVE.retryAt || 0)) return;
+  if (liveIdle() && Date.now() - (LIVE.lastCall || 0) < LIVE_IDLE_SEC * 1000) return;
+  LIVE.lastCall = Date.now();
   try {
     const j = await relay();
     if (my !== ROUTING) return;
@@ -261,8 +272,10 @@ async function liveTick(my) {
 /** Chauffeurs en ce moment : compteurs relus toutes les DRV_SEC secondes */
 async function liveDrvTick(my) {
   if (document.hidden || my !== ROUTING || LIVE.drvBusy) return;
+  if (liveIdle() && Date.now() - (LIVE.drvLast || 0) < DRV_IDLE_SEC * 1000) return;
   const rows = liveRows().filter(r => r.contract_num && r.ctr_start);
   if (!rows.length) return;
+  LIVE.drvLast = Date.now();
   LIVE.drvBusy = true;
   try {
     const j = await relay({ mode: 'drivers', c: rows.map(r => r.vehicle_key + '@' + new Date(r.ctr_start).toISOString()).join(',') });

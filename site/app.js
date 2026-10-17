@@ -6,10 +6,10 @@ const $ = sel => document.querySelector(sel);
 const ROLE_TXT = { admin: 'Administrateur', manager: 'Gestionnaire', viewer: 'Lecture seule', pending: 'En attente' };
 const canEdit = () => S.profile && ['admin', 'manager'].includes(S.profile.role);
 const isAdmin = () => S.profile && S.profile.role === 'admin';
-const PARAM_DEFAULTS = { shiftAdvance: 2, minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
+const PARAM_DEFAULTS = { limDbMb: 500, limStorageMb: 1024, limLiveMonth: 500000, manifestKeepDays: 30, shiftAdvance: 2, minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
 
 // ---------- Accès aux données ----------
-const PK = { vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key' };
+const PK = { vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key', manager_shifts: 'agency_id,user_id,day,shift' };
 async function all(table, cols, build, order) {
   const page = 1000;
   const get = async i => {
@@ -64,8 +64,10 @@ async function loadRef(force) {
 function agFilter() { let a = ''; try { a = localStorage.getItem('agence') || ''; } catch (e) { } return S.agencies.some(x => String(x.id) === a) ? a : ''; }
 /** Filtre par clé de véhicule selon l'agence choisie */
 function inAgency() {
-  const a = agFilter(); if (!a) return () => true;
-  const ks = new Set(S.vehList.filter(v => String(v.agency_id) === a).map(v => v.key)); return k => ks.has(k);
+  const a = agFilter(), m = mineOn() ? S.mine : null;   // planning : véhicules confiés à l'utilisateur pour le shift en cours (planning.js)
+  if (!a && !m) return () => true;
+  const ks = a ? new Set(S.vehList.filter(v => String(v.agency_id) === a).map(v => v.key)) : null;
+  return k => (!ks || ks.has(k)) && (!m || m.has(k));
 }
 function agOptions(sel, emptyTxt) { return (emptyTxt !== undefined ? `<option value="">${esc(emptyTxt)}</option>` : '') + S.agencies.map(a => `<option value="${a.id}" ${String(sel) === String(a.id) ? 'selected' : ''}>${esc(a.name)}</option>`).join(''); }
 function agTxt(id) { return id ? esc(S.agName[id] || '') : '<span class="small">aucune</span>'; }
@@ -89,6 +91,39 @@ async function appUpdateCheck() {
 function appUpdateShow() {
   const f = $('.side .foot'); if (!f || !S.appLatest || !window.LUDY_APP || verNum(S.appLatest) <= verNum(window.LUDY_APP.version) || $('#appupd')) return;
   f.insertAdjacentHTML('afterbegin', `<a id="appupd" class="dlapp" href="#/application">Nouvelle version de l'application (${esc(S.appLatest)}) : mettre à jour</a>`);
+}
+// ---------- Limites de l'hébergement (offre Supabase) : base, stockage, appels du relais En direct ; alerte à 80 % ----------
+/** Mesures (administrateur) : usage_stats() ; null si la migration 20261028000000_limites.sql n'est pas exécutée */
+async function usageLoad(force) {
+  if (!isAdmin()) return null;
+  if (S.usage !== undefined && !force) return S.usage;
+  try { S.usage = await rpc('usage_stats'); } catch (e) { S.usage = null; }
+  return S.usage;
+}
+/** Lignes [libellé, utilisé, limite, unité, détail] ; projection des appels du mois au rythme des jours comptés */
+function usageRows(u, P) {
+  if (!u) return [];
+  const st = u.storage_mb || {}, stTot = Object.values(st).reduce((a, x) => a + num(x), 0);
+  const m = new Date(u.month + 'T12:00:00Z'), dim = new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 0)).getUTCDate();
+  const days = Math.max(1, num(u.live_days)), proj = Math.round(num(u.live_month) / days * dim);
+  return [['Base de données', num(u.db_mb), num(P.limDbMb, 500), 'Mo', 'données détaillées archivées dans Drive au-delà de ' + num(P.retentionDays, 62) + ' jours'],
+    ['Stockage (PDF, application)', Math.round(stTot * 10) / 10, num(P.limStorageMb, 1024), 'Mo', Object.keys(st).map(k => k + ' ' + f1(st[k]) + ' Mo').join(' · ') || 'vide'],
+    ['Appels En direct ce mois', num(u.live_month), num(P.limLiveMonth, 500000), '', u.live_since ? 'comptés depuis le ' + fmtDay(u.live_since) + ' · à ce rythme : ' + f0(proj) + ' sur le mois' + (u.live_days < 3 ? ' (estimation encore peu fiable)' : '') : 'aucun appel compté ce mois'],
+  ].map(r => r.concat([r[0] === 'Appels En direct ce mois' ? Math.max(r[1], u.live_days >= 3 ? proj : 0) : r[1]]));
+}
+/** Limite atteinte à 80 % (ou projetée pour les appels du mois) */
+function usageAlerts(u, P) { return usageRows(u, P).filter(r => r[5] >= 0.8 * r[2]); }
+function usageHtml(u, P) {
+  if (!u) return msg('Suivi des limites pas encore installé : exécuter <b>supabase/migrations/20261028000000_limites.sql</b> dans Supabase &gt; SQL Editor.', 'warn');
+  return `<div class="usage">${usageRows(u, P).map(r => { const pct = r[2] ? Math.min(100, r[1] / r[2] * 100) : 0, ppct = r[2] ? r[5] / r[2] * 100 : 0, cls = ppct >= 100 ? 'crit' : ppct >= 80 ? 'warn' : 'ok';
+    return `<div class="ub"><div class="ul"><b>${esc(r[0])}</b><span>${f0(r[1])}${r[3] ? ' ' + r[3] : ''} / ${f0(r[2])}${r[3] ? ' ' + r[3] : ''} (${f0(pct)} %)</span></div>
+      <div class="ubar"><span class="${cls}" style="width:${pct.toFixed(1)}%"></span></div><div class="small">${esc(r[4])}</div></div>`; }).join('')}</div>`;
+}
+/** Bandeau en bas du menu (administrateur) quand une limite approche */
+async function usageWarn() {
+  const u = await usageLoad(); const a = usageAlerts(u, S.P || {}), f = $('.side .foot');
+  if (!a.length || !f || $('#usewarn')) return;
+  f.insertAdjacentHTML('afterbegin', `<a id="usewarn" class="dlapp" href="#/reglages">Limite de l'hébergement bientôt atteinte : ${esc(a.map(r => r[0].toLowerCase()).join(', '))}</a>`);
 }
 function appUber() { const u = window.LUDY_APP && window.LUDY_APP.uber; return /^https:\/\/([a-z0-9-]+\.)*uber\.com\//.test(u || '') ? u : ''; }
 function appIpc() { return !!(window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke); }
@@ -210,8 +245,8 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
-  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['reglages', 'Réglages']];
-const ADMIN_PAGES = { agences: 1, reglages: 1 };
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning'], ['reglages', 'Réglages']];
+const ADMIN_PAGES = { agences: 1, planning: 1, reglages: 1 };
 function shell() {
   const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct';
   $('#app').innerHTML = `<div class="layout">
@@ -220,15 +255,16 @@ function shell() {
     <nav aria-label="Pages">${NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && canSee(n[0])).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
       (n[0] !== 'direct' ? '' : appMode() === 'link' ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` :
         navSites().filter(x => canSee('x-' + x.id)).map(x => `<a href="#/x-${x.id}" class="navext${page === 'x-' + x.id ? ' on' : ''}" data-ext="${x.id}"${page === 'x-' + x.id ? ' aria-current="page"' : ''}>${esc(x.name)}</a>`).join(''))).join('')}</nav>
-    <div class="foot">${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
+    <div class="foot">${mineFoot()}${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
       ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span>${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
   <main id="page"><div class="loading">Chargement…</div></main></div>`;
   $('#logout').onclick = async () => { await sb.auth.signOut(); location.hash = ''; };
   $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
   const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
+  const mo = $('#mineon'); if (mo) mo.onchange = () => { try { localStorage.setItem('mesveh', mo.checked ? '1' : '0'); } catch (e) { } route(); };
   const nb = $('#notifon'); if (nb) nb.onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } nb.remove(); };
-  health(); openAlerts(); appUpdateCheck(); appUpdateShow();
+  health(); openAlerts(); appUpdateCheck(); appUpdateShow(); usageWarn();
   const on = $('.side nav a.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   return page;
 }
@@ -1035,13 +1071,17 @@ async function pageAgences() {
 
 // ---------- RÉGLAGES (admin) ----------
 async function pageReglages() {
-  const [params, rules, users, logs, jobs, recs, scheds, types] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
+  const my = ROUTING;
+  const [params, rules, users, logs, jobs, recs, scheds, types, usage] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
     sb.from('logs').select('*').order('id', { ascending: false }).limit(150), sb.from('jobs').select('*').order('id', { ascending: false }).limit(30),
-    all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), all('alerts', 'type', q => q.gte('day', addDays(today(), -60)))]);
+    all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), all('alerts', 'type', q => q.gte('day', addDays(today(), -60))), usageLoad(true)]);
+  if (my !== ROUTING) return;   // autre page demandée pendant le chargement : ne pas l'écraser
   const alTypes = [...new Set(types.map(x => x.type))].sort();
   const SEVS = ['Critique', 'Haute', 'Moyenne', 'Info'], FREQ = { jour: 'Chaque jour (veille)', semaine: 'Chaque lundi (semaine passée)', mois: 'Le 1er du mois (mois passé)' };
   const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
   $('#page').innerHTML = `<div class="head"><h1>Réglages</h1></div>
+    <h2>Limites de l'hébergement</h2><div class="sub">Offre Supabase (base, stockage, appels du temps réel). Le site lui-même (Cloudflare) n'a pas de limite. À 80 % : avertissement en bas du menu. Limites à changer dans les paramètres ci-dessous si l'offre change (Pro : 8 000 Mo, 102 400 Mo, 2 000 000 appels).</div>
+    ${usageHtml(usage, S.P)}
     <h2>Utilisateurs</h2><div class="sub">Les nouveaux comptes attendent votre validation (rôle « En attente »). Gestionnaire = import des contrats, chauffeurs, plaques, statut des alertes. Lecture seule = consultation. Agences de chaque utilisateur : <a href="#/agences">Agences</a>.</div>
     ${table('tusr', [['Email', u => esc(u.email)], ['Créé le', u => fmtDTY(u.created_at)], ['Rôle', u => u.user_id === S.session.user.id ? ROLE_TXT[u.role] :
       `<select class="urole" data-u="${u.user_id}">${Object.keys(ROLE_TXT).map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${ROLE_TXT[r]}</option>`).join('')}</select>`],
@@ -1146,7 +1186,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
@@ -1158,6 +1198,7 @@ async function route() {
   if (!S.profile) { const { data } = await sb.from('profiles').select('*').eq('user_id', S.session.user.id).maybeSingle(); S.profile = data || { email: S.session.user.email, role: 'pending' }; }
   if (S.profile.role === 'pending') { pendingView(); return; }
   try { await loadRef(); } catch (e) { $('#app').innerHTML = msg('Base inaccessible : ' + esc(e.message), 'err'); return; }
+  await mineLoad();   // planning : véhicules confiés pour le shift en cours
   if (!canSee(pageOf())) { location.replace('#/' + firstAllowed()); return; }   // volet non autorisé à cet utilisateur
   let page = shell();
   if (/^x-/.test(page)) { const id = page.slice(2); PAGES[page] = () => pageExt(id); }

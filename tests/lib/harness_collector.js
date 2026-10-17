@@ -77,7 +77,9 @@ function storageFetch(url, opt) {
   const u = 'http://localhost:' + (process.env.SITE_PORT || 8080) + url.slice(url.indexOf('/storage/v1/'));
   const args = ['-s', '-o', '-', '-w', '%{http_code}', '-X', String(opt.method || 'get').toUpperCase(), u];
   Object.entries(opt.headers || {}).forEach(([k, v]) => args.push('-H', k + ': ' + v));
-  const out = execFileSync('curl', args, { maxBuffer: 1 << 30 }), code = +out.slice(-3).toString(), bytes = out.slice(0, -3);
+  if (opt.contentType) args.push('-H', 'Content-Type: ' + opt.contentType);
+  if (opt.payload !== undefined) args.push('--data-binary', '@-');
+  const out = execFileSync('curl', args, { input: opt.payload || '', maxBuffer: 1 << 30 }), code = +out.slice(-3).toString(), bytes = out.slice(0, -3);
   const blob = { bytes, name: '', type: '', setName(n) { this.name = n; return this; }, setContentType(t) { this.type = t; return this; }, getBytes() { return this.bytes; } };
   return { getResponseCode: () => code, getContentText: () => bytes.toString(), getBlob: () => blob };
 } const books = {}; const props = {}, triggers = [], folders = [], cache = {};

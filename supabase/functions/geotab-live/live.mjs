@@ -175,6 +175,10 @@ export async function handle(req, deps) {
     if (vr.status === 401) return json(401, { error: 'Connexion requise' });
     if (!vr.ok) return json(502, { error: 'Base : HTTP ' + vr.status });
     const veh = (await vr.json()).filter(v => String(v.active).toUpperCase() !== 'NON' && v.active !== false);
+    // appel compté par jour (quota de l'offre Supabase, suivi dans Réglages) ; sans effet sur la réponse s'il échoue
+    const svc = deps.env('SUPABASE_SERVICE_ROLE_KEY');
+    if (svc) await deps.fetch(rest + '/rpc/bump_usage', { method: 'POST', headers: { apikey: svc, Authorization: 'Bearer ' + svc, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_kind: 'live' }) }).catch(() => null);
     const now = deps.now ? deps.now() : Date.now(), nowIso = new Date(now).toISOString(), q = new URL(req.url).searchParams, mode = q.get('mode') || '';
     if (mode === 'detail') {
       const v = veh.find(x => x.key === q.get('key')), from = ms(q.get('from')), to = ms(q.get('to') || q.get('from'));

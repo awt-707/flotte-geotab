@@ -16,7 +16,7 @@ test.after(() => { if (srv) srv.kill(); });
 const PAGES = [['direct', 'En direct', /En route|Garé|Arrêté/], ['tableau', 'Tableau de bord', /Km parcourus/], ['jour', 'Journée du', /Journées de travail actives/],
   ['chauffeurs', 'Classement des chauffeurs', /Score/], ['alertes', 'Alertes', /Gravité/], ['manifeste', 'Manifestes', /Derniers manifestes/], ['contrats', 'Contrats', /Contrats des 40 derniers jours/],
   ['plaques', 'Changements de plaque', /Ancienne plaque/], ['vehicules', 'Véhicules', /WW968194/], ['reglages', 'Réglages', /Journal technique/],
-  ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/],
+  ['fiches', 'Chauffeurs', /Code/], ['rapports', 'Rapports', /Km parcourus/], ['agences', 'Agences', /Aucune agence|Accès des utilisateurs/], ['planning', 'Planning des gestionnaires', /Aucune agence|Gestionnaire/],
   ['conduite', 'Conduite', /Excès de vitesse/], ['carburant', 'Carburant', /Jauge en ce moment/], ['carburant?t=carte', 'Carburant', /Aucun achat importé/], ['conso', 'Consommation', /Rapport de consommation/], ['ralenti', 'Ralenti', /Heures de ralenti par chauffeur/], ['arrets', 'Arrêts moteur tournant', /Détail des arrêts/], ['comportement', 'Comportement chauffeur', /Choisissez un chauffeur/], ['finshift?d=2026-10-03&s=Jour', 'Résultat de fin de shift', /Par chauffeur : consommation et conduite/],
   ['vehicule?k=968199WW', 'WW968199', /Journées de travail/], ['chauffeur?c=C038', 'Compte rendu', /Par journée de travail/]];
 
@@ -528,4 +528,28 @@ test('manifeste : réglages de l\'administrateur (entreprise, cachet rendu trans
     assert.match(await page.innerText('#mfvinfo'), /7 places autorisées · N° d'agrément TT\/99999\/2026/);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
+});
+
+test('limites de l\'hébergement : mesures dans Réglages, avertissement à 80 % ; En direct ralenti sans activité', async () => {
+  env.psql(`truncate usage_daily; insert into usage_daily (day, kind, n) values ((now() + interval '1 hour')::date, 'live', 450000)`);
+  const { br, page, errors } = await openBrowser();
+  let calls = 0; page.on('request', r => { if (/functions\/v1\/geotab-live(\?|$)/.test(r.url()) && !/mode=/.test(r.url())) calls++; });
+  try {
+    await login(page, '#/reglages');
+    await page.waitForSelector('.usage .ub');
+    const txt = await page.innerText('.usage');
+    assert.match(txt, /Base de données[\s\S]*Mo \/ 500 Mo/); assert.match(txt, /Stockage[\s\S]*\/ 1\s?024 Mo/); assert.match(txt, /Appels En direct ce mois[\s\S]*450\s?000 \/ 500\s?000 \(90\s?%\)/);
+    assert.strictEqual(await page.locator('.ubar span.warn, .ubar span.crit').count() >= 1, true);
+    assert.match(await page.innerText('#usewarn'), /Limite de l'hébergement bientôt atteinte : appels en direct ce mois/);
+    // En direct : sans souris ni clavier depuis 10 min, une lecture par minute au lieu de toutes les 5 s
+    await page.goto('http://localhost:8080/#/direct');
+    await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test((document.querySelector('#page') || {}).innerText || ''), null, { timeout: 20000 });
+    await page.evaluate(() => { LIVE_ACT = Date.now() - 11 * 60000; LIVE.lastCall = Date.now(); });
+    const c0 = calls; await page.waitForTimeout(11000);
+    assert.strictEqual(calls, c0, 'aucune lecture pendant la minute d\'inactivité');
+    await page.mouse.move(200, 300); await page.mouse.move(220, 310);
+    await page.waitForTimeout(1500);
+    assert.ok(calls > c0, 'reprise aussitôt après un mouvement de souris');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); env.psql('truncate usage_daily'); }
 });
