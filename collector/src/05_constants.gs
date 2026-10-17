@@ -90,6 +90,7 @@ const PARAM_DEFS = [
   ['retentionDays', 'Données détaillées conservées (jours)', 62, 'Au-delà, archivées chaque mois dans le classeur « Flotte Geotab - Archive » (Drive)'],
   ['shiftDay', 'Équipe de jour : début (heure)', 7, 'Bilan de fin de shift : l\'équipe de jour finit quand commence l\'équipe de nuit'],
   ['shiftNight', 'Équipe de nuit : début (heure)', 19, 'L\'équipe de nuit finit le lendemain à l\'heure de début de l\'équipe de jour'],
+  ['shiftAdvance', 'Shift d\'un contrat : avance (heures)', 2, 'Contrat pris jusqu\'à N h avant le début d\'un shift : compté dans ce shift (2 : pris de 05:00 à 16:59 = jour, de 17:00 à 04:59 = nuit ; 0 : 07:00 → 18:59 jour)'],
   ['overByLimit', 'Dépassement : seuil d\'alerte par limite de route', '', 'limite:seuil séparés par « ; » (ex. 50:30;80:20;120:20). Limite non listée : la ligne inférieure la plus proche, sinon le seuil général. Réglé dans Réglages > Alerte de dépassement de vitesse']
 ];
 const MODEL_DEFAULTS = { STARIA: { tank: 75 }, SONATA: { tank: 50 }, _: { tank: '' } };

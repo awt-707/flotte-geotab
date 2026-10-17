@@ -2,21 +2,28 @@
 // de shiftDay h (inclus) à shiftNight h (exclu) = shift jour, sinon nuit. Même règle sur le site et dans les rapports PDF.
 const test = require('node:test'), assert = require('node:assert');
 const env = require('./lib/env'), lib = require('../site/lib.js'), rpt = require('../site/report.js');
-const P = { shiftDay: 7, shiftNight: 19, kmMin: 20, minFuelKm: 30, scoreY: 5, scoreO: 10, scoreR: 20 };
+const P = { shiftDay: 7, shiftNight: 19, shiftAdvance: 0, kmMin: 20, minFuelKm: 30, scoreY: 5, scoreO: 10, scoreR: 20 };
 // heure du Maroc 'hh:mm' le 14/10/2026 (UTC+1) -> instant UTC
 const at = hm => new Date(Date.UTC(2026, 9, 14, +hm.slice(0, 2) - 1, +hm.slice(3, 5))).toISOString();
 
-test('shift d\'un contrat : pris de 07:00 à 18:59 = jour, sinon nuit, heure du Maroc', () => {
+test('shift d\'un contrat : pris de 07:00 à 18:59 = jour (avance 0), de 05:00 à 16:59 (avance 2 h), heure du Maroc', () => {
   lib.setTzRules(env.MA_TZ);
   const cases = { '07:00': 'Jour', '06:59': 'Nuit', '06:00': 'Nuit', '12:59': 'Jour', '15:30': 'Jour', '18:59': 'Jour', '19:00': 'Nuit', '23:30': 'Nuit', '00:59': 'Nuit', '01:01': 'Nuit' };
   Object.entries(cases).forEach(([hm, s]) => {
     assert.strictEqual(lib.shiftOf(at(hm), P), s, 'site ' + hm);
     assert.strictEqual(rpt.rptShift(lib.localHM(at(hm)), P), s, 'rapport ' + hm);
   });
-  assert.strictEqual(lib.shiftOf(at('13:00'), { shiftDay: 8, shiftNight: 20 }), 'Jour');
-  assert.strictEqual(lib.shiftOf(at('07:30'), { shiftDay: 8, shiftNight: 20 }), 'Nuit');
-  assert.strictEqual(lib.shiftOf(at('19:30'), { shiftDay: 8, shiftNight: 20 }), 'Jour');
+  assert.strictEqual(lib.shiftOf(at('13:00'), { shiftDay: 8, shiftNight: 20, shiftAdvance: 0 }), 'Jour');
+  assert.strictEqual(lib.shiftOf(at('07:30'), { shiftDay: 8, shiftNight: 20, shiftAdvance: 0 }), 'Nuit');
+  assert.strictEqual(lib.shiftOf(at('19:30'), { shiftDay: 8, shiftNight: 20, shiftAdvance: 0 }), 'Jour');
   assert.strictEqual(lib.shiftOf(null, P), '');
+  // avance de 2 h (réglage par défaut) : pris de 05:00 à 16:59 = jour, de 17:00 à 04:59 = nuit
+  const P2 = Object.assign({}, P, { shiftAdvance: 2 }), c2 = { '04:59': 'Nuit', '05:00': 'Jour', '06:50': 'Jour', '15:30': 'Jour', '16:59': 'Jour', '17:00': 'Nuit', '23:30': 'Nuit' };
+  Object.entries(c2).forEach(([hm, s]) => {
+    assert.strictEqual(lib.shiftOf(at(hm), P2), s, 'site +2 h ' + hm);
+    assert.strictEqual(rpt.rptShift(lib.localHM(at(hm)), P2), s, 'rapport +2 h ' + hm);
+  });
+  assert.strictEqual(lib.shiftOf(at('05:30'), { shiftDay: 7, shiftNight: 19 }), 'Jour', 'sans réglage : 2 h d\'avance');
   assert.strictEqual(lib.shiftName('Nuit', P), 'Shift nuit (19:00 → 07:00)');
   lib.setTzRules(null);
 });
@@ -58,6 +65,12 @@ test('shift d\'un instant (alerte) : jour de 07:00 à 19:00, sinon nuit ; la nui
   assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(16, '18:58'), P)), 'Jour du 16/10');
   assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(16, '15:20'), P)), 'Jour du 16/10');
   assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(17, '00:08'), P)), 'Nuit du 16/10 → 17/10');
+  // avance de 2 h : la nuit prise à 23:30 reste la nuit du jour même, celle prise à 04:00 est la nuit de la veille, 05:30 = jour
+  const P2 = Object.assign({}, P, { shiftAdvance: 2 });
+  assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(16, '23:30'), P2)), 'Nuit du 16/10 → 17/10');
+  assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(17, '04:00'), P2)), 'Nuit du 16/10 → 17/10');
+  assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(17, '05:30'), P2)), 'Jour du 17/10');
+  assert.strictEqual(lib.shiftDayName(lib.shiftOfCtr(at2(16, '17:10'), P2)), 'Nuit du 16/10 → 17/10');
   assert.strictEqual(lib.shiftAt(null, P), null);
   lib.setTzRules(null);
 });

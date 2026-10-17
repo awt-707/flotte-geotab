@@ -40,11 +40,12 @@ function rptAgg(rows, minKm) {
   a.l100 = a.fuelKm >= (minKm || 30) ? a.fuel / a.fuelKm * 100 : null;
   return a;
 }
-/** Shift d'un contrat d'après l'heure de début 'hh:mm' (heure du Maroc) : de shiftDay h (inclus) à shiftNight h (exclu) = jour, sinon nuit */
+/** Shift d'un contrat d'après l'heure de début 'hh:mm' (heure du Maroc), avancée de shiftAdvance h (2 par défaut) : de shiftDay h (inclus) à shiftNight h (exclu) = jour, sinon nuit */
 function rptShiftH(P, k, def) { return P && P[k] !== undefined && P[k] !== null && P[k] !== '' ? rptNum(P[k]) : def; }
 function rptShift(hm, P) {
   if (!hm) return '';
-  var h = rptNum(String(hm).slice(0, 2)) + rptNum(String(hm).slice(3, 5)) / 60, d = rptShiftH(P, 'shiftDay', 7), n = rptShiftH(P, 'shiftNight', 19);
+  var d = rptShiftH(P, 'shiftDay', 7), n = rptShiftH(P, 'shiftNight', 19);
+  var h = ((rptNum(String(hm).slice(0, 2)) + rptNum(String(hm).slice(3, 5)) / 60 + rptShiftH(P, 'shiftAdvance', 2)) % 24 + 24) % 24;
   return (d < n ? h >= d && h < n : h >= d || h < n) ? 'Jour' : 'Nuit';
 }
 var RPT_SHIFTS = ['Jour', 'Nuit', ''];

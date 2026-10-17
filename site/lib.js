@@ -158,12 +158,15 @@ function aggJournal(rows, keyFn, P) {
 }
 const NM = 'non mesuré';
 /**
- * Shift d'une journée de travail : heure de début du contrat (Réglages : shiftDay, shiftNight). Contrat pris de shiftDay h
- * (inclus) à shiftNight h (exclu) = shift jour, sinon shift nuit (demande d'Ahmed, 17/10 : 07:00 → 18:59 jour). Sans contrat : '' (hors contrat).
+ * Shift d'une journée de travail : heure de début du contrat (Réglages : shiftDay, shiftNight, shiftAdvance). Un contrat pris
+ * jusqu'à shiftAdvance h avant le début d'un shift compte dans ce shift (demande d'Ahmed, 17/10) : avance 2 h = pris de 05:00 à
+ * 16:59 → jour, de 17:00 à 04:59 → nuit ; avance 0 = 07:00 → 18:59 jour. Sans contrat : '' (hors contrat).
  */
+function shiftAdv(P) { return num((P || {}).shiftAdvance, 2); }
 function shiftOf(t, P) {
   if (!t) return '';
-  const hm = localHM(t), h = +hm.slice(0, 2) + +hm.slice(3, 5) / 60, d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19);
+  const hm = localHM(t), d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19);
+  const h = ((+hm.slice(0, 2) + +hm.slice(3, 5) / 60 + shiftAdv(P)) % 24 + 24) % 24;
   return (d < n ? h >= d && h < n : h >= d || h < n) ? 'Jour' : 'Nuit';
 }
 /**
@@ -179,7 +182,8 @@ function shiftAt(t, P) {
 /** Shift d'un contrat avec son jour : règle de shiftOf (heure de début du contrat) ; une nuit prise après minuit appartient à la veille */
 function shiftOfCtr(start, P) {
   if (!start) return null;
-  const s = shiftOf(start, P), day = localDay(start), h = +localHM(start).slice(0, 2);
+  // jour du shift : celui de l'heure de début avancée (pris à 23:30 avec 2 h d'avance = nuit du jour même ; à 04:00 = nuit de la veille)
+  const s = shiftOf(start, P), t = new Date(new Date(start).getTime() + shiftAdv(P) * HOUR), day = localDay(t), h = +localHM(t).slice(0, 2);
   return { s, day: s === 'Nuit' && h < num((P || {}).shiftDay, 7) ? addDays(day, -1) : day };
 }
 /** Début (Date) du shift { s, day } : day à shiftDay h (jour) ou shiftNight h (nuit), heure du Maroc */
