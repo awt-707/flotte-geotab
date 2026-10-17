@@ -46,3 +46,29 @@ test('application Ludy : volet Uber Fleet seulement dans l\'application (window.
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
+
+test('application 1.1 : volet Uber Fleet posé à droite du menu (uber_show), masqué en changeant de volet (uber_hide)', async () => {
+  const { br, page, errors } = await openBrowser();
+  try {
+    await page.context().addInitScript(() => {
+      window.LUDY_APP = { version: '1.1.0', uber: 'https://fleethub.uber.com/orgs/test/livemap?tab=4', embed: true };
+      window.__calls = []; window.__TAURI_INTERNALS__ = { invoke: (c, a) => { window.__calls.push([c, a]); return Promise.resolve(); } };
+    });
+    await login(page, '#/tableau');
+    await page.waitForSelector('#navuber');
+    assert.strictEqual(await page.getAttribute('#navuber', 'href'), '#/uber');
+    await page.click('#navuber');
+    await page.waitForFunction(() => window.__calls.some(c => c[0] === 'uber_show'));
+    const show = (await page.evaluate(() => window.__calls)).filter(c => c[0] === 'uber_show').pop()[1];
+    const side = await page.evaluate(() => document.querySelector('.side').getBoundingClientRect().width);
+    assert.ok(show.x >= side - 1 && show.y === 0 && show.w > 600 && show.h === 900, 'zone de contenu à droite du menu : ' + JSON.stringify(show) + ' menu ' + side);
+    assert.match(await page.getAttribute('#navuber', 'class'), /on/);
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await page.waitForFunction(() => window.__calls.filter(c => c[0] === 'uber_show').pop()[1].h === 800);
+    await page.evaluate(() => { window.__calls = []; });
+    await page.click('.side nav a[href="#/tableau"]');
+    await page.waitForFunction(() => window.__calls.some(c => c[0] === 'uber_hide'));
+    assert.ok(!(await page.evaluate(() => window.__calls)).some(c => c[0] === 'uber_show'));
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});

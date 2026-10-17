@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-uber-hide"
+description = "Enables the uber_hide command without any pre-configured scope."
+commands.allow = ["uber_hide"]
+
+[[permission]]
+identifier = "deny-uber-hide"
+description = "Denies the uber_hide command without any pre-configured scope."
+commands.deny = ["uber_hide"]
