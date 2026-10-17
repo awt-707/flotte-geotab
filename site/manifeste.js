@@ -376,11 +376,11 @@ function mfHistory() {
     ['', h => `<span class="mfha">${h.file_path && canEdit() ? `<button class="ghost small" data-mfpdf="${h.id}">PDF</button><button class="ghost small" data-mfwa="${h.id}">WhatsApp</button>` : ''}${canEdit() ? `<button class="ghost small" data-mfre="${h.id}">Reprendre</button>` : ''}</span>`]], rows, { empty: 'Aucun manifeste sur les 60 derniers jours' });
   window.__rerender = mfHistory;
   const byId = id => rows.find(h => String(h.id) === String(id));
-  box.querySelectorAll('[data-mfpdf]').forEach(b => b.onclick = async () => { try { window.open(await mfLink(byId(b.dataset.mfpdf).file_path), '_blank', 'noopener'); } catch (e) { alert('PDF inaccessible : ' + e.message); } });
+  box.querySelectorAll('[data-mfpdf]').forEach(b => b.onclick = async () => { try { { const u = await mfLink(byId(b.dataset.mfpdf).file_path); if (!openOut(u)) window.open(u, '_blank', 'noopener'); } } catch (e) { alert('PDF inaccessible : ' + e.message); } });
   box.querySelectorAll('[data-mfwa]').forEach(b => b.onclick = async () => {
     const h = byId(b.dataset.mfwa); let link = null; try { link = await mfLink(h.file_path); } catch (e) { }
     const d = (h.data && h.data.d) || null, txt = d ? manifText(d, link) : (h.message || ''), wa = manifWa(h.driver_phone);
-    window.open('https://wa.me/' + (wa || '') + '?text=' + encodeURIComponent(txt), '_blank', 'noopener');
+    { const u = 'https://wa.me/' + (wa || '') + '?text=' + encodeURIComponent(txt); if (!openOut(u)) window.open(u, '_blank', 'noopener'); }
   });
   box.querySelectorAll('[data-mfre]').forEach(b => b.onclick = () => {
     const h = byId(b.dataset.mfre), r = Object.assign({}, (h.data && h.data.raw) || {});

@@ -91,6 +91,51 @@ fn with_downloads<R: Runtime>(b: WebviewBuilder<R>, app: &AppHandle<R>) -> Webvi
   })
 }
 
+/// Application WhatsApp installée sur cet ordinateur ? (Mac : dossier Applications ; Windows : application du Store ou ancienne version)
+fn whatsapp_installed() -> bool {
+  #[cfg(target_os = "macos")]
+  {
+    let home = std::env::var("HOME").unwrap_or_default();
+    return ["/Applications/WhatsApp.app".to_string(), format!("{home}/Applications/WhatsApp.app")].iter().any(|p| std::path::Path::new(p).exists());
+  }
+  #[cfg(target_os = "windows")]
+  {
+    let local = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default());
+    if local.join("WhatsApp").join("WhatsApp.exe").exists() { return true; }
+    return std::fs::read_dir(local.join("Packages")).map(|d| d.flatten().any(|e| e.file_name().to_string_lossy().starts_with("5319275A.WhatsAppDesktop"))).unwrap_or(false);
+  }
+  #[allow(unreachable_code)]
+  false
+}
+/// Lien WhatsApp (wa.me / api.whatsapp.com) → whatsapp://send (ouvre directement l'application WhatsApp de l'ordinateur)
+fn whatsapp_link(u: &url::Url) -> Option<url::Url> {
+  let host = u.host_str().unwrap_or("");
+  if host != "wa.me" && host != "api.whatsapp.com" { return None; }
+  let q: std::collections::HashMap<String, String> = u.query_pairs().into_owned().collect();
+  let phone = if host == "wa.me" { u.path().trim_matches('/').to_string() } else { q.get("phone").cloned().unwrap_or_default() };
+  let mut w = url::Url::parse("whatsapp://send").ok()?;
+  { let mut p = w.query_pairs_mut();
+    if !phone.is_empty() && phone.chars().all(|c| c.is_ascii_digit()) { p.append_pair("phone", &phone); }
+    if let Some(t) = q.get("text") { p.append_pair("text", t); } }
+  Some(w)
+}
+/// Lien vers l'extérieur (WhatsApp, e-mail, cartes…) : ouvert par le système (application WhatsApp, messagerie, navigateur).
+/// La vue web de l'application ne sait pas ouvrir mailto: ni WhatsApp elle-même.
+fn open_out<R: Runtime>(app: &AppHandle<R>, u: &url::Url) -> Result<(), String> {
+  match u.scheme() {
+    "https" | "http" => {
+      if let Some(w) = whatsapp_link(u) { if whatsapp_installed() && app.opener().open_url(w.as_str(), None::<&str>).is_ok() { return Ok(()); } }
+      app.opener().open_url(u.as_str(), None::<&str>).map_err(|e| e.to_string())
+    }
+    "mailto" | "tel" | "whatsapp" => app.opener().open_url(u.as_str(), None::<&str>).map_err(|e| e.to_string()),
+    s => Err(format!("lien refusé : {s}")),
+  }
+}
+#[tauri::command]
+fn open_external<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> {
+  open_out(&app, &url::Url::parse(&url).map_err(|e| e.to_string())?)
+}
+
 /// Affiche le volet `id` (adresse `url`) sur la zone (x, y, w, h) de la page Ludy (pixels CSS = pixels logiques) ; les autres sont masqués
 #[tauri::command]
 fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: String, url: String, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
@@ -113,9 +158,10 @@ fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: Str
     // nouvel onglet demandé par le site : dans le volet s'il reste sur le même site, sinon dans le navigateur
     .on_new_window(move |u, _f| {
       if same_site(&u, &home) { if let Some(v) = h2.get_webview(&l2) { let _ = v.navigate(u); } }
-      else { let _ = h2.opener().open_url(u.as_str(), None::<&str>); }
+      else { let _ = open_out(&h2, &u); }
       NewWindowResponse::Deny
-    });
+    })
+    .on_navigation({ let h = app.clone(); move |u| { if matches!(u.scheme(), "mailto" | "tel" | "whatsapp") { let _ = open_out(&h, u); false } else { true } } });
   let v = win.add_child(with_downloads(b, &app), pos, size).map_err(|e| e.to_string())?;
   op.insert(label, url);
   let _ = v.set_focus();
@@ -165,13 +211,13 @@ fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .manage(Opened(Mutex::new(Default::default())))
-    .invoke_handler(tauri::generate_handler![ext_show, ext_hide, ext_reload, ext_status, ext_login])
+    .invoke_handler(tauri::generate_handler![ext_show, ext_hide, ext_reload, ext_status, ext_login, open_external])
     .setup(|app| {
       let home = home();
       let origin = { let u: url::Url = home.parse().expect("adresse du site"); u.origin().ascii_serialization() };
       // seul le site Ludy peut afficher / masquer les volets externes et enregistrer leurs accès réservés
       app.add_capability(CapabilityBuilder::new("ludy-site").webview("ludy").remote(format!("{origin}/*"))
-        .permission("allow-ext-show").permission("allow-ext-hide").permission("allow-ext-reload").permission("allow-ext-status").permission("allow-ext-login"))?;
+        .permission("allow-ext-show").permission("allow-ext-hide").permission("allow-ext-reload").permission("allow-ext-status").permission("allow-ext-login").permission("allow-open-external"))?;
       let win = WindowBuilder::new(app, "main")
         .title("Ludy · Supervision de flotte")
         .inner_size(1440.0, 900.0)
@@ -180,6 +226,7 @@ fn main() {
         .build()?;
       let init = include_str!("init.js").replace("__VERSION__", env!("CARGO_PKG_VERSION")).replace("__UBER__", UBER);
       let h1 = app.handle().clone();
+      let h3 = app.handle().clone();
       let site = origin.clone();
       let b = WebviewBuilder::new("ludy", WebviewUrl::External(home.parse().unwrap()))
         .initialization_script(&init)
@@ -187,13 +234,31 @@ fn main() {
         // liens « nouvel onglet » : le site dans sa vue, le reste (cartes…) dans le navigateur
         .on_new_window(move |url, _f| {
           if url.origin().ascii_serialization() == site { if let Some(v) = h1.get_webview("ludy") { let _ = v.navigate(url); } }
-          else { let _ = h1.opener().open_url(url.as_str(), None::<&str>); }
+          else { let _ = open_out(&h1, &url); }
           NewWindowResponse::Deny
-        });
+        })
+        // e-mail, téléphone, WhatsApp dans la page : ouverts par le système (la vue web ne les ouvre pas)
+        .on_navigation(move |url| { if matches!(url.scheme(), "mailto" | "tel" | "whatsapp") { let _ = open_out(&h3, url); false } else { true } });
       let size = win.inner_size()?.to_logical::<f64>(win.scale_factor()?);
       win.add_child(with_downloads(b, app.handle()), LogicalPosition::new(0.0, 0.0), size)?;
       Ok(())
     })
     .run(tauri::generate_context!())
     .expect("Ludy n'a pas pu démarrer");
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  #[test]
+  fn lien_whatsapp() {
+    let w = whatsapp_link(&url::Url::parse("https://wa.me/212612345678?text=Manifeste%20%E2%86%92%20Rabat%0AChauffeur%20%3A%20Z").unwrap()).unwrap();
+    assert_eq!(w.scheme(), "whatsapp");
+    let q: std::collections::HashMap<String, String> = w.query_pairs().into_owned().collect();
+    assert_eq!(q["phone"], "212612345678");
+    assert_eq!(q["text"], "Manifeste → Rabat\nChauffeur : Z");
+    let w = whatsapp_link(&url::Url::parse("https://wa.me/?text=Bonjour").unwrap()).unwrap();
+    assert!(!w.query_pairs().any(|(k, _)| k == "phone"));
+    assert!(whatsapp_link(&url::Url::parse("https://www.openstreetmap.org/?mlat=1").unwrap()).is_none());
+  }
 }
