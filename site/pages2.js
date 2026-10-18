@@ -104,8 +104,8 @@ async function pageCarburant() {
     add(byV[r.vehicle_key] = byV[r.vehicle_key] || mk(), r, v); add(tot, r, v); add(byD[dk] = byD[dk] || Object.assign(mk(), { name: r.driver_name, code, shift: dk.split('|')[0] }), r, v);
     if (r.fuel_l !== null) { const d = byDay[r.day] = byDay[r.day] || {}; d[r.vehicle_key] = (d[r.vehicle_key] || 0) + num(r.fuel_l); }
   });
-  const fills = fuel.filter(f => f.type === 'PLEIN'), fillsP = fills.filter(f => inP(f.day));
-  fillsP.forEach(f => [byV[f.vehicle_key] = byV[f.vehicle_key] || mk(), tot].forEach(o => { o.pleins++; o.pleinsL += num(f.liters_gauge); if (f.liters_geotab !== null) { o.pleinsEst += num(f.liters_geotab); o.pleinsEstN++; } }));
+  const fills = rptFillMark(fuel.filter(f => f.type === 'PLEIN')), fillsP = fills.filter(f => inP(f.day));   // litres d'un plein : mesure retenue selon le plein précédent
+  fillsP.forEach(f => [byV[f.vehicle_key] = byV[f.vehicle_key] || mk(), tot].forEach(o => { o.pleins++; o.pleinsL += rptFillL(f); }));   // mesure retenue plein par plein (rptFillL)
   const l100 = o => o.fuelKm >= num(P.minFuelKm, 30) ? f1(o.fuel / o.fuelKm * 100) : (o.fuelN ? 'km insuffisants' : NM);
   const cov = o => o.trips ? Math.round(o.fuelN / o.trips * 100) + ' %' : '-';
   const cost = o => !o.fuelN ? '' : o.noPrice === o.fuelN ? '<span class="nm">prix non saisi</span>' : f0(o.cost) + (o.noPrice ? ' <span class="nm">(partiel : prix non saisi pour une partie)</span>' : '');
@@ -116,14 +116,14 @@ async function pageCarburant() {
   const ff = fullToFull(fills, allTrips);
   const siph = fuel.filter(f => f.type === 'SIPHONAGE_SUSPECT').sort((a, b) => new Date(b.stop_start) - new Date(a.stop_start));
   const tne = fuel.filter(f => f.type === 'TRAJET_NON_ENREGISTRE').sort((a, b) => new Date(b.stop_start) - new Date(a.stop_start));
-  const rec = {}; fills.forEach(f => { const k = f.day.slice(0, 7) + '|' + f.vehicle_key, o = rec[k] || (rec[k] = { m: f.day.slice(0, 7), key: f.vehicle_key, n: 0, lj: 0, lg: 0, ng: 0 });
-    o.n++; o.lj += num(f.liters_gauge); if (f.liters_geotab !== null) { o.lg += num(f.liters_geotab); o.ng++; } });
+  const rec = {}; fills.forEach(f => { const k = f.day.slice(0, 7) + '|' + f.vehicle_key, o = rec[k] || (rec[k] = { m: f.day.slice(0, 7), key: f.vehicle_key, n: 0, l: 0 });
+    o.n++; o.l += rptFillL(f); });
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Carburant</h1><div class="sub">Litres = compteur carburant du véhicule, trajet par trajet (aucune estimation). Pleins détectés par Geotab : à comparer aux tickets. Un trajet compte dans la période s'il y démarre.</div></div>
     ${fuelTabs('')}
     ${periodBar(go)}<div class="bar">${vehSelect(key)}</div>
     ${cards([['Carburant consommé (L)', tot.fuelN ? f1(tot.fuel) : NM], ['Km', f0(tot.km)], ['Consommation (L/100 km)', l100(tot)], ['dont moteur allumé à l\'arrêt (L)', idleL(tot)],
-      ['Pleins détectés', f0(tot.pleins)], ['Litres pleins (jauge)', f1(tot.pleinsL)], ['Coût (MAD)', cost(tot)], ['Trajets mesurés', cov(tot)],
+      ['Pleins détectés', f0(tot.pleins)], ['Litres des pleins', f1(tot.pleinsL)], ['Coût (MAD)', cost(tot)], ['Trajets mesurés', cov(tot)],
       ['Siphonages suspects', f0(siph.filter(f => inP(f.day) && f.status !== 'Faux positif').length), siph.some(f => inP(f.day) && f.status !== 'Faux positif') ? 'crit' : '']])}
     <h2>Jauge en ce moment</h2>
     ${table('tjauge', [['Véhicule', k => vlink(k), k => vehOf(k).plate], ['Modèle', k => esc(vehOf(k).model || '')],
@@ -135,7 +135,7 @@ async function pageCarburant() {
       ['Km', k => f1((byV[k] || mk()).km), k => (byV[k] || mk()).km, 'n'], ['Carburant (L)', k => (byV[k] || mk()).fuelN ? f1(byV[k].fuel) : `<span class="nm">${NM}</span>`, k => (byV[k] || mk()).fuel, 'n'],
       ['L/100 km', k => nmv(l100(byV[k] || mk())), null, 'n'], ['Litres moteur à l\'arrêt', k => idleL(byV[k] || mk()), k => (byV[k] || mk()).idleL, 'n'],
       ['Temps moteur à l\'arrêt', k => fH((byV[k] || mk()).idleMin / 60), k => (byV[k] || mk()).idleMin, 'n'], ['Pleins', k => f0((byV[k] || mk()).pleins), null, 'n'],
-      ['Litres pleins (jauge)', k => f1((byV[k] || mk()).pleinsL), null, 'n'], ['Estimation Geotab (depuis plein précédent)', k => (byV[k] || mk()).pleinsEstN ? f1(byV[k].pleinsEst) : ((byV[k] || mk()).pleins ? `<span class="nm">${NM}</span>` : ''), null, 'n'],
+      ['Litres des pleins', k => f1((byV[k] || mk()).pleinsL), null, 'n'],
       ['Coût (MAD)', k => cost(byV[k] || mk()), null, 'n'], ['Trajets mesurés', k => cov(byV[k] || mk()), null, 'n']], vk)}
     <h2>Par chauffeur</h2>
     ${shiftSections(Object.keys(byD).sort((a, b) => byD[b].fuel - byD[a].fuel), k => byD[k].shift, (ks, sfx) => table('tcd' + sfx, [['Chauffeur', k => dlink(byD[k].code, drvName(byD[k].code, byD[k].name)), k => drvName(byD[k].code, byD[k].name)], ['Code', k => byD[k].code === HORS ? '' : esc(byD[k].code)], ['Trajets', k => byD[k].trips, null, 'n'],
@@ -146,18 +146,17 @@ async function pageCarburant() {
       .concat([['Total', d => `<b>${f1(Object.values(byDay[d]).reduce((s, x) => s + x, 0))}</b>`, null, 'n']]), Object.keys(byDay).sort())}
     <h2>Pleins détectés, un par un (${fillsP.length})</h2>
     ${table('tpl', [['Date / heure', f => fmtDTY(f.stop_start), f => f.stop_start], ['Véhicule', f => vlink(f.vehicle_key, f.plate), f => f.plate], ['Chauffeur', f => dlink(f.driver_code, drvName(f.driver_code, f.driver_name))],
-      ['Jauge avant (%)', f => f0(f.lvl_before), null, 'n'], ['Jauge après (%)', f => f0(f.lvl_after), null, 'n'], ['Litres (jauge)', f => f1(f.liters_gauge), f => num(f.liters_gauge), 'n'],
-      ['Litres Geotab', f => f1(f.liters_geotab), f => num(f.liters_geotab), 'n'], ['Lieu', f => mapLink(f.lat, f.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(f.lat, f.lon)}">carte</a>` : '']],
+      ['Jauge avant (%)', f => f0(f.lvl_before), null, 'n'], ['Jauge après (%)', f => f0(f.lvl_after), null, 'n'], ['Litres', f => f1(rptFillL(f)), f => rptFillL(f), 'n'], ['Mesure retenue', f => esc(rptFillSrc(f))],
+      ['Volume Geotab (L)', f => f.liters_geotab === null ? `<span class="nm">${NM}</span>` : f1(f.liters_geotab), f => num(f.liters_geotab), 'n'], ['Jauge × réservoir (L)', f => f1(f.liters_gauge), f => num(f.liters_gauge), 'n'], ['Lieu', f => mapLink(f.lat, f.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(f.lat, f.lon)}">carte</a>` : '']],
       fillsP.sort((a, b) => new Date(b.stop_start) - new Date(a.stop_start)), { empty: 'Aucun plein sur la période' })}
-    <h2>Consommation plein à plein</h2><div class="sub">Entre deux pleins complets (jauge ≥ ${esc(P.fullPct || 90)} % après le plein) : litres remis à la pompe / km roulés. Écart = litres mesurés trajet par trajet comparés aux litres remis.</div>
+    <h2>Consommation plein à plein</h2><div class="sub">Entre deux pleins complets (jauge ≥ ${esc(P.fullPct || 90)} % après le plein) : litres des pleins (volume calculé par Geotab) / km roulés. Écart = litres mesurés trajet par trajet comparés à ce volume : les deux viennent du compteur du véhicule, l'écart contrôle seulement qu'aucun trajet ne manque. Litres réellement facturés : onglet « Anomalies carburant ».</div>
     ${table('tff', [['Véhicule', x => vlink(x.key), x => vehOf(x.key).plate], ['Plein de départ', x => fmtDTY(x.from), x => x.from], ['Plein d\'arrivée', x => fmtDTY(x.to), x => x.to],
       ['Km roulés', x => f1(x.km), x => x.km, 'n'], ['Litres remis', x => f1(x.litres), x => x.litres, 'n'], ['L/100 km', x => x.l100 !== null ? `<b>${f1(x.l100)}</b>` : '<span class="nm">km insuffisants</span>', x => x.l100 || 0, 'n'],
       ['Chauffeur(s)', x => x.codes.map(c => dlink(c)).join(', ')], ['Attribuable à', x => x.single ? esc(x.single) : 'Plusieurs chauffeurs'],
       ['Litres mesurés par trajet', x => x.measured !== null ? f1(x.measured) : `<span class="nm">${NM}</span>`, null, 'n'],
       ['Écart (%)', x => x.gap === null ? '' : `<span class="${Math.abs(x.gap) > 15 ? 'red' : ''}">${f1(x.gap)}</span>`, x => x.gap || 0, 'n']], ff, { empty: 'Aucun intervalle entre deux pleins complets sur les données conservées' })}
     <h2>Récapitulatif des pleins par mois et par véhicule</h2>
-    ${table('trec', [['Mois', o => o.m.slice(5) + '/' + o.m.slice(0, 4), o => o.m], ['Véhicule', o => vlink(o.key)], ['Pleins', o => o.n, null, 'n'], ['Litres (jauge)', o => f1(o.lj), null, 'n'],
-      ['Litres Geotab', o => o.ng ? f1(o.lg) : '', null, 'n']], Object.values(rec).sort((a, b) => b.m.localeCompare(a.m)), { empty: 'Aucun plein' })}
+    ${table('trec', [['Mois', o => o.m.slice(5) + '/' + o.m.slice(0, 4), o => o.m], ['Véhicule', o => vlink(o.key)], ['Pleins', o => o.n, null, 'n'], ['Litres', o => f1(o.l), null, 'n']], Object.values(rec).sort((a, b) => b.m.localeCompare(a.m)), { empty: 'Aucun plein' })}
     <h2>Siphonages suspects (baisse de jauge moteur coupé, sans trajet)</h2>
     ${table('tsi', [['Arrêt', f => fmtDTY(f.stop_start), f => f.stop_start], ['Redémarrage', f => fmtDTY(f.stop_end)], ['Véhicule', f => vlink(f.vehicle_key, f.plate)],
       ['Chauffeur à l\'arrêt', f => dlink(f.driver_code, drvName(f.driver_code, f.driver_name))], ['Chauffeur au redémarrage', f => esc(f.next_driver || '')], ['Durée arrêt (min)', f => f0(f.stop_min), null, 'n'],
@@ -356,7 +355,7 @@ async function pageConso() {
   const keys = new Set(vlist.map(v => v.key)), mine = r => keys.has(r.vehicle_key);
   const [trips, fuel, stops, vd] = await Promise.all([
     all('trips', 'vehicle_key,plate,start_at,km,drive_min,idle_min,fuel_l,fuel_source,idle_fuel_l,driver_code,driver_name,contract_num', q => q.gte('start_at', aI).lt('start_at', zI)),
-    all('fuel', 'vehicle_key,plate,type,stop_start,stop_end,lvl_before,lvl_after,liters_gauge,liters_geotab,engine,status,driver_code,driver_name', q => q.gte('stop_start', aI).lt('stop_start', zI)),
+    all('fuel', 'vehicle_key,plate,type,stop_start,stop_end,lvl_before,lvl_after,liters_gauge,liters_geotab,engine,status,driver_code,driver_name', q => q.gte('stop_start', new Date(A - 45 * DAY).toISOString()).lt('stop_start', zI)),   // 45 j avant : plein précédent (litres d'un plein)
     all('engine_stops', 'vehicle_key,start_at,dur_min,liters,driver_code,contract_num', q => q.gte('start_at', aI).lt('start_at', zI)).catch(() => null),
     all('vehicle_days', 'vehicle_key,day', q => q.gte('day', d0).lte('day', d1))]);
   // Journées passées (avant-hier et plus) ni finalisées ni téléchargées : totaux incomplets, signalé
@@ -497,6 +496,7 @@ async function pageFicheVehicule() {
     sb.from('alerts').select('*').eq('vehicle_key', key).order('day', { ascending: false }).order('time', { ascending: false }).limit(30),
     // contrat en cours : le plus récent déjà commencé (une réservation future ne masque pas le contrat en cours)
     sb.from('contracts').select('num,name,client_code,start_at,end_at').eq('vehicle_key', key).lte('start_at', new Date().toISOString()).order('start_at', { ascending: false }).limit(1)]);
+  rptFillMark(fuel.filter(f => f.type === 'PLEIN'));   // litres d'un plein : selon le plein précédent
   const a = aggJournal(jrn.filter(r => r.day >= p.from && r.day <= p.to), () => 'A', P).A || emptyAgg();
   const lv = lvls.map(x => ({ t: new Date(x.at).getTime(), v: num(x.pct) })).sort((x, y) => x.t - y.t), last = lv[lv.length - 1];
   const c0 = (ctr.data || [])[0], cur = c0 && new Date(c0.start_at) <= new Date() && (!c0.end_at || new Date(c0.end_at) >= new Date()) ? c0 : null;
@@ -530,7 +530,7 @@ async function pageFicheVehicule() {
       idl.sort((x, y) => new Date(y.start_at) - new Date(x.start_at)), { empty: 'Aucun arrêt prolongé' })}
     <h2>Pleins et siphonages suspects (31 jours)</h2>
     ${table('tfvf', [['Date / heure', f => fmtDTY(f.stop_start), f => f.stop_start], ['Type', f => f.type === 'PLEIN' ? badge('Plein', 'ok') : f.type === 'SIPHONAGE_SUSPECT' ? badge('Siphonage suspect', 'crit') : badge('Boîtier coupé', 'crit')],
-      ['Jauge avant → après (%)', f => f1(f.lvl_before) + ' → ' + f1(f.lvl_after)], ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n'], ['Litres Geotab', f => f1(f.liters_geotab), null, 'n'],
+      ['Jauge avant → après (%)', f => f1(f.lvl_before) + ' → ' + f1(f.lvl_after)], ['Litres', f => f.type === 'PLEIN' ? f1(rptFillL(f)) : f1(f.liters_gauge), null, 'n'], ['Mesure', f => f.type === 'PLEIN' ? esc(rptFillSrc(f)) : 'jauge'],
       ['Chauffeur', f => dlink(f.driver_code, drvName(f.driver_code, f.driver_name))], ['Chauffeur au redémarrage', f => esc(f.next_driver || '')], ['Statut', f => esc(f.status || '')]],
       fuel.sort((x, y) => new Date(y.stop_start) - new Date(x.stop_start)), { empty: 'Aucun' })}
     <h2>Alertes (30 plus récentes)</h2>${alertTable('tfva', alS, false)}`;
@@ -563,6 +563,7 @@ async function pageFicheChauffeur() {
   const wRows = Object.keys(gw).sort().map(k => ({ label: 'Sem. du ' + fmtDay(k).slice(0, 5) + ' au ' + fmtDay(addDays(k, 6)), a: A(gw[k]) })).concat([{ label: 'Total', a: all0 }]);
   const byR = {}; evts.forEach(e => { const rl = S.rules[e.rule_id] || { name: e.rule_id, weight: 0 }, o = byR[e.rule_id] || (byR[e.rule_id] = { n: rl.name, w: num(rl.weight), c: 0, d: 0 }); o.c++; o.d += num(e.dur_s); });
   const speed = trips.filter(r => num(r.worst_over) >= 10 || num(r.vmax) >= num(P.vmaxAlert, 130)).sort((x, y) => new Date(x.start_at) - new Date(y.start_at));
+  rptFillMark(fuel.filter(f => f.type === 'PLEIN'));   // plein précédent de chaque véhicule (litres d'un plein)
   const pleins = fuel.filter(f => f.type === 'PLEIN' && f.driver_code === code), siph = fuel.filter(f => f.type === 'SIPHONAGE_SUSPECT' && (f.driver_code === code || f.next_driver === nom));
   $('#page').innerHTML = `<div class="head"><h1>Compte rendu : ${esc(nom)}</h1><div class="sub">Code client ${esc(code)}${d.phone ? ' · Tél. ' + esc(d.phone) : ''}${d.agency_id ? ' · agence ' + agTxt(d.agency_id) : ''} ·
       ${mine.length ? 'du ' + fmtDay(mine[0].day) + ' au ' + fmtDay(mine[mine.length - 1].day) + ' (données conservées)' : 'aucune journée de travail'} · ${Object.keys(all0.ctr).length} contrats · véhicules ${esc(Object.keys(all0.plates).join(', '))}</div>
@@ -590,7 +591,7 @@ async function pageFicheChauffeur() {
       Object.values(byR).sort((x, y) => y.c - x.c), { empty: 'Aucun événement' })}
     <h2>Carburant : pleins et siphonages</h2>
     ${table('tccp', [['Date / heure', f => fmtDTY(f.stop_start), f => f.stop_start], ['Véhicule', f => vlink(f.vehicle_key, f.plate)], ['Jauge avant → après (%)', f => f1(f.lvl_before) + ' → ' + f1(f.lvl_after)],
-      ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n'], ['Litres Geotab', f => f1(f.liters_geotab), null, 'n']], pleins, { empty: 'Aucun plein pendant ses contrats' })}
+      ['Litres', f => f1(rptFillL(f)), null, 'n'], ['Mesure', f => esc(rptFillSrc(f))]], pleins, { empty: 'Aucun plein pendant ses contrats' })}
     ${siph.length ? table('tccsi', [['Arrêt', f => fmtDTY(f.stop_start)], ['Redémarrage', f => fmtDTY(f.stop_end)], ['Véhicule', f => vlink(f.vehicle_key, f.plate)], ['Jauge', f => f1(f.lvl_before) + ' → ' + f1(f.lvl_after) + ' %'],
       ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n'], ['Rôle', f => f.driver_code === code ? 'Véhicule garé par lui' : 'Redémarré par lui'], ['Statut', f => esc(f.status || '')]], siph) : ''}
     <h2>Alertes</h2>${alertTable('tcca', alS.filter(x => x.status !== 'Faux positif'), false)}
@@ -639,7 +640,7 @@ async function driverReport(code, from, to) {
     all('journal', '*', dr),
     all('trips', '*', dr),
     all('events', 'id,vehicle_key,plate,day,start_at,dur_s,km,rule_id,rule_name,driver_code', dr),
-    all('fuel', '*', q => q.gte('day', from).lte('day', to).in('type', ['PLEIN', 'SIPHONAGE_SUSPECT'])),
+    all('fuel', '*', q => q.gte('day', addDays(from, -45)).lte('day', to).in('type', ['PLEIN', 'SIPHONAGE_SUSPECT'])),   // 45 j avant : plein précédent
     all('engine_stops', '*', dr).catch(() => null),
     all('idles', '*', dr),
     all('alerts', '*', dr),
@@ -730,7 +731,7 @@ async function pageFinShift() {
   const [trips, evts, stops, idles, fuel, al0] = await Promise.all([
     byNums('trips', '*'), byNums('events', 'id,vehicle_key,plate,day,start_at,dur_s,km,rule_id,rule_name,driver_code,contract_num'),
     byNums('engine_stops', '*').catch(() => null), byNums('idles', '*').catch(() => []),
-    all('fuel', '*', x => x.gte('day', sel.day).lte('day', addDays(sel.day, 1)).in('type', ['PLEIN', 'SIPHONAGE_SUSPECT'])),
+    all('fuel', '*', x => x.gte('day', addDays(sel.day, -45)).lte('day', addDays(sel.day, 1)).in('type', ['PLEIN', 'SIPHONAGE_SUSPECT'])),   // 45 j avant : plein précédent
     all('alerts', '*', x => x.gte('day', sel.day).lte('day', addDays(sel.day, 1)))]);
   // alertes du shift (contrat en cours à leur heure, sinon créneau horaire), véhicules de l'agence
   const al = (await alertShifts(al0.filter(a => ok(a.vehicle_key)))).filter(a => { const x = alertShiftDay(a); return x && x.s === sel.s && x.day === sel.day; });

@@ -122,6 +122,30 @@ function rptDT(t, dayOf, hmOf) { return t ? rptDay(dayOf(t)) + ' ' + hmOf(t) : '
  * o = { trips, fuel, stops (null = arrêts moteur non disponibles), vehicles, P, a, z (ms), agency, missing: [{plate, day}],
  *       dayOf(ms) -> 'aaaa-mm-jj', hmOf(ms) -> 'hh:mm' (heure du Maroc), generatedAt }
  */
+/**
+ * Litres d'un plein. Deux mesures, aucune n'est toujours juste (comparées aux litres facturés par Afriquia, 133 pleins, 09-10/2026) :
+ *  - volume Geotab (liters_geotab) = carburant consommé depuis le plein précédent (compteur du véhicule) : égal au volume
+ *    pompé seulement si ce plein ET le précédent remplissent le réservoir (Staria : facturé = 0,98 × Geotab, écart typique 4 %) ;
+ *    faux sinon (plein partiel : 0,65 ; après un plein partiel : 1,61) ;
+ *  - jauge × réservoir (liters_gauge) : juste pour un plein partiel (1,02), trop basse pour un plein complet du Staria (jauge
+ *    non proportionnelle : 1,16).
+ * Retenu : volume Geotab quand ce plein et le précédent sont complets (jauge ≥ RPT_FULL %), sinon la jauge.
+ * rptFillMark(lignes) repère le plein précédent de chaque véhicule : lui donner aussi les pleins avant la période (45 jours).
+ */
+var RPT_FULL = 97;
+function rptFillMark(rows) {
+  var byV = {};
+  (rows || []).filter(function (f) { return f && f.type !== 'SIPHONAGE_SUSPECT' && f.type !== 'TRAJET_NON_ENREGISTRE'; }).forEach(function (f) { (byV[f.vehicle_key] = byV[f.vehicle_key] || []).push(f); });
+  Object.keys(byV).forEach(function (k) {
+    var l = byV[k].sort(function (x, y) { return new Date(x.stop_start) - new Date(y.stop_start); });
+    l.forEach(function (f, i) { f._full = rptNum(f.lvl_after) >= RPT_FULL; f._prevFull = i ? rptNum(l[i - 1].lvl_after) >= RPT_FULL : null; });
+  });
+  return rows;
+}
+function rptFillGeo(f) { return f._full === true && f._prevFull === true && f.liters_geotab !== null && f.liters_geotab !== undefined && f.liters_geotab !== ''; }
+function rptFillL(f) { return rptFillGeo(f) || f.liters_gauge === null || f.liters_gauge === undefined || f.liters_gauge === '' ? rptNum(f.liters_geotab) : rptNum(f.liters_gauge); }
+function rptFillSrc(f) { return rptFillGeo(f) ? 'Geotab (plein à plein)' : f._prevFull === null && f._full ? 'jauge (plein précédent inconnu)' : 'jauge'; }
+
 function rptConso(o) {
   var P = o.P || {}, minKm = rptNum(P.minFuelKm) || 30, keys = {}, HORS = 'HORS_CONTRAT', a = o.a, z = o.z;
   (o.vehicles || []).forEach(function (v) { keys[v.key] = v; });
@@ -149,10 +173,11 @@ function rptConso(o) {
       x.stops++; x.stopMin += rptNum(s.dur_min); if (s.liters !== null && s.liters !== undefined) { x.stopL += rptNum(s.liters); x.stopLN++; } });
   });
   var fills = [], siph = [], tne = [];
+  rptFillMark((o.fuel || []).filter(function (f) { return f.type === 'PLEIN'; }));
   (o.fuel || []).forEach(function (f) {
     if (!keys[f.vehicle_key] || !inP(f.stop_start)) return;
     var x = byV[f.vehicle_key] = byV[f.vehicle_key] || mk();
-    if (f.type === 'PLEIN') { fills.push(f); [tot, x].forEach(function (y) { y.pleins++; y.pleinsL += rptNum(f.liters_gauge); }); }
+    if (f.type === 'PLEIN') { fills.push(f); [tot, x].forEach(function (y) { y.pleins++; y.pleinsL += rptFillL(f); }); }
     else if (f.type === 'SIPHONAGE_SUSPECT' && f.status !== 'Faux positif') { siph.push(f); [tot, x].forEach(function (y) { y.siph++; y.siphL += Math.abs(rptNum(f.liters_gauge)); }); }
     else if (f.type === 'TRAJET_NON_ENREGISTRE') tne.push(f);
   });
@@ -168,7 +193,7 @@ function rptConso(o) {
   var vlist = Object.keys(keys).filter(function (k) { return byV[k] || keys[k].active !== 'NON'; }).sort(function (x, y) { return ((byV[y] || {}).fuel || 0) - ((byV[x] || {}).fuel || 0) || String(keys[x].plate).localeCompare(String(keys[y].plate)); });
   var tables = [
     { title: 'Par véhicule', empty: 'Aucun véhicule',
-      head: ['Plaque', 'Modèle', 'Trajets', 'Km', 'Carburant (L)', 'L/100 km', 'Coût (MAD)', 'Ralenti', 'Litres au ralenti', 'Arrêts moteur tournant', 'Litres à l\'arrêt', 'Pleins', 'Litres pleins (jauge)', 'Siphonages suspects', 'Trajets mesurés'],
+      head: ['Plaque', 'Modèle', 'Trajets', 'Km', 'Carburant (L)', 'L/100 km', 'Coût (MAD)', 'Ralenti', 'Litres au ralenti', 'Arrêts moteur tournant', 'Litres à l\'arrêt', 'Pleins', 'Litres pleins', 'Siphonages suspects', 'Trajets mesurés'],
       num: [2, 3, 4, 5, 6, 7, 8, 11, 12, 13],
       rows: vlist.map(function (k) { var x = byV[k] || mk(), v = keys[k];
         return [v.plate, v.model || '', rptFmt(x.trips), rptFmt(x.km, 1), liters(x), l100(x), cost(x), rptH(x.idleMin / 60), x.idleN ? rptFmt(x.idleL, 1) : (x.trips ? RPT_NM : ''),
@@ -182,9 +207,9 @@ function rptConso(o) {
       head: ['Jour', 'Trajets', 'Km', 'Carburant (L)', 'L/100 km', 'Coût (MAD)', 'Litres au ralenti', 'Trajets mesurés'], num: [1, 2, 3, 4, 5, 6],
       rows: Object.keys(byDay).sort().map(function (d) { var x = byDay[d]; return [rptDay(d), rptFmt(x.trips), rptFmt(x.km, 1), liters(x), l100(x), cost(x), x.idleN ? rptFmt(x.idleL, 1) : RPT_NM, cov(x)]; }) },
     { title: 'Pleins détectés par Geotab (à pointer avec les tickets)', empty: 'Aucun plein sur la période',
-      head: ['Date / heure', 'Plaque', 'Chauffeur', 'Jauge avant (%)', 'Jauge après (%)', 'Litres (jauge)', 'Estimation Geotab (L)'], num: [3, 4, 5, 6],
+      head: ['Date / heure', 'Plaque', 'Chauffeur', 'Jauge avant (%)', 'Jauge après (%)', 'Litres', 'Mesure retenue', 'Volume Geotab (L)', 'Jauge × réservoir (L)'], num: [3, 4, 5, 7, 8],
       rows: fills.sort(function (x, y) { return new Date(x.stop_start) - new Date(y.stop_start); }).map(function (f) {
-        return [fdt(f.stop_start), keys[f.vehicle_key].plate, f.driver_name || '', rptFmt(f.lvl_before), rptFmt(f.lvl_after), rptFmt(f.liters_gauge, 1), f.liters_geotab === null || f.liters_geotab === undefined ? '' : rptFmt(f.liters_geotab, 1)]; }) },
+        return [fdt(f.stop_start), keys[f.vehicle_key].plate, f.driver_name || '', rptFmt(f.lvl_before), rptFmt(f.lvl_after), rptFmt(rptFillL(f), 1), rptFillSrc(f), f.liters_geotab === null || f.liters_geotab === undefined ? RPT_NM : rptFmt(f.liters_geotab, 1), rptFmt(f.liters_gauge, 1)]; }) },
     { title: 'Siphonages suspects (baisse de jauge moteur coupé, sans trajet)', empty: 'Aucun siphonage suspect',
       head: ['Arrêt', 'Redémarrage', 'Plaque', 'Chauffeur à l\'arrêt', 'Jauge avant → après (%)', 'Litres (jauge)', 'Statut'], num: [5],
       rows: siph.sort(function (x, y) { return new Date(x.stop_start) - new Date(y.stop_start); }).map(function (f) {
@@ -207,7 +232,7 @@ function rptConso(o) {
       ['Coût carburant (MAD)', cost(tot) || 'prix non saisi'],
       ['Ralenti (moteur allumé, véhicule immobile)', rptH(tot.idleMin / 60) + ' · ' + (tot.idleN ? rptFmt(tot.idleL, 1) + ' L' : RPT_NM)],
       ['Arrêts moteur tournant (' + rptFmt(rptNum(P.engStopMin) || 3) + ' min et plus)', o.stops ? stopTxt(tot) + (tot.stops ? ' · ' + stopL(tot) + ' L' : '') : 'non disponible'],
-      ['Pleins détectés', rptFmt(tot.pleins) + (tot.pleins ? ' (' + rptFmt(tot.pleinsL, 1) + ' L jauge)' : '')],
+      ['Pleins détectés', rptFmt(tot.pleins) + (tot.pleins ? ' (' + rptFmt(tot.pleinsL, 1) + ' L)' : '')],
       ['Siphonages suspects', rptFmt(tot.siph) + (tot.siph ? ' (' + rptFmt(tot.siphL, 1) + ' L)' : '')],
       ['Non mesuré', tot.noFuelKm ? rptFmt(tot.trips - tot.fuelN) + ' trajets, ' + rptFmt(tot.noFuelKm, 1) + ' km sans litres' : 'tous les trajets ont leurs litres'],
       ['Données', (o.missing || []).length ? o.missing.length + ' véhicule-jours pas encore téléchargés : totaux incomplets' : 'complètes']
@@ -276,6 +301,7 @@ function rptDriver(o) {
   var cv = {}; trips.forEach(function (t) { var x = cv[t.vehicle_key] = cv[t.vehicle_key] || { plate: t.plate || t.vehicle_key, n: 0, km: 0, l: 0, lkm: 0, ln: 0, il: 0, iln: 0 };
     x.n++; x.km += rptNum(t.km); if (t.fuel_l !== null && t.fuel_l !== undefined && t.fuel_l !== '') { x.l += rptNum(t.fuel_l); x.lkm += rptNum(t.km); x.ln++; }
     if (t.idle_fuel_l !== null && t.idle_fuel_l !== undefined && t.idle_fuel_l !== '') { x.il += rptNum(t.idle_fuel_l); x.iln++; } });
+  rptFillMark((o.fuel || []).filter(function (f) { return f.type === 'PLEIN'; }));   // plein précédent : avant la période compris
   var fuel = (o.fuel || []).filter(function (f) { return inDay(f.day); });
   var fills = fuel.filter(function (f) { return f.type === 'PLEIN' && f.driver_code === code; }).sort(function (x, y) { return new Date(x.stop_start) - new Date(y.stop_start); });
   var siph = fuel.filter(function (f) { return f.type === 'SIPHONAGE_SUSPECT' && f.status !== 'Faux positif' && (f.driver_code === code || (d.name && f.next_driver === d.name)); });
@@ -309,8 +335,8 @@ function rptDriver(o) {
       rows: Object.keys(cv).map(function (k) { var x = cv[k]; return [x.plate, rptFmt(x.n), rptFmt(x.km, 1), x.ln ? rptFmt(x.l, 1) : RPT_NM, x.lkm >= minKm ? rptFmt(x.l / x.lkm * 100, 1) : (x.ln ? 'km insuffisants' : RPT_NM),
         x.iln ? rptFmt(x.il, 1) : RPT_NM, Math.round(x.ln / x.n * 100) + ' %']; }) },
     { title: 'Pleins détectés par Geotab pendant ses contrats', empty: 'Aucun plein détecté',
-      head: ['Date / heure', 'Véhicule', 'Jauge avant → après (%)', 'Litres (jauge)', 'Litres Geotab'], num: [3, 4],
-      rows: fills.map(function (f) { return [dt(f.stop_start), f.plate || '', rptFmt(f.lvl_before) + ' → ' + rptFmt(f.lvl_after), nm(f.liters_gauge, 1), nm(f.liters_geotab, 1)]; }) }
+      head: ['Date / heure', 'Véhicule', 'Jauge avant → après (%)', 'Litres', 'Mesure retenue'], num: [3],
+      rows: fills.map(function (f) { return [dt(f.stop_start), f.plate || '', rptFmt(f.lvl_before) + ' → ' + rptFmt(f.lvl_after), rptFmt(rptFillL(f), 1), rptFillSrc(f)]; }) }
   ];
   if (siph.length) tables.push({ title: 'Siphonages suspects (baisse de jauge moteur coupé, sans trajet)', empty: '', head: ['Arrêt', 'Redémarrage', 'Véhicule', 'Jauge avant → après (%)', 'Litres (jauge)', 'Rôle', 'Statut'], num: [4],
     rows: siph.map(function (f) { return [dt(f.stop_start), dt(f.stop_end), f.plate || '', rptFmt(f.lvl_before) + ' → ' + rptFmt(f.lvl_after), rptFmt(Math.abs(rptNum(f.liters_gauge)), 1), f.driver_code === code ? 'Véhicule garé par lui' : 'Redémarré par lui', f.status || '']; }) });
@@ -343,7 +369,7 @@ function rptDriver(o) {
       ['Rang au classement (1 = le plus dangereux)', rank ? (rank.pos ? rank.pos + ' / ' + rank.n : 'non classé (moins de ' + kmMin + ' km)') : '-'],
       ['Ralenti prolongé', rptFmt(idles.length) + ' arrêts'],
       ['Arrêts moteur tournant', stops ? rptFmt(stops.length) + (stL.length ? ' · ' + rptFmt(stL.reduce(function (t, s) { return t + rptNum(s.liters); }, 0), 1) + ' L mesurés (' + stL.length + '/' + stops.length + ')' : '') : 'non disponible'],
-      ['Pleins détectés', rptFmt(fills.length) + (fills.length ? ' (' + rptFmt(fills.reduce(function (t, f) { return t + rptNum(f.liters_gauge); }, 0), 1) + ' L jauge)' : '')],
+      ['Pleins détectés', rptFmt(fills.length) + (fills.length ? ' (' + rptFmt(fills.reduce(function (t, f) { return t + rptFillL(f); }, 0), 1) + ' L)' : '')],
       ['Siphonages suspects', rptFmt(siph.length)],
       ['Alertes', RPT_SEV.map(function (k) { return k + ' ' + sev[k]; }).join(' · ')]
     ],
@@ -607,4 +633,4 @@ function rptDoc(rep) { return '<!doctype html><html><head><meta charset="utf-8">
 /** Nom de fichier du rapport */
 function rptFileName(rep) { if (rep.fileName) return String(rep.fileName).replace(/[^A-Za-z0-9_\-]+/g, '_'); return ((rep.kind === 'conso' ? 'rapport_consommation_' : rep.kind === 'chauffeur' ? 'comportement_' : rep.kind === 'conduite' ? 'conduite_' : rep.kind === 'classement' ? 'classement_' : 'rapport_flotte_') + (rep.agency === 'Toutes les agences' ? 'toutes_agences' : rep.agency) + '_' + rep.from + (rep.to !== rep.from ? '_' + rep.to : '')).replace(/[^A-Za-z0-9_\-]+/g, '_'); }
 
-if (typeof module !== 'undefined') module.exports = { rptConso: rptConso, rptBuild: rptBuild, rptTables: rptTables, rptHtml: rptHtml, rptDoc: rptDoc, rptFileName: rptFileName, rptFmt: rptFmt, rptShift: rptShift, rptDriver: rptDriver, rptSimple: rptSimple, rptOverTol: rptOverTol, rptOverWorst: rptOverWorst, rptOverHit: rptOverHit, rptShiftEnd: rptShiftEnd, rptFuelCard: rptFuelCard, rptRuleFr: rptRuleFr };
+if (typeof module !== 'undefined') module.exports = { rptConso: rptConso, rptBuild: rptBuild, rptTables: rptTables, rptHtml: rptHtml, rptDoc: rptDoc, rptFileName: rptFileName, rptFmt: rptFmt, rptShift: rptShift, rptDriver: rptDriver, rptSimple: rptSimple, rptOverTol: rptOverTol, rptOverWorst: rptOverWorst, rptOverHit: rptOverHit, rptShiftEnd: rptShiftEnd, rptFuelCard: rptFuelCard, rptRuleFr: rptRuleFr, rptFillL: rptFillL, rptFillMark: rptFillMark, rptFillSrc: rptFillSrc };

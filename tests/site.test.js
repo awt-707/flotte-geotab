@@ -74,7 +74,12 @@ test('page Carburant : mêmes totaux que « Carburant consommé entre deux dates
     assert.strictEqual(+await card('Consommation'), +m[3]);
     assert.strictEqual(+await card('moteur allumé'), +m[4]);
     assert.strictEqual(+await card('Pleins détectés'), +m[5]);
-    assert.strictEqual(+await card('Litres pleins'), +m[6]);
+    // litres des pleins : mesure retenue plein par plein (volume Geotab entre deux pleins complets, sinon jauge) au lieu de la jauge seule du v6
+    const R = require('../site/report.js'), all = JSON.parse(env.psql("select coalesce(json_agg(f), '[]') from (select * from fuel where type = 'PLEIN') f"));
+    R.rptFillMark(all);
+    const inP = all.filter(f => f.day >= '2026-09-30' && f.day <= '2026-10-06');
+    assert.strictEqual(+await card('Litres des pleins'), Math.round(inP.reduce((t, f) => t + R.rptFillL(f), 0) * 10) / 10);
+    assert.ok(+m[6] >= 0, 'jauge seule (v6) : ' + m[6]);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });

@@ -131,3 +131,13 @@ test('lecture de l\'extract Afriquia : plaque WW, date au Maroc, nombres, produi
   assert.strictEqual(lib.numAny('1,077.27'), 1077.27); assert.strictEqual(lib.numAny('1.077,27'), 1077.27);
   assert.throws(() => lib.parseFuelCard([['Nom', 'Prénom'], ['a', 'b']], cm), /Quantité/);
 });
+
+test('litres d\'un plein : volume Geotab entre deux pleins complets, sinon jauge (plein partiel, après un plein partiel, premier plein)', () => {
+  const R = require('../site/report.js');
+  const f = (t, before, after, gauge, geo) => ({ type: 'PLEIN', vehicle_key: 'V', stop_start: t, lvl_before: before, lvl_after: after, liters_gauge: gauge, liters_geotab: geo });
+  const l = [f('2026-10-01T08:00:00Z', 20, 100, 60, 70), f('2026-10-03T08:00:00Z', 15, 100, 64, 74.5), f('2026-10-05T08:00:00Z', 30, 60, 22.5, 41), f('2026-10-07T08:00:00Z', 25, 100, 56, 30)];
+  R.rptFillMark(l.slice().reverse());   // ordre quelconque
+  assert.deepStrictEqual(l.map(x => [R.rptFillL(x), R.rptFillSrc(x)]), [[60, 'jauge (plein précédent inconnu)'], [74.5, 'Geotab (plein à plein)'], [22.5, 'jauge'], [56, 'jauge']]);
+  // jauge absente : volume Geotab
+  const g = [f('2026-10-01T08:00:00Z', 20, 100, null, 70)]; R.rptFillMark(g); assert.strictEqual(R.rptFillL(g[0]), 70);
+});

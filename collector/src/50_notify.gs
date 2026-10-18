@@ -95,7 +95,7 @@ function buildConso_(from, to, agencyId) {
     .forEach(c => { ctrSh[c.num] = c.start_at ? rptShift(localHM_(c.start_at), P) : ''; });
   return rptConso({
     trips: dbSelect_('trips', 'select=vehicle_key,plate,start_at,km,drive_min,idle_min,fuel_l,fuel_source,idle_fuel_l,driver_code,driver_name,contract_num&start_at=gte.' + enc_(aI) + '&start_at=lt.' + enc_(zI), 'id'),
-    fuel: dbSelect_('fuel', 'select=vehicle_key,plate,type,stop_start,stop_end,lvl_before,lvl_after,liters_gauge,liters_geotab,engine,status,driver_code,driver_name&stop_start=gte.' + enc_(aI) + '&stop_start=lt.' + enc_(zI), 'id'),
+    fuel: dbSelect_('fuel', 'select=vehicle_key,plate,type,stop_start,stop_end,lvl_before,lvl_after,liters_gauge,liters_geotab,engine,status,driver_code,driver_name&stop_start=gte.' + enc_(new Date(new Date(aI).getTime() - 45 * 86400000).toISOString()) + '&stop_start=lt.' + enc_(zI), 'id'),
     stops: stops, vehicles: veh, drivers: drv, P: P, a: A, z: Z, missing: missing, agency: ag, dayOf: localDay_, hmOf: localHM_, ctrShift: n => ctrSh[n] || '', generatedAt: new Date()
   });
 }
@@ -164,7 +164,7 @@ function buildDriver_(code, from, to, keys) {
     journal: mine(dbSelect_('journal', 'select=*' + dr, 'id')),
     trips: mine(dbSelect_('trips', 'select=*' + dr, 'id')),
     events: mine(dbSelect_('events', 'select=id,vehicle_key,plate,day,start_at,dur_s,km,rule_id,rule_name,driver_code' + dr, 'id')),
-    fuel: mine(dbSelect_('fuel', 'select=*&type=in.(PLEIN,SIPHONAGE_SUSPECT)&day=gte.' + from + '&day=lte.' + to, 'id')),
+    fuel: mine(dbSelect_('fuel', 'select=*&type=in.(PLEIN,SIPHONAGE_SUSPECT)&day=gte.' + addDays_(from, -45) + '&day=lte.' + to, 'id')),   // 45 j avant : plein précédent
     stops: stops && mine(stops), idles: mine(dbSelect_('idles', 'select=*' + dr, 'id')), alerts: mine(dbSelect_('alerts', 'select=*' + dr, 'id')),
     rules, P, from, to, rankJournal: mine(dbSelect_('journal', 'select=id,driver_code,day,km,danger_pts,vehicle_key&day=gte.' + from + '&day=lte.' + to, 'id')),
     dayOf: localDay_, hmOf: localHM_, generatedAt: new Date()
