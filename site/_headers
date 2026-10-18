@@ -9,3 +9,5 @@
   Cache-Control: no-cache
 /index.html
   Cache-Control: no-cache
+/build.txt
+  Cache-Control: no-cache
