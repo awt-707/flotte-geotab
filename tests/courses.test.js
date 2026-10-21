@@ -31,10 +31,15 @@ test('prix : mise à disposition, transferts, intervilles, suppléments ; rien d
   assert.strictEqual(P({ kind: 'Mise à disposition à la journée', cat: 'STARIA', startDate: '2026-11-01', hoursDay: 9, kmDay: 120 }).total, 2000 + 300);
   assert.strictEqual(P({ kind: 'Mise à disposition à l\'heure', cat: 'SONATA', hoursDay: 1 }).total, 440);
   assert.strictEqual(P({ kind: 'Mise à disposition à l\'heure', cat: 'STARIA', hoursDay: 3.5 }).total, 1200);
-  // transfert aéroport aller-retour de nuit au retour, retour à vide −30 %, attente 90 min (60 incluses → 2 × 15 min), agence −10 %
+  // transfert aéroport aller-retour de nuit au retour, attente 90 min (60 incluses → 2 × 15 min), agence −10 % ;
+  // aller-retour du même client : le véhicule ne rentre pas à vide, pas de remise « course retour »
   p = P({ kind: 'Transfert aéroport', cat: 'STARIA', dest: 'Marrakech', roundTrip: true, returnEmpty: true, nightReturn: true, waitMin: 90, pro: true });
-  assert.deepStrictEqual(p.lines.map(l => l.amount), [2830, 2830, -849, 297.15, 150, -525.82]);
-  assert.strictEqual(p.total, 4732.33); assert.strictEqual(p.deposit, 0);
+  assert.deepStrictEqual(p.lines.map(l => l.amount), [2830, 2830, 424.5, 150, -623.45]);
+  assert.strictEqual(p.total, 5611.05); assert.strictEqual(p.deposit, 0);
+  // course retour (grille) : sens du retour d'un véhicule qui rentrerait à vide, −30 % sur le trajet ; nuit +15 % sur le prix du trajet
+  p = P({ kind: 'Déplacement interville', cat: 'STARIA', dest: 'Marrakech', returnEmpty: true, night: true, startDate: '2026-11-01' });
+  assert.deepStrictEqual(p.lines.map(l => l.amount), [2720, -816, 285.6]);
+  assert.match(p.lines[0].label, /^Marrakech → Casablanca/); assert.strictEqual(p.total, 2189.6);
   // interville : prix de la grille, acompte 30 %, péages compris (forfait)
   p = P({ kind: 'Déplacement interville', cat: 'SONATA', dest: 'Rabat', startDate: '2026-11-01' });
   assert.deepStrictEqual([p.total, p.deposit], [780, 234]);

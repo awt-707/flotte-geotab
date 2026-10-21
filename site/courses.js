@@ -121,11 +121,13 @@ function crsPrice(f, G) {
     else if (!p) notes.push('Pas de prix dans la grille pour cette catégorie de véhicule.');
     // chaque trajet : prix de la grille ; nuit (22h–6h) ou jour férié : +15 % sur ce trajet (nuit et férié non cumulables)
     const nightTxt = 'Nuit (' + (G.nightFrom || 22) + 'h–' + (G.nightTo || 6) + 'h) ou jour férié : +' + nightPct + ' % (non cumulables)';
-    let go = add(what + (f.roundTrip ? ' (aller)' : '') + vehTxt, nVeh, p); baseSum += go;
+    // course retour (grille) : course dans le sens du retour d'un véhicule qui rentrerait à vide (déposé par un autre client) : −30 % sur ce trajet
+    const retour = !f.roundTrip && f.returnEmpty && crsN(G.returnPct);
+    let go = add((retour && base === 'interville' ? (f.dest || '?') + ' → Casablanca' : what) + (f.roundTrip ? ' (aller)' : '') + vehTxt, nVeh, p); baseSum += go;
+    if (retour && go) { const r = add('Course retour : véhicule qui rentre à vide (−' + G.returnPct + ' %)', 1, -go * crsN(G.returnPct) / 100, 'remise'); go += r; baseSum += r; }
     if ((f.night || f.holiday) && nightPct && go) add(nightTxt + (f.roundTrip ? ', aller' : ''), 1, go * nightPct / 100, 'majoration');
     if (f.roundTrip) {
       let back = add(what + ' (retour)' + vehTxt, nVeh, p); baseSum += back;
-      if (f.returnEmpty && crsN(G.returnPct) && back) { const r = add('Course retour : véhicule qui serait rentré à vide (−' + G.returnPct + ' %)', 1, -back * crsN(G.returnPct) / 100, 'remise'); back += r; baseSum += r; }
       if ((f.nightReturn || f.holiday) && nightPct && back) add(nightTxt + ', retour', 1, back * nightPct / 100, 'majoration');
     }
     const free = base === 'aeroport' ? crsN(G.waitFreeAirport) : crsN(G.waitFreeOther), w = Math.max(0, crsN(f.waitMin) - free);
@@ -268,7 +270,7 @@ function crsForm() {
     <div class="mfrow">${crsField('kind', 'Type de prestation', 'select', { options: CRS_KINDS.map(x => x[0]) })}
     ${crsField('base', 'Formule tarifaire', 'select', { empty: 'Automatique : ' + (CRS_BASES[crsBase(Object.assign({}, f, { base: '' }), G)] || '—'), options: Object.keys(CRS_BASES).map(k => [k, CRS_BASES[k]]) })}
     ${tab ? crsField('dest', base === 'aeroport' ? 'Destination (depuis / vers l\'aéroport Mohammed V)' : 'Destination depuis Casablanca', 'select', { options: tab.map(r => r.dest) }) : ''}
-    ${tab ? crsField('roundTrip', 'Aller-retour', 'check') + (f.roundTrip ? crsField('returnEmpty', 'Course retour : le véhicule serait rentré à vide (−' + (G.returnPct || 0) + ' %)', 'check') : '') : ''}
+    ${tab ? crsField('roundTrip', 'Aller-retour', 'check') + (!f.roundTrip ? crsField('returnEmpty', 'Course retour : sens du retour, le véhicule rentrerait à vide (−' + (G.returnPct || 0) + ' %)', 'check') : '') : ''}
     ${crsField('dispo', 'Niveau de disponibilité', 'select', { options: CRS_DISPO })}${crsField('planning', 'Planning', 'select', { options: [['oui', 'Confirmé'], ['partiel', 'Approximatif'], ['non', 'Non défini']] })}
     ${crsField('changes', 'Changements de dernière minute probables', 'check')}${crsField('flatOrReal', 'Facturation', 'select', { options: ['Prix forfaitaire', 'Selon l\'utilisation réelle'] })}</div></details>
   <details class="panel" open><summary><h2>3. Dates et horaires</h2></summary><div class="mfrow">
