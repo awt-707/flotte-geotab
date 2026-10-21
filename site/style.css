@@ -401,3 +401,9 @@ table.crslines td, table.crslines th { padding: 5px 4px; border-bottom: 1px soli
 table.crslines .n { text-align: right; white-space: nowrap; }
 table.crslines tfoot th { font-size: 15px; }
 @media (max-width: 900px) { .crsgrid { grid-template-columns: minmax(0, 1fr); } .crsgrid #crsside { position: static; max-height: none; } }
+/* Course privée en cours (En direct) : couleur Ludy (bordeaux) sur le marqueur, l'étiquette, la carte du véhicule et le badge */
+.badge.crs { background: #7b1e2e; color: #fff; text-decoration: none; }
+.vmk-pin.crs { border-color: #7b1e2e; box-shadow: 0 0 0 3px #fff, 0 0 0 6px #7b1e2e, 0 2px 8px rgba(0, 0, 0, .35); }
+.vmk-l.crs { background: #7b1e2e; }
+.vcard.crs { box-shadow: inset 4px 0 0 #7b1e2e; }
+.card.crs .cv { color: #7b1e2e; }

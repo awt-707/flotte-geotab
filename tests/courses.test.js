@@ -157,6 +157,12 @@ test('page Courses privées : nouvelle demande, prix en direct, enregistrement, 
     await page.goto('http://localhost:8080/#/courses?id=' + env.psql('select id from missions')); await page.waitForSelector('#tcrsg');
     const geo = await page.innerText('#crsgeo');
     assert.match(geo, /Contrôle réel \(Geotab\)/); assert.match(geo, /170,5/);
+    // En direct : véhicule en course privée signalé (carte du véhicule, marqueur, info-bulle)
+    env.psql(`insert into live_status (vehicle_key, plate, model, state, lat, lon, updated_at) values ('968199WW', 'WW968199', 'STARIA', 'En route', 33.59, -7.61, now()), ('968194WW', 'WW968194', 'SONATA', 'Garé', 33.6, -7.62, now())`);
+    await page.goto('http://localhost:8080/#/direct'); await page.waitForSelector('#vlist .vcard.crs');
+    assert.strictEqual(await page.locator('#vlist .vcard.crs').count(), 1);
+    assert.match(await page.innerText('#vlist .vcard.crs'), /Course privée[\s\S]*Karim Bennani/);
+    assert.strictEqual(await page.locator('.vmk-pin.crs').count(), 1);
     // grille : l'administrateur la modifie
     await page.goto('http://localhost:8080/#/courses?t=grille'); await page.waitForSelector('#gsave');
     await page.fill('[data-g="day.STARIA"]', '2100'); await page.click('#gsave'); await page.waitForSelector('text=Grille enregistrée');
