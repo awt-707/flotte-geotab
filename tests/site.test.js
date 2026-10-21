@@ -35,7 +35,7 @@ for (const [viewport, size] of [['ordinateur', { width: 1440, height: 900 }], ['
         assert.match(txt, content, p + ' : contenu attendu absent');
         assert.strictEqual(await page.locator('#page .msg.err').count(), 0, p + ' : ' + txt.slice(0, 200));
         if (viewport === 'téléphone') {
-          const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+          const over = await page.evaluate(() => document.documentElement.scrollWidth - 390);   // isMobile : innerWidth suit la largeur du contenu
           assert.ok(over <= 1, p + ' : la page déborde de ' + over + ' px en largeur');
         }
         await page.screenshot({ path: path.join(env.OUT, 'site_' + p.replace(/\W.*/, '') + (viewport === 'téléphone' ? '_mobile' : '') + '.png') });

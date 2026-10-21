@@ -20,7 +20,9 @@ function notifyAlerts_() {
   }
   const al = dbSelect_('alerts', 'select=id,day,time,plate,vehicle_key,driver_name,type,severity,detail,value&notified_at=is.null', 'id');
   if (!al.length) return '';
-  const since = addDays_(today, -1), fresh = al.filter(a => String(a.day) >= since);
+  // nouvelles : alertes d'hier et d'aujourd'hui ; alerte d'un contrat de plusieurs jours (datée de son début) : 7 jours
+  const since = addDays_(today, -1), sinceC = addDays_(today, -7);
+  const fresh = al.filter(a => String(a.day) >= since || (/^(RALJ|CONSO|DANG)\|C\|/.test(a.id) && String(a.day) >= sinceC));
   // marquées avant l'envoi : une alerte n'est jamais envoyée deux fois, même si un envoi échoue
   const ids = al.map(a => a.id);
   for (let i = 0; i < ids.length; i += 300) dbRpc_('mark_notified', { p_ids: ids.slice(i, i + 300) });
@@ -75,7 +77,7 @@ function buildReport_(from, to, agencyId, freq) {
   const ag = agencyId ? (dbSelect_('agencies', 'select=id,name&id=eq.' + agencyId, 'id')[0] || {}).name : '';
   return rptBuild({
     journal: dbSelect_('journal', 'select=day,vehicle_key,driver_code,driver_name,contract_num,contract_start,km,drive_h,idle_h,long_idle_h,n_trips,fuel_l,fuel_km,fuel_cost,n_events,danger_pts,n_siphon,siphon_l,km_off_contract,vmax&day=gte.' + from + '&day=lte.' + to, 'id'),
-    alerts: dbSelect_('alerts', 'select=day,time,plate,vehicle_key,driver_name,type,severity,detail&day=gte.' + from + '&day=lte.' + to, 'id'),
+    alerts: dbSelect_('alerts', 'select=day,time,plate,vehicle_key,driver_name,type,severity,detail,status&day=gte.' + from + '&day=lte.' + to, 'id'),
     vehicles: veh, drivers: drv, P: P, from: from, to: to, agency: ag, frequency: freq, hmOf: localHM_, generatedAt: new Date()
   });
 }
@@ -114,16 +116,19 @@ function sendReport_(s, per) {
   return rep.period + ' envoyé à ' + to.length + ' destinataire' + (to.length > 1 ? 's' : '');
 }
 /** Rapports planifiés dus : une fois par période, quand les journées de la période sont finalisées et le journal à jour */
-function reportsStep_() {
+function reportsStep_(tRun) {
   const props = PropertiesService.getScriptProperties(), P = params_(), now = new Date(), today = localDay_(now), h = +localHM_(now).slice(0, 2);
   if (h < (P.reportHour === '' || P.reportHour === undefined ? 13 : P.reportHour)) return '';
-  if (JSON.parse(props.getProperty('SYNC_QUEUE') || '[]').length || props.getProperty('DERIVED_DIRTY')) return '';   // données pas encore finalisées
-  const list = dbSelect_('report_schedules', 'select=*&active=is.true', 'id'), out = [], t0 = Date.now(), hour = today + ' ' + h;
+  if (JSON.parse(props.getProperty('SYNC_QUEUE') || '[]').length || props.getProperty('SYNC_QUEUE_MORE_0') || props.getProperty('DERIVED_DIRTY')) return '';   // données pas encore finalisées
+  const list = dbSelect_('report_schedules', 'select=*&active=is.true', 'id'), out = [], t0 = tRun || Date.now(), hour = today + ' ' + h;
+  let due = null;   // véhicule-jours pas encore finalisés (Geotab en panne vers midi, file abandonnée) : jamais de rapport sur des lignes provisoires
   for (const s of list) {
-    if (Date.now() - t0 > 120000) break;                                   // le reste au passage suivant (jamais d'envoi coupé en plein milieu)
+    if (Date.now() - t0 > MAX_RUN_MS - 120000) break;                      // le reste au passage suivant (jamais d'envoi coupé en plein milieu)
     const per = reportPeriod_(s.frequency, today);
     if (s.last_period === per.key) continue;
     if (dayBounds_(per.to).end.getTime() + 12 * HOUR > now.getTime()) continue;   // journées de la période pas encore finalisées
+    if (due === null) due = dueFinal_(P);
+    if (due.some(x => x.d >= per.from && x.d <= per.to)) continue;
     if (props.getProperty('REPORT_ERR|' + s.id) === hour) continue;      // en échec : nouvel essai l'heure suivante
     let res, ok = true;
     try { res = sendReport_(s, per); } catch (e) { res = 'Erreur : ' + mailErr_(e); ok = false; }
@@ -176,9 +181,10 @@ function jobDriverReport_(arg, by) {
   const day = /^\d{4}-\d{2}-\d{2}$/;
   if (!a.code || !day.test(a.from || '') || !day.test(a.to || '') || a.from > a.to) return 'Erreur : chauffeur ou période invalide';
   if (!/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(a.email || '')) return 'Erreur : adresse e-mail invalide';
-  // demandé par un gestionnaire : seulement les véhicules de ses agences (comme sur le site)
+  // demandé par un gestionnaire : seulement les véhicules de ses agences (comme sur le site) ; demande sans auteur refusée
+  if (!by) return 'Erreur : demande sans auteur';
   let keys = null;
-  if (by) {
+  {
     const pr = dbSelect_('profiles', 'select=user_id,role&user_id=eq.' + enc_(by), 'user_id')[0];
     if (!pr || pr.role !== 'admin') {
       const ags = dbSelect_('user_agencies', 'select=user_id,agency_id&user_id=eq.' + enc_(by), 'user_id,agency_id').map(x => x.agency_id);
@@ -205,7 +211,9 @@ function jobManifestMail_(arg, by) {
   const m = dbSelect_('manifests', 'select=id,vehicle_key,plate,driver_name,file_name,file_path,message,data&id=eq.' + enc_(a.id), 'id')[0];
   if (!m) return 'Erreur : manifeste introuvable';
   if (!m.file_path) return 'Erreur : PDF du manifeste non enregistré (à regénérer)';
-  if (by) {
+  if (!/^\d{4}-\d{2}\/[0-9A-Za-z-]{8,64}\.pdf$/.test(String(m.file_path))) return 'Erreur : chemin du PDF invalide';
+  if (!by) return 'Erreur : demande sans auteur';
+  {
     const pr = dbSelect_('profiles', 'select=user_id,role&user_id=eq.' + enc_(by), 'user_id')[0];
     if (!pr || pr.role !== 'admin') {
       const ags = dbSelect_('user_agencies', 'select=user_id,agency_id&user_id=eq.' + enc_(by), 'user_id,agency_id').map(x => x.agency_id);

@@ -66,8 +66,14 @@ fn free_path(dir: &PathBuf, name: &str) -> PathBuf {
   (2..1000).map(|i| dir.join(format!("{stem} ({i}){ext}"))).find(|p| !p.exists()).unwrap_or(p)
 }
 
-/// Téléchargements (PDF, exports) : dossier Téléchargements, puis fichier ouvert
-fn with_downloads<R: Runtime>(b: WebviewBuilder<R>, app: &AppHandle<R>) -> WebviewBuilder<R> {
+/// Fichier ouvert tout seul après téléchargement : documents, tableurs et images seulement (jamais un programme ni un script)
+fn safe_open(p: &std::path::Path) -> bool {
+  matches!(p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(), Some("pdf" | "xlsx" | "xls" | "csv" | "png" | "jpg" | "jpeg"))
+}
+
+/// Téléchargements (PDF, exports) : dossier Téléchargements, puis fichier ouvert s'il vient de Ludy (auto_open) et sans risque ;
+/// sinon (volet externe : Uber, Clicar…, ou autre type de fichier) seulement montré dans son dossier
+fn with_downloads<R: Runtime>(b: WebviewBuilder<R>, app: &AppHandle<R>, auto_open: bool) -> WebviewBuilder<R> {
   let dir = app.path().download_dir().ok();
   let last: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
   let h = app.clone();
@@ -82,7 +88,10 @@ fn with_downloads<R: Runtime>(b: WebviewBuilder<R>, app: &AppHandle<R>) -> Webvi
       }
       DownloadEvent::Finished { path, success, .. } => {
         if success {
-          if let Some(p) = path.or_else(|| last.lock().unwrap().clone()) { let _ = h.opener().open_path(p.to_string_lossy(), None::<&str>); }
+          if let Some(p) = path.or_else(|| last.lock().unwrap().clone()) {
+            if auto_open && safe_open(&p) { let _ = h.opener().open_path(p.to_string_lossy(), None::<&str>); }
+            else { let _ = h.opener().reveal_item_in_dir(&p); }
+          }
         }
       }
       _ => {}
@@ -162,7 +171,7 @@ fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: Str
       NewWindowResponse::Deny
     })
     .on_navigation({ let h = app.clone(); move |u| { if matches!(u.scheme(), "mailto" | "tel" | "whatsapp") { let _ = open_out(&h, u); false } else { true } } });
-  let v = win.add_child(with_downloads(b, &app), pos, size).map_err(|e| e.to_string())?;
+  let v = win.add_child(with_downloads(b, &app, false), pos, size).map_err(|e| e.to_string())?;
   op.insert(label, url);
   let _ = v.set_focus();
   Ok(())
@@ -227,7 +236,7 @@ fn main() {
       let init = include_str!("init.js").replace("__VERSION__", env!("CARGO_PKG_VERSION")).replace("__UBER__", UBER);
       let h1 = app.handle().clone();
       let h3 = app.handle().clone();
-      let site = origin.clone();
+      let (site, site2) = (origin.clone(), origin.clone());
       let b = WebviewBuilder::new("ludy", WebviewUrl::External(home.parse().unwrap()))
         .initialization_script(&init)
         .auto_resize()
@@ -237,10 +246,15 @@ fn main() {
           else { let _ = open_out(&h1, &url); }
           NewWindowResponse::Deny
         })
-        // e-mail, téléphone, WhatsApp dans la page : ouverts par le système (la vue web ne les ouvre pas)
-        .on_navigation(move |url| { if matches!(url.scheme(), "mailto" | "tel" | "whatsapp") { let _ = open_out(&h3, url); false } else { true } });
+        // e-mail, téléphone, WhatsApp dans la page : ouverts par le système (la vue web ne les ouvre pas) ; la vue Ludy ne montre que
+        // le site Ludy (une page externe, sans barre d'adresse, pourrait imiter l'écran de connexion) : le reste va au navigateur
+        .on_navigation(move |url| {
+          if matches!(url.scheme(), "mailto" | "tel" | "whatsapp") { let _ = open_out(&h3, url); return false; }
+          if matches!(url.scheme(), "blob" | "data" | "about") || url.origin().ascii_serialization() == site2 { return true; }
+          let _ = open_out(&h3, url); false
+        });
       let size = win.inner_size()?.to_logical::<f64>(win.scale_factor()?);
-      win.add_child(with_downloads(b, app.handle()), LogicalPosition::new(0.0, 0.0), size)?;
+      win.add_child(with_downloads(b, app.handle(), true), LogicalPosition::new(0.0, 0.0), size)?;
       Ok(())
     })
     .run(tauri::generate_context!())
@@ -250,6 +264,12 @@ fn main() {
 #[cfg(test)]
 mod tests {
   use super::*;
+  #[test]
+  fn fichiers_ouverts_seuls() {
+    use std::path::Path;
+    assert!(safe_open(Path::new("/x/Manifeste-Mission.PDF")) && safe_open(Path::new("rapport.xlsx")));
+    assert!(!safe_open(Path::new("x.command")) && !safe_open(Path::new("setup.exe")) && !safe_open(Path::new("a.bat")) && !safe_open(Path::new("sans_extension")));
+  }
   #[test]
   fn lien_whatsapp() {
     let w = whatsapp_link(&url::Url::parse("https://wa.me/212612345678?text=Manifeste%20%E2%86%92%20Rabat%0AChauffeur%20%3A%20Z").unwrap()).unwrap();

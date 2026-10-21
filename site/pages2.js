@@ -91,7 +91,9 @@ async function pageCarburant() {
     dataRows('levels', 'vehicle_key,at,pct', addDays(today(), -3), today(), { key, dayCol: 'vday' }),
     dataRows('trips', 'vehicle_key,start_at,km,fuel_l,fuel_source,driver_code', retFrom, today(), { key })]);
   const inP = d => d >= p.from && d <= p.to;
-  const vk = key ? [key] : S.vehList.filter(v => v.active !== 'NON' && inAgency()(v.key)).map(v => v.key);
+  // véhicules : actifs, ou ayant roulé dans la période (véhicule rendu en cours de période : ses litres comptent, sa ligne aussi)
+  const rolled = new Set(trips.map(r => r.vehicle_key));
+  const vk = key ? [key] : S.vehList.filter(v => (v.active !== 'NON' || rolled.has(v.key)) && inAgency()(v.key)).map(v => v.key);
   const mk = () => ({ trips: 0, km: 0, drive: 0, fuel: 0, fuelKm: 0, fuelN: 0, idleL: 0, idleN: 0, idleMin: 0, pleins: 0, pleinsL: 0, pleinsEst: 0, pleinsEstN: 0, cost: 0, noPrice: 0 });
   const byV = {}, byD = {}, byDay = {}, tot = mk();
   const add = (o, r, v) => { const km = num(r.km); o.trips++; o.km += km; o.drive += num(r.drive_min) / 60; o.idleMin += num(r.idle_min);
@@ -114,8 +116,9 @@ async function pageCarburant() {
   const lv = {}; lvls.forEach(x => { (lv[x.vehicle_key] = lv[x.vehicle_key] || []).push({ t: new Date(x.at).getTime(), v: num(x.pct) }); });
   Object.values(lv).forEach(a => a.sort((x, y) => x.t - y.t));
   const ff = fullToFull(fills, allTrips);
-  const siph = fuel.filter(f => f.type === 'SIPHONAGE_SUSPECT').sort((a, b) => new Date(b.stop_start) - new Date(a.stop_start));
-  const tne = fuel.filter(f => f.type === 'TRAJET_NON_ENREGISTRE').sort((a, b) => new Date(b.stop_start) - new Date(a.stop_start));
+  // siphonages et trajets non enregistrés de la période (comme les cartes du haut)
+  const siph = fuel.filter(f => f.type === 'SIPHONAGE_SUSPECT' && inP(f.day)).sort((a, b) => new Date(b.stop_start) - new Date(a.stop_start));
+  const tne = fuel.filter(f => f.type === 'TRAJET_NON_ENREGISTRE' && inP(f.day)).sort((a, b) => new Date(b.stop_start) - new Date(a.stop_start));
   const rec = {}; fills.forEach(f => { const k = f.day.slice(0, 7) + '|' + f.vehicle_key, o = rec[k] || (rec[k] = { m: f.day.slice(0, 7), key: f.vehicle_key, n: 0, l: 0 });
     o.n++; o.l += rptFillL(f); });
   const render = () => {
@@ -184,12 +187,14 @@ const FC_STATUS = ['À vérifier', 'Justifié', 'Anomalie confirmée'];
 async function pageCarteCarburant() {
   const p = period(), P = S.P, ok = inAgency(), MINS = 60000;
   const go = () => { pageCarteCarburant().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }); };
-  // achats : 60 jours avant la période en plus (relation litres / jauge par modèle, ticket précédent) ; pleins Geotab : 3 jours avant (transmission en différé)
+  // achats : 60 jours avant la période en plus (relation litres / jauge par modèle, ticket précédent) et 2 jours après (plein de la
+  // période payé après minuit ou transmis en différé) ; trajets : depuis 60 jours avant (moteur depuis le plein complet précédent)
+  const tripsFrom = addDays(p.from, -60);
   const [tx, fills, lvls, trips] = await Promise.all([
-    dataRows('fuel_card_tx', '*', addDays(p.from, -60), p.to),
+    dataRows('fuel_card_tx', '*', addDays(p.from, -60), addDays(p.to, 2)),
     all('fuel', 'id,vehicle_key,plate,day,stop_start,lvl_before,lvl_after,liters_gauge,liters_geotab,driver_code,driver_name', q => q.eq('type', 'PLEIN').gte('day', addDays(p.from, -63)).lte('day', addDays(p.to, 1))).then(r => r.filter(x => ok(x.vehicle_key))),
     dataRows('levels', 'vehicle_key,at,pct', addDays(p.from, -1), addDays(p.to, 1), { dayCol: 'vday' }),
-    dataRows('trips', 'vehicle_key,start_at,km,fuel_l', addDays(p.from, -10), addDays(p.to, 1))]);
+    dataRows('trips', 'vehicle_key,start_at,km,fuel_l', tripsFrom, addDays(p.to, 1))]);
   // chauffeur au moment du plein : contrat en cours sur le véhicule (contrat jamais clôturé : fin au début du suivant)
   const keys = [...new Set(tx.map(x => x.vehicle_key).filter(Boolean))], ctr = {};
   for (let i = 0; i < keys.length; i += 100) (await all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.in('vehicle_key', keys.slice(i, i + 100))
@@ -198,7 +203,7 @@ async function pageCarteCarburant() {
   Object.values(ctr).forEach(l => ctrEffEnds(l));
   const who = (k, t) => { const c = (ctr[k] || []).filter(c => new Date(c.start_at).getTime() <= t && (c._end === null || t < c._end)).pop(); return c ? c.name || c.client_code : 'Sans contrat'; };
   const V = {}; S.vehList.forEach(v => { V[v.key] = v; });
-  const res = rptFuelCard({ tx: tx.map(x => Object.assign({}, x, { at: new Date(x.at).getTime() })), fills, levels: lvls, trips, vehicles: V, who });
+  const res = rptFuelCard({ tx: tx.map(x => Object.assign({}, x, { at: new Date(x.at).getTime() })), fills, levels: lvls, trips, tripsFrom: dayBounds(tripsFrom).start.getTime(), vehicles: V, who });
   const inP = t => { const d = localDay(t); return d >= p.from && d <= p.to; };
   const rows = res.rows.filter(r => inP(r.at)), anom = rows.filter(r => r.anomalies.some(a => a.sev !== 'Info'));
   const orphans = res.orphans.filter(f => inP(new Date(f.stop_start).getTime()));
@@ -570,7 +575,7 @@ async function pageFicheChauffeur() {
       <button id="cprint" class="ghost">Imprimer / PDF</button> <a class="btnlink" href="#/comportement?c=${encodeURIComponent(code)}">Comportement entre deux dates (PDF, e-mail)</a></div>
     ${cards([['Classement danger', pos >= 0 ? (pos + 1) + ' / ' + rk.length + ' (' + esc(rk[pos].level) + ')' : '—'], ['Score /100 km', f1(scoreOf(all0, P))], ['Km', f0(all0.km)], ['Heures sous contrat', fH(all0.ctrH)],
       ['Conduite', fH(all0.drive)], ['Ralenti', fH(all0.idle)], ['dont prolongé', fH(all0.idleLong) + ' (' + all0.nLong + ')', all0.idleLong ? 'crit' : ''], ['Carburant mesuré', all0.fuelN ? f1(all0.fuel) + ' L' : NM],
-      ['Consommation', all0.l100 !== null ? f1(all0.l100) + ' L/100' : NM], ['Vmax', f0(all0.vmax) + ' km/h'], ['Événements', f0(all0.evts)], ['Siphonages suspects', f0(all0.siph), all0.siph ? 'crit' : ''], ['Alertes', f0(alS.filter(x => x.status !== 'Faux positif').length)]])}
+      ['Consommation', all0.l100 !== null ? f1(all0.l100) + ' L/100' : l100Val(all0)], ['Vmax', f0(all0.vmax) + ' km/h'], ['Événements', f0(all0.evts)], ['Siphonages suspects', f0(all0.siph), all0.siph ? 'crit' : ''], ['Alertes', f0(alS.filter(x => x.status !== 'Faux positif').length)]])}
     <h2>Par mois</h2>${table('tccm', LINE, mRows)}
     <h2>Par semaine</h2>${table('tccw', LINE, wRows)}
     <h2>Par journée de travail (horaires du contrat)</h2>
@@ -688,7 +693,7 @@ async function pageComportement() {
         ${canEdit() ? `<div class="dmail"><input type="email" id="cmail" placeholder="adresse e-mail" value="${esc((S.session && S.session.user && S.session.user.email) || '')}"><button id="csend" class="ghost">Envoyer par e-mail</button></div><div id="cmailst" class="small" aria-live="polite"></div>` : ''}</div>
     </div>
     ${cards([['Km', f0(a.km)], ['Conduite', fH(a.drive)], ['Ralenti', fH(a.idle), a.idleLong ? 'warn' : ''], ['Carburant', a.fuelN ? f1(a.fuel) + ' L' : NM],
-      ['L/100 km', a.l100 !== null ? f1(a.l100) : NM], ['Événements', f0(a.evts)], ['Score /100 km', rep.score != null ? f1(rep.score) : '—', rep.level ? LEVEL_CLS[rep.level] : ''],
+      ['L/100 km', l100Val(a)], ['Événements', f0(a.evts)], ['Score /100 km', rep.score != null ? f1(rep.score) : '—', rep.level ? LEVEL_CLS[rep.level] : ''],
       ['Pleins', esc(sum['Pleins détectés'].split(' ')[0])], ['Alertes', esc(String(sum['Alertes']).match(/\d+/g).reduce((t, x) => t + +x, 0))]])}
     <div class="grid2">
       <div><h2>Score de danger par journée</h2>${svgBars(dk.map(k => { const s = sc(days[k]), lv = levelOf(s, P); return { label: fmtDay(k), value: Math.max(s, 0.3), color: LVL_COLOR[lv], text: f1(s) + ' · ' + f0(days[k].km) + ' km' }; }), { title: 'Score par journée', empty: 'Aucune journée de travail' })}</div>
@@ -739,10 +744,14 @@ async function pageFinShift() {
   const tag = sel.day + '_' + sel.s.toLowerCase();
   const rep = rptShiftEnd({ journal: jrn, events: evts, trips, alerts: al, rules: S.rules, P, title: 'Résultat de fin de shift', period: label + (running ? ' (shift en cours : résultats provisoires)' : ''),
     from: sel.day, agency: agency || 'Toutes les agences', fileTag: tag, dayOf: localDay, hmOf: localHM });
+  rptFillMark(fuel.filter(f => f.type === 'PLEIN'));   // plein précédent du véhicule (tous chauffeurs) avant de garder ceux du contrat
   const drvRep = r => {
     const mine = x => x.contract_num === r.contract_num;
+    // pleins et siphonages du contrat ; siphonage remarqué au redémarrage par ce chauffeur pendant son contrat
+    const t0 = new Date(r.contract_start).getTime(), t1 = r.contract_end ? new Date(r.contract_end).getTime() : Infinity;
+    const fuelOf = f => mine(f) || (f.type === 'SIPHONAGE_SUSPECT' && f.next_driver === r.driver_name && new Date(f.stop_end).getTime() >= t0 && new Date(f.stop_end).getTime() <= t1);
     const d = rptDriver({ driver: { code: r.driver_code, name: S.drv[r.driver_code] || r.driver_name }, journal: [r], trips: trips.filter(mine), events: evts.filter(mine),
-      fuel: fuel.filter(f => f.driver_code === r.driver_code || f.next_driver === r.driver_name), stops: stops ? stops.filter(mine) : null, idles: idles.filter(mine),
+      fuel: fuel.filter(fuelOf), stops: stops ? stops.filter(mine) : null, idles: idles.filter(mine),
       alerts: al.filter(a => a.driver_code === r.driver_code), rules: S.rules, P, from: sel.day, to: addDays(sel.day, 1), rankJournal: jrn, dayOf: localDay, hmOf: localHM });
     return Object.assign(d, { kind: 'finshift_chauffeur', title: 'Fin de shift : ' + (S.drv[r.driver_code] || r.driver_name), period: label + ' · contrat ' + r.contract_num + ' · ' + (r.plate || ''),
       fileName: 'fin_de_shift_' + tag + '_' + r.driver_code });

@@ -52,10 +52,11 @@ function processLive(j) {
   });
   (j.vehicles || []).forEach(v => {
     if (v.state === 'En route' && v.speed >= lim) {
-      if (LIVE.fast[v.key]) { const a = LIVE.alerts.find(x => x.id === LIVE.fast[v.key]); if (a) { a.end = v.at || a.end; if (v.speed > a.vmax) { a.vmax = v.speed; a.detail = 'Vitesse max ' + v.speed + ' km/h (seuil ' + lim + ')'; } } return; }
+      if (LIVE.fast[v.key]) { const a = LIVE.alerts.find(x => x.id === LIVE.fast[v.key]); if (a) { a.end = v.at || a.end; if (v.speed > a.vmax) { a.vmax = v.speed; a.detail = 'Vitesse max ' + v.speed + ' km/h (seuil ' + lim + ')'; } } }
+      else {   // (pas de « return » : le dépassement de la limite de la route est suivi aussi)
       const c = contractAt(v.key, now), a = { id: 'VIT|' + v.key + '|' + (v.at || now), vehicle_key: v.key, plate: v.plate, at: v.at || new Date(now).toISOString(), end: v.at || null, cat: 'Vitesse', severity: 'Haute',
         type: 'Vitesse excessive', vmax: v.speed, detail: v.speed + ' km/h (seuil ' + lim + ')', driver_name: c ? c.name : 'Sans contrat', driver_code: c ? c.client_code : '', contract_num: c ? c.num : '', shift: c ? shiftOf(c.start_at, S.P) : '' };
-      LIVE.fast[v.key] = a.id; LIVE.alerts.push(a); fresh.push(a);
+      LIVE.fast[v.key] = a.id; LIVE.alerts.push(a); fresh.push(a); }
     } else if (v.state !== 'En route' || v.speed < lim - 10) delete LIVE.fast[v.key];   // 10 km/h de marge : pas d'alerte à répétition autour du seuil
     // dépassement de la limite de la route (limite Geotab sous le véhicule) au-delà du seuil réglé pour cette limite (Réglages)
     if (v.state === 'En route' && v.limit) {
@@ -111,7 +112,8 @@ function liveRows() {
     // chauffeur affiché maintenant : contrat qui couvre l'instant présent, sans tolérance (véhicule rendu = sans contrat) ;
     // extract pas encore injecté pour le shift en cours : « Contrat dépassé » (contrat d'un shift précédent ou aucun contrat)
     const g = LIVE.pos[r.vehicle_key], c0 = contractAt(r.vehicle_key, now, true), sc = c0 && shiftOfCtr(c0.start_at, S.P);
-    const c = c0 && (fresh || (sc.s === cur.s && sc.day === cur.day)) ? c0 : null, nc = c ? '' : fresh ? 'sans' : 'depasse';
+    // contrat à date de fin (location de plusieurs jours, réservation) : jamais « dépassé » tant qu'il couvre l'instant présent
+    const c = c0 && (fresh || c0.end_at || (sc.s === cur.s && sc.day === cur.day)) ? c0 : null, nc = c ? '' : fresh ? 'sans' : 'depasse';
     const who = { driver_name: c ? c.name : nc === 'sans' ? 'Sans contrat' : 'Contrat dépassé', no_ctr: nc, old_ctr: !c && c0 ? c0.num : '', contract_num: c ? c.num : '',
       driver_code: c ? c.client_code : HORS, shift: c ? shiftOf(c.start_at, S.P) : '', ctr_start: c ? c.start_at : null };
     return g && g.state ? Object.assign({}, r, who, { state: g.state, speed: g.speed, since_min: g.since_min, bearing: g.bearing,
@@ -220,10 +222,11 @@ function liveStatusTxt() {
 
 /** refresh = données du collecteur relues sans redessiner la carte */
 async function pageDirect(refresh) {
-  const ok = inAgency();
+  const ok = inAgency(), rid = ROUTING;
   [LIVE.rows] = await Promise.all([all('live_status', '*', null, ['plate']), loadLiveContracts(), refresh && LIVE.base ? null : loadConsoBase().catch(() => { LIVE.base = {}; })]);
   LIVE.rows = LIVE.rows.filter(r => ok(r.vehicle_key));
   if (refresh) { if ($('#tlive') && MAP) applyDirect(); return; }   // relecture : jamais de page redessinée (l'utilisateur a pu changer de page)
+  if (rid !== ROUTING) return;   // autre page demandée pendant le chargement
   const rows = liveRows(), last = LIVE.rows.reduce((m, r) => Math.max(m, new Date(r.updated_at || 0).getTime()), 0);
   LIVE.drv = {}; LIVE.drvAt = 0; LIVE.drvErr = ''; LIVE.drvFallback = ''; LIVE.trails = {};
   $('#page').innerHTML = `

@@ -52,6 +52,10 @@ jobs:
             ~/.cargo/git
             desktop/src-tauri/target
           key: tauri-${{ matrix.os }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+      - name: Tests (liens, fichiers ouverts après téléchargement)
+        working-directory: desktop/src-tauri
+        shell: bash
+        run: cargo test --release
       - name: Fabrication
         working-directory: desktop
         shell: bash
@@ -84,7 +88,15 @@ jobs:
         with:
           path: out
           merge-multiple: true
+      # relance d'une ancienne exécution : une ancienne application ne remplace jamais la dernière
+      - name: Dernière version de main ?
+        id: head
+        run: |
+          git fetch -q origin main --depth=1
+          if [ "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"
+          else echo "::warning::$GITHUB_SHA n'est plus la dernière version de main : application non publiée"; echo "ok=0" >> "$GITHUB_OUTPUT"; fi
       - name: Supabase Storage (seau public « app »)
+        if: ${{ steps.head.outputs.ok == '1' }}
         env:
           SUPABASE_URL: https://cgiiwumbblimvmrypxlc.supabase.co
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

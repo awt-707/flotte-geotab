@@ -30,6 +30,11 @@ function liveFills_() {
   });
   if (!acc.fuels.length) return 0;
   attribRows_('FUEL', acc.fuels, attribCtx_());
+  // pleins nouveaux ou modifiés seulement : le journal n'est recalculé que s'il y a du nouveau (sinon toutes les 15 min pour rien)
+  const F = ['lvl_before', 'lvl_after', 'liters_gauge', 'liters_geotab', 'driver_code', 'contract_num'], sig = o => F.map(c => o[c] == null ? '' : String(+o[c] === +o[c] ? +o[c] : o[c])).join('|');
+  const rows = acc.fuels.map(r => toDb_('FUEL', r, true)), old = {};
+  for (let i = 0; i < rows.length; i += 40) dbSelect_('fuel', 'select=id,' + F.join(',') + '&id=' + inList_(rows.slice(i, i + 40).map(o => o.id)), 'id').forEach(o => { old[o.id] = sig(o); });
+  const changed = rows.filter(o => old[o.id] !== sig(o)).length;
   putLive_('FUEL', acc.fuels);
-  return acc.fuels.length;
+  return changed;
 }

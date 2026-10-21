@@ -69,7 +69,7 @@ function rptBuild(o) {
   var P = o.P || {}, minKm = rptNum(P.minFuelKm) || 30, kmMin = rptNum(P.kmMin) || 20, keys = {}, HORS = 'HORS_CONTRAT';
   (o.vehicles || []).forEach(function (v) { keys[v.key] = v; });
   var jrn = (o.journal || []).filter(function (r) { return keys[r.vehicle_key]; });
-  var al = (o.alerts || []).filter(function (a) { return keys[a.vehicle_key]; });
+  var al = (o.alerts || []).filter(function (a) { return keys[a.vehicle_key] && a.status !== 'Faux positif'; });   // alertes classées faux positif : hors rapport
   var t = rptAgg(jrn, minKm), byV = {}, byD = {};
   // shift du chauffeur = heure de début du contrat (o.hmOf : heure du Maroc) ; un chauffeur qui a fait les deux shifts apparaît dans chacun
   var shOf = function (r) { return o.hmOf && r.contract_num && r.contract_start ? rptShift(o.hmOf(new Date(r.contract_start).getTime()), P) : ''; };
@@ -133,9 +133,10 @@ function rptDT(t, dayOf, hmOf) { return t ? rptDay(dayOf(t)) + ' ' + hmOf(t) : '
  * rptFillMark(lignes) repère le plein précédent de chaque véhicule : lui donner aussi les pleins avant la période (45 jours).
  */
 var RPT_FULL = 97;
-function rptFillMark(rows) {
+function rptFillMark(rows, keep) {
   var byV = {};
-  (rows || []).filter(function (f) { return f && f.type !== 'SIPHONAGE_SUSPECT' && f.type !== 'TRAJET_NON_ENREGISTRE'; }).forEach(function (f) { (byV[f.vehicle_key] = byV[f.vehicle_key] || []).push(f); });
+  // keep : pleins déjà repérés sur la liste complète du véhicule (liste ici limitée à un chauffeur) gardés tels quels
+  (rows || []).filter(function (f) { return f && f.type !== 'SIPHONAGE_SUSPECT' && f.type !== 'TRAJET_NON_ENREGISTRE' && !(keep && f._prevFull !== undefined); }).forEach(function (f) { (byV[f.vehicle_key] = byV[f.vehicle_key] || []).push(f); });
   Object.keys(byV).forEach(function (k) {
     var l = byV[k].sort(function (x, y) { return new Date(x.stop_start) - new Date(y.stop_start); });
     l.forEach(function (f, i) { f._full = rptNum(f.lvl_after) >= RPT_FULL; f._prevFull = i ? rptNum(l[i - 1].lvl_after) >= RPT_FULL : null; });
@@ -143,8 +144,12 @@ function rptFillMark(rows) {
   return rows;
 }
 function rptFillGeo(f) { return f._full === true && f._prevFull === true && f.liters_geotab !== null && f.liters_geotab !== undefined && f.liters_geotab !== ''; }
-function rptFillL(f) { return rptFillGeo(f) || f.liters_gauge === null || f.liters_gauge === undefined || f.liters_gauge === '' ? rptNum(f.liters_geotab) : rptNum(f.liters_gauge); }
-function rptFillSrc(f) { return rptFillGeo(f) ? 'Geotab (plein à plein)' : f._prevFull === null && f._full ? 'jauge (plein précédent inconnu)' : 'jauge'; }
+function rptFillL(f) {
+  var no = function (v) { return v === null || v === undefined || v === ''; };
+  if (no(f.liters_geotab) && no(f.liters_gauge)) return null;   // ni volume Geotab ni jauge : non mesuré (jamais 0)
+  return rptFillGeo(f) || no(f.liters_gauge) ? rptNum(f.liters_geotab) : rptNum(f.liters_gauge);
+}
+function rptFillSrc(f) { return rptFillL(f) === null ? RPT_NM : rptFillGeo(f) ? 'Geotab (plein à plein)' : f._prevFull === null && f._full ? 'jauge (plein précédent inconnu)' : 'jauge'; }
 
 function rptConso(o) {
   var P = o.P || {}, minKm = rptNum(P.minFuelKm) || 30, keys = {}, HORS = 'HORS_CONTRAT', a = o.a, z = o.z;
@@ -198,10 +203,10 @@ function rptConso(o) {
       rows: vlist.map(function (k) { var x = byV[k] || mk(), v = keys[k];
         return [v.plate, v.model || '', rptFmt(x.trips), rptFmt(x.km, 1), liters(x), l100(x), cost(x), rptH(x.idleMin / 60), x.idleN ? rptFmt(x.idleL, 1) : (x.trips ? RPT_NM : ''),
           stopTxt(x), stopL(x), rptFmt(x.pleins), rptFmt(x.pleinsL, 1), x.siph ? rptFmt(x.siph) + ' (' + rptFmt(x.siphL, 1) + ' L)' : '0', cov(x)]; }) },
-  ].concat(rptSplit({ title: 'Par chauffeur', empty: 'Aucun trajet sur la période',
+  ].concat(rptSplit({ title: 'Par chauffeur', empty: 'Aucun trajet sur la période', none: 'Hors contrat ou contrat introuvable',
       head: ['Chauffeur', 'Code', 'Trajets', 'Km', 'Carburant (L)', 'L/100 km', 'Coût (MAD)', 'Ralenti', 'Litres au ralenti', 'Arrêts moteur tournant', 'Litres à l\'arrêt', 'Trajets mesurés'],
       num: [2, 3, 4, 5, 6, 7, 8],
-      rowsOf: function (sh) { return Object.keys(byD).filter(function (k) { return byD[k].trips && k.slice(0, k.indexOf('|')) === sh; }).sort(function (x, y) { return byD[y].fuel - byD[x].fuel || drvName(kc(x)).localeCompare(drvName(kc(y))); })
+      rowsOf: function (sh) { return Object.keys(byD).filter(function (k) { return (byD[k].trips || byD[k].stops) && k.slice(0, k.indexOf('|')) === sh; }).sort(function (x, y) { return byD[y].fuel - byD[x].fuel || drvName(kc(x)).localeCompare(drvName(kc(y))); })
         .map(function (k) { var x = byD[k], c = kc(k); return [drvName(c), c === HORS ? '' : c, rptFmt(x.trips), rptFmt(x.km, 1), liters(x), l100(x), cost(x), rptH(x.idleMin / 60), x.idleN ? rptFmt(x.idleL, 1) : RPT_NM, stopTxt(x), stopL(x), cov(x)]; }); } }, P, RPT_SHIFTS)).concat([
     { title: 'Par jour', empty: 'Aucun trajet sur la période',
       head: ['Jour', 'Trajets', 'Km', 'Carburant (L)', 'L/100 km', 'Coût (MAD)', 'Litres au ralenti', 'Trajets mesurés'], num: [1, 2, 3, 4, 5, 6],
@@ -231,7 +236,7 @@ function rptConso(o) {
       ['Consommation (L/100 km)', l100(tot)],
       ['Coût carburant (MAD)', cost(tot) || 'prix non saisi'],
       ['Ralenti (moteur allumé, véhicule immobile)', rptH(tot.idleMin / 60) + ' · ' + (tot.idleN ? rptFmt(tot.idleL, 1) + ' L' : RPT_NM)],
-      ['Arrêts moteur tournant (' + rptFmt(rptNum(P.engStopMin) || 3) + ' min et plus)', o.stops ? stopTxt(tot) + (tot.stops ? ' · ' + stopL(tot) + ' L' : '') : 'non disponible'],
+      ['Arrêts moteur tournant (' + rptFmt(rptNum(P.engStopMin) || 3) + ' min et plus)', o.stops ? stopTxt(tot) + (tot.stops ? ' · ' + (tot.stopLN ? rptFmt(tot.stopL, 1) + ' L (' + tot.stopLN + '/' + tot.stops + ' mesurés)' : 'litres ' + RPT_NM) : '') : 'non disponible'],
       ['Pleins détectés', rptFmt(tot.pleins) + (tot.pleins ? ' (' + rptFmt(tot.pleinsL, 1) + ' L)' : '')],
       ['Siphonages suspects', rptFmt(tot.siph) + (tot.siph ? ' (' + rptFmt(tot.siphL, 1) + ' L)' : '')],
       ['Non mesuré', tot.noFuelKm ? rptFmt(tot.trips - tot.fuelN) + ' trajets, ' + rptFmt(tot.noFuelKm, 1) + ' km sans litres' : 'tous les trajets ont leurs litres'],
@@ -301,7 +306,7 @@ function rptDriver(o) {
   var cv = {}; trips.forEach(function (t) { var x = cv[t.vehicle_key] = cv[t.vehicle_key] || { plate: t.plate || t.vehicle_key, n: 0, km: 0, l: 0, lkm: 0, ln: 0, il: 0, iln: 0 };
     x.n++; x.km += rptNum(t.km); if (t.fuel_l !== null && t.fuel_l !== undefined && t.fuel_l !== '') { x.l += rptNum(t.fuel_l); x.lkm += rptNum(t.km); x.ln++; }
     if (t.idle_fuel_l !== null && t.idle_fuel_l !== undefined && t.idle_fuel_l !== '') { x.il += rptNum(t.idle_fuel_l); x.iln++; } });
-  rptFillMark((o.fuel || []).filter(function (f) { return f.type === 'PLEIN'; }));   // plein précédent : avant la période compris
+  rptFillMark((o.fuel || []).filter(function (f) { return f.type === 'PLEIN'; }), true);   // plein précédent : avant la période compris
   var fuel = (o.fuel || []).filter(function (f) { return inDay(f.day); });
   var fills = fuel.filter(function (f) { return f.type === 'PLEIN' && f.driver_code === code; }).sort(function (x, y) { return new Date(x.stop_start) - new Date(y.stop_start); });
   var siph = fuel.filter(function (f) { return f.type === 'SIPHONAGE_SUSPECT' && f.status !== 'Faux positif' && (f.driver_code === code || (d.name && f.next_driver === d.name)); });
@@ -410,7 +415,7 @@ function rptShiftEnd(o) {
         has(r.idle_fuel_l) ? rptFmt(r.idle_fuel_l, 1) : RPT_NM, rptFmt(r.vmax), has(r.worst_over) ? '+' + rptFmt(r.worst_over) : '', rptFmt(over[r.contract_num] || 0),
         rptFmt(r.n_events), rptNum(r.km) >= kmMin ? rptFmt(r.score, 1) : 'trop peu de km', rptNum(r.km) >= kmMin ? rptLevel(rptNum(r.score), P) : '']; }) },
     { title: 'Mode de conduite : événements Geotab par chauffeur', empty: 'Aucun événement de conduite sur ce shift',
-      head: ['Chauffeur', 'Véhicule'].concat(rIds.map(function (id) { return (rules[id].name || id) + ' ×' + rptFmt(rules[id].weight, 1); })).concat(['Points', 'Points /100 km']),
+      head: ['Chauffeur', 'Véhicule'].concat(rIds.map(function (id) { return rptRuleFr(rules[id].name || id) + ' ×' + rptFmt(rules[id].weight, 1); })).concat(['Points', 'Points /100 km']),
       num: rIds.map(function (x, i) { return i + 2; }).concat([rIds.length + 2, rIds.length + 3]),
       rows: rIds.length ? jrn.map(function (r) { var c = byC[r.contract_num] || {}; return [r.driver_name || '', r.plate || ''].concat(rIds.map(function (id) { return rptFmt(c[id] || 0); }))
         .concat([rptFmt(r.danger_pts, 1), rptNum(r.km) >= kmMin ? rptFmt(r.score, 1) : 'trop peu de km']); }) : [] },
@@ -442,7 +447,7 @@ function rptShiftEnd(o) {
 /**
  * Anomalies carburant : achats de la carte carburant (extract Afriquia) croisés avec les pleins détectés par Geotab et la jauge.
  * o = { tx: [{ id, vehicle_key, plate, at (ms), liters, product, amount_ttc, station, ticket }], fills: lignes PLEIN de la table fuel,
- *       levels: [{ vehicle_key, at, pct }], trips: [{ vehicle_key, start_at, km, fuel_l }] (facultatif),
+ *       levels: [{ vehicle_key, at, pct }], trips: [{ vehicle_key, start_at, km, fuel_l }] (facultatif), tripsFrom: début des trajets lus (ms),
  *       vehicles: { clé: { plate, model, fuel, tank_l } }, who: (clé, ms) -> nom du chauffeur ou '' }
  * 1. Chaque ticket est rapproché du plein Geotab le plus proche, de 2 h 30 avant à 1 h 30 après l'achat (un plein Geotab pour un ticket) :
  *    l'heure Afriquia peut être décalée d'1 h (constaté du 10 au 19/09/2026 : ticket 1 h 05 après le plein, confirmé par Afriquia).
@@ -470,19 +475,24 @@ function rptFuelCard(o) {
     if (f.t >= x.at - RPT_FC.before * MIN && f.t <= x.at + RPT_FC.after * MIN) pairs.push({ i: i, f: f, d: Math.abs(f.t - x.at) }); }); });
   pairs.sort(function (a, b) { return a.d - b.d; });
   pairs.forEach(function (p) { if (tkOf[p.i] || fillOf[p.f.id]) return; tkOf[p.i] = { f: p.f, how: 'direct' }; fillOf[p.f.id] = [p.i]; });
-  // 2. tickets restés seuls : transmis en différé, puis tickets complémentaires d'un même plein
-  tx.forEach(function (x, i) {
-    if (tkOf[i]) return; var prevT = -Infinity;
+  // 2. tickets restés seuls : d'abord les tickets complémentaires d'un plein rapproché (même plein payé en plusieurs tickets, à moins
+  //    de 45 min), puis les transactions transmises en différé, puis les tickets complémentaires de celles-ci
+  var split = function (how) { tx.forEach(function (x, i) {
+    if (tkOf[i]) return; var near = null;
+    tx.forEach(function (y, j) { if (tkOf[j] && tkOf[j].how === how && y.vehicle_key === x.vehicle_key && Math.abs(y.at - x.at) <= RPT_FC.group * MIN && (!near || Math.abs(y.at - x.at) < Math.abs(near.at - x.at))) near = { at: y.at, j: j }; });
+    if (near) { tkOf[i] = { f: tkOf[near.j].f, how: 'split' }; fillOf[tkOf[near.j].f.id].push(i); }
+  }); };
+  split('direct');
+  // en différé : du dernier ticket au premier, chacun prend le plein libre le plus récent avant lui (après le ticket précédent du
+  // véhicule) : des tickets transmis ensemble gardent l'ordre de leurs pleins (le premier ticket va au premier plein)
+  for (var i = tx.length - 1; i >= 0; i--) {
+    var x = tx[i]; if (tkOf[i]) continue; var prevT = -Infinity;
     for (var k = i - 1; k >= 0; k--) if (tx[k].vehicle_key === x.vehicle_key && x.at - tx[k].at > RPT_FC.group * MIN) { prevT = tx[k].at; break; }
     var best = null; (byV[x.vehicle_key] || []).forEach(function (f) {
       if (!fillOf[f.id] && f.t < x.at && f.t > prevT && f.t >= x.at - RPT_FC.late * MIN && (!best || f.t > best.t)) best = f; });
     if (best) { tkOf[i] = { f: best, how: 'late' }; fillOf[best.id] = [i]; }
-  });
-  tx.forEach(function (x, i) {
-    if (tkOf[i]) return; var near = null;
-    tx.forEach(function (y, j) { if (tkOf[j] && tkOf[j].how !== 'split' && y.vehicle_key === x.vehicle_key && Math.abs(y.at - x.at) <= RPT_FC.group * MIN && (!near || Math.abs(y.at - x.at) < Math.abs(near.at - x.at))) near = { at: y.at, j: j }; });
-    if (near) { tkOf[i] = { f: tkOf[near.j].f, how: 'split' }; fillOf[tkOf[near.j].f.id].push(i); }
-  });
+  }
+  split('late');
   // pleins payés : un plein Geotab et ses tickets, ou un ticket sans plein Geotab
   var G = [], done = {};
   tx.forEach(function (x, i) {
@@ -493,7 +503,7 @@ function rptFuelCard(o) {
       liters: tks.reduce(function (s, y) { return s + rptNum(y.liters); }, 0), amount: tks.reduce(function (s, y) { return s + rptNum(y.amount_ttc); }, 0) });
   });
   G.sort(function (a, b) { return (a.fillT || a.at) - (b.fillT || b.at); });
-  // niveaux de jauge : ceux du plein Geotab, sinon la courbe (dernier relevé 15 min à 6 h avant l'achat, plus haut relevé dans les 3 h qui suivent, avant le plein ou le ticket suivant)
+  // niveaux de jauge : ceux du plein Geotab, sinon la courbe (plus bas relevé 15 min à 6 h avant l'achat, plus haut relevé dans les 3 h qui suivent, avant le plein ou le ticket suivant)
   G.forEach(function (g) {
     var f = g.fill;
     if (f && has(f.lvl_before) && has(f.lvl_after)) { g.lvlBefore = rptNum(f.lvl_before); g.lvlAfter = rptNum(f.lvl_after); g.src = 'plein Geotab'; return; }
@@ -502,7 +512,8 @@ function rptFuelCard(o) {
     var end = g.at + 180 * MIN, b = null, a = null;
     (byV[g.key] || []).forEach(function (h) { if (h.t > g.at - 10 * MIN && h.t < end) end = h.t; });
     tx.forEach(function (y) { if (y.vehicle_key === g.key && y.at > g.tx[g.tx.length - 1].at && y.at < end) end = y.at; });
-    (lvByV[g.key] || []).forEach(function (r) { if (r.t <= g.at - 15 * MIN && r.t >= g.at - 360 * MIN) b = r; if (r.t >= g.at - 10 * MIN && r.t < end && (!a || r.p > a.p)) a = r; });
+    // avant : plus bas relevé de la fenêtre (l'heure Afriquia peut être décalée d'1 h : un relevé juste avant le ticket peut déjà suivre le plein)
+    (lvByV[g.key] || []).forEach(function (r) { if (r.t <= g.at - 15 * MIN && r.t >= g.at - 360 * MIN && (!b || r.p < b.p)) b = r; if (r.t >= g.at - 10 * MIN && r.t < end && (!a || r.p > a.p)) a = r; });
     if (b && a) { g.lvlBefore = b.p; g.lvlAfter = a.p; g.src = 'courbe de jauge'; }
   });
   // relation litres / montée de jauge par modèle, sur les pleins rapprochés à un seul ticket (moindres carrés, 2e passe sans les écarts > 15 L)
@@ -525,6 +536,7 @@ function rptFuelCard(o) {
   // carburant consommé par le moteur depuis le plein complet précédent (null si un autre plein / ticket entre les deux ou un trajet non mesuré)
   var engineOf = function (g) {
     var a = lastFull[g.key]; if (!a || lastAny[g.key] !== a || !g.fill || !(g.lvlAfter >= 97) || !trByV[g.key]) return null;
+    if (o.tripsFrom && a.fillT < o.tripsFrom) return null;   // trajets pas lus depuis le plein précédent : consommation non mesurée
     if ((byV[g.key] || []).some(function (f) { return f.t > a.fillT && f.t < g.fillT; })) return null;
     var tr = trByV[g.key].filter(function (r) { return r.t >= a.fillT && r.t < g.fillT; });
     if (tr.some(function (r) { return (r.l === null || r.l === undefined) && r.km > 1; })) return null;
@@ -538,8 +550,8 @@ function rptFuelCard(o) {
       driver: o.who ? o.who(g.key, t) : '', fill: g.fill, lvlBefore: lb, lvlAfter: la, src: g.src || '', expected: null, engine: engineOf(g), tank: rptNum(v.tank_l) || null, anomalies: an };
     lastAny[g.key] = g; if (g.fill && g.lvlAfter >= 97) lastFull[g.key] = g;
     var P = g.tx.map(function (x) { return String(x.product || '').toUpperCase(); }).join(' ');
-    if (diesel(v) && /SUPER|\bSP\b|ESSENCE/.test(P)) an.push({ sev: 'Critique', t: 'Carburant non conforme', d: 'Essence achetée pour un véhicule diesel' });
-    if (essence(v) && /GASOIL|GAZOIL|DIESEL/.test(P)) an.push({ sev: 'Critique', t: 'Carburant non conforme', d: 'Gasoil acheté pour un véhicule essence' });
+    if (diesel(v) && /SUPER|\bSP\s?(9[58])?\b|ESSENCE|SANS ?PLOMB/.test(P)) an.push({ sev: 'Critique', t: 'Carburant non conforme', d: 'Essence achetée pour un véhicule diesel' });
+    if (essence(v) && /GAS ?OIL|GAZ ?OIL|DIESEL/.test(P)) an.push({ sev: 'Critique', t: 'Carburant non conforme', d: 'Gasoil acheté pour un véhicule essence' });
     var lv = has2 ? rptFmt(lb) + ' % → ' + rptFmt(la) + ' %' : '';
     if (!g.fill) {
       if (!has2) an.push({ sev: 'Moyenne', t: 'Aucun plein détecté par Geotab', d: 'Jauge non relevée autour de l\'achat : à vérifier' });
