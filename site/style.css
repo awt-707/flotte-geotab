@@ -193,6 +193,7 @@ td input { width: 100%; min-width: 90px; }
 .rpt table.rtab { border-collapse: collapse; width: 100%; font-size: 13px; }
 .rpt .rtab th { text-align: left; background: var(--side); color: #fff; padding: 5px 7px; white-space: nowrap; } .rpt .rtab td { border-bottom: 1px solid var(--line2); padding: 4px 7px; }
 .rpt .rtab tr:nth-child(even) td { background: var(--bg); }
+.rpt .rtab th.n, .rpt .rtab td.n { text-align: right; }   /* en-tête d'une colonne de chiffres aligné sur ses chiffres */
 .rpt .n { text-align: right; } .rpt .rempty, .rpt .rfoot, .rpt .nm { color: var(--mute); } .rpt .nm { font-style: italic; }
 .rpt .lv-crit { color: var(--crit); font-weight: 700; } .rpt .lv-high { color: var(--high); font-weight: 700; } .rpt .lv-warn { color: var(--warn); font-weight: 700; } .rpt .lv-ok { color: var(--ok); font-weight: 700; }
 @media (max-width: 700px) { .rpt .rkpi, .rpt .rkpi tbody, .rpt .rkpi tr { display: block; width: auto; margin: 0; } .rpt .rkpi td { display: block; margin: 0 0 6px; } .rpt .rkpi td.kempty { display: none; } }

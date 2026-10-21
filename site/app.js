@@ -88,6 +88,25 @@ async function appUpdateCheck() {
   try { const r = await fetch(CFG.SUPABASE_URL + '/storage/v1/object/public/app/version.json?t=' + Date.now()); if (r.ok) S.appLatest = (await r.json()).version || null; } catch (e) { }
   appUpdateShow();
 }
+// ---------- Nouvelle version du site : une page restée ouverte (application, onglet) garde l'ancien code ----------
+// build.txt = commit publié (écrit par la CI) ; changé = rechargement au prochain changement de page, bandeau en attendant
+let SITE_BUILD = null, SITE_NEW = false;
+async function siteBuildCheck() {
+  if (SITE_NEW) return;
+  try {
+    const r = await fetch('build.txt', { cache: 'no-store' }); if (!r.ok) return;
+    const b = (await r.text()).trim(); if (!/^[0-9a-f]{7,40}$/.test(b)) return;
+    if (SITE_BUILD === null) SITE_BUILD = b; else if (b !== SITE_BUILD) { SITE_NEW = true; siteNewShow(); }
+  } catch (e) { /* hors ligne : nouvel essai plus tard */ }
+}
+function siteNewShow() {
+  const f = $('.side .foot'); if (!SITE_NEW || !f || $('#siteupd')) return;
+  f.insertAdjacentHTML('afterbegin', '<button id="siteupd" class="small">Nouvelle version de Ludy : recharger</button>');
+  $('#siteupd').onclick = () => location.reload();
+}
+siteBuildCheck();
+setInterval(() => { if (!document.hidden) siteBuildCheck(); }, 300000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) siteBuildCheck(); });
 function appUpdateShow() {
   const f = $('.side .foot'); if (!f || !S.appLatest || !window.LUDY_APP || verNum(S.appLatest) <= verNum(window.LUDY_APP.version) || $('#appupd')) return;
   f.insertAdjacentHTML('afterbegin', `<a id="appupd" class="dlapp" href="#/application">Nouvelle version de l'application (${esc(S.appLatest)}) : mettre à jour</a>`);
@@ -264,7 +283,7 @@ function shell() {
   const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
   const mo = $('#mineon'); if (mo) mo.onchange = () => { try { localStorage.setItem('mesveh', mo.checked ? '1' : '0'); } catch (e) { } route(); };
   const nb = $('#notifon'); if (nb) nb.onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } nb.remove(); };
-  health(); openAlerts(); appUpdateCheck(); appUpdateShow(); usageWarn();
+  health(); openAlerts(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
   const on = $('.side nav a.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   return page;
 }
@@ -1190,6 +1209,7 @@ const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauff
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
+  if (SITE_NEW) { location.reload(); return; }   // nouvelle version publiée : la page demandée s'ouvre avec le nouveau code
   if (pageOf() === 'uber') { location.replace('#/x-uber'); return; }   // ancien lien (application 1.1)
   if (!/^x-/.test(pageOf()) || !S.session) extHide();   // autre volet : volets externes masqués (leurs pages restent chargées)
   S.timers.forEach(clearInterval); S.timers = [];

@@ -5,3 +5,4 @@ tests/out/
 .env
 .DS_Store
 .bin/
+site/build.txt

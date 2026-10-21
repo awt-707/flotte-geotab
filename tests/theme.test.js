@@ -73,3 +73,26 @@ test('application 1.1 : volet Uber Fleet posé à droite du menu (uber_show), ma
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
+
+test('nouvelle version du site publiée pendant que la page est ouverte : bandeau, rechargement au changement de page ; en-têtes des colonnes de chiffres alignés à droite', async () => {
+  const { br, page, errors } = await openBrowser();
+  let build = 'aaaaaaa';
+  await page.route('**/build.txt', r => r.fulfill({ status: 200, contentType: 'text/plain', body: build + '\n' }));
+  try {
+    await login(page, '#/reglages');
+    await page.waitForSelector('#themesel');
+    await page.evaluate(() => siteBuildCheck());
+    assert.strictEqual(await page.$('#siteupd'), null, 'même version : pas de bandeau');
+    // colonne de chiffres d'un rapport : en-tête à droite comme les chiffres
+    const al = await page.evaluate(() => { const d = document.createElement('div'); d.className = 'rpt'; d.innerHTML = '<table class="rtab"><tr><th class="n">Km</th><th>Plaque</th></tr><tr><td class="n">1</td><td>x</td></tr></table>'; document.body.appendChild(d);
+      const r = [...d.querySelectorAll('th,td')].map(e => getComputedStyle(e).textAlign); d.remove(); return r; });
+    assert.deepStrictEqual(al.map(x => x === 'start' ? 'left' : x), ['right', 'left', 'right', 'left']);
+    build = 'bbbbbbb';
+    await page.evaluate(() => { window.__avant = 1; return siteBuildCheck(); });
+    await page.waitForSelector('#siteupd');
+    await page.evaluate(() => { location.hash = '#/alertes'; });
+    await page.waitForFunction(() => !window.__avant && location.hash === '#/alertes' && document.querySelector('.side'));
+    assert.strictEqual(await page.$('#siteupd'), null, 'nouvelle version chargée : plus de bandeau');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});
