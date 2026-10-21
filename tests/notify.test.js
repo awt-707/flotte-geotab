@@ -69,7 +69,7 @@ test('rapport quotidien : envoyé une fois, après l\'heure prévue et la finali
   assert.strictEqual(B.run('reportsStep_()'), '', 'envoyé avant le calcul du journal');
   B.run("PropertiesService.getScriptProperties().deleteProperty('DERIVED_DIRTY')");
   assert.strictEqual(B.run('reportsStep_()'), '', 'envoyé avant la finalisation de la journée');
-  env.psql("insert into vehicle_days (id, vehicle_key, day) select key || '|2026-10-05', key, '2026-10-05' from vehicles on conflict do nothing"); B.run('memoClear_()');
+  env.psql("insert into vehicle_days (id, vehicle_key, day, synced_at) select key || '|2026-10-05', key, '2026-10-05', '2026-10-06 14:01+00' from vehicles on conflict (id) do update set synced_at = excluded.synced_at"); B.run('memoClear_()');
   assert.match(B.run('reportsStep_()'), /Casa jour : du 05\/10\/2026 envoyé à 2 destinataires/);
   assert.strictEqual(B.mails.length, 1);
   const m = B.mails[0];
