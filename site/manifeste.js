@@ -419,8 +419,9 @@ function mfSettings() {
           : await sb.from('parc').insert({ plate: v.plate, brand: v.brand || null, model: v.model || null, agency_id: v.agency_id || null, agrement: ag || null, seats: se });
         if (u.error) throw new Error(v.plate + ' : ' + u.error.message);
       }
-      out.innerHTML = '<span class="ok">Réglages enregistrés.</span>'; MF.cfg = Object.assign({}, MF.cfg, { company: comp, email_to: $('#mfcto').value.trim(), stamp });
+      MF.cfg = Object.assign({}, MF.cfg, { company: comp, email_to: $('#mfcto').value.trim(), stamp });
       MF.parc = await all('parc', '*'); mfVehInfo(); mfPassengers();
+      out.innerHTML = '<span class="ok">Réglages enregistrés.</span>';   // après la relecture du parc : l'écran montre déjà les nouvelles valeurs
     } catch (e) { out.innerHTML = '<span class="err">Erreur : ' + esc(e.message) + '</span>'; }
   };
 }
