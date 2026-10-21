@@ -387,3 +387,17 @@ table.plan .crit { color: var(--crit); }
 .agsel.mine { display: flex; gap: 6px; align-items: center; font-weight: 600; }
 table.plan input[type="checkbox"] { min-height: 0; min-width: 0; width: 18px; height: 18px; padding: 0; margin: 0; }
 table.plan td, table.plan th { padding-left: 6px; padding-right: 6px; }
+/* Courses privées : fiche de découverte à gauche, classement / prix / statut à droite (collant sur grand écran) */
+.crsgrid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); gap: 0 20px; align-items: start; }
+.crsgrid #crsside { position: sticky; top: 8px; max-height: calc(100vh - 16px); overflow: auto; }
+.crsgrid details.panel > summary { cursor: pointer; list-style: none; }
+.crsgrid details.panel > summary h2 { display: inline; margin: 0; }
+.crsgrid label.wide { flex: 1 1 100%; }
+.crsgrid label.wide textarea { width: 100%; }
+.crschk { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0 12px; }
+.crschk label.chk { margin: 3px 0; font-size: 13px; }
+table.crslines { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.crslines td, table.crslines th { padding: 5px 4px; border-bottom: 1px solid var(--line2); text-align: left; vertical-align: top; }
+table.crslines .n { text-align: right; white-space: nowrap; }
+table.crslines tfoot th { font-size: 15px; }
+@media (max-width: 900px) { .crsgrid { grid-template-columns: minmax(0, 1fr); } .crsgrid #crsside { position: static; max-height: none; } }
