@@ -167,14 +167,19 @@ async function mfImage(url) {
 }
 function mfRatio(src) { return new Promise(res => { const i = new Image(); i.onload = () => res(i.height / i.width || 1); i.onerror = () => res(1); i.src = src; }); }
 
-async function pageManifeste() {
-  const P = S.P, q = qs(), my = ROUTING;
-  let cfgErr = '';
+/** Réglages des manifestes et parc (places, agrément) : lus une fois, relus avec force */
+async function mfEnsure(force) {
+  if (MF.cfg && !MF.cfgErr && !force) return '';
   try {
     const [c, parc] = await Promise.all([sb.from('manifest_config').select('*').eq('id', 1).maybeSingle(), all('parc', '*').catch(() => [])]);
     if (c.error) throw new Error(c.error.message);
-    MF.cfg = c.data || { company: {}, email_to: '', stamp: null }; MF.parc = parc;
-  } catch (e) { cfgErr = e.message; MF.cfg = { company: {}, email_to: '', stamp: null }; }
+    MF.cfg = c.data || { company: {}, email_to: '', stamp: null }; MF.parc = parc; MF.cfgErr = '';
+  } catch (e) { MF.cfgErr = e.message; MF.cfg = { company: {}, email_to: '', stamp: null }; }
+  return MF.cfgErr;
+}
+async function pageManifeste() {
+  const P = S.P, q = qs(), my = ROUTING;
+  const cfgErr = await mfEnsure(true);
   const since = new Date(Date.now() - 60 * DAY).toISOString();
   MF.hist = cfgErr ? [] : await all('manifests', 'id,created_at,vehicle_key,plate,driver_name,driver_phone,client,depart_at,file_name,file_path,data', x => x.gte('created_at', since), ['created_at', false]).catch(() => []);
   if (my !== ROUTING) return;   // autre page demandée pendant le chargement
@@ -182,6 +187,7 @@ async function pageManifeste() {
   const st = MF.draft || { type: 'resident', nb: 1, prestation: 'Transfert', nature: 'Transfert', passengers: [''], donneurVoyage: true, dateDep: mfNowLocal(), vehicle: q.get('k') || '' };
   MF.draft = st;
   const places = [...new Set(MF.hist.flatMap(h => [h.data && h.data.raw && h.data.raw.depart, h.data && h.data.raw && h.data.raw.terminus]).filter(Boolean).concat(MANIF_PLACES))].slice(0, 120);
+  if (typeof addrSetPlaces === 'function') addrSetPlaces(places);
   $('#page').innerHTML = `<div class="head"><h1>Manifestes</h1><div class="sub">Manifeste de passagers (transport touristique) sur les formulaires officiels : véhicule, N° d'agrément et chauffeur pris dans Ludy (contrat en cours à l'heure de départ). PDF à partager par WhatsApp ou par e-mail.</div></div>
     ${cfgErr ? msg('Manifestes pas encore installés dans la base : exécuter <b>supabase/migrations/20261027000000_manifestes.sql</b> dans Supabase &gt; SQL Editor. (' + esc(cfgErr) + ')', 'err') : ''}
     ${!cfgErr && !MF.cfg.stamp ? msg('Cachet de l\'entreprise manquant : ' + (isAdmin() ? 'l\'ajouter dans « Réglages des manifestes » en bas de page.' : 'l\'administrateur doit l\'ajouter (Manifestes &gt; Réglages).'), 'warn') : ''}
@@ -203,10 +209,9 @@ async function pageManifeste() {
         <div class="seg" role="group" aria-label="Type de client"><button type="button" data-mft="resident" class="${st.type === 'resident' ? '' : 'ghost'}">Résident</button><button type="button" data-mft="non" class="${st.type === 'resident' ? 'ghost' : ''}">Non résident</button></div>
         <div class="mfrow"><label>Donneur d'ordre (nom et prénom) <input id="mfdon" value="${esc(st.donneur || '')}" placeholder="Ex. Karim Bennani" size="28"></label>
           ${st.type === 'resident' ? `<label>N° CIN ou passeport <input id="mfcin" value="${esc(st.cin || '')}" placeholder="Ex. BK123456" size="14"></label>` : `<label>Nombre de passagers <input type="number" id="mfnb" min="1" value="${esc(st.nb || 1)}" style="width:90px"></label>`}</div>
-        <div class="mfrow"><label>Départ <input id="mfa" list="mfpl" value="${esc(st.depart || '')}" placeholder="Adresse, hôtel, aéroport…" size="34"></label>
+        <div class="mfrow"><label>Départ <input id="mfa" data-addr value="${esc(st.depart || '')}" placeholder="Adresse, hôtel, aéroport…" size="34"></label>
           <button type="button" class="ghost small" id="mfswap" title="Inverser départ et terminus">⇅</button>
-          <label>Terminus <input id="mfb" list="mfpl" value="${esc(st.terminus || '')}" placeholder="Adresse, hôtel, aéroport…" size="34"></label></div>
-        <datalist id="mfpl">${places.map(p => `<option value="${esc(p)}"></option>`).join('')}</datalist>
+          <label>Terminus <input id="mfb" data-addr value="${esc(st.terminus || '')}" placeholder="Adresse, hôtel, aéroport…" size="34"></label></div>
         <div class="mfrow"><label>Type de prestation <select id="mfpre">${MANIF_PRESTA.map(p => `<option ${p === st.prestation ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></label>
           <label>Nature du voyage <input id="mfnat" list="mfnatl" value="${esc(st.nature || '')}" size="20"></label>
           <datalist id="mfnatl">${MANIF_NATURES.map(n => `<option value="${esc(n)}"></option>`).join('')}</datalist></div>
@@ -281,9 +286,9 @@ function mfBind() {
   mfVehInfo(); mfPassengers(); mfDriverAuto();
 }
 
-async function mfGenerate() {
-  const st = mfRead(), btn = $('#mfgen'), bad = [];
-  const v = st.vehicle && mfVeh(st.vehicle);
+/** Ce qui manque pour établir le manifeste (vide = prêt) */
+function mfCheck(st) {
+  const bad = [], v = st.vehicle && mfVeh(st.vehicle);
   if (!v) bad.push('le véhicule');
   if (!String(st.donneur || '').trim()) bad.push('le donneur d\'ordre');
   if (st.type === 'resident' && !String(st.cin || '').trim()) bad.push('le N° de CIN ou de passeport');
@@ -292,9 +297,27 @@ async function mfGenerate() {
   if (!st.dateDep) bad.push('la date de départ');
   if (!String(st.chauffeur || '').trim()) bad.push('le chauffeur');
   if (v && !v.places) bad.push('le nombre de places du véhicule (Réglages des manifestes)');
+  return bad;
+}
+async function mfGenerate() {
+  const st = mfRead(), btn = $('#mfgen'), bad = mfCheck(st);
   if (bad.length) { alert('À compléter : ' + bad.join(', ') + '.'); return; }
-  if (!MF.cfg.stamp) { alert('Cachet de l\'entreprise manquant : impossible de générer (Manifestes > Réglages des manifestes).'); return; }
-  if (!window.jspdf) { alert('Bibliothèque PDF non chargée, réessayez dans un instant.'); return; }
+  btn.disabled = true; btn.textContent = 'Création…';
+  try {
+    MF.last = await mfMake(st); MF.draft = st;
+    mfDone(MF.last);
+    if (MF.last.row) { MF.hist.unshift(MF.last.row); mfHistory(); }
+  } catch (e) { alert(e.message || e); }
+  btn.disabled = false; btn.textContent = 'Générer le manifeste PDF';
+}
+/**
+ * Manifeste PDF : création, dépôt dans le stockage privé, ligne d'historique. Utilisé par la page Manifestes et par les courses
+ * privées (manifeste automatique, extra = { mission_id, number }). Renvoie l'objet affiché par mfDone ; erreur si impossible.
+ */
+async function mfMake(st, extra) {
+  const v = st.vehicle && mfVeh(st.vehicle);
+  if (!MF.cfg.stamp) throw new Error('Cachet de l\'entreprise manquant : impossible de générer (Manifestes > Réglages des manifestes).');
+  if (!window.jspdf) throw new Error('Bibliothèque PDF non chargée, réessayez dans un instant.');
   v.remplacement = String(st.remplacement || '').trim().toUpperCase();
   const dn = String(st.donneur).trim(), pass = st.type === 'resident' ? (st.donneurVoyage !== false ? [dn] : []).concat(st.passengers.map(p => p.trim()).filter(Boolean)).slice(0, v.places || 59) : [];
   const company = Object.assign({}, MF.cfg.company || {}, v.autorisation ? { autorisation: v.autorisation } : {});
@@ -302,8 +325,7 @@ async function mfGenerate() {
     depart: st.depart.trim(), terminus: st.terminus.trim(), prestation: st.prestation, nature: String(st.nature || '').trim(),
     dateDepart: manifFrDate(st.dateDep), dateRetour: manifFrDate(st.dateRet), observations: String(st.obs || '').trim(),
     etabli: fmtDay(addDays(today(), -1)), chauffeur: st.chauffeur.trim(), chauffeurTel: String(st.chauffeurTel || '').trim(), dateDep: st.dateDep };
-  btn.disabled = true; btn.textContent = 'Création…';
-  try {
+  {
     const A = { stamp: MF.cfg.stamp, stampW: 150, stampRatio: await mfRatio(MF.cfg.stamp) };
     if (d.type === 'resident') { A.bg1 = await mfImage(MANIF_BG.bg1); A.bg2 = await mfImage(MANIF_BG.bg2); } else A.bg3 = await mfImage(MANIF_BG.bg3);
     const doc = buildManifest(window.jspdf.jsPDF, d, A), blob = doc.output('blob'), name = manifFileName(d);
@@ -317,14 +339,27 @@ async function mfGenerate() {
     } catch (e) { upErr = e.message || String(e); }
     const raw = Object.assign({}, st); delete raw.drvManual;
     const row = { vehicle_key: v.key, plate: v.plaque, driver_name: d.chauffeur, driver_phone: d.chauffeurTel || null, client: d.donneur,
-      depart_at: (parseLocalDT(st.dateDep) || new Date()).toISOString(), file_name: name, file_path: path, message: manifText(d, link), data: { d: Object.assign({}, d, { company: undefined }), raw } };
+      depart_at: (parseLocalDT(st.dateDep) || new Date()).toISOString(), file_name: name, file_path: path, message: manifText(d, link),
+      data: Object.assign({ d: Object.assign({}, d, { company: undefined }), raw }, extra || {}) };
     const ins = await sb.from('manifests').insert(row).select('id').single();
-    MF.last = { id: ins.data ? ins.data.id : null, d, blob, name, link, path, upErr, saveErr: ins.error ? ins.error.message : '', email: st.chauffeurEmail || '' };
-    MF.draft = st;
-    mfDone(MF.last);
-    if (!ins.error) { MF.hist.unshift(Object.assign({ id: ins.data.id, created_at: new Date().toISOString() }, row)); mfHistory(); }
-  } catch (e) { alert('Erreur lors de la création du PDF : ' + (e.message || e)); }
-  btn.disabled = false; btn.textContent = 'Générer le manifeste PDF';
+    return { id: ins.data ? ins.data.id : null, d, blob, name, link, path, upErr, saveErr: ins.error ? ins.error.message : '', email: st.chauffeurEmail || '',
+      row: ins.error ? null : Object.assign({ id: ins.data.id, created_at: new Date().toISOString() }, row) };
+  }
+}
+/** Chauffeur et téléphone manquants : contrat en cours sur le véhicule à l'heure de départ, sinon fiche du chauffeur */
+async function mfDriverFill(st) {
+  const t = st.dateDep && parseLocalDT(st.dateDep);
+  if (st.vehicle && t && (!st.chauffeur || !st.chauffeurTel)) {
+    const c = await mfContractAt(st.vehicle, t.getTime()).catch(() => null);
+    if (c && (!st.chauffeur || String(c.name || '').toLowerCase() === String(st.chauffeur).trim().toLowerCase())) {
+      st.chauffeur = st.chauffeur || c.name || ''; st.chauffeurTel = st.chauffeurTel || c.phone || ''; st.chauffeurEmail = st.chauffeurEmail || c.email || '';
+    }
+  }
+  if (st.chauffeur && !st.chauffeurTel) {
+    const code = Object.keys(S.drv || {}).find(c => c !== HORS && String(S.drv[c]).toLowerCase() === String(st.chauffeur).trim().toLowerCase());
+    if (code) { const r = await sb.from('drivers').select('phone,email').eq('code', code).maybeSingle(); if (r.data) { st.chauffeurTel = r.data.phone || ''; st.chauffeurEmail = st.chauffeurEmail || r.data.email || ''; } }
+  }
+  return st;
 }
 async function mfLink(path) {
   if (!path) return null;
@@ -333,8 +368,8 @@ async function mfLink(path) {
   return data.signedUrl;
 }
 /** Panneau du manifeste créé : partage WhatsApp / e-mail, téléchargement */
-function mfDone(m) {
-  const box = $('#mfdone'); if (!box) return;
+function mfDone(m, box) {
+  box = box || $('#mfdone'); if (!box) return;
   const txt = manifText(m.d, m.link), wa = manifWa(m.d.chauffeurTel), subj = 'Manifeste mission du ' + m.d.dateDepart + ' · ' + m.d.vehicule.plaque;
   const canFile = (() => { try { return !!(navigator.canShare && navigator.canShare({ files: [new File([m.blob], m.name, { type: 'application/pdf' })] })); } catch (e) { return false; } })();
   box.innerHTML = `<div class="panel mfok"><h2>Manifeste prêt</h2><div class="small">${esc(m.name)}</div>
@@ -351,6 +386,7 @@ function mfDone(m) {
   $('#mfdl').onclick = () => { const u = URL.createObjectURL(m.blob), a = document.createElement('a'); a.href = u; a.download = m.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); };
   $('#mfcopy').onclick = async () => { try { await navigator.clipboard.writeText(txt); $('#mfcopy').textContent = 'Copié'; } catch (e) { prompt('Copiez le message :', txt); } };
   if ($('#mfshare')) $('#mfshare').onclick = () => navigator.share({ files: [new File([m.blob], m.name, { type: 'application/pdf' })], text: txt }).catch(() => { });
+  if (m.noReturn) $('#mfret2').hidden = true;
   $('#mfret2').onclick = () => { const s = Object.assign({}, MF.draft, { depart: MF.draft.terminus, terminus: MF.draft.depart, dateDep: mfNowLocal(), dateRet: '' }); MF.draft = s; MF.last = null; pageManifeste(); };
   if ($('#mfsend')) $('#mfsend').onclick = () => mfSendMail(m.id, $('#mfto').value, $('#mfsendr'));
 }

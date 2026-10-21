@@ -227,8 +227,65 @@ function jobManifestMail_(arg, by) {
   if (r.getResponseCode() >= 300) return 'Erreur : PDF illisible dans le stockage (HTTP ' + r.getResponseCode() + ')';
   const d = (m.data && m.data.d) || {}, name = m.file_name || 'Manifeste.pdf';
   const body = String(m.message || '').replace(/\n?Manifeste PDF : \S+ \(lien valable \d+ jours\)/, '');
-  MailApp.sendEmail({ to: to.join(','), subject: 'Manifeste mission du ' + (d.dateDepart || '') + ' · ' + (m.plate || ''),
+  const note = extMail_({ to: to.join(','), subject: 'Manifeste mission du ' + (d.dateDepart || '') + ' · ' + (m.plate || ''),
     body: 'Bonjour,\n\nCi-joint le manifeste de passagers.\n\n' + body.replace(/^📄 Ludy · Manifeste de passagers\n/, '') + '\n\nLuxury & Discovery (envoyé par Ludy)',
-    attachments: [r.getBlob().setName(name).setContentType('application/pdf')], name: 'Ludy' });
-  return 'Manifeste envoyé à ' + to.join(', ');
+    attachments: [r.getBlob().setName(name).setContentType('application/pdf')] });
+  return 'Manifeste envoyé à ' + to.join(', ') + note;
+}
+
+/**
+ * E-mail à un client (devis, manifeste) avec l'expéditeur réglé sur le site (Réglages > E-mails aux clients) :
+ * nom affiché (mailName), adresse de réponse (mailReplyTo) et adresse d'envoi (mailFrom). L'adresse d'envoi n'est possible que si elle
+ * est déclarée dans Gmail du compte du collecteur (« Envoyer des e-mails en tant que ») et que l'autorisation Gmail a été acceptée ;
+ * sinon l'e-mail part du compte du collecteur (nom et adresse de réponse appliqués) et le résultat le signale.
+ */
+function extMail_(o) {
+  const P = params_(), name = String(P.mailName || 'Ludy').trim() || 'Ludy', reply = String(P.mailReplyTo || '').trim(), from = String(P.mailFrom || '').trim().toLowerCase();
+  const okAddr = x => /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(x);
+  let note = '';
+  if (from && okAddr(from)) {
+    try {
+      const aliases = GmailApp.getAliases().map(x => String(x).toLowerCase());
+      if (aliases.indexOf(from) >= 0) {
+        GmailApp.sendEmail(o.to, o.subject, o.body, Object.assign({ name, from }, reply && okAddr(reply) ? { replyTo: reply } : {}, o.attachments ? { attachments: o.attachments } : {}));
+        return ' (depuis ' + from + ')';
+      }
+      note = ' (adresse d\'envoi ' + from + ' non déclarée dans Gmail du compte du collecteur : envoyé depuis ce compte)';
+    } catch (e) { note = ' (adresse d\'envoi ' + from + ' pas encore autorisée : exécuter « installer » dans Apps Script ; envoyé depuis le compte du collecteur)'; }
+  }
+  MailApp.sendEmail(Object.assign({}, o, { name }, reply && okAddr(reply) ? { replyTo: reply } : {}));
+  return note;
+}
+
+/** Devis d'une course privée envoyé au client, PDF joint (demande « quote_mail » du site ; PDF déposé dans le stockage « devis ») */
+function jobQuoteMail_(arg, by) {
+  let a; try { a = JSON.parse(arg || '{}'); } catch (e) { return 'Erreur : demande illisible'; }
+  const to = String(a.to || '').split(/[,;\s]+/).filter(Boolean);
+  if (!to.length || to.length > 10 || to.some(x => !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(x))) return 'Erreur : adresse e-mail invalide';
+  if (!/^\d{4}-\d{2}\/[0-9A-Za-z-]{8,64}\.pdf$/.test(String(a.path || ''))) return 'Erreur : chemin du PDF invalide';
+  if (!by) return 'Erreur : demande sans auteur';
+  const m = dbSelect_('missions', 'select=id,number,client_name,agency_id,created_by,data&id=eq.' + enc_(a.id), 'id')[0];
+  if (!m) return 'Erreur : course introuvable';
+  {
+    const pr = dbSelect_('profiles', 'select=user_id,role&user_id=eq.' + enc_(by), 'user_id')[0];
+    if (!pr || pr.role !== 'admin') {
+      const ags = dbSelect_('user_agencies', 'select=user_id,agency_id&user_id=eq.' + enc_(by), 'user_id,agency_id').map(x => String(x.agency_id));
+      const ok = m.created_by === by || m.agency_id === null || m.agency_id === undefined || ags.indexOf(String(m.agency_id)) >= 0;
+      if (!pr || pr.role !== 'manager' || !ok) return 'Erreur : course hors de vos agences';
+    }
+  }
+  const c = sbConf_();
+  const r = UrlFetchApp.fetch(c.url + '/storage/v1/object/devis/' + String(a.path).split('/').map(enc_).join('/'),
+    { method: 'get', muteHttpExceptions: true, headers: Object.assign({ apikey: c.key }, /^sb_/.test(c.key) ? {} : { Authorization: 'Bearer ' + c.key }) });
+  if (r.getResponseCode() >= 300) return 'Erreur : PDF du devis illisible dans le stockage (HTTP ' + r.getResponseCode() + ')';
+  const name = String(a.name || ('Devis-' + (m.number || m.id) + '.pdf')).replace(/[^\w.\- ]+/g, '-').slice(0, 80);
+  const body = String(a.body || '').slice(0, 4000);
+  const note = extMail_({ to: to.join(','), subject: String(a.subject || ('Devis Ludy ' + (m.number || ''))).slice(0, 200),
+    body: 'Bonjour' + (m.client_name ? ' ' + m.client_name : '') + ',\n\nVeuillez trouver ci-joint notre devis.\n\n' + body + '\n\nCordialement,\nLudy · Luxury & Discovery',
+    attachments: [r.getBlob().setName(/\.pdf$/i.test(name) ? name : name + '.pdf').setContentType('application/pdf')] });
+  // historique de la course
+  const data = m.data || {}, hist = (data.history || []).slice();
+  hist.push({ at: new Date().toISOString(), status: 'Devis envoyé par e-mail à ' + to.join(', '), by: 'Ludy' });
+  sbReq_('patch', 'missions?id=eq.' + enc_(m.id), { data: Object.assign({}, data, { history: hist }) }, { Prefer: 'return=minimal' });
+  return 'Devis envoyé à ' + to.join(', ') + note;
 }

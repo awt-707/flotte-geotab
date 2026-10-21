@@ -15,7 +15,7 @@ const Utilities = { sleep: () => { },
     return pat.replace(/'([^']*)'/g, '$1').replace('yyyy', p.year).replace('MM', p.month).replace('dd', p.day).replace('HH', p.hour).replace('mm', p.minute); },
   base64Decode: s => Buffer.from(s, 'base64'), base64DecodeWebSafe: s => Array.from(Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'), 'base64')), base64Encode: b => Buffer.from(b.map(x => x & 255)).toString('base64'), gzip: bl => ({ getBytes: () => Array.from(require('zlib').gzipSync(Buffer.from(bl.getBytes().map(x => x & 255)))).map(x => x > 127 ? x - 256 : x) }), newBlob: c => ({ getDataAsString: () => Buffer.from(c).toString('utf8'), getBytes: () => c, getAs: () => { pdfs.push(c); return { setName(n) { this.name = n; return this; } }; } })
 };
-const pdfs = [], toasts = [], mails = [], scriptApi = [];
+const pdfs = [], toasts = [], mails = [], scriptApi = [], GMAIL = { aliases: [] };
 let scriptApiReply = () => ({ getResponseCode: () => 200, getContentText: () => '{}' });
 function chain(extra) { const t = Object.assign({}, extra || {}); const p = new Proxy(t, { get(o, k) { if (k in o) return o[k]; if (k === 'build') return () => ({}); return () => p; } }); return p; }
 function a1(ref) { const m = ref.match(/^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/); const col = s => s.split('').reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0); const r = +m[2], c = col(m[1]); return m[3] ? [r, c, +m[4] - r + 1, col(m[3]) - c + 1] : [r, c, 1, 1]; }
@@ -88,7 +88,8 @@ const ctx = vm.createContext({ console, Utilities, Date: FakeDate, Math, JSON,
   PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => { props[k] = String(v); }, deleteProperty: k => { delete props[k]; }, getProperties: () => Object.assign({}, props), setProperties: o => { Object.keys(o).forEach(k => { props[k] = String(o[k]); }); } }) },
   LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() { } }) },
   ScriptApp: { getScriptId: () => 'SCRIPT_ID', getOAuthToken: () => 'tok', getProjectTriggers: () => triggers.slice(), deleteTrigger: t => { triggers.splice(triggers.indexOf(t), 1); }, newTrigger: fn => chain({ create: () => { const t = { getHandlerFunction: () => fn }; triggers.push(t); return t; } }) },
-  MailApp: { sendEmail: o => mails.push(o) }, HtmlService: { createHtmlOutput: () => chain() }, Charts: { ChartType: { LINE: 'L', COLUMN: 'C', BAR: 'B' } },
+  MailApp: { sendEmail: o => mails.push(o) },
+  GmailApp: { getAliases: () => GMAIL.aliases, sendEmail: (to, subject, body, o) => mails.push(Object.assign({ to, subject, body, gmail: true }, o)) }, HtmlService: { createHtmlOutput: () => chain() }, Charts: { ChartType: { LINE: 'L', COLUMN: 'C', BAR: 'B' } },
   DriveApp: { getFoldersByName: n => { const f = folders.filter(x => x.name === n); return { hasNext: () => f.length > 0, next: () => f[0] }; },
     createFolder: n => { const files = []; const f = { name: n, files, createFile: (a, c) => { const x = { name: a.name || a, content: c, trashed: false, getName() { return this.name; }, setTrashed(v) { this.trashed = v; }, getUrl: () => 'https://drive/' + (a.name || a) }; files.push(x); return x; },
       getFiles: () => { const l = files.filter(x => !x.trashed); let k = 0; return { hasNext: () => k < l.length, next: () => l[k++] }; } }; folders.push(f); return f; } },
@@ -97,4 +98,4 @@ const ctx = vm.createContext({ console, Utilities, Date: FakeDate, Math, JSON,
   UrlFetchApp: { fetch: (url, opt) => { if (url.length > 2048) throw new Error('Limite dépassée : Longueur d\'URL URLFetch.'); if (url.indexOf('script.googleapis.com') >= 0) { scriptApi.push({ url, opt }); return scriptApiReply(url, opt); } if (url.indexOf('/storage/v1/') >= 0) return storageFetch(url, opt); if (url.indexOf('/apiv1') < 0) return dbFetch(url, opt); stats.calls++; global.__NOW = NOW0; const req = JSON.parse(opt.payload); const res = require('./geotab_fake.js').handle(req.method, req.params); const txt = JSON.stringify(res); stats.bytes += txt.length; return { getContentText: () => txt, getResponseCode: () => 200 }; }, fetchAll: reqs => { stats.batches++; return reqs.map(r => ctx.UrlFetchApp.fetch(r.url, r)); } }
 });
 vm.runInContext(fs.readFileSync(process.env.CODE, 'utf8'), ctx, { filename: 'Collecteur.gs' });
-module.exports = { scriptApi, setScriptApiReply: f => { scriptApiReply = f; }, folders, triggers, books, stats, ctx, main, toasts, mails, props, pdfs, setNow, run: c => vm.runInContext(c, ctx) };
+module.exports = { scriptApi, setScriptApiReply: f => { scriptApiReply = f; }, folders, triggers, books, stats, ctx, main, toasts, mails, GMAIL, props, pdfs, setNow, run: c => vm.runInContext(c, ctx) };

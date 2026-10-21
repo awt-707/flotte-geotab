@@ -1028,6 +1028,16 @@ function reportPdf(rep) {
 
 // ---------- Réglages : alerte de dépassement de vitesse (seuil par limite de route) ----------
 const SPEED_LIMITS = [20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
+/** Expéditeur des e-mails aux clients (devis, manifestes) : paramètres mailName / mailReplyTo / mailFrom (enregistrés comme les autres paramètres) */
+function mailSettingsHtml(params) {
+  const P = k => params.find(p => p.key === k), has = P('mailName') && P('mailReplyTo') && P('mailFrom');
+  const inp = (k, ph, size) => `<input class="ped" data-k="${k}" value="${esc((P(k) || {}).value || '')}" placeholder="${esc(ph)}" size="${size}"${has ? '' : ' disabled'}>`;
+  return `<h2>E-mails aux clients (devis, manifestes)</h2><div class="sub">Envoyés directement par Ludy (PDF joint). Nom et adresse de réponse appliqués à chaque envoi.
+    L'adresse d'envoi doit d'abord être ajoutée dans Gmail du compte du collecteur (Paramètres Gmail &gt; Comptes &gt; « Envoyer des e-mails en tant que ») ; sinon l'e-mail part de ce compte, avec l'adresse de réponse ci-dessous.</div>
+    ${has ? '' : msg('Pour régler l\'expéditeur, exécutez d\'abord le SQL <b>20261102000000_devis_mail.sql</b> dans Supabase > SQL Editor.', 'warn')}
+    <div class="panel row"><label>Nom de l'expéditeur ${inp('mailName', 'Ludy', 18)}</label><label>Adresse d'envoi ${inp('mailFrom', 'reservation@ludy.ma', 26)}</label>
+      <label>Adresse de réponse ${inp('mailReplyTo', 'reservation@ludy.ma', 26)}</label></div>`;
+}
 /** Réglages > Volets externes : sites affichés dans l'application (nom + adresse https), sans mise à jour de l'application */
 function extSettingsHtml(params) {
   const has = params.some(p => p.key === 'appSites');
@@ -1138,7 +1148,7 @@ async function pageReglages() {
   if (my !== ROUTING) return;   // autre page demandée pendant le chargement : ne pas l'écraser
   const alTypes = [...new Set(types.map(x => x.type))].sort();
   const SEVS = ['Critique', 'Haute', 'Moyenne', 'Info'], FREQ = { jour: 'Chaque jour (veille)', semaine: 'Chaque lundi (semaine passée)', mois: 'Le 1er du mois (mois passé)' };
-  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
+  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1, mailName: 1, mailReplyTo: 1, mailFrom: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
   $('#page').innerHTML = `<div class="head"><h1>Réglages</h1></div>
     <h2>Limites de l'hébergement</h2><div class="sub">Offre Supabase (base, stockage, appels du temps réel). Le site lui-même (Cloudflare) n'a pas de limite. À 80 % : avertissement en bas du menu. Limites à changer dans les paramètres ci-dessous si l'offre change (Pro : 8 000 Mo, 102 400 Mo, 2 000 000 appels).</div>
     ${usageHtml(usage, S.P)}
@@ -1150,6 +1160,7 @@ async function pageReglages() {
     <div id="upgbox"></div>
     ${speedSettingsHtml(params)}
     ${extSettingsHtml(params)}
+    ${mailSettingsHtml(params)}
     <h2>Alertes par e-mail</h2><div class="sub">Chaque nouvelle alerte (veille et jour même) est envoyée une seule fois aux destinataires concernés, dans les minutes qui suivent son calcul par le collecteur.</div>
     <div class="panel row"><label>Email <input id="reml" type="email" size="22" placeholder="chef@clicar.fr"></label><label>Nom <input id="rnom" size="14"></label>
       <label>Agence <select id="rag">${agOptions('', 'Toutes')}</select></label><label>Gravité minimum <select id="rsev">${SEVS.map(x => `<option ${x === 'Haute' ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
