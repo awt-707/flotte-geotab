@@ -80,7 +80,10 @@ test('alerte reçue en temps réel : bandeau affiché', async () => {
   const { br, page, errors } = await openBrowser();
   try {
     await login(page, '#/direct'); await ready(page);
-    await page.evaluate(() => window.__onNewAlert({ id: 'RT1', day: '2026-10-06', time: '09:15', plate: 'WW968199', vehicle_key: '968199WW', driver_name: 'Chauffeur RT', type: 'Excès de vitesse', severity: 'Critique', detail: '142 km/h' }));
+    // alerte d'une journée passée (recalcul) : pas de bandeau
+    await page.evaluate(() => window.__onNewAlert({ id: 'RT0', day: addDays(today(), -3), time: '09:15', plate: 'WW968199', vehicle_key: '968199WW', type: 'Excès de vitesse', severity: 'Critique', detail: 'x' }));
+    assert.strictEqual(await page.locator('#toasts .toast').count(), 0);
+    await page.evaluate(() => window.__onNewAlert({ id: 'RT1', day: today(), time: '09:15', plate: 'WW968199', vehicle_key: '968199WW', driver_name: 'Chauffeur RT', type: 'Excès de vitesse', severity: 'Critique', detail: '142 km/h' }));
     const t = await page.innerText('#toasts .toast');
     assert.match(t, /Critique/); assert.match(t, /Excès de vitesse/); assert.match(t, /WW968199/); assert.match(t, /Chauffeur RT/);
     await page.click('#toasts .toast .x');
