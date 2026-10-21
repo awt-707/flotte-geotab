@@ -175,3 +175,93 @@ test('page Courses privées : nouvelle demande, prix en direct, enregistrement, 
     assert.deepStrictEqual(errors, []);
   } finally { env.psql(`update pricing_grid set data = jsonb_set(data, '{day,STARIA}', '2000')`); await br.close(); srv.kill(); }
 });
+
+test('course rapide : prix convenu (sans grille) ; adresses : libellés Photon, lieux habituels d\'abord', () => {
+  const G = grid(), A = require('../site/adresses.js');
+  const p = C.crsPrice({ base: 'convenu', agreedPrice: 450, startAddr: 'Hyatt Regency, Casablanca', endAddr: 'Aéroport Mohammed V, Casablanca', cat: 'SONATA', startDate: '2026-11-01' }, G);
+  assert.deepStrictEqual(p.lines.map(l => [l.label, l.amount]), [['Course Hyatt Regency, Casablanca → Aéroport Mohammed V, Casablanca : prix convenu', 450]]);
+  assert.deepStrictEqual([p.total, p.deposit, p.tva], [450, 0, 40.91]);
+  assert.deepStrictEqual(C.crsMissing({ base: 'convenu', client: 'X', startDate: '2026-11-01', cat: 'SONATA', pax: 1 }, G), ['prix convenu']);
+  // réponse Photon (GeoJSON) : nom, rue, quartier, ville ; pays seulement hors Maroc ; doublons retirés
+  const json = { features: [
+    { properties: { name: 'Hyatt Regency', street: 'Place des Nations Unies', city: 'Casablanca', countrycode: 'MA', country: 'Maroc' } },
+    { properties: { name: 'Hyatt Regency', street: 'Place des Nations Unies', city: 'Casablanca', countrycode: 'MA', country: 'Maroc' } },
+    { properties: { housenumber: '12', street: 'Rue Tahar Sebti', district: 'Maârif', city: 'Casablanca', countrycode: 'MA' } },
+    { properties: { name: 'Gibraltar', countrycode: 'GI', country: 'Gibraltar' } }] };
+  assert.deepStrictEqual(A.addrParse(json), ['Hyatt Regency, Place des Nations Unies, Casablanca', '12 Rue Tahar Sebti, Maârif, Casablanca', 'Gibraltar']);
+  assert.deepStrictEqual(A.addrLocal('aeroport casa', ['Aéroport Mohammed V, Casablanca', 'Aéroport Marrakech Menara', 'Gare Casa-Port, Casablanca']), ['Aéroport Mohammed V, Casablanca']);
+});
+
+test('course rapide : lancée sans devis, véhicule bloqué, manifeste créé ; devis envoyé par Ludy (PDF joint, expéditeur des Réglages)', async () => {
+  const { collector } = require('./lib/v6'), NOW = Date.now();
+  const B = collector(NOW);   // base remise à zéro, collecteur prêt à traiter les demandes
+  env.psql(`insert into vehicles (key, plate, model, active) values ('968199WW', 'WW968199', 'STARIA', 'OUI'), ('968194WW', 'WW968194', 'SONATA', 'OUI');
+    insert into parc (plate, model, seats, agrement) values ('WW968199', 'STARIA', 7, 'TT/1/2026'), ('WW968194', 'SONATA', 4, 'TT/2/2026');
+    insert into params (key, label, value, note, sort) values ('mailName', 'n', 'Ludy Réservations', '', 1), ('mailReplyTo', 'r', 'reservation@ludy.ma', '', 2), ('mailFrom', 'f', 'reservation@ludy.ma', '', 3);
+    update manifest_config set stamp = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='`);
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  const photon = [];
+  await page.route('https://photon.komoot.io/**', r => { photon.push(r.request().url()); r.fulfill({ contentType: 'application/json', body: JSON.stringify({ features: [
+    { properties: { name: 'Hyatt Regency', street: 'Place des Nations Unies', city: 'Casablanca', countrycode: 'MA' } }] }) }); });
+  try {
+    await login(page, '#/courses');
+    await page.click('text=⚡ Course rapide'); await page.waitForSelector('#qkgo');
+    await page.selectOption('#qkveh', '968199WW');
+    const dep = new Date(NOW + 3 * 3600000), loc = d => new Date(d.getTime() + 3600000).toISOString().slice(0, 16);   // heure du Maroc (UTC+1)
+    await page.fill('#qkdep', loc(dep)); await page.dispatchEvent('#qkdep', 'change');
+    // autocomplétion : adresse proposée par Photon (limité au Maroc), choisie au clic
+    await page.locator('#qkfrom').pressSequentially('hyatt');
+    await page.waitForSelector('.addrpop .ai');
+    assert.match(photon[0], /q=hyatt&limit=7&bbox=-17\.5,20\.5,-0\.9,36\.2/);
+    await page.click('.addrpop .ai >> text=Hyatt Regency');
+    assert.strictEqual(await page.inputValue('#qkfrom'), 'Hyatt Regency, Place des Nations Unies, Casablanca');
+    await page.locator('#qkto').pressSequentially('aéroport moh');   // lieu habituel, proposé sans attendre
+    await page.click('.addrpop .ai >> text=Aéroport Mohammed V, Casablanca');
+    await page.fill('#qkdrv', 'Youssef Amrani'); await page.fill('#qktel', '0611223344');
+    await page.selectOption('#qkgrid', 'I|Rabat');
+    assert.strictEqual(await page.inputValue('#qkprice'), '1130');
+    await page.fill('#qkcli', 'John Smith'); await page.fill('#qkpax', '3');
+    await page.click('#qkgo');
+    await page.waitForSelector('#crsmf #mfwa');
+    const m = JSON.parse(env.psql('select row_to_json(x) from (select id, number, status, vehicle_key, total_ttc, needs_validation, data from missions) x'));
+    assert.deepStrictEqual([m.status, m.vehicle_key, m.total_ttc, m.needs_validation, m.data.quick], ['Confirmée', '968199WW', 1130, false, true]);
+    assert.ok(m.data.manifest && m.data.manifest.id, 'manifeste rattaché à la course');
+    const mf = JSON.parse(env.psql('select row_to_json(x) from (select vehicle_key, driver_name, driver_phone, client, data from manifests) x'));
+    assert.deepStrictEqual([mf.vehicle_key, mf.driver_name, mf.driver_phone, mf.client, mf.data.mission_id], ['968199WW', 'Youssef Amrani', '0611223344', 'John Smith', m.id]);
+    assert.deepStrictEqual([mf.data.d.type, mf.data.d.nbPassagers, mf.data.d.depart, mf.data.d.terminus], ['non', 3, 'Hyatt Regency, Place des Nations Unies, Casablanca', 'Aéroport Mohammed V, Casablanca']);
+    assert.match(decodeURIComponent((await page.getAttribute('#crsmf #mfwa1', 'href')).split('text=')[1]), /Chauffeur : Youssef Amrani · 0611223344/);
+    // même véhicule sur la même période : refusé
+    await page.click('#qkagain'); await page.waitForSelector('#qkgo');
+    await page.selectOption('#qkveh', '968199WW'); await page.fill('#qkdep', loc(dep)); await page.fill('#qkend', loc(new Date(dep.getTime() + 3600000)));
+    await page.fill('#qkfrom', 'A'); await page.fill('#qkto', 'B'); await page.fill('#qkdrv', 'Y'); await page.fill('#qkcli', 'Z'); await page.fill('#qkprice', '300');
+    await page.click('#qkgo'); await page.waitForSelector('#qkres .err');
+    assert.match(await page.innerText('#qkres'), /déjà bloqué/);
+    // devis envoyé directement par Ludy : PDF déposé, demande au collecteur, e-mail avec le PDF joint
+    await page.goto('http://localhost:8080/#/courses?id=' + m.id); await page.waitForSelector('#crsmail');
+    assert.match(await page.innerText('#crsmf'), /Manifeste-Mission-/);
+    await page.click('#crsmail'); await page.fill('#crsmto', 'john@exemple.com'); await page.click('#crsmgo');
+    await page.waitForFunction(() => /Envoi demandé/.test(document.querySelector('#crsmres').innerText));
+    const arg = JSON.parse(env.psql("select arg from jobs where kind = 'quote_mail'"));
+    assert.deepStrictEqual([arg.id, arg.to, arg.name], [m.id, 'john@exemple.com', 'Devis-' + m.number + '-John-Smith.pdf']);
+    B.GMAIL.aliases = ['reservation@ludy.ma']; B.mails.length = 0;
+    B.run('processJobs_(Date.now())');
+    assert.strictEqual(B.mails.length, 1);
+    const mail = B.mails[0];
+    assert.deepStrictEqual([mail.gmail, mail.to, mail.from, mail.name, mail.replyTo, mail.subject], [true, 'john@exemple.com', 'reservation@ludy.ma', 'Ludy Réservations', 'reservation@ludy.ma', 'Devis Ludy ' + m.number]);
+    assert.strictEqual(mail.attachments[0].bytes.slice(0, 5).toString(), '%PDF-'); assert.match(mail.body, /Total : 1 130 MAD TTC/);
+    assert.match(env.psql("select result from jobs where kind = 'quote_mail'"), /^Devis envoyé à john@exemple\.com \(depuis reservation@ludy\.ma\)$/);
+    assert.match(env.psql(`select data->'history' from missions where id = ${m.id}`), /Devis envoyé par e-mail à john@exemple\.com/);
+    // adresse d'envoi non déclarée dans Gmail : envoyé du compte du collecteur, réponse à l'adresse réglée
+    env.psql("delete from jobs; update params set value = 'autre@ludy.ma' where key = 'mailFrom'"); B.run('memoClear_()');
+    await page.click('#crsmgo'); await page.waitForFunction(() => /Envoi demandé/.test(document.querySelector('#crsmres').innerText));
+    B.mails.length = 0; B.run('processJobs_(Date.now())');
+    assert.deepStrictEqual([B.mails[0].gmail, B.mails[0].replyTo, B.mails[0].name], [undefined, 'reservation@ludy.ma', 'Ludy Réservations']);
+    assert.match(env.psql("select result from jobs where kind = 'quote_mail'"), /non déclarée dans Gmail/);
+    // Réglages : expéditeur modifiable par l'administrateur
+    await page.goto('http://localhost:8080/#/reglages'); await page.waitForSelector('input[data-k="mailFrom"]');
+    await page.fill('input[data-k="mailFrom"]', 'contact@ludy.ma'); await page.dispatchEvent('input[data-k="mailFrom"]', 'change');
+    await page.waitForFunction(() => document.querySelector('input[data-k="mailFrom"]').classList.contains('saved'));
+    assert.strictEqual(env.psql("select value from params where key = 'mailFrom'"), 'contact@ludy.ma');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); }
+});

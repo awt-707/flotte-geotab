@@ -359,6 +359,10 @@ a.btn.ghostb { background: transparent; color: var(--ink); border: 1px solid var
 .seg button:first-child { border-radius: 6px 0 0 6px; }
 .seg button:last-child { border-radius: 0 6px 6px 0; }
 .chk { display: flex; gap: 7px; align-items: center; font-size: 14px; margin: 6px 0; }
+.addrpop { position: fixed; z-index: 3000; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.18); max-height: 320px; overflow: auto; }
+.addrpop .ai { padding: 7px 10px; cursor: pointer; font-size: 13px; }
+.addrpop .ai:hover, .addrpop .ai.on { background: var(--line2); }
+.addrpop .an { padding: 6px 10px; color: var(--mute); }
 .mfp { display: flex; gap: 8px; align-items: center; margin: 5px 0; }
 .mfp .n { width: 26px; text-align: right; color: var(--mute); font-variant-numeric: tabular-nums; }
 .mfp input { flex: 1; }

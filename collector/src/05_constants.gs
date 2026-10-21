@@ -92,7 +92,10 @@ const PARAM_DEFS = [
   ['shiftNight', 'Équipe de nuit : début (heure)', 19, 'L\'équipe de nuit finit le lendemain à l\'heure de début de l\'équipe de jour'],
   ['manifestKeepDays', 'PDF des manifestes conservés (jours)', 30, 'Au-delà, le PDF est effacé du stockage chaque nuit (l\'historique du manifeste reste ; le lien envoyé n\'est valable que 7 jours). 0 = jamais effacé.'],
   ['shiftAdvance', 'Shift d\'un contrat : avance (heures)', 2, 'Contrat pris jusqu\'à N h avant le début d\'un shift : compté dans ce shift (2 : pris de 05:00 à 16:59 = jour, de 17:00 à 04:59 = nuit ; 0 : 07:00 → 18:59 jour)'],
-  ['overByLimit', 'Dépassement : seuil d\'alerte par limite de route', '', 'limite:seuil séparés par « ; » (ex. 50:30;80:20;120:20). Limite non listée : la ligne inférieure la plus proche, sinon le seuil général. Réglé dans Réglages > Alerte de dépassement de vitesse']
+  ['overByLimit', 'Dépassement : seuil d\'alerte par limite de route', '', 'limite:seuil séparés par « ; » (ex. 50:30;80:20;120:20). Limite non listée : la ligne inférieure la plus proche, sinon le seuil général. Réglé dans Réglages > Alerte de dépassement de vitesse'],
+  ['mailName', 'E-mails aux clients : nom de l\'expéditeur', 'Ludy', 'Nom affiché chez le client (devis, manifestes).'],
+  ['mailReplyTo', 'E-mails aux clients : adresse de réponse', '', 'Les réponses du client arrivent à cette adresse (ex. reservation@ludy.ma). Vide : compte d\'envoi de Ludy.'],
+  ['mailFrom', 'E-mails aux clients : adresse d\'envoi', '', 'Adresse affichée comme expéditeur. Doit être déclarée dans Gmail du compte du collecteur (« Envoyer des e-mails en tant que »), sinon l\'e-mail part du compte du collecteur avec l\'adresse de réponse ci-dessus.']
 ];
 const MODEL_DEFAULTS = { STARIA: { tank: 75 }, SONATA: { tank: 50 }, _: { tank: '' } };
 const HORS_PERIODE = 'Hors période des contrats';
