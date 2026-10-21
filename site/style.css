@@ -407,3 +407,9 @@ table.crslines tfoot th { font-size: 15px; }
 .vmk-l.crs { background: #7b1e2e; }
 .vcard.crs { box-shadow: inset 4px 0 0 #7b1e2e; }
 .card.crs .cv { color: #7b1e2e; }
+/* Connexions : pastille en bas du menu (administrateur) et statut des utilisateurs */
+.side .foot a.onl { color: #3ccf7a; font: 600 13px var(--f); text-decoration: none; }
+.side .foot a.onl:hover { text-decoration: underline; }
+.sdot2 { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: #9aa5af; }
+.sdot2.on { background: #1f9d55; box-shadow: 0 0 0 3px rgba(31, 157, 85, .18); }
+.sdot2.idle { background: #d98b00; }
