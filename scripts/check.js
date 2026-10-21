@@ -4,7 +4,7 @@ const ROOT = path.join(__dirname, '..'), read = f => fs.readFileSync(path.join(R
 const errors = [], ok = m => console.log('  ok  ' + m), fail = m => errors.push(m);
 
 // 1. Syntaxe
-for (const f of ['collector/dist/Collecteur.gs', 'site/app.js', 'site/lib.js', 'site/report.js', 'site/pages2.js', 'site/direct.js', 'site/manifeste.js', 'site/planning.js', 'site/config.js', 'collector/loader/Code.gs']) {
+for (const f of ['collector/dist/Collecteur.gs', 'site/app.js', 'site/lib.js', 'site/report.js', 'site/pages2.js', 'site/direct.js', 'site/manifeste.js', 'site/courses.js', 'site/planning.js', 'site/connexions.js', 'site/config.js', 'collector/loader/Code.gs']) {
   try { new vm.Script(read(f), { filename: f }); ok('syntaxe ' + f); } catch (e) { fail('syntaxe ' + f + ' : ' + e.message); }
 }
 

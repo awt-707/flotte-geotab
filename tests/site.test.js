@@ -530,7 +530,7 @@ test('manifeste : réglages de l\'administrateur (entreprise, cachet rendu trans
     assert.strictEqual(env.psql("select company->>'dossier' from manifest_config"), '1234/TOUR/2026');
     assert.match(env.psql('select left(stamp, 22) from manifest_config'), /^data:image\/png;base64,/);
     await page.selectOption('#mfveh', key);
-    assert.match(await page.innerText('#mfvinfo'), /7 places autorisées · N° d'agrément TT\/99999\/2026/);
+    await page.waitForFunction(() => /7 places autorisées · N° d'agrément TT\/99999\/2026/.test(document.querySelector('#mfvinfo').innerText));
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });

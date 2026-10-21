@@ -1,7 +1,9 @@
 name: Tests et mise en ligne
 
 on:
+  # main (mise en ligne) et PR seulement : une branche avec une PR ouverte n'est plus testée deux fois (minutes GitHub Actions)
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

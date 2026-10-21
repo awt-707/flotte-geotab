@@ -387,3 +387,29 @@ table.plan .crit { color: var(--crit); }
 .agsel.mine { display: flex; gap: 6px; align-items: center; font-weight: 600; }
 table.plan input[type="checkbox"] { min-height: 0; min-width: 0; width: 18px; height: 18px; padding: 0; margin: 0; }
 table.plan td, table.plan th { padding-left: 6px; padding-right: 6px; }
+/* Courses privées : fiche de découverte à gauche, classement / prix / statut à droite (collant sur grand écran) */
+.crsgrid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); gap: 0 20px; align-items: start; }
+.crsgrid #crsside { position: sticky; top: 8px; max-height: calc(100vh - 16px); overflow: auto; }
+.crsgrid details.panel > summary { cursor: pointer; list-style: none; }
+.crsgrid details.panel > summary h2 { display: inline; margin: 0; }
+.crsgrid label.wide { flex: 1 1 100%; }
+.crsgrid label.wide textarea { width: 100%; }
+.crschk { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0 12px; }
+.crschk label.chk { margin: 3px 0; font-size: 13px; }
+table.crslines { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.crslines td, table.crslines th { padding: 5px 4px; border-bottom: 1px solid var(--line2); text-align: left; vertical-align: top; }
+table.crslines .n { text-align: right; white-space: nowrap; }
+table.crslines tfoot th { font-size: 15px; }
+@media (max-width: 900px) { .crsgrid { grid-template-columns: minmax(0, 1fr); } .crsgrid #crsside { position: static; max-height: none; } }
+/* Course privée en cours (En direct) : couleur Ludy (bordeaux) sur le marqueur, l'étiquette, la carte du véhicule et le badge */
+.badge.crs { background: #7b1e2e; color: #fff; text-decoration: none; }
+.vmk-pin.crs { border-color: #7b1e2e; box-shadow: 0 0 0 3px #fff, 0 0 0 6px #7b1e2e, 0 2px 8px rgba(0, 0, 0, .35); }
+.vmk-l.crs { background: #7b1e2e; }
+.vcard.crs { box-shadow: inset 4px 0 0 #7b1e2e; }
+.card.crs .cv { color: #7b1e2e; }
+/* Connexions : pastille en bas du menu (administrateur) et statut des utilisateurs */
+.side .foot a.onl { color: #3ccf7a; font: 600 13px var(--f); text-decoration: none; }
+.side .foot a.onl:hover { text-decoration: underline; }
+.sdot2 { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: #9aa5af; }
+.sdot2.on { background: #1f9d55; box-shadow: 0 0 0 3px rgba(31, 157, 85, .18); }
+.sdot2.idle { background: #d98b00; }

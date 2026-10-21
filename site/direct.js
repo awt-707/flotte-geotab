@@ -95,6 +95,18 @@ async function loadLiveContracts() {
   // dernier import de l'extract (contrat ajouté ou modifié) : « Contrat dépassé » tant que les contrats du shift en cours ne sont pas injectés
   const { data: li } = await sb.from('contracts').select('updated_at').not('updated_at', 'is', null).order('updated_at', { ascending: false }).limit(1);
   LIVE.lastImport = li && li[0] ? new Date(li[0].updated_at).getTime() : 0;
+  // courses privées en cours : véhicule bloqué pour une mission (acompte reçu, confirmée, en cours) qui couvre maintenant
+  try {
+    const ms = await all('missions', 'id,number,status,client_name,client_company,driver_name,vehicle_key,start_at,end_at,kind', q => q.in('status', CRS_BLOCK).not('vehicle_key', 'is', null)
+      .lte('start_at', new Date(now).toISOString()).gte('end_at', new Date(now).toISOString()));
+    LIVE.mis = {}; ms.forEach(m => { LIVE.mis[m.vehicle_key] = m; });
+  } catch (e) { LIVE.mis = {}; }   // module pas encore installé (migration) : rien à afficher
+}
+/** Course privée en cours sur le véhicule : badge (lien vers la mission) */
+function crsLiveHtml(r, full) {
+  const m = r.crs; if (!m) return '';
+  return `<a class="badge crs" href="#/courses?id=${m.id}" title="${esc('Course privée ' + (m.number || '') + ' · ' + (m.kind || '') + ' · jusqu\'au ' + fmtDTY(m.end_at))}">Course privée</a>`
+    + (full ? ` <span class="small">${esc((m.number || '') + ' · ' + (m.client_company || m.client_name || ''))}</span>` : '');
 }
 /** Pas de nom de chauffeur : « Sans contrat » (extract du shift injecté, plaque absente) ou « Contrat dépassé » (extract pas encore injecté) */
 function noCtrHtml(r) {
@@ -116,6 +128,8 @@ function liveRows() {
     const c = c0 && (fresh || c0.end_at || (sc.s === cur.s && sc.day === cur.day)) ? c0 : null, nc = c ? '' : fresh ? 'sans' : 'depasse';
     const who = { driver_name: c ? c.name : nc === 'sans' ? 'Sans contrat' : 'Contrat dépassé', no_ctr: nc, old_ctr: !c && c0 ? c0.num : '', contract_num: c ? c.num : '',
       driver_code: c ? c.client_code : HORS, shift: c ? shiftOf(c.start_at, S.P) : '', ctr_start: c ? c.start_at : null };
+    const mi = (LIVE.mis || {})[r.vehicle_key];
+    if (mi) Object.assign(who, { crs: mi, crs_driver: mi.driver_name || '' });
     return g && g.state ? Object.assign({}, r, who, { state: g.state, speed: g.speed, since_min: g.since_min, bearing: g.bearing,
       last_pos_at: g.at || r.last_pos_at, lat: g.lat != null ? g.lat : r.lat, lon: g.lon != null ? g.lon : r.lon, live: 1 }) : Object.assign({}, r, who); })
     .sort((a, b) => SHIFTS.indexOf(a.shift || '') - SHIFTS.indexOf(b.shift || '') || (LIVE_ORDER[a.state] ?? 9) - (LIVE_ORDER[b.state] ?? 9) || String(a.plate).localeCompare(String(b.plate)));   // shift jour, puis nuit, puis hors contrat
@@ -156,14 +170,16 @@ function kpisHtml(rows) {
   const n = s => rows.filter(r => r.state === s).length, off = n('Boîtier hors ligne') + n('Pas de réponse Geotab'), ctr = rows.filter(r => r.contract_num).length;
   return cards([['En route', n('En route'), 'ok'], ['Arrêtés contact mis', n('Arrêté, contact mis'), n('Arrêté, contact mis') ? 'warn' : ''], ['Garés', n('Garé')],
     ['Boîtiers hors ligne', off, off ? 'crit' : ''], ['Sous contrat', ctr + ' / ' + rows.length],
+    ...(rows.some(r => r.crs) ? [['En course privée', rows.filter(r => r.crs).length, 'crs']] : []),
     ...(rows.some(r => r.no_ctr === 'depasse') ? [['Contrats dépassés (extract à injecter)', rows.filter(r => r.no_ctr === 'depasse').length, 'warn']] : []), ['Alertes (30 min)', LIVE.alerts.filter(a => inAgency()(a.vehicle_key)).length, LIVE.alerts.length ? 'high' : '']]);
 }
 function vcardsHtml(rows) {
   if (!rows.length) return '<div class="empty">Aucun véhicule actif</div>';
-  return rows.map(r => `<button type="button" class="vcard st-${ST_CLS(r.state)}${LIVE.fast[r.vehicle_key] ? ' fast' : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
+  return rows.map(r => `<button type="button" class="vcard st-${ST_CLS(r.state)}${r.crs ? ' crs' : ''}${LIVE.fast[r.vehicle_key] ? ' fast' : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
     <span class="vc-l1">${plate(r.plate)}<span class="vc-model">${esc(r.model || '')}</span><span class="vc-spd">${r.state === 'En route' ? f0(r.speed) + '<small> km/h</small>' : ''}</span></span>
     <span class="vc-l2"><span class="vc-st"><span class="sdot"></span>${esc(r.state || 'État inconnu')}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</span>${consoGauge(r)}</span>
-    <span class="vc-l3">${r.contract_num ? `<b>${esc(r.driver_name)}</b> ${shiftBadge(r.shift)}` : noCtrHtml(r)}</span>
+    <span class="vc-l3">${r.crs ? crsLiveHtml(r) + ' <b>' + esc(r.crs_driver || r.driver_name || '') + '</b> <span class="small">' + esc(r.crs.client_company || r.crs.client_name || '') + '</span>'
+      : r.contract_num ? `<b>${esc(r.driver_name)}</b> ${shiftBadge(r.shift)}` : noCtrHtml(r)}</span>
     <span class="vc-l4">${r.live ? 'Position Geotab ' + esc(fmtHMS(r.last_pos_at).slice(6)) + ' · <span class="ago" data-t="' + esc(r.last_pos_at || '') + '">' + ago(r.last_pos_at) + '</span>'
       : r.last_pos_at ? 'Position du collecteur ' + esc(fmtDT(r.last_pos_at)) : 'Aucune position'}</span></button>`).join('');
 }
@@ -184,6 +200,7 @@ function vehTableHtml(rows) {
     ['Vitesse', r => r.speed ? f0(r.speed) + ' km/h' : '', r => r.speed, 'n'], ['Depuis', r => r.since_min != null ? fH(r.since_min / 60) : '', r => r.since_min, 'n'],
     ['Dernière position', r => r.live ? fmtHMS(r.last_pos_at) : fmtDT(r.last_pos_at), r => r.last_pos_at], ['Chauffeur sous contrat (maintenant)', r => r.contract_num ? dlink(r.driver_code, r.driver_name) : noCtrHtml(r), r => r.driver_name],
     ['Shift', r => r.contract_num ? shiftBadge(r.shift) : '', r => r.shift || 'z'], ['Contrat', r => esc(r.contract_num || '')],
+    ['Course privée', r => r.crs ? crsLiveHtml(r, true) + (r.crs_driver ? '<div class="small">' + esc(r.crs_driver) + '</div>' : '') : '', r => r.crs ? r.crs.number : ''],
     ['Km aujourd\'hui', r => f1(r.km_today), r => r.km_today, 'n'], ['Conduite', r => r.drive_min_today == null ? '' : fH(r.drive_min_today / 60), r => r.drive_min_today, 'n'],
     ['Ralenti', r => r.idle_min_today == null ? '' : fH(r.idle_min_today / 60), r => r.idle_min_today, 'n'], ['Carburant (L)', r => r.fuel_l_today === null ? `<span class="nm">${NM}</span>` : f1(r.fuel_l_today), r => r.fuel_l_today, 'n'],
     ['Alertes du jour', r => r.alerts_today ? `<a href="#/alertes?plaque=${encodeURIComponent(r.plate)}&jour=${today()}">${r.alerts_today}</a>` : '0', r => r.alerts_today, 'n'],
@@ -296,16 +313,18 @@ async function liveDrvTick(my) {
 const VAN_SVG = '<svg class="vmk-van" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 15.5V9.2C2 7.4 3.4 6 5.2 6h9.6c1 0 1.9.5 2.5 1.2l3.2 4c.3.4.5.9.5 1.4v2.9c0 .8-.6 1.5-1.4 1.5h-.9a2.7 2.7 0 0 1-5.3 0H8.8a2.7 2.7 0 0 1-5.3 0h-.1c-.8 0-1.4-.7-1.4-1.5ZM14 8v3.6h5.1L16.4 8.4A1 1 0 0 0 15.6 8H14Zm-4.5 0v3.6h3V8h-3ZM4 8.9v2.7h4V8H4.9c-.5 0-.9.4-.9.9Z"/><circle cx="6.2" cy="17.2" r="1.5"/><circle cx="16.4" cy="17.2" r="1.5"/></svg>';
 function vIcon(r) {
   const st = LIVE.fast[r.vehicle_key] || LIVE.over[r.vehicle_key] ? 'crit' : ST_CLS(r.state), rot = r.state === 'En route' && r.bearing != null && isFinite(+r.bearing) ? +r.bearing : null;
-  const html = `<span class="vmk-pin st-${st}${r.state === 'En route' ? ' moving' : ''}">${rot != null ? `<span class="vmk-dir" style="transform:rotate(${Math.round(rot)}deg)"><i></i></span>` : ''}${VAN_SVG}</span>`
-    + `<span class="vmk-l">${esc(r.plate || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}</span>`;
+  const html = `<span class="vmk-pin st-${st}${r.state === 'En route' ? ' moving' : ''}${r.crs ? ' crs' : ''}">${rot != null ? `<span class="vmk-dir" style="transform:rotate(${Math.round(rot)}deg)"><i></i></span>` : ''}${VAN_SVG}</span>`
+    + `<span class="vmk-l${r.crs ? ' crs' : ''}">${r.crs ? 'Course privée · ' : ''}${esc(r.plate || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}</span>`;
   return { html, icon: () => L.divIcon({ className: 'vmk', iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20], tooltipAnchor: [0, -22], html }) };
 }
 /** Info-bulle au survol : chauffeur sous contrat, plaque, état, vitesse */
 function tipHtml(r) {
+  if (r.crs) return `<b>Course privée ${esc(r.crs.number || '')}</b><br>${esc(r.crs_driver || r.driver_name || '')}${r.crs.client_name ? ' · ' + esc(r.crs.client_company || r.crs.client_name) : ''}<br>${esc(r.plate || '')} · ${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}`;
   return `<b>${esc(r.driver_name)}</b>${r.contract_num && r.shift ? ' · shift ' + esc(r.shift.toLowerCase()) : ''}<br>${esc(r.plate || '')} · ${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}`;
 }
 function popupHtml(r) {
   return `<div class="vpop">${plate(r.plate)} <span class="small">${esc(r.model || '')}</span><div><b>${esc(r.state || '')}</b>${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</div>
+    ${r.crs ? `<div>${crsLiveHtml(r, true)}<br>Chauffeur : <b>${esc(r.crs_driver || '—')}</b> · jusqu'au ${esc(fmtDTY(r.crs.end_at))}</div>` : ''}
     <div>${r.contract_num ? esc(r.driver_name) + ' · ' + esc(r.shift ? 'shift ' + r.shift.toLowerCase() : '') + ' · contrat ' + esc(r.contract_num) : noCtrHtml(r)}</div>
     <div class="small">Position ${r.live ? 'Geotab ' + esc(fmtHMS(r.last_pos_at)) : 'du collecteur ' + esc(fmtDT(r.last_pos_at))}</div>
     <div><a href="#/vehicule?k=${encodeURIComponent(r.vehicle_key)}">Fiche du véhicule</a>${r.contract_num && r.driver_code ? ` · <a href="#/chauffeur?c=${encodeURIComponent(r.driver_code)}">Fiche du chauffeur</a>` : ''}</div></div>`;

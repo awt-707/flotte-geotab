@@ -9,7 +9,7 @@ const isAdmin = () => S.profile && S.profile.role === 'admin';
 const PARAM_DEFAULTS = { limDbMb: 500, limStorageMb: 1024, limLiveMonth: 500000, manifestKeepDays: 30, shiftAdvance: 2, minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
 
 // ---------- Accès aux données ----------
-const PK = { vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key', manager_shifts: 'agency_id,user_id,day,shift' };
+const PK = { trips: 'id', user_sessions: 'id', vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key', manager_shifts: 'agency_id,user_id,day,shift' };
 async function all(table, cols, build, order) {
   const page = 1000;
   const get = async i => {
@@ -264,8 +264,8 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
-  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning'], ['reglages', 'Réglages']];
-const ADMIN_PAGES = { agences: 1, planning: 1, reglages: 1 };
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
+const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
 function shell() {
   const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct';
   $('#app').innerHTML = `<div class="layout">
@@ -275,10 +275,10 @@ function shell() {
       (n[0] !== 'direct' ? '' : appMode() === 'link' ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` :
         navSites().filter(x => canSee('x-' + x.id)).map(x => `<a href="#/x-${x.id}" class="navext${page === 'x-' + x.id ? ' on' : ''}" data-ext="${x.id}"${page === 'x-' + x.id ? ' aria-current="page"' : ''}>${esc(x.name)}</a>`).join(''))).join('')}</nav>
     <div class="foot">${mineFoot()}${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
-      ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span>${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
+      ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span>${isAdmin() ? '<a id="onl" class="onl" href="#/connexions" hidden title="Qui est connecté en ce moment"></a>' : ''}${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
   <main id="page"><div class="loading">Chargement…</div></main></div>`;
-  $('#logout').onclick = async () => { await sb.auth.signOut(); location.hash = ''; };
+  $('#logout').onclick = async () => { await sessEnd(); await sb.auth.signOut(); location.hash = ''; };
   $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
   const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
   const mo = $('#mineon'); if (mo) mo.onchange = () => { try { localStorage.setItem('mesveh', mo.checked ? '1' : '0'); } catch (e) { } route(); };
@@ -1247,7 +1247,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
@@ -1276,10 +1276,11 @@ async function route() {
   try { await PAGES[page](); } catch (e) { if (my === ROUTING) $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
   if (my !== ROUTING) return;
   S.timers.push(setInterval(health, 60000));
+  sessPing();   // connexions : page affichée envoyée tout de suite (puis toutes les minutes)
   // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)
   S.timers.push(setInterval(async () => {
     const was = S.mine ? [...S.mine].sort().join() : '', k = S.mineKey; await mineLoad();
-    if (my === ROUTING && S.mineKey !== k && (S.mine ? [...S.mine].sort().join() : '') !== was && !/^(manifeste|reglages|planning|x-)/.test(pageOf())) route();
+    if (my === ROUTING && S.mineKey !== k && (S.mine ? [...S.mine].sort().join() : '') !== was && !/^(manifeste|courses|reglages|planning|x-)/.test(pageOf())) route();
   }, 60000));
   if (page === 'direct') {
     LIVE.retryAt = 0; LIVE.primed = false; liveTick(my);
@@ -1298,6 +1299,7 @@ sb.auth.onAuthStateChange(async (ev, session) => {
   }
   const changed = (S.session && S.session.user.id) !== (session && session.user.id);
   if (changed) {   // autre utilisateur : rien de ce qui a été lu pour le précédent n'est gardé (droits par agence, planning)
+    SESS.id = sessNewId(); SESS.off = false;   // connexions : nouvelle session pour le nouvel utilisateur
     S.profile = null; S.P = null; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
     Object.assign(LIVE, { rows: [], pos: {}, at: 0, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {}, drv: {}, drvAt: 0, sel: '' });
   }
