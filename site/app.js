@@ -299,13 +299,17 @@ function plate(p, others) {
 /** Nombre d'alertes critiques encore à traiter (pastille du menu) */
 async function openAlerts() {
   try {
-    const { count } = await sb.from('alerts').select('id', { count: 'exact', head: true }).eq('severity', 'Critique').eq('status', 'À traiter');
-    const el = $('#nbal'); if (el && count) { el.textContent = count; el.hidden = false; el.title = count + ' alertes critiques à traiter'; }
+    // agence choisie ou « Mes véhicules » : seulement ces véhicules (les droits de la base limitent déjà aux agences de l'utilisateur)
+    let q = sb.from('alerts').select('id', { count: 'exact', head: true }).eq('severity', 'Critique').eq('status', 'À traiter');
+    if (agFilter() || mineOn()) { const ok = inAgency(); q = q.in('vehicle_key', S.vehList.filter(v => ok(v.key)).map(v => v.key).concat(['-'])); }
+    const { count } = await q;
+    const el = $('#nbal'); if (el) { el.textContent = count || ''; el.hidden = !count; el.title = (count || 0) + ' alertes critiques à traiter'; }
   } catch (e) { }
 }
 /** Nouvelle alerte reçue en temps réel (Supabase Realtime) : bandeau dans le site, notification du navigateur si la page est en arrière-plan */
 function onNewAlert(a) {
   if (!a || !a.id || !inAgency()(a.vehicle_key)) return;
+  if (a.day && a.day < addDays(today(), -1)) return;   // alerte d'une journée passée (recalcul, contrats injectés en retard) : pas de bandeau
   let box = $('#toasts'); if (!box) { box = document.createElement('div'); box.id = 'toasts'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
   const t = document.createElement('div'); t.className = 'toast ' + (GRAV_CLS[a.severity] || '');
   t.innerHTML = `<button class="x" aria-label="Fermer">×</button>${badge(a.severity, GRAV_CLS[a.severity])} <b>${esc(a.type)}</b> ${plate(a.plate)}<div>${esc(a.driver_name || '')}${a.time ? ' · ' + esc(a.time) : ''}</div>
@@ -314,7 +318,8 @@ function onNewAlert(a) {
   box.prepend(t); while (box.children.length > 5) box.lastChild.remove();
   if (a.severity !== 'Critique') setTimeout(() => t.remove(), 30000);
   openAlerts();
-  try { if (document.hidden && ['Critique', 'Haute'].includes(a.severity) && 'Notification' in window && Notification.permission === 'granted')
+  // fenêtre cachée, ou volet externe (Uber, Clicar…) affiché par-dessus les bandeaux : notification du système
+  try { if ((document.hidden || /^x-/.test(pageOf())) && ['Critique', 'Haute'].includes(a.severity) && 'Notification' in window && Notification.permission === 'granted')
     new Notification('Ludy : ' + a.type + ' ' + (a.plate || ''), { body: (a.driver_name ? a.driver_name + ' · ' : '') + String(a.detail || '').slice(0, 120), tag: a.id }); } catch (e) { }
 }
 window.__onNewAlert = onNewAlert;
@@ -346,8 +351,11 @@ document.addEventListener('click', e => {
 function cards(items) { return `<div class="cards">${items.map(i => `<div class="card ${i[2] || ''}"><div class="cv">${i[1]}</div><div class="cl">${i[0]}</div></div>`).join('')}</div>`; }
 /** Sélecteur de période (comme le tableau de bord du Sheet) */
 const PERIODS = ['Aujourd\'hui', 'Hier', '7 derniers jours', 'Semaine en cours', '30 derniers jours', 'Mois en cours', 'Personnalisé'];
+/** Réglage mémorisé dans le navigateur ; null si absent, illisible ou stockage bloqué (navigation privée) */
+function lsJSON(k) { if (S.mem && k in S.mem) return S.mem[k]; try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v && typeof v === 'object' ? v : null; } catch (e) { return null; } }
+function lsSet(k, v) { (S.mem = S.mem || {})[k] = v; try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* gardé pour cette page ouverte */ } }
 function period() {
-  const p = JSON.parse(localStorage.getItem('periode') || 'null') || { sel: '7 derniers jours' }, t = today();
+  const p = lsJSON('periode') || { sel: '7 derniers jours' }, t = today();
   let from = addDays(t, -6), to = t;
   switch (p.sel) {
     case 'Aujourd\'hui': from = t; break;
@@ -362,7 +370,7 @@ function period() {
 function periodBar(onchange) {
   const p = period();
   setTimeout(() => {
-    const go = () => { const v = { sel: $('#psel').value, from: $('#pfrom').value, to: $('#pto').value }; localStorage.setItem('periode', JSON.stringify(v)); onchange(); };
+    const go = () => { const v = { sel: $('#psel').value, from: $('#pfrom').value, to: $('#pto').value }; lsSet('periode', v); onchange(); };
     $('#psel').onchange = go; $('#pfrom').onchange = () => { $('#psel').value = 'Personnalisé'; go(); }; $('#pto').onchange = () => { $('#psel').value = 'Personnalisé'; go(); };
   });
   return `<div class="bar"><label>Période <select id="psel">${PERIODS.map(x => `<option ${x === p.sel ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
@@ -383,6 +391,7 @@ async function health() {
 
 // ---------- TABLEAU DE BORD ----------
 async function pageTableau() {
+  const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const p = period(), P = S.P, ok = inAgency();
   let [jrn, ac, tne, top] = await Promise.all([
     all('journal', '*', q => q.gte('day', p.from).lte('day', p.to)),
@@ -402,6 +411,7 @@ async function pageTableau() {
   const drows0 = Object.values(byD).map(a => { const [sh, code] = a.k.split('|'), sc = scoreOf(a, P); return { a, sh, code, nom: S.drv[code] || Object.keys(a.names)[0] || code, score: sc, level: levelOf(sc, P) }; })
     .sort((x, y) => y.score - x.score || y.a.pts - x.a.pts);
   const drows = SHIFTS.flatMap(s => drows0.filter(d => d.sh === s).slice(0, 10));   // 10 plus dangereux de chaque shift
+  if (rid !== ROUTING) return;
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Tableau de bord</h1><div class="sub">Données mesurées par Geotab uniquement, « ${NM} » quand Geotab ne fournit pas la valeur.</div></div>
     ${periodBar(go)}
@@ -459,7 +469,7 @@ function nmv(v) { return v === NM || v === 'km insuffisants' ? `<span class="nm"
  */
 async function withSuccessors(list) {
   const open = list.filter(c => !c.end_at && c.vehicle_key); if (!open.length) return list;
-  const lim = new Date(Date.now() - 45 * DAY).toISOString(), first = open.map(c => c.start_at).sort()[0], from = first < lim ? lim : first;
+  const lim = new Date(Date.now() - (num(S.P && S.P.retentionDays, 62) + 45) * DAY).toISOString(), first = open.map(c => c.start_at).sort()[0], from = first < lim ? lim : first;   // même fenêtre que le collecteur (contractIndex_)
   const keys = [...new Set(open.map(c => c.vehicle_key))], have = new Set(list.map(c => c.num)), out = list.slice();
   for (let i = 0; i < keys.length; i += 100) {
     (await all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.in('vehicle_key', keys.slice(i, i + 100)).gt('start_at', from)
@@ -530,6 +540,7 @@ function linkify(t) { return esc(t).replace(/https:\/\/maps\.google\.com\/\?q=(-
 
 // ---------- DU JOUR ----------
 async function pageJour() {
+  const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const qs = new URLSearchParams(location.hash.split('?')[1] || ''), P = S.P, day = qs.get('jour') || shiftAt(new Date(), P).day;   // la nuit en cours (avant 7 h) appartient à la journée de la veille
   // journée d'exploitation : shift jour (shiftDay h → shiftNight h) puis shift nuit jusqu'au lendemain shiftDay h ; une nuit appartient au jour où elle commence
   const ok = inAgency(), dp = day.split('-').map(Number), d1 = addDays(day, 1).split('-').map(Number), sd = num(P.shiftDay, 7);
@@ -541,9 +552,10 @@ async function pageJour() {
   const rows = jrn.filter(r => (r.contract_start ? shiftOfCtr(r.contract_start, P).day : r.day) === day);
   const al = (await alertShifts(al0)).filter(a => { const x = alertShiftDay(a); return x ? x.day === day : a.day === day; })
     .sort((x, y) => (String(y.day) + (y.time || '')).localeCompare(String(x.day) + (x.time || '')));
+  if (rid !== ROUTING) return;
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Journée du ${fmtDay(day)}</h1><div class="sub">${esc(shiftName('Jour', P))} du ${fmtDay(day)}, puis ${esc(shiftName('Nuit', P).replace(/^S/, 's'))} du ${fmtDay(day)} au ${fmtDay(addDays(day, 1))}. Chaque ligne de contrat couvre toute la journée de travail, selon les horaires du contrat.</div></div>
-    <div class="bar"><label>Date <input type="date" id="jday" value="${day}"></label><button class="ghost" id="jprev">Veille</button><button class="ghost" id="jnext">Lendemain</button></div>
+    <div class="bar"><label>Date <input type="date" id="jday" value="${esc(day)}"></label><button class="ghost" id="jprev">Veille</button><button class="ghost" id="jnext">Lendemain</button></div>
     <h2>Journées de travail actives, par shift (de la plus dangereuse à la moins dangereuse)</h2>
     ${shiftSections(rows.sort((x, y) => y.score - x.score), r => shiftOf(r.contract_start, P), (sub, sfx) => table('tjour' + sfx, [['Plaque', r => plate(r.plate), r => r.plate], ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name)], ['Contrat', r => esc(r.contract_num || 'Hors contrat')],
       ['Début', r => fmtDT(r.contract_start), r => r.contract_start], ['Fin', r => r.contract_end ? fmtDT(r.contract_end) : (r.contract_num ? 'en cours' : '')],
@@ -568,6 +580,7 @@ async function pageJour() {
 
 // ---------- CHAUFFEURS ----------
 async function pageChauffeurs() {
+  const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const p = period(), P = S.P;
   const ok = inAgency();
   const [jrn0, rc] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAll('driver_rule_counts', { p_from: p.from, p_to: p.to }, ['driver_code', 'rule_id', 'vehicle_key', 'contract_num'])]);
@@ -597,6 +610,7 @@ async function pageChauffeurs() {
       agency: agFilter() ? S.agName[agFilter()] : 'Toutes les agences',
       summary: [['Score', 'points danger pour 100 km (poids des règles dans Réglages)'], ['Seuils', 'Modéré ' + P.scoreY + ', Élevé ' + P.scoreO + ', Dangereux ' + P.scoreR], ['Chauffeurs classés', String(list.length)]], tables: tabs }));
   };
+  if (rid !== ROUTING) return;
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Classement des chauffeurs</h1><div class="sub">Score = points danger pour 100 km (poids des règles dans Réglages). Seuils : Modéré ${P.scoreY}, Élevé ${P.scoreO}, Dangereux ${P.scoreR}.</div>
       <button id="rkpdf">Télécharger le PDF</button></div>
@@ -616,21 +630,23 @@ async function pageChauffeurs() {
 
 // ---------- ALERTES ----------
 async function pageAlertes() {
+  const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const qs = new URLSearchParams(location.hash.split('?')[1] || ''), p = period();
   const from = qs.get('jour') || p.from, to = qs.get('jour') || p.to;
   const ok = inAgency(), rows = await alertShifts((await all('alerts', '*', q => q.gte('day', from).lte('day', to), ['day', false])).filter(r => ok(r.vehicle_key)));
-  const f = JSON.parse(localStorage.getItem('fal') || '{}'); if (qs.get('plaque')) f.plate = qs.get('plaque');
+  const f = Object.assign({}, lsJSON('fal')); if (qs.get('plaque')) f.plate = qs.get('plaque');
   const types = [...new Set(rows.map(r => r.type))].sort();
+  if (rid !== ROUTING) return;
   const render = () => {
     const list = rows.filter(r => (!f.sev || r.severity === f.sev) && (!f.st || r.status === f.st) && (!f.type || r.type === f.type) && (!f.plate || normPlate(r.plate) === normPlate(f.plate)));
-    $('#page').innerHTML = `<div class="head"><h1>Alertes</h1><div class="sub">${list.length} alertes sur ${rows.length}${qs.get('jour') ? ' le ' + fmtDay(qs.get('jour')) : ''}. ${canEdit() ? 'Statut et commentaire enregistrés automatiquement.' : ''}</div></div>
+    $('#page').innerHTML = `<div class="head"><h1>Alertes</h1><div class="sub">${list.length} alertes sur ${rows.length}${qs.get('jour') ? ' le ' + esc(fmtDay(qs.get('jour'))) : ''}. ${canEdit() ? 'Statut et commentaire enregistrés automatiquement.' : ''}</div></div>
     ${qs.get('jour') ? '' : periodBar(go)}
     <div class="bar"><label>Gravité <select id="fsev"><option value="">Toutes</option>${['Critique', 'Haute', 'Moyenne', 'Info'].map(x => `<option ${f.sev === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
       <label>Statut <select id="fst"><option value="">Tous</option>${['À traiter', 'En cours', 'Traité', 'Faux positif'].map(x => `<option ${f.st === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
       <label>Type <select id="ftype"><option value="">Tous</option>${types.map(x => `<option ${f.type === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
       <label>Plaque <input id="fplate" value="${esc(f.plate || '')}" size="10"></label></div>
     ${alertTable('talall', list, canEdit())}`;
-    const set = (k, v) => { f[k] = v; const s = Object.assign({}, f); delete s.plate; localStorage.setItem('fal', JSON.stringify(s)); render(); };
+    const set = (k, v) => { f[k] = v; const s = Object.assign({}, f); delete s.plate; lsSet('fal', s); render(); };
     $('#fsev').onchange = e => set('sev', e.target.value); $('#fst').onchange = e => set('st', e.target.value); $('#ftype').onchange = e => set('type', e.target.value);
     $('#fplate').onchange = e => set('plate', e.target.value);
     document.querySelectorAll('.alst').forEach(s => { s.onchange = () => saveAlert(s.dataset.al, { status: s.value }, rows); });
@@ -651,11 +667,13 @@ async function saveAlert(id, patch, rows) {
 
 // ---------- CONTRATS ----------
 async function pageContrats() {
+  const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const ok = inAgency(), keep = c => ok(c.vehicle_key) || (!agFilter() && !c.vehicle_key);
   // contrats des 40 derniers jours, plus ceux restés ouverts (sans date de fin) même plus anciens
   const [rec0, open0] = await Promise.all([all('contracts', '*', q => q.gte('start_at', new Date(Date.now() - 40 * DAY).toISOString()), ['start_at', false]),
     all('contracts', '*', q => q.is('end_at', null))]);
-  const seen = {}, recent = rec0.concat(open0).filter(c => !seen[c.num] && (seen[c.num] = 1) && keep(c)).sort((a, b) => String(b.start_at).localeCompare(String(a.start_at)));
+  const open1 = await withSuccessors(open0);   // vrai remplaçant d'un vieux contrat ouvert (même fenêtre que le collecteur)
+  const seen = {}, recent = rec0.concat(open1).filter(c => !seen[c.num] && (seen[c.num] = 1) && keep(c)).sort((a, b) => String(b.start_at).localeCompare(String(a.start_at)));
   // fin effective par véhicule ; contrats à vérifier : jamais clôturés alors qu'un contrat plus récent a commencé, ou qui se chevauchent
   const byV = {}; recent.forEach(c => { if (c.vehicle_key) (byV[c.vehicle_key] = byV[c.vehicle_key] || []).push(c); });
   const check = [];
@@ -667,6 +685,7 @@ async function pageContrats() {
   const finTxt = c => c._next ? `<span class="badge warn">non clôturé</span> remplacé par ${esc(c._next)}` : c.end_at ? fmtDTY(c.end_at) : 'en cours';
   const jobs = (await sb.from('jobs').select('*').eq('kind', 'after_inject').order('id', { ascending: false }).limit(5)).data || [];
   let search = '';
+  if (rid !== ROUTING) return;
   const render = () => {
     const s = normTxt(search), list = recent.filter(c => !s || normTxt([c.num, c.name, c.plate, c.client_code].join(' ')).includes(s));
     $('#page').innerHTML = `<div class="head"><h1>Contrats</h1><div class="sub">Importez l'extract du jour : chauffeurs, données Geotab, journal et alertes se mettent à jour tout seuls (5 min max).</div></div>
@@ -687,11 +706,22 @@ async function pageContrats() {
   };
   window.__rerender = render; render();
 }
+/**
+ * Classeur lu sans ambiguïté de date : un CSV reste en texte (SheetJS lit sinon « 05/10/2026 13:30 » comme le 10 mai, sans l'heure),
+ * une date Excel est réécrite jj/mm/aaaa hh:mm telle qu'affichée (heure du Maroc, sans passer par le fuseau du navigateur).
+ */
+function readBook(buf, name) {
+  const csv = /\.(csv|txt)$/i.test(name || '');
+  const wb = XLSX.read(buf, { type: 'array', raw: csv, cellNF: true });
+  if (!csv) wb.SheetNames.forEach(n => { const sh = wb.Sheets[n];
+    Object.keys(sh).forEach(k => { const c = sh[k]; if (k[0] !== '!' && c && c.t === 'n' && c.z && XLSX.SSF.is_date(c.z)) c.w = XLSX.SSF.format('dd/mm/yyyy hh:mm', c.v); }); });
+  return wb;
+}
 async function importFile(file) {
   const out = $('#cres'); if (!file) return;
   out.innerHTML = msg('Lecture du fichier…');
   try {
-    const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array' });
+    const wb = readBook(new Uint8Array(await file.arrayBuffer()), file.name);
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '', dateNF: 'dd/mm/yyyy hh:mm' });
     const pc = await all('plate_changes', 'old_plate,new_plate'), cm = buildCanonMap(S.vehList, pc);
     const res = parseContracts(rows, cm);
@@ -734,7 +764,7 @@ async function pagePlaques() {
 
 // ---------- Lecture d'un fichier Excel / CSV : colonnes reconnues par leur titre ----------
 async function readSheet(file) {
-  const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array' });
+  const wb = readBook(new Uint8Array(await file.arrayBuffer()), file.name);
   return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
 }
 /** spec = { champ: [regex, ...] } ; la ligne d'en-têtes est la première qui contient la colonne obligatoire (req) */
@@ -761,10 +791,12 @@ async function agencyIds(names) {
 
 // ---------- VÉHICULES (liste du parc gérée ici : remplace le Sheet ETAT PARC) ----------
 async function pageVehicules() {
+  const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   await loadRef(true);
   const ok = inAgency(), rows = S.vehList.filter(v => ok(v.key)), parc = isAdmin() ? await all('parc', '*', null, ['plate']) : [];
   const known = new Set(); S.vehList.forEach(v => [v.plate].concat(String(v.other_plates || '').split(/[,;]\s*/)).forEach(p => { if (p) known.add(normPlate(p)); }));
   const ed = (v, c, w) => isAdmin() ? `<input class="ved" data-k="${esc(v.key)}" data-c="${c}" value="${esc(v[c] == null ? '' : v[c])}" size="${w || 6}">` : esc(v[c] == null ? '' : v[c]);
+  if (rid !== ROUTING) return;
   const render = (info) => {
     $('#page').innerHTML = `<div class="head"><h1>Véhicules</h1><div class="sub">La liste des véhicules (parc) se gère ici : ajout à la main ou import d'un fichier Excel. Le collecteur les associe aux boîtiers Geotab (5 min max).
       ${isAdmin() ? 'Agence, réservoir, conso de référence, recette et Actif modifiables dans le tableau.' : ''}</div></div>
@@ -837,12 +869,17 @@ async function importParc(file, parc) {
 
 // ---------- FICHES CHAUFFEURS (déduits des contrats ou ajoutés à la main) ----------
 async function pageFiches() {
+  const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const ok = inAgency(), a = agFilter();
-  let rows = await all('drivers', '*', null, ['name']);
-  if (a) { const seen = new Set((await all('contracts', 'client_code,vehicle_key', q => q.not('vehicle_key', 'is', null))).filter(c => ok(c.vehicle_key)).map(c => c.client_code));
-    rows = rows.filter(d => String(d.agency_id) === a || seen.has(d.code)); }
+  // agence choisie : chauffeurs de l'agence et ceux qui ont eu un contrat sur ses véhicules
+  const load = async () => { let r = await all('drivers', '*', null, ['name']);
+    if (a) { const seen = new Set((await all('contracts', 'client_code,vehicle_key', q => q.not('vehicle_key', 'is', null))).filter(c => ok(c.vehicle_key)).map(c => c.client_code));
+      r = r.filter(d => String(d.agency_id) === a || seen.has(d.code)); }
+    return r; };
+  let rows = await load();
   let search = '';
   const myAg = S.agencies;
+  if (rid !== ROUTING) return;
   const render = (info) => {
     const q = normTxt(search), list = rows.filter(d => !q || normTxt([d.code, d.name, d.phone, d.email, d.other_names].join(' ')).includes(q));
     $('#page').innerHTML = `<div class="head"><h1>Chauffeurs</h1><div class="sub">${rows.length} chauffeurs. Ceux des contrats sont ajoutés automatiquement ; vous pouvez aussi en ajouter (le code doit être le code client des contrats pour croiser avec Geotab).</div></div>
@@ -880,7 +917,7 @@ async function pageFiches() {
       const { error } = await sb.from('drivers').insert(row); if (error) { alert(/row-level/.test(error.message) ? 'Choisissez une de vos agences.' : error.message); return; }
       rows.push(Object.assign({ n_contracts: 0 }, row)); rows.sort((x, y) => String(x.name).localeCompare(String(y.name))); render(msg('Chauffeur ' + esc(name) + ' ajouté.', 'ok'));
     };
-    const fi = $('#dfile'); if (fi) fi.onchange = () => importDrivers(fi.files[0], rows, $('#dag').value).then(async t => { rows = await all('drivers', '*', null, ['name']); render(t); }).catch(e => render(msg('Erreur : ' + esc(e.message || e), 'err')));
+    const fi = $('#dfile'); if (fi) fi.onchange = () => importDrivers(fi.files[0], rows, $('#dag').value).then(async t => { rows = await load(); render(t); }).catch(e => render(msg('Erreur : ' + esc(e.message || e), 'err')));
   };
   window.__rerender = () => render(); render();
 }
@@ -906,10 +943,12 @@ async function importDrivers(file, rows, defAg) {
 
 // ---------- RAPPORTS (PDF) ----------
 async function pageRapports() {
+  const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const p = period(), sel = agFilter();
   const keys = new Set(S.vehList.filter(v => !sel || String(v.agency_id) === sel).map(v => v.key));
-  const [jrn, al] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to)), all('alerts', 'id,day,time,plate,vehicle_key,driver_name,type,severity,detail', q => q.gte('day', p.from).lte('day', p.to))]);
+  const [jrn, al] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to)), all('alerts', 'id,day,time,plate,vehicle_key,driver_name,type,severity,detail,status', q => q.gte('day', p.from).lte('day', p.to))]);
   const rep = rptBuild({ journal: jrn, alerts: al, vehicles: S.vehList.filter(v => keys.has(v.key)), drivers: S.drv, P: S.P, from: p.from, to: p.to, hmOf: localHM, agency: sel ? S.agName[sel] : (isAdmin() || S.agencies.length !== 1 ? '' : S.agencies[0].name) });
+  if (rid !== ROUTING) return;
   $('#page').innerHTML = `<div class="head"><h1>Rapports</h1><div class="sub">Rapport de la période et de l'agence choisies (agence : menu de gauche). ${isAdmin() ? 'Envoi automatique par e-mail : <a href="#/reglages">Réglages > Rapports automatiques</a>.' : ''}</div>
     <button id="rpdf">Télécharger le PDF</button></div>
     ${periodBar(go)}
@@ -1056,10 +1095,12 @@ function bindSpeedSettings(params) {
 
 // ---------- AGENCES (admin) ----------
 async function pageAgences() {
+  const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   await loadRef(true);
   const [users, links] = await Promise.all([all('profiles', 'user_id,email,role', null, ['email']), all('user_agencies', '*')]);
   const nVeh = id => S.vehList.filter(v => v.agency_id === id).length, noAg = S.vehList.filter(v => !v.agency_id && v.active !== 'NON').length;
   const has = (u, a) => links.some(l => l.user_id === u && l.agency_id === a);
+  if (rid !== ROUTING) return;
   const render = (info) => {
     $('#page').innerHTML = `<div class="head"><h1>Agences</h1><div class="sub">Chaque gestionnaire ou utilisateur en lecture seule ne voit que les véhicules (trajets, contrats, alertes, chauffeurs) des agences cochées. L'administrateur voit tout.</div></div>
     <div class="panel row"><label>Nouvelle agence <input id="agname" placeholder="Casablanca" size="18"></label><label>Ville <input id="agcity" size="14"></label><button id="agadd">Créer</button></div>
@@ -1151,12 +1192,13 @@ async function pageReglages() {
     $('#upgbox').scrollIntoView({ block: 'nearest' });
   }; });
   document.querySelectorAll('.urole').forEach(s => { s.onchange = async () => { const { error } = await sb.from('profiles').update({ role: s.value }).eq('user_id', s.dataset.u); if (error) alert(error.message); else s.classList.add('saved'); }; });
-  document.querySelectorAll('.ped').forEach(i => { i.onchange = async () => { const { error } = await sb.from('params').update({ value: i.value }).eq('key', i.dataset.k); if (error) alert(error.message); else { i.classList.add('saved'); S.P = null; await loadRef(); } }; });
-  document.querySelectorAll('.red_').forEach(i => { i.onchange = async () => { const { error } = await sb.from('rules').update({ weight: num(i.value) }).eq('id', i.dataset.k); if (error) alert(error.message); else { i.classList.add('saved'); await job('recompute', addDays(today(), -31)); } }; });
+  document.querySelectorAll('.ped').forEach(i => { i.onchange = async () => { const { error } = await sb.from('params').update({ value: i.value }).eq('key', i.dataset.k); if (error) alert(error.message); else { i.classList.add('saved'); S.P = null; S.ctrShift = {}; await loadRef(); } }; });   // horaires des shifts changés : shift des contrats recalculé
+  document.querySelectorAll('.red_').forEach(i => { i.onchange = async () => { const { error } = await sb.from('rules').update({ weight: num(i.value) }).eq('id', i.dataset.k); if (error) alert(error.message); else { i.classList.add('saved'); await job('recompute', addDays(today(), -31)).catch(e => alert('Recalcul non demandé : ' + e.message)); } }; });
   const done = t => { $('#actres').innerHTML = msg(t + ' Le collecteur s\'en charge dans 5 minutes maximum (suivi ci-dessous).', 'ok'); };
-  $('#rcgo').onclick = async () => { await job('recompute', $('#rcfrom').value); done('Recalcul demandé.'); };
-  $('#rsgo').onclick = async () => { await job('resync', $('#rsfrom').value + '|' + $('#rsto').value); done('Retéléchargement demandé.'); };
-  $('#vhgo').onclick = async () => { await job('import_vehicles'); done('Mise à jour des véhicules demandée.'); };
+  const fail = e => { $('#actres').innerHTML = msg('Demande non enregistrée : ' + esc(e.message || e), 'err'); };
+  $('#rcgo').onclick = async () => { await job('recompute', $('#rcfrom').value).then(() => done('Recalcul demandé.'), fail); };
+  $('#rsgo').onclick = async () => { await job('resync', $('#rsfrom').value + '|' + $('#rsto').value).then(() => done('Retéléchargement demandé.'), fail); };
+  $('#vhgo').onclick = async () => { await job('import_vehicles').then(() => done('Mise à jour des véhicules demandée.'), fail); };
   const reload = () => pageReglages().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message), 'err'); });
   bindSpeedSettings(params);
   bindExtSettings(params);
@@ -1175,7 +1217,7 @@ async function pageReglages() {
   };
   document.querySelectorAll('.sact').forEach(c => { c.onchange = async () => { const { error } = await sb.from('report_schedules').update({ active: c.checked }).eq('id', c.dataset.s); if (error) alert(error.message); }; });
   document.querySelectorAll('[data-sdel]').forEach(b => { b.onclick = async () => { if (!confirm('Supprimer ce rapport automatique ?')) return; const { error } = await sb.from('report_schedules').delete().eq('id', b.dataset.sdel); if (error) alert(error.message); else reload(); }; });
-  document.querySelectorAll('[data-snow]').forEach(b => { b.onclick = async () => { b.disabled = true; await job('send_report', b.dataset.snow); b.textContent = 'Envoi demandé (5 min max)'; }; });
+  document.querySelectorAll('[data-snow]').forEach(b => { b.onclick = async () => { b.disabled = true; try { await job('send_report', b.dataset.snow); b.textContent = 'Envoi demandé (5 min max)'; } catch (e) { alert(e.message); b.disabled = false; } }; });
 }
 
 // ---------- Connexion ----------
@@ -1215,10 +1257,16 @@ async function route() {
   S.timers.forEach(clearInterval); S.timers = [];
   if (S.channel) { sb.removeChannel(S.channel); S.channel = null; }
   if (!S.session) { if (S.alertCh) { sb.removeChannel(S.alertCh); S.alertCh = null; } loginView(); return; }
-  if (!S.profile) { const { data } = await sb.from('profiles').select('*').eq('user_id', S.session.user.id).maybeSingle(); S.profile = data || { email: S.session.user.email, role: 'pending' }; }
+  if (!S.profile) {
+    const { data, error } = await sb.from('profiles').select('*').eq('user_id', S.session.user.id).maybeSingle();
+    // erreur réseau : pas de « compte en attente » par erreur ; le profil est relu au prochain changement de page
+    if (error) { $('#app').innerHTML = msg('Base inaccessible : ' + esc(error.message) + '. Rechargez la page.', 'err'); return; }
+    S.profile = data || { email: S.session.user.email, role: 'pending' };
+  }
   if (S.profile.role === 'pending') { pendingView(); return; }
   try { await loadRef(); } catch (e) { $('#app').innerHTML = msg('Base inaccessible : ' + esc(e.message), 'err'); return; }
   await mineLoad();   // planning : véhicules confiés pour le shift en cours
+  if (my !== ROUTING) return;   // autre page demandée pendant le chargement
   if (!canSee(pageOf())) { location.replace('#/' + firstAllowed()); return; }   // volet non autorisé à cet utilisateur
   let page = shell();
   if (/^x-/.test(page)) { const id = page.slice(2); PAGES[page] = () => pageExt(id); }
@@ -1228,6 +1276,11 @@ async function route() {
   try { await PAGES[page](); } catch (e) { if (my === ROUTING) $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
   if (my !== ROUTING) return;
   S.timers.push(setInterval(health, 60000));
+  // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)
+  S.timers.push(setInterval(async () => {
+    const was = S.mine ? [...S.mine].sort().join() : '', k = S.mineKey; await mineLoad();
+    if (my === ROUTING && S.mineKey !== k && (S.mine ? [...S.mine].sort().join() : '') !== was && !/^(manifeste|reglages|planning|x-)/.test(pageOf())) route();
+  }, 60000));
   if (page === 'direct') {
     LIVE.retryAt = 0; LIVE.primed = false; liveTick(my);
     S.timers.push(setInterval(() => liveTick(my), LIVE_SEC * 1000));
@@ -1244,6 +1297,10 @@ sb.auth.onAuthStateChange(async (ev, session) => {
     if (p) { const { error } = await sb.auth.updateUser({ password: p }); alert(error ? error.message : 'Mot de passe changé.'); }
   }
   const changed = (S.session && S.session.user.id) !== (session && session.user.id);
-  S.session = session; if (changed) { S.profile = null; S.P = null; route(); }
+  if (changed) {   // autre utilisateur : rien de ce qui a été lu pour le précédent n'est gardé (droits par agence, planning)
+    S.profile = null; S.P = null; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
+    Object.assign(LIVE, { rows: [], pos: {}, at: 0, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {}, drv: {}, drvAt: 0, sel: '' });
+  }
+  S.session = session; if (changed) route();
 });
 sb.auth.getSession().then(({ data }) => { S.session = data.session; route(); });

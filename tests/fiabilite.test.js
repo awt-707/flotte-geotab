@@ -18,6 +18,10 @@ test('rapport planifié : pas avant la finalisation de ses journées, renvoyé a
   B.setNow(Date.UTC(2026, 9, 6, 9, 0)); B.run("setParam_('reportHour', '0')");
   assert.strictEqual(B.run('reportsStep_()'), '', 'rapport de la veille envoyé avant midi (journée pas finalisée)');
   B.setNow(Date.UTC(2026, 9, 6, 13, 0));
+  // file vide mais journée de la veille pas finalisée (Geotab en panne à midi, file abandonnée) : pas de rapport sur des lignes provisoires
+  env.psql("delete from vehicle_days where day = '2026-10-05'"); B.run('memoClear_()');
+  assert.strictEqual(B.run('reportsStep_()'), '', 'rapport envoyé sur une journée pas finalisée');
+  env.psql("insert into vehicle_days (id, vehicle_key, day, synced_at) select key || '|2026-10-05', key, '2026-10-05', '2026-10-06 14:01+00' from vehicles on conflict (id) do update set synced_at = excluded.synced_at"); B.run('memoClear_()');
   const send = B.ctx.MailApp.sendEmail; B.ctx.MailApp.sendEmail = () => { throw new Error('Exception: You do not have permission to call MailApp.sendEmail'); };
   try { assert.match(B.run('reportsStep_()'), /Erreur/); } finally { B.ctx.MailApp.sendEmail = send; }
   assert.strictEqual(env.psql("select coalesce(last_period, '-') from report_schedules"), '-', 'période notée envoyée malgré l\'échec');

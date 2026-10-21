@@ -112,6 +112,7 @@ function manifFileName(d) {
 function manifWa(phone) {
   let s = String(phone || '').replace(/\D/g, '');
   if (/^00/.test(s)) s = s.slice(2);
+  if (/^2120[5-7]\d{8}$/.test(s)) s = '212' + s.slice(4);   // « +212 (0)6 … » : zéro national en trop
   if (/^0[5-7]\d{8}$/.test(s)) s = '212' + s.slice(1);
   else if (/^[5-7]\d{8}$/.test(s)) s = '212' + s;
   return /^\d{10,15}$/.test(s) ? s : '';

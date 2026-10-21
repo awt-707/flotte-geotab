@@ -35,9 +35,9 @@ function parseLocalDT(v) {
   const s = String(v == null ? '' : v).trim(); if (!s) return null;
   // ISO d'abord (« 2026-10-05 » contient « 26-10-05 », lu sinon comme le 26/10/2005)
   let m = s.match(/(?<!\d)(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
-  if (m) return localToDate(+m[1], +m[2], +m[3], +(m[4] || 0), +(m[5] || 0));
+  if (m) return +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31 ? localToDate(+m[1], +m[2], +m[3], +(m[4] || 0), +(m[5] || 0)) : null;
   m = s.match(/(?<!\d)(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})(?!\d)(?:\D+?(\d{1,2})\s*[hH:]\s*(\d{2})?)?/);
-  if (m) { let y = +m[3]; if (y < 100) y += 2000; return localToDate(y, +m[2], +m[1], +(m[4] || 0), +(m[5] || 0)); }
+  if (m) { let y = +m[3]; if (y < 100) y += 2000; return +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31 ? localToDate(y, +m[2], +m[1], +(m[4] || 0), +(m[5] || 0)) : null; }   // jour / mois (jamais mois / jour)
   const d = new Date(s); return isNaN(d) ? null : d;
 }
 function deacc(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }

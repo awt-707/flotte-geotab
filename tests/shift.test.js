@@ -50,7 +50,7 @@ test('rapport de consommation : par chauffeur et par shift, hors contrat à part
   const rep = rpt.rptConso({ trips: [trip('A', 'C1', 4), trip('B', 'C2', 5), trip('HORS_CONTRAT', '', 1)], fuel: [], stops: [], vehicles: [{ key: 'V1', plate: 'V1' }], P,
     a: Date.parse(at('00:00')), z: Date.parse(at('23:59')), dayOf: () => '2026-10-14', hmOf: () => '10:00', ctrShift: n => sh[n] || '' });
   const t = rep.tables.filter(x => /^Par chauffeur/.test(x.title));
-  assert.deepStrictEqual(t.map(x => x.title), ['Par chauffeur : Shift jour (07:00 → 19:00)', 'Par chauffeur : Shift nuit (19:00 → 07:00)', 'Par chauffeur : Hors contrat']);
+  assert.deepStrictEqual(t.map(x => x.title), ['Par chauffeur : Shift jour (07:00 → 19:00)', 'Par chauffeur : Shift nuit (19:00 → 07:00)', 'Par chauffeur : Hors contrat ou contrat introuvable']);
   assert.deepStrictEqual(t.map(x => x.rows.map(r => r[0])), [['Nom A'], ['Nom B'], ['Hors contrat']]);
 });
 

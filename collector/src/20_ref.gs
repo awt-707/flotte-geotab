@@ -50,10 +50,10 @@ function tzPublish_(force) {
 function tzFix_() {
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty('TZ_FIX') === 'MA_TZ') return '';
-  props.setProperty('TZ_FIX', 'MA_TZ');
   const from = '2026-09-20', to = addDays_(localDay_(new Date()), -1);
-  if (to < from) return '';
+  if (to < from) { props.setProperty('TZ_FIX', 'MA_TZ'); return ''; }
   const r = jobResync_([from + '|' + to]); markDirty_(from);
+  props.setProperty('TZ_FIX', 'MA_TZ');   // après la mise en file réussie (sinon refait au passage suivant)
   log_('Heure du Maroc', 'Journées du ' + fmtDay_(from) + ' au ' + fmtDay_(to) + ' recalculées à l\'heure réelle du Maroc (UTC+1) : ' + r);
   return '';
 }

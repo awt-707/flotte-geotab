@@ -28,6 +28,7 @@ test('manifeste : nom du fichier, numéro WhatsApp, places, message détaillé',
   assert.strictEqual(M.manifWa('+212 6 12 34 56 78'), '212612345678');
   assert.strictEqual(M.manifWa('00212612345678'), '212612345678');
   assert.strictEqual(M.manifWa('612345678'), '212612345678');
+  assert.strictEqual(M.manifWa('+212 (0)6 12 34 56 78'), '212612345678');
   assert.strictEqual(M.manifWa('12'), '');
   assert.strictEqual(M.manifSeats('HYUNDAI STARIA', null), 9);
   assert.strictEqual(M.manifSeats('Sonata', ''), 4);

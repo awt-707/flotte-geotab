@@ -141,3 +141,24 @@ test('litres d\'un plein : volume Geotab entre deux pleins complets, sinon jauge
   // jauge absente : volume Geotab
   const g = [f('2026-10-01T08:00:00Z', 20, 100, null, 70)]; R.rptFillMark(g); assert.strictEqual(R.rptFillL(g[0]), 70);
 });
+
+test('relecture 18/10 : 2e ticket d\'un plein regroupé avant le « transmis en différé » ; tickets transmis ensemble dans l\'ordre de leurs pleins', () => {
+  // plein F1 la veille payé autrement, plein F2 payé en deux tickets (50 L + 45 L) : 95 L pour un réservoir de 75 L
+  let d = base(); const t = T0 + 14 * 24 * H;
+  d.fills.push({ id: 'G1', vehicle_key: '111111WW', stop_start: new Date(t - 16 * H).toISOString(), lvl_before: 60, lvl_after: 99 },
+    { id: 'G2', vehicle_key: '111111WW', stop_start: new Date(t - 5 * MIN).toISOString(), lvl_before: 5, lvl_after: 100 });
+  d.tx.push({ id: 'S1', vehicle_key: '111111WW', at: t, liters: 50, product: 'GASOIL' }, { id: 'S2', vehicle_key: '111111WW', at: t + 20 * MIN, liters: 45, product: 'GASOIL' });
+  let res = run(d);
+  const r = res.rows.find(x => x.tx.some(y => y.id === 'S1'));
+  assert.deepStrictEqual(r.tx.map(x => x.id), ['S1', 'S2']); assert.strictEqual(r.fill.id, 'G2');
+  assert.ok(r.anomalies.some(a => a.t === 'Plus que la capacité du réservoir'), JSON.stringify(r.anomalies));
+  assert.ok(res.orphans.some(f => f.id === 'G1'), 'plein de la veille sans achat');
+  // deux tickets transmis à la même minute 2 jours plus tard : le premier ticket va au premier plein
+  d = base(); const u = T0 + 15 * 24 * H;
+  d.fills.push({ id: 'P1', vehicle_key: '111111WW', stop_start: new Date(u - 30 * H).toISOString(), lvl_before: 10, lvl_after: 100 },
+    { id: 'P2', vehicle_key: '111111WW', stop_start: new Date(u - 6 * H).toISOString(), lvl_before: 60, lvl_after: 99 });
+  d.tx.push({ id: 'L1', vehicle_key: '111111WW', at: u, liters: 70, product: 'GASOIL' }, { id: 'L2', vehicle_key: '111111WW', at: u, liters: 30, product: 'GASOIL' });
+  res = run(d);
+  assert.strictEqual(res.rows.find(x => x.tx[0].id === 'L1').fill.id, 'P1');
+  assert.strictEqual(res.rows.find(x => x.tx[0].id === 'L2').fill.id, 'P2');
+});

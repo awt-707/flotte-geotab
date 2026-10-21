@@ -44,7 +44,9 @@ function flush_(acc) {
  */
 function updateDerived_(fromDay) {
   const t0 = Date.now(), P = params_(), veh = vehicles_(), rules = rulesMap_(), cidx = contractIndex_();
-  const cut = addDays_(fromDay, -3), c0 = dayBounds_(cut).start.getTime(), lim = addDays_(fromDay, -31), longs = {};
+  // jamais avant les données détaillées conservées (archivées dans Drive au-delà) : journal et alertes plus anciens gardés tels quels
+  const keepFrom = addDays_(localDay_(new Date()), -Math.max(7, P.retentionDays || 62));
+  const cut = [addDays_(fromDay, -3), keepFrom].sort()[1], c0 = dayBounds_(cut).start.getTime(), lim = addDays_(fromDay, -31), longs = {};
   // contrat long encore en cours à « cut » : sa ligne de journal (datée du début du contrat) est recalculée en entier,
   // données relues depuis son début (31 jours au plus) ; sinon elle resterait figée à ses premiers jours
   let dataFrom = addDays_(fromDay, -4);
@@ -57,8 +59,16 @@ function updateDerived_(fromDay) {
   const jrn = buildJournalier_(T, E, F, veh, rules, P, fauxPositifs_(), contractInfoFor_([T, E, F]))
     .filter(r => toDayStr_(r[IJ['Date']]) >= cut || longs[String(r[IJ['Contrat']] || '')]);
   dbRpc_('replace_journal', { p_cut: cut, p_rows: jrn.map(r => toDb_('JRN', r)) });
-  const al = buildAlerts_(T, E, F, Il, jrn, veh, rules, P, cidx, cut);
+  // contrats longs : leurs alertes de journée de travail (datées du début du contrat, avant cut) recalculées aussi, sinon figées
+  const longKeys = {}; let cutA = cut;
+  jrn.forEach(r => { const d = toDayStr_(r[IJ['Date']]); if (d < cut && longs[String(r[IJ['Contrat']] || '')]) { longKeys[String(r[IJ['Clé']])] = 1; if (d < cutA) cutA = d; } });
+  const al = buildAlerts_(T, E, F, Il, jrn, veh, rules, P, cidx, cutA)
+    .filter(r => toDayStr_(r[1]) >= cut || longKeys[String(r[0]).replace(/^[A-Z]+\|/, '')]);
   dbRpc_('replace_alerts', { p_cut: cut, p_rows: al.map(r => toDb_('ALERT', r)) });
+  // seuil plus atteint sur un contrat long (moyenne qui redescend) : son ancienne alerte est retirée
+  const keep = {}; al.forEach(r => { keep[String(r[0])] = 1; });
+  const stale = []; Object.keys(longKeys).forEach(k => ['RALJ', 'CONSO', 'DANG'].forEach(t => { if (!keep[t + '|' + k]) stale.push(t + '|' + k); }));
+  for (let i = 0; i < stale.length; i += 40) dbDelete_('alerts', 'id=' + inList_(stale.slice(i, i + 40)));
   PropertiesService.getScriptProperties().setProperty('DERIVED_LAST', String(Date.now()));
   return { jrn: jrn.length, alerts: al.length, ms: Date.now() - t0 };
 }
@@ -140,16 +150,28 @@ function afterInject_(fromDay) {
     if (miss.length) { queueDays_(miss.map(id => ({ d: id.split('|')[1], k: id.split('|')[0], solo: 1 }))); msg.push(miss.length + ' journées passées à télécharger (quelques minutes)'); }
   } catch (e) { msg.push('journées manquantes : ' + e.message); }
   const r = rebuild_(addDays_(fromDay, -1));
-  PropertiesService.getScriptProperties().deleteProperty('DERIVED_DIRTY');
+  clearDirty_(addDays_(fromDay, -1));
   msg.push(r.jrn + ' journées de travail, ' + r.alerts + ' alertes recalculées');
   log_('Après import contrats', msg.join(' | '), t0);
   return msg.join(' | ');
 }
-/** Ajoute des véhicule-jours à la file de finalisation (traitée par collect) */
+/**
+ * Ajoute des véhicule-jours à la file de finalisation (traitée par collect). Une propriété Apps Script fait 9 Ko au plus
+ * (~200 véhicule-jours) : SYNC_QUEUE garde ce qui tient, le surplus attend dans SYNC_QUEUE_MORE_0, _1… et revient au fil des passages.
+ */
+const QUEUE_MAX_ = 8000;
+function queueMore_(props) { const out = []; for (let i = 0; ; i++) { const v = props.getProperty('SYNC_QUEUE_MORE_' + i); if (!v) return out; JSON.parse(v).forEach(x => out.push(x)); } }
 function queueDays_(items) {
-  const props = PropertiesService.getScriptProperties(), cur = JSON.parse(props.getProperty('SYNC_QUEUE') || '[]'), seen = {};
-  const q = cur.concat(items).filter(x => { const k = x.d + '|' + x.k; if (seen[k]) return false; seen[k] = 1; return true; });
-  props.setProperty('SYNC_QUEUE', JSON.stringify(q));
+  const props = PropertiesService.getScriptProperties(), seen = {};
+  const q = JSON.parse(props.getProperty('SYNC_QUEUE') || '[]').concat(queueMore_(props), items || [])
+    .filter(x => { const k = x.d + '|' + x.k; if (seen[k]) return false; seen[k] = 1; return true; });
+  const parts = [[]]; let size = 2;
+  q.forEach(x => { const l = JSON.stringify(x).length + 1; if (size + l > QUEUE_MAX_) { parts.push([]); size = 2; } parts[parts.length - 1].push(x); size += l; });
+  props.setProperty('SYNC_QUEUE', JSON.stringify(parts[0]));
+  for (let i = 0; ; i++) {
+    if (parts[i + 1]) props.setProperty('SYNC_QUEUE_MORE_' + i, JSON.stringify(parts[i + 1]));
+    else if (props.getProperty('SYNC_QUEUE_MORE_' + i)) props.deleteProperty('SYNC_QUEUE_MORE_' + i); else break;
+  }
   return q.length;
 }
 
@@ -186,7 +208,7 @@ function collect() {
     try { const m = notifyAlerts_(); if (m) msg.push(m); } catch (e) { msg.push('Alertes par e-mail : ' + e.message); }
     // Finalisation des journées terminées (une seule fois par véhicule-jour)
     if (Date.now() - t0 < 180000) {
-      const n = queueDays_(dueFinal_(P));
+      let n = 0; try { n = queueDays_(dueFinal_(P)); } catch (e) { msg.push('File de finalisation : ' + e.message); n = 1; }   // la file en place est traitée quand même
       if (n) {
         const r = syncQueueStep_(t0, MAX_RUN_MS - 60000);
         if (r.done) msg.push(r.done + ' véhicule-jours finalisés' + (r.left ? ', ' + r.left + ' restants' : ''));
@@ -196,7 +218,7 @@ function collect() {
     // Tâches du jour / du mois, par étapes
     if (Date.now() - t0 < MAX_RUN_MS - 90000) { try { const m = dailyStep_(t0); if (m) msg.push(m); } catch (e) { msg.push('Maintenance : ' + e.message); } }
     // Rapports PDF planifiés (une fois par période, données finalisées)
-    if (Date.now() - t0 < MAX_RUN_MS - 60000) { try { const m = reportsStep_(); if (m) msg.push(m); } catch (e) { msg.push('Rapports : ' + e.message); } }
+    if (Date.now() - t0 < MAX_RUN_MS - 60000) { try { const m = reportsStep_(t0); if (m) msg.push(m); } catch (e) { msg.push('Rapports : ' + e.message); } }
     const lastLog = +(props.getProperty('LIVE_LOG_LAST') || 0);
     if (Date.now() - lastLog >= HOUR) {
       msg.unshift((+(props.getProperty('LIVE_COUNT') || 0)) + ' trajets terminés ajoutés depuis ' + (lastLog ? localHM_(lastLog) : 'le démarrage'));
@@ -211,9 +233,15 @@ function collecterMaintenant() { collect(); }
 
 /** Demandes déposées par le site (table jobs). Les demandes du même type sont traitées ensemble. */
 function processJobs_(t0) {
-  const jobs = dbSelect_('jobs', 'select=id,kind,arg,created_by&done_at=is.null', 'id');
+  const jobs = dbSelect_('jobs', 'select=id,kind,arg,created_by,result&done_at=is.null', 'id');
   if (!jobs.length) return '';
   const by = {}, out = [];
+  // demande arrêtée en plein traitement (6 min d'Apps Script dépassées) : notée « essai n » avant de commencer, abandonnée au 3e essai
+  // (sinon rejouée à chaque passage, qui s'arrête avant les e-mails, la finalisation et les rapports)
+  const tries = j => { const m = String(j.result || '').match(/^Essai (\d+)/); return m ? +m[1] : 0; };
+  const start = list => { const ids = list.map(j => j.id), n = Math.max(...list.map(tries)) + 1;
+    sbReq_('patch', 'jobs?id=in.(' + ids.join(',') + ')', n > 2 ? { done_at: new Date().toISOString(), result: 'Abandonnée : traitement trop long (2 essais). Réessayer sur une période plus courte.' } : { result: 'Essai ' + n + ' en cours' }, { Prefer: 'return=minimal' });
+    return n <= 2; };
   jobs.forEach(j => { (by[j.kind] = by[j.kind] || []).push(j); });
   const order = ['apply_plates', 'import_vehicles', 'after_inject', 'resync', 'recompute', 'sync_now', 'send_report', 'driver_report', 'manifest_mail'];
   Object.keys(by).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)).forEach(kind => {
@@ -221,6 +249,7 @@ function processJobs_(t0) {
     if (kind === 'driver_report' || kind === 'manifest_mail') {   // une réponse par demande (chaque utilisateur voit le résultat de la sienne)
       by[kind].forEach(j => {
         if (Date.now() - t0 > 240000) return;
+        if (!start([j])) { out.push(kind + ' : abandonnée'); return; }
         let res; try { res = kind === 'manifest_mail' ? jobManifestMail_(j.arg, j.created_by) : jobDriverReport_(j.arg, j.created_by); } catch (e) { res = 'Erreur : ' + mailErr_(e); }
         sbReq_('patch', 'jobs?id=eq.' + j.id, { done_at: new Date().toISOString(), result: String(res).slice(0, 2000) }, { Prefer: 'return=minimal' });
         out.push(kind + ' : ' + res);
@@ -228,6 +257,7 @@ function processJobs_(t0) {
       return;
     }
     const list = by[kind], args = list.map(j => j.arg).filter(Boolean);
+    if (!start(list)) { out.push(kind + ' : abandonnée'); return; }
     let res;
     try {
       if (kind === 'after_inject') res = jobAfterInject_(args.map(a => toDayStr_(a)).filter(Boolean).sort()[0] || addDays_(localDay_(new Date()), -1));
@@ -253,24 +283,26 @@ function jobAfterInject_(fromDay) {
   if (dr.newDrivers.length) m += ' | nouveaux chauffeurs : ' + dr.newDrivers.join(', ');
   return m;
 }
+/** Recalcul fait à partir de day : la demande de recalcul en attente (journées finalisées) n'est effacée que si elle est couverte */
+function clearDirty_(day) { const p = PropertiesService.getScriptProperties(), d = p.getProperty('DERIVED_DIRTY'); if (d && (!day || d >= day)) p.deleteProperty('DERIVED_DIRTY'); }
 function jobPlates_() {
   importVehicles(true);
   const minDay = rekeyAll_();
-  const r = rebuild_(minDay || addDays_(localDay_(new Date()), -7));
-  PropertiesService.getScriptProperties().deleteProperty('DERIVED_DIRTY');
+  const from = minDay || addDays_(localDay_(new Date()), -7), r = rebuild_(from);
+  clearDirty_(from);
   return 'plaques appliquées, ' + r.jrn + ' journées de travail recalculées';
 }
 function jobSyncNow_() {
   const live = liveCatchUp_(MAX_RUN_MS - 150000);
   writeLive_(live.status);
   updateDerived_(localDay_(Date.now() - DAY));
-  PropertiesService.getScriptProperties().deleteProperty('DERIVED_DIRTY');
+  clearDirty_(localDay_(Date.now() - DAY));
   return (live.n ? live.n + ' trajets terminés ajoutés' : 'aucun nouveau trajet terminé') + (live.warn.length ? ' | ' + live.warn.join(' ; ') : '');
 }
 function jobRecompute_(fromDay) {
   refreshDrivers_();
   const r = rebuild_(fromDay);
-  PropertiesService.getScriptProperties().deleteProperty('DERIVED_DIRTY');
+  clearDirty_(fromDay || addDays_(localDay_(new Date()), -31));
   return r.jrn + ' journées de travail, ' + r.alerts + ' alertes';
 }
 /** Retéléchargement de journées : arg = « aaaa-mm-jj » ou « aaaa-mm-jj|aaaa-mm-jj » (période), éventuellement « |PLAQUE » */
@@ -354,8 +386,10 @@ function driveFolder_(name) {
 function backup_() {
   const o = { at: new Date().toISOString(), version: COLLECTOR_V };
   [['vehicles', 'key'], ['plate_changes', 'id'], ['drivers', 'code'], ['contracts', 'num'], ['rules', 'id'], ['params', 'key'], ['profiles', 'user_id'],
-    ['parc', 'plate'], ['agencies', 'id'], ['user_agencies', 'user_id,agency_id'], ['alert_recipients', 'id'], ['report_schedules', 'id']].forEach(t => {
-    o[t[0]] = dbSelect_(t[0], 'select=*', t[1]);
+    ['parc', 'plate'], ['agencies', 'id'], ['user_agencies', 'user_id,agency_id'], ['alert_recipients', 'id'], ['report_schedules', 'id'],
+    ['fuel_card_tx', 'id'], ['manager_shifts', 'agency_id,user_id,day,shift'], ['manifest_config', 'id'], ['manifests', 'id']].forEach(t => {
+    // tables ajoutées par les migrations récentes : absentes tant que la migration n'est pas exécutée (sauvegarde du reste quand même)
+    try { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); } catch (e) { if (t[0] in { fuel_card_tx: 1, manager_shifts: 1, manifest_config: 1, manifests: 1 }) o[t[0]] = 'absente : ' + e.message; else throw e; }
   });
   o.alerts = dbSelect_('alerts', 'select=id,status,comment&or=' + enc_('(status.neq.À traiter,comment.neq.)'), 'id');
   o.fuel_status = dbSelect_('fuel', 'select=id,status&status=not.in.' + enc_('("À vérifier","Info")'), 'id');
