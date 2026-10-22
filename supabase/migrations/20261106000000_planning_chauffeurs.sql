@@ -106,8 +106,8 @@ begin
     if not plan_can_edit(p_agency, w) then raise exception 'modification du planning non autorisée (droits ou semaine verrouillée)'; end if;
   end loop;
   create temp table _n on commit drop as
-    select (c->>'day')::date day, c->>'shift' shift, c->>'vehicle_key' vehicle_key, nullif(c->>'driver_code', '') driver_code,
-           coalesce((c->>'locked')::boolean, false) locked, nullif(c->>'note', '') note
+    select (c->>'day')::date as day, c->>'shift' as shift, c->>'vehicle_key' as vehicle_key, nullif(c->>'driver_code', '') as driver_code,
+           coalesce((c->>'locked')::boolean, false) as locked, nullif(c->>'note', '') as note
       from jsonb_array_elements(coalesce(p_cells, '[]')) c where (c->>'day')::date between p_from and p_to;
   select count(*) into n_cells from _n;
   select count(*) into n_changed from _n full join (select * from driver_plan where agency_id = p_agency and day between p_from and p_to) o
@@ -143,12 +143,14 @@ grant execute on function public.plan_can_edit(bigint, date), public.plan_can_re
 
 -- historique des réglages chauffeurs et absences
 create or replace function public.plan_log_trg() returns trigger language plpgsql security definer set search_path = public as $$
+declare j jsonb := to_jsonb(case when tg_op = 'DELETE' then old else new end);
 begin
-  insert into plan_log (agency_id, action, detail) values (coalesce(new.agency_id, old.agency_id),
+  insert into plan_log (agency_id, action, detail) values ((j->>'agency_id')::bigint,
     case tg_table_name when 'driver_absences' then 'absence' else 'chauffeur' end || ' ' || lower(tg_op),
-    case tg_table_name when 'driver_absences' then coalesce(new.driver_code, old.driver_code) || ' du ' || coalesce(new.day_from, old.day_from) || ' au ' || coalesce(new.day_to, old.day_to) || coalesce(' · ' || coalesce(new.reason, old.reason), '')
-      else coalesce(new.driver_code, old.driver_code) || ' : shift ' || coalesce(new.shift, '—') || ', véhicule ' || coalesce(new.vehicle_key, '—') || ', repos ' || coalesce(array_to_string(new.off_days, ','), '—') || case when new.active is false then ', inactif' else '' end end);
-  return coalesce(new, old);
+    case tg_table_name when 'driver_absences' then (j->>'driver_code') || ' du ' || (j->>'day_from') || ' au ' || (j->>'day_to') || coalesce(' · ' || (j->>'reason'), '')
+      else (j->>'driver_code') || ' : shift ' || coalesce(j->>'shift', '—') || ', véhicule ' || coalesce(j->>'vehicle_key', '—') || ', repos ' || coalesce(nullif(translate(j->>'off_days', '[]', ''), ''), '—')
+        || case when (j->>'active') = 'false' then ', inactif' else '' end end);
+  return case when tg_op = 'DELETE' then old else new end;
 end $$;
 drop trigger if exists driver_roster_log on public.driver_roster;
 create trigger driver_roster_log after insert or update or delete on public.driver_roster for each row execute function public.plan_log_trg();

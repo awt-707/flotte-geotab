@@ -99,7 +99,7 @@ test('base : planning lu et modifié par l\'agence seulement, semaine verrouill�
     assert.strictEqual(as(MGR, "select plan_can_edit(1, '" + MON + "')"), 'f');
     env.psql("update params set value = 'oui' where key = 'planManagersEdit'");
     as(MGR, "insert into driver_absences (agency_id, driver_code, day_from, day_to, reason) values (1, 'A', '" + DAYS[2] + "', '" + DAYS[2] + "', 'maladie')");
-    assert.match(as(ADMIN, "select string_agg(action, ',' order by id) from plan_log where agency_id = 1"), /^modification,verrouiller,modification,déverrouiller,absence insert$/);
+    assert.match(as(ADMIN, "select string_agg(action, ',' order by id) from plan_log where agency_id = 1"), /^(chauffeur insert,){7}modification,verrouiller,modification,déverrouiller,absence insert$/);
     assert.throws(() => env.psql('begin; set local role anon; select count(*) from driver_plan; commit;'), /permission denied/);
   } finally { env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'`); }
 });
