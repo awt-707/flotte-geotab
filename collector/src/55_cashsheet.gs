@@ -75,9 +75,14 @@ function cshWrite_(sh, first, rows, ncols, prevN, textCols) {
   const need = first + rows.length - 1;
   if (need > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
   if (rows.length) {
-    cshLoosen_(sh, sh.getRange(first, 1, rows.length, ncols));
+    const rg = sh.getRange(first, 1, rows.length, ncols);
+    cshLoosen_(sh, rg);
     (textCols || []).forEach(c => sh.getRange(first, c, rows.length, 1).setNumberFormat('@'));
-    sh.getRange(first, 1, rows.length, ncols).setValues(rows);
+    try { rg.setValues(rows); }
+    catch (e) {   // règle que Google n'a pas laissé assouplir : listes retirées des lignes écrites (la sauvegarde passe avant les listes)
+      if (!/validation/i.test(e.message)) throw e;
+      rg.clearDataValidations(); rg.setValues(rows);
+    }
   }
   if (prevN > rows.length) sh.getRange(first + rows.length, 1, prevN - rows.length, ncols).clearContent();
 }

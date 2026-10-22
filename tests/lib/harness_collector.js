@@ -57,8 +57,9 @@ class Range {
     v.forEach((row, i) => row.forEach((x, j) => { const dv = (this.s.dv || {})[(this.r + i) + ',' + (this.c + j)];
       if (dv && !dv.ok(x)) throw new Error('The data you entered in cell ' + this.s.name + ' r' + (this.r + i) + ' c' + (this.c + j) + ' violates the data validation rules set on this cell.');
       if (x === undefined || x === null || (typeof x === 'number' && !isFinite(x))) throw new Error('Bad value ' + this.s.name + ' r' + (this.r + i) + ' c' + (this.c + j) + ': ' + x); if (x instanceof Date && isNaN(x)) throw new Error('Invalid date ' + this.s.name); this.s._set(this.r + i, this.c + j, x); })); return this; }
-  getDataValidations() { const o = []; for (let i = 0; i < this.nr; i++) { const row = []; for (let j = 0; j < this.nc; j++) row.push((this.s.dv || {})[(this.r + i) + ',' + (this.c + j)] || null); o.push(row); } return o; }
+  getDataValidations() { if (this.s.dvBroken) throw new Error('Service error: Spreadsheets'); const o = []; for (let i = 0; i < this.nr; i++) { const row = []; for (let j = 0; j < this.nc; j++) row.push((this.s.dv || {})[(this.r + i) + ',' + (this.c + j)] || null); o.push(row); } return o; }
   setDataValidations(m) { this.s.dv = this.s.dv || {}; m.forEach((row, i) => row.forEach((v, j) => { const k = (this.r + i) + ',' + (this.c + j); if (v) this.s.dv[k] = v; else delete this.s.dv[k]; })); return this; }
+  clearDataValidations() { return this.setDataValidation(null); }
   setDataValidation(v) { return this.setDataValidations(Array.from({ length: this.nr }, () => Array.from({ length: this.nc }, () => v))); }
   setNumberFormats(f) { if (f.length !== this.nr || f.some(r => r.length !== this.nc)) throw new Error('setNumberFormats dims ' + this.s.name); return this; }
   setValue(x) { this.s._set(this.r, this.c, x); return this; }
