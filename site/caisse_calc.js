@@ -184,11 +184,16 @@ function cshParseUberPayments(rows, localToDate) {
   const bonusCols = H.map((c, i) => c.indexOf('vos revenus:bonus') >= 0 ? i : -1).filter(i => i >= 0);
   if (ix.at < 0) ix.at = H.findIndex(c => c === 'date' || c.indexOf('date et heure') >= 0);
   const v = (r, i) => i >= 0 ? cshAmount(r[i]) || 0 : 0, out = [], bad = [];
+  // ligne complète (cellules non vides et montants non nuls, par en-tête d'origine) : recopiée à l'identique dans le classeur de sauvegarde
+  const HELP = ['date', 'prenom nom', 'especes collectees', 'check doublons', ''], rawCols = rows[h].map((c, j) => HELP.indexOf(H[j]) < 0 ? [String(c).trim(), j] : null).filter(Boolean);
+  const rawOf = r => { const o = {}; rawCols.forEach(([k, j]) => { const x = r[j]; if (x === undefined || x === null || String(x).trim() === '') return;
+    const t = String(x).trim(), n = /^-?[\d\s.,]+(\s*(MAD|DH))?$/i.test(t) ? cshAmount(t) : null; if (n === 0) return; o[k] = n !== null ? n : t; }); return o; };
   for (let i = h + 1; i < rows.length; i++) {
     const r = rows[i] || [], tx = String(r[ix.tx] || '').trim(); if (!tx) continue;
     const at = cshUberTime(r[ix.at], localToDate);
     if (!at) { bad.push(i + 1); continue; }
     out.push({ tx, at, driver_uuid: String(r[ix.du] || '').trim() || null, driver_name: [r[ix.fn], r[ix.ln]].map(x => String(x || '').trim()).filter(Boolean).join(' ') || null,
+      first_name: String(r[ix.fn] || '').trim() || null, last_name: String(r[ix.ln] || '').trim() || null, raw: rawOf(r),
       trip: ix.trip >= 0 ? String(r[ix.trip] || '').trim() || null : null, description: ix.desc >= 0 ? String(r[ix.desc] || '').trim() || null : null,
       cash: cshR(-v(r, ix.cash)), revenue: cshR(v(r, ix.revenue)), payout: cshR(v(r, ix.payout)), fare: cshR(v(r, ix.fare)), tip: cshR(v(r, ix.tip)), toll: cshR(v(r, ix.toll)),
       bonus: cshR(bonusCols.reduce((s, c) => s + v(r, c), 0)) });

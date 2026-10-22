@@ -95,7 +95,8 @@ const PARAM_DEFS = [
   ['overByLimit', 'Dépassement : seuil d\'alerte par limite de route', '', 'limite:seuil séparés par « ; » (ex. 50:30;80:20;120:20). Limite non listée : la ligne inférieure la plus proche, sinon le seuil général. Réglé dans Réglages > Alerte de dépassement de vitesse'],
   ['mailName', 'E-mails aux clients : nom de l\'expéditeur', 'Ludy', 'Nom affiché chez le client (devis, manifestes).'],
   ['mailReplyTo', 'E-mails aux clients : adresse de réponse', '', 'Les réponses du client arrivent à cette adresse (ex. reservation@ludy.ma). Vide : compte d\'envoi de Ludy.'],
-  ['mailFrom', 'E-mails aux clients : adresse d\'envoi', '', 'Adresse affichée comme expéditeur. Doit être déclarée dans Gmail du compte du collecteur (« Envoyer des e-mails en tant que »), sinon l\'e-mail part du compte du collecteur avec l\'adresse de réponse ci-dessus.']
+  ['mailFrom', 'E-mails aux clients : adresse d\'envoi', '', 'Adresse affichée comme expéditeur. Doit être déclarée dans Gmail du compte du collecteur (« Envoyer des e-mails en tant que »), sinon l\'e-mail part du compte du collecteur avec l\'adresse de réponse ci-dessus.'],
+  ['cashSheetId', 'Caisse : classeur de sauvegarde (ID Google Sheets)', '', 'Chaque saisie de la Caisse est recopiée dans ce classeur (onglets « … Ludy », format du classeur Suivi Cash Chauffeurs) à chaque passage du collecteur (5 min). Vide = pas de copie.']
 ];
 const MODEL_DEFAULTS = { STARIA: { tank: 75 }, SONATA: { tank: 50 }, _: { tank: '' } };
 const HORS_PERIODE = 'Hors période des contrats';

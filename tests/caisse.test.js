@@ -239,3 +239,58 @@ test('page Caisse : imports Uber, chauffeur relié, encaissement du shift, rappr
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); }
 });
+
+test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » (format et formules du classeur), transactions Uber ajoutées à la suite', () => {
+  const { collector } = require('./lib/v6');
+  const B = collector(Date.UTC(2026, 9, 22, 12, 0));
+  const id = B.run(`(function () { const b = SpreadsheetApp.create('Sauvegarde caisse');
+    ['Caisse - Encaissements chauffeurs Ludy', 'Caisse - Dépenses chauffeurs Ludy', 'Caisse - Avance RH Ludy', 'Caisse - Courses indep Ludy', 'Caisse - Bonus performance Ludy',
+     'Export Uber - Driver Status Ludy', 'Export Uber - Opérations de paiement Ludy'].forEach(n => b.insertSheet(n)); return b.getId(); })()`);
+  const book = B.books[id], tab = n => book.getSheetByName(n), PAY = 'Export Uber - Opérations de paiement Ludy';
+  // en-têtes de l'onglet du classeur d'origine (ligne 5) : colonnes d'aide A-C, export Uber de D à AJ, contrôle des doublons en AK
+  const M = 'Montant vous étant versé';
+  tab(PAY).maxC = 40; tab(PAY).data[4] = ['DATE', 'Prénom Nom', 'Espèces collectées', 'UUID de la transaction', 'UUID du chauffeur', 'Prénom du chauffeur', 'Nom du chauffeur', 'UUID de la course',
+    'Description', 'Nom de l\'organisation', 'Alias de l\'organisation', 'par rapport à la création de rapport', M, M + ' : Vos revenus', M + ' : Solde des courses : Versements : Espèces collectées',
+    M + ' : Vos revenus : Prix de la course', M + ' : Vos revenus : Taxes'].concat(Array.from({ length: 18 }, (x, i) => M + ':Vos revenus:Autre ' + i), ['', 'check doublons']);
+  const pay = C.cshParseUberPayments(UBER_ROWS, null).rows[0];
+  env.psql(`insert into params (key, label, value) values ('cashSheetId', 'x', '${id}');
+    insert into drivers (code, name, uber_uuid) values ('C1', 'ALPHA Test', 'aaaaaaaa-1111-2222-3333-444444444444');
+    insert into uber_drivers (uuid, name, phone, status) values ('aaaaaaaa-1111-2222-3333-444444444444', 'Test Alpha', '+212600000001', 'ACTIVE');
+    insert into uber_payments (tx, at, driver_uuid, driver_name, first_name, last_name, raw, cash, revenue) values ('${pay.tx}', '${pay.at}', '${pay.driver_uuid}', 'Test Alpha', 'Test', 'Alpha', '${JSON.stringify(pay.raw).replace(/'/g, "''")}', 100, 64.5);
+    insert into cash_moves (caisse, kind, flow, amount, day, shift, driver_code, uber_cash, given, change, source, manager_name, comment) values
+      ('uber', 'encaissement', 'in', 723, '2026-10-20', 'Jour', 'C1', 913, 800, 77, 'Chauffeur', 'Gest Un', '+ à contrôler'),
+      ('uber', 'depot', 'out', 5000, '2026-10-21', null, null, null, null, null, 'Banque', 'Gest Un', null);
+    insert into cash_moves (caisse, kind, flow, amount, day, shift, driver_name, label, ride_type, justif, source) values
+      ('depenses', 'depense', 'out', 50, '2026-10-20', 'Nuit', 'Essai Beta', 'Péage', 'Course Uber', 'En attente', 'Chauffeur / Uber');
+    insert into cash_moves (caisse, kind, flow, amount, day, driver_code, course_amount, commission_pct, prime, prime_paid, label, source) values
+      ('courses', 'course', 'in', 720, '2026-10-22', 'C1', 800, 10, 80, 80, 'Casablanca → Rabat', 'Chauffeur');
+    insert into cash_moves (caisse, kind, flow, amount, day, driver_code, signed, source) values ('rh', 'avance', 'out', 300, '2026-10-19', 'C1', true, 'Caisse RH');
+    insert into cash_moves (caisse, kind, flow, amount, day, driver_code, label, status, source) values ('bonus', 'bonus', 'virement', 150, '2026-10-20', 'C1', 'Challenge Shift', 'A payer', 'Caisse');`);
+  const serial = d => (Date.parse(d) - Date.UTC(1899, 11, 30)) / 86400000;
+  assert.match(B.run('cashSheetStep_(Date.now())'), /Encaissements chauffeurs 2.*Dépenses chauffeurs 1.*1 transactions Uber/);
+  const enc = tab('Caisse - Encaissements chauffeurs Ludy').data;
+  assert.deepStrictEqual(enc[7].slice(0, 13), [serial('2026-10-20'), 'Test Alpha',
+    '=IF(B8="","",XLOOKUP(B8,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G))', 'Gest Un', 'Chauffeur', 'Entrée de cash', 'Chauffeur', 913, 800, 77, '=I8-J8', '=H8-K8', '\'+ à contrôler']);
+  assert.match(enc[7][13], /^=SUMIFS\('Export Uber - Opérations de paiement Ludy'!\$C\$6:\$C,.*\$B8,.*\$A8\)$/);
+  assert.deepStrictEqual(enc[8].slice(4, 11), ['Dépôt en banque', 'Sortie de cash', 'Banque', '', 5000, '', '=I9-J9']);
+  assert.deepStrictEqual(tab('Caisse - Dépenses chauffeurs Ludy').data[4], [serial('2026-10-20'), 'Shift 2', 'Essai Beta', '=IF(C5="","",XLOOKUP(C5,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G))',
+    '', 50, 'Course Uber', 'Péage', 'Sortie de cash', 'Chauffeur / Uber', '', '']);
+  assert.deepStrictEqual(tab('Caisse - Courses indep Ludy').data[7].slice(0, 17), [serial('2026-10-22'), '', 'Entrée de cash', 720, 'Encaissement chauffeur', 'Casablanca', 'Rabat', 'Test Alpha', serial('2026-10-22'), 800, 0.1, '=J8*K8', 'Oui', '',
+    '=IF($E8="Encaissement chauffeur",L8,0)', '=IF($E8="Encaissement chauffeur",J8-D8,0)', '=IF($E8="Encaissement chauffeur",O8-P8,0)']);
+  assert.deepStrictEqual(tab('Caisse - Avance RH Ludy').data[4].slice(4, 10), [300, 'Sortie de cash', 'Caisse RH', 'Avance sur Salaire', '', 'OK']);
+  assert.deepStrictEqual(tab('Caisse - Bonus performance Ludy').data[4].slice(4, 9), [150, 'Virement', 'Challenge Shift', 'A payer', 'Caisse']);
+  assert.deepStrictEqual(tab('Export Uber - Driver Status Ludy').data[1], ['Test Alpha', 'ACTIVE', '', '+212600000001', '', '', 'aaaaaaaa-1111-2222-3333-444444444444', '']);
+  const p = tab(PAY).data[5];
+  assert.deepStrictEqual([p[0].slice(0, 8), p[1], p[2], p[3], p[5], p[6], p[11], p[12], p[13], p[14], p[15], p[20], p[35], p[36]],
+    ['=IF(L6="', '=IF(F6="","",F6&" "&G6)', '=-O6', 'tx-0001-aaaa-bbbb-cccc', 'Test', 'Alpha', '2026-10-20 09:15:00.232 +0100 +01', -35.5, 64.5, -100, 60, 0, '', '=COUNTIFS($D:$D,D6)']);
+
+  // rien de changé : rien d'écrit ; mouvement annulé : retiré et ligne effacée ; nouvelle transaction : ajoutée à la suite
+  assert.strictEqual(B.run('cashSheetStep_(Date.now())'), '');
+  env.psql("update cash_moves set cancelled_at = now() where kind = 'depot'");
+  const p2 = Object.assign({}, pay, { tx: 'tx-0009' });
+  env.psql(`insert into uber_payments (tx, at, first_name, last_name, raw) values ('tx-0009', '${pay.at}', 'Test', 'Alpha', '${JSON.stringify(Object.assign({}, p2.raw, { 'UUID de la transaction': 'tx-0009' })).replace(/'/g, "''")}')`);
+  assert.match(B.run('cashSheetStep_(Date.now())'), /Encaissements chauffeurs 1.*1 transactions Uber/);
+  assert.deepStrictEqual(enc[8].filter(x => x !== ''), []);
+  assert.strictEqual(tab(PAY).data[6][3], 'tx-0009');
+  assert.strictEqual(tab(PAY).data[6][0].slice(0, 8), '=IF(L7="');
+});
