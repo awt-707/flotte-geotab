@@ -418,3 +418,15 @@ table.crslines tfoot th { font-size: 15px; }
 .sdot2 { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: #9aa5af; }
 .sdot2.on { background: #1f9d55; box-shadow: 0 0 0 3px rgba(31, 157, 85, .18); }
 .sdot2.idle { background: #d98b00; }
+/* Caisse */
+.cshchart { width: 100%; max-height: 220px; }
+.cshchart .cb-u { fill: var(--acc); opacity: .55; }
+.cshchart .cb-n { fill: var(--ok, #18794a); }
+.cshchart .cb-t { font-size: 10px; fill: var(--mute); }
+.lg-u { color: var(--acc); opacity: .55; } .lg-n { color: var(--ok, #18794a); }
+.cshshift td input { padding: 4px 6px; }
+.cshshift tr.done td { background: var(--line2); }
+details.panel > summary { cursor: pointer; list-style: none; } details.panel > summary h3 { display: inline; }
+details.panel > summary::before { content: '▸ '; } details.panel[open] > summary::before { content: '▾ '; }
+b.ok, .small.ok { color: var(--ok); } b.warn { color: var(--warn); } .small.crit { color: var(--crit); }
+.bar a.on { font-weight: 700; text-decoration: none; color: var(--ink); }

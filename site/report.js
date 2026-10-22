@@ -603,7 +603,7 @@ function rptTables(rep) {
 }
 
 /** Corps HTML du rapport (affiché sur le site, converti en PDF par le collecteur) */
-var RPT_KIND = { conso: 'Rapport de consommation', chauffeur: 'Comportement chauffeur', conduite: 'Conduite des chauffeurs', classement: 'Classement des chauffeurs', finshift: 'Résultat de fin de shift', finshift_chauffeur: 'Fin de shift · chauffeur', carte: 'Anomalies carburant' };
+var RPT_KIND = { caisse: 'Caisse', conso: 'Rapport de consommation', chauffeur: 'Comportement chauffeur', conduite: 'Conduite des chauffeurs', classement: 'Classement des chauffeurs', finshift: 'Résultat de fin de shift', finshift_chauffeur: 'Fin de shift · chauffeur', carte: 'Anomalies carburant' };
 var RPT_LEVEL = { 'Dangereux': 'crit', 'Critique': 'crit', 'Élevé': 'high', 'Haute': 'high', 'Modéré': 'warn', 'Moyenne': 'warn', 'Faible': 'ok' };
 /** Rapport en HTML (page Rapports du site, PDF du collecteur) : en-tête, résumé en cartes (4 par ligne), une section par tableau */
 function rptHtml(rep) {
