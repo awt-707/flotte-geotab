@@ -1,6 +1,6 @@
 // Connexions en temps réel : signal de chaque onglet ouvert, liste des connectés réservée à l'administrateur
 const test = require('node:test'), assert = require('node:assert');
-const env = require('./lib/env'), { startSite, openBrowser, login } = require('./lib/browser'), { sessGroup } = require('../site/connexions.js');
+const env = require('./lib/env'), { startSite, openBrowser, login } = require('./lib/browser'), { sessGroup } = require('../site/connexions.js'), { sessHistory, sessDur } = require('../site/connexions.js');
 const ADMIN = '11111111-1111-1111-1111-111111111111', MGR = '22222222-2222-2222-2222-222222222222';
 const as = (uid, sql) => env.psql(`begin; set local role authenticated; set local request.jwt.claims = '{"sub":"${uid}","role":"authenticated"}'; ${sql}; commit;`);
 const ping = (uid, id, page, active) => as(uid, `select public.session_ping('${id}', '${page}', 'Navigateur · Mac', ${active})`);
@@ -50,9 +50,29 @@ test('page Connexions : l\'administrateur voit qui est en ligne, sur quelle page
     assert.match(t, /Gestionnaire\tEn ligne\tCourses privées[\s\S]*Navigateur · Mac/);
     await page.waitForFunction(() => /2 connectés/.test((document.querySelector('#onl') || {}).textContent || ''));
     assert.strictEqual(env.psql("select count(*) from user_sessions where user_id = '" + ADMIN + "'"), '1', 'l\'onglet de l\'administrateur envoie son signal');
-    // déconnexion : la session de l'onglet est retirée
+    // historique des connexions (30 jours)
+    await page.waitForSelector('#thist');
+    assert.match(await page.innerText('#thist'), /admin@x[\s\S]*en cours/);
+    const mgrMail = env.psql(`select email from profiles where user_id = '${MGR}'`);
+    assert.ok((await page.innerText('#thsum')).includes(mgrMail), 'le gestionnaire figure dans l\'historique');
+    await page.selectOption('#shu', MGR); await page.waitForFunction(() => { const t = document.querySelector('#thist'); return t && /new@x|mgr@x|Gestionnaire/.test(t.innerText) && !/admin@x/.test(t.innerText); });
+    // déconnexion : la session est close tout de suite, gardée dans l'historique
     await page.click('#logout'); await page.waitForSelector('#lf');
-    assert.strictEqual(env.psql("select count(*) from user_sessions where user_id = '" + ADMIN + "'"), '0');
+    assert.strictEqual(env.psql("select page || '|' || active from user_sessions where user_id = '" + ADMIN + "'"), 'Déconnecté|false');
     assert.deepStrictEqual(errors, []);
   } finally { env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'; delete from user_sessions`); await br.close(); srv.kill(); }
+});
+
+test('historique : pages rechargées réunies, déconnexion, connexion en cours, durée', () => {
+  const now = Date.parse('2026-10-22T12:00:00Z'), at = m => new Date(now - m * 60000).toISOString();
+  const P = [{ user_id: 'a', email: 'a@x', role: 'admin' }, { user_id: 'b', email: 'b@x', role: 'manager' }];
+  const R = [
+    { user_id: 'a', client: 'Navigateur · Mac', started_at: at(300), last_seen: at(240), page: 'Alertes' },   // rechargée 1 min après : même connexion
+    { user_id: 'a', client: 'Navigateur · Mac', started_at: at(239), last_seen: at(200), page: 'Déconnecté' },
+    { user_id: 'a', client: 'Navigateur · Mac', started_at: at(30), last_seen: at(1), page: 'En direct' },     // en cours
+    { user_id: 'b', client: 'Application 1.4.0 · Windows', started_at: at(100), last_seen: at(80), page: 'Courses privées' }];
+  const h = sessHistory(P, R, now);
+  assert.deepStrictEqual(h.map(x => [x.p.email, x.n, Math.round(x.dur / 60000), x.live, x.off, x.page]),
+    [['a@x', 1, 29, true, false, 'En direct'], ['b@x', 1, 20, false, false, 'Courses privées'], ['a@x', 2, 100, false, true, 'Déconnecté']]);
+  assert.deepStrictEqual([sessDur(20000), sessDur(29 * 60000), sessDur(100 * 60000)], ['moins d\'1 min', '29 min', '1 h 40']);
 });

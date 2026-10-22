@@ -201,7 +201,7 @@ test('course rapide : lancée sans devis, véhicule bloqué, manifeste créé ; 
     update manifest_config set stamp = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='`);
   const srv = await startSite(), { br, page, errors } = await openBrowser();
   const photon = [];
-  await page.route('https://photon.komoot.io/**', r => { photon.push(r.request().url()); r.fulfill({ contentType: 'application/json', body: JSON.stringify({ features: [
+  await page.route('https://photon.komoot.io/**', r => { photon.push(r.request().url()); r.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ features: [
     { properties: { name: 'Hyatt Regency', street: 'Place des Nations Unies', city: 'Casablanca', countrycode: 'MA' } }] }) }); });
   try {
     await login(page, '#/courses');

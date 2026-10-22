@@ -17,6 +17,8 @@ async function openBrowser(opts) {
     const f = path.join(NM, m[1], m[3]);
     r.fulfill({ status: 200, contentType: f.endsWith('.css') ? 'text/css' : f.endsWith('.png') ? 'image/png' : 'text/javascript', body: fs.readFileSync(f) });
   });
+  // Autocomplétion d'adresses (Photon) : jamais de réseau en test, aucune proposition (les tests qui en ont besoin la simulent eux-mêmes)
+  await ctx.route(/photon\.komoot\.io/, r => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: '{"features":[]}' }));
   // Polices Google (Barlow) servies depuis @fontsource : captures d'écran fidèles sans réseau
   await ctx.route(/fonts\.googleapis\.com/, r => {
     const css = [['barlow', [400, 500, 600, 700]], ['barlow-semi-condensed', [500, 600]]].map(([f, ws]) => ws.map(w =>
