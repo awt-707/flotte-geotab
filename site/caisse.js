@@ -467,7 +467,12 @@ function cshTabImport() {
   if (CS.flash) { const x = $('#' + CS.flash.id); if (x) x.innerHTML = CS.flash.html; CS.flash = null; }
   const read = async (f, out) => { out.innerHTML = msg('Lecture du fichier…'); return cshReadBook(new Uint8Array(await f.arrayBuffer()), f.name); };
   const rowsOf = (wb, test) => { for (const n of wb.SheetNames) { const r = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: '' }); if (test(r)) return r; } return null; };
-  const batch = async (tbl, rows, conflict, out, label) => { let n = 0; for (let i = 0; i < rows.length; i += 500) { const r = await sb.from(tbl).upsert(rows.slice(i, i + 500), { onConflict: conflict, ignoreDuplicates: true }); if (r.error) throw new Error(r.error.message); n += Math.min(500, rows.length - i); out.innerHTML = msg(label + ' : ' + n + ' / ' + rows.length + '…'); } };
+  // base sans la migration 20261104000000_caisse_classeur.sql : transactions enregistrées sans la ligne complète de l'export
+  const slim = rows => rows.map(r => { const o = Object.assign({}, r); delete o.first_name; delete o.last_name; delete o.raw; return o; });
+  const batch = async (tbl, rows, conflict, out, label) => { let n = 0; for (let i = 0; i < rows.length; i += 500) {
+    let part = rows.slice(i, i + 500), r = await sb.from(tbl).upsert(part, { onConflict: conflict, ignoreDuplicates: true });
+    if (r.error && tbl === 'uber_payments' && /first_name|last_name|raw/.test(r.error.message)) r = await sb.from(tbl).upsert(slim(part), { onConflict: conflict, ignoreDuplicates: true });
+    if (r.error) throw new Error(r.error.message); n += Math.min(500, rows.length - i); out.innerHTML = msg(label + ' : ' + n + ' / ' + rows.length + '…'); } };
   $('#cshfp').onchange = async e => { const f = e.target.files[0], out = $('#cshfpr'); if (!f) return;
     try { const wb = await read(f, out), rows = rowsOf(wb, r => cshParseUberPayments(r).rows.length > 0) || [], res = cshParseUberPayments(rows, localToDate);
       if (res.error || !res.rows.length) throw new Error(res.error || 'aucune transaction trouvée');

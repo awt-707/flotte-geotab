@@ -206,6 +206,8 @@ function collect() {
     }
     // Nouvelles alertes envoyées par e-mail aux destinataires choisis sur le site
     try { const m = notifyAlerts_(); if (m) msg.push(m); } catch (e) { msg.push('Alertes par e-mail : ' + e.message); }
+    // Caisse recopiée dans le classeur de sauvegarde (onglets « … Ludy »)
+    if (Date.now() - t0 < 200000) { try { const m = cashSheetStep_(t0); if (m) msg.push(m); } catch (e) { msg.push('Classeur de la caisse : ' + e.message); } }
     // Finalisation des journées terminées (une seule fois par véhicule-jour)
     if (Date.now() - t0 < 180000) {
       let n = 0; try { n = queueDays_(dueFinal_(P)); } catch (e) { msg.push('File de finalisation : ' + e.message); n = 1; }   // la file en place est traitée quand même
