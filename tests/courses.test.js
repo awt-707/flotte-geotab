@@ -108,7 +108,7 @@ test('droits : grille modifiable par l\'administrateur seul ; validation réserv
     env.psql("insert into missions (agency_id, client_name) values (2, 'Rabat client')");
     assert.strictEqual(as(MGR, 'select count(*) from missions'), '2');
     as(MGR, `delete from missions where id = ${id}`); assert.strictEqual(env.psql('select count(*) from missions'), '3');
-  } finally { env.psql(`update pricing_grid set data = jsonb_set(data, '{day,SONATA}', '${before}'); update profiles set role = 'pending' where user_id = '${MGR}'; truncate missions restart identity`); }
+  } finally { env.psql(`update pricing_grid set data = jsonb_set(data, '{day,SONATA}', '${before}'); update profiles set role = 'pending' where user_id = '${MGR}'; truncate missions, cash_moves restart identity`); }
 });
 
 test('page Courses privées : nouvelle demande, prix en direct, enregistrement, validation, devis PDF, grille (administrateur)', async () => {
