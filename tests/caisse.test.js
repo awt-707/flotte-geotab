@@ -205,6 +205,8 @@ test('page Caisse : imports Uber, chauffeur relié, encaissement du shift, rappr
     assert.strictEqual(env.psql("select kind || '|' || amount || '|' || uber_cash || '|' || given || '|' || change || '|' || driver_code || '|' || contract_num from cash_moves"),
       'encaissement|160.00|180.00|200.00|40.00|C1|K1');
     assert.match(env.psql('select shift from cash_moves'), /^(Jour|Nuit)$/);
+    // total du shift : espèces Uber, remis, monnaie, net, manquant
+    assert.match(await page.innerText('.cshshift tfoot'), /Total · 1 \/ 1 encaissé\t\t180[\s\S]*200[\s\S]*40[\s\S]*160[\s\S]*20/);
 
     // dépense « Course Uber » justifiée : réduit le théorique ; rapprochement et paie
     await page.goto(page.url().replace(/#.*/, '') + '#/caisse?t=depenses');
@@ -213,6 +215,7 @@ test('page Caisse : imports Uber, chauffeur relié, encaissement du shift, rappr
     await page.click('#cdsave');
     await page.waitForFunction(() => /15/.test((document.querySelector('#tcshdep') || {}).innerText || ''));
     assert.strictEqual(env.psql("select driver_code || '|' || label || '|' || ride_type || '|' || justif from cash_moves where kind = 'depense'"), 'C1|Carburant|Course Uber|OK');
+    assert.match(await page.innerText('#tcshdep tfoot'), /Total · 1 ligne[\s\S]*15/);
     const day = env.psql('select day from cash_moves where kind = \'encaissement\'');
     await page.goto(page.url().replace(/#.*/, '') + `#/caisse?t=rappro&du=${day}&au=${day}`);
     await page.waitForSelector('#tcshrap');
@@ -324,4 +327,21 @@ test('deux agences : chaque agence a sa caisse (page, saisies) et son classeur d
     assert.strictEqual(env.psql("select agency_id from cash_moves where amount = 33"), '2');
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); }
+});
+
+test('historique des encaissements : solde identique au classeur (chauffeur non renseigné gardé, ligne sans entrée / sortie hors caisse, sens du classeur respecté)', () => {
+  const H = ['Date début du shift', 'Chauffeur', 'UUID Chauffeur', 'Gestionnaire', 'Opération', 'Entrée / Sortie', 'Source', 'Montant espèces affiché sur Uber', 'Montant donné par chauffeur', 'Monnaie rendue', 'Montant encaissé net', 'Manquant', 'Commentaires'];
+  const sheet = { 'Caisse - Encaissements chauffeu': [H,
+    ['20/09/2026', 'Test Alpha', '', 'G', 'Chauffeur', 'Entrée de cash', 'Chauffeur', '500', '500', '', '500', '0', ''],
+    ['20/09/2026', '', '', 'G', 'Chauffeur', 'Entrée de cash', 'Chauffeur', '300', '300', '', '300', '0', ''],
+    ['20/09/2026', 'Test Alpha', '', 'G', 'Dépôt en banque', 'Entrée de cash', 'Chauffeur', '100', '100', '', '100', '0', ''],
+    ['', '', '', '', 'Dépôt en banque', 'Sortie de cash', 'Banque', '', '', '', '700', '', ''],
+    ['', '', '', '', '', '', 'Banque', '', '', '', '2 078', '', '']] };
+  // solde du classeur = SOMME.SI.ENS(net ; Entrée) − SOMME.SI.ENS(net ; Sortie) = 500 + 300 + 100 − 700 = 200
+  const h = C.cshParseHistory(sheet, {});
+  assert.deepStrictEqual([h.moves.length, h.skipped, C.cshBalances(h.moves).uber], [5, 0, 200]);
+  assert.match(h.moves[1].comment, /chauffeur non renseigné/);
+  assert.deepStrictEqual([h.moves[2].kind, h.moves[2].flow], ['depot', 'in']); assert.match(h.moves[2].comment, /à vérifier/);
+  assert.deepStrictEqual([h.moves[3].flow, h.moves[3].day], ['out', '2026-09-20']); assert.match(h.moves[3].comment, /date absente/);
+  assert.deepStrictEqual([h.moves[4].kind, h.moves[4].flow, h.moves[4].amount], ['autre', 'virement', 2078]);
 });

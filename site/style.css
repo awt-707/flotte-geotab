@@ -441,3 +441,4 @@ b.ok, .small.ok { color: var(--ok); } b.warn { color: var(--warn); } .small.crit
 .plros .proff label { margin-right: 4px; font-size: 12px; } .plros .proff input { margin: 0 1px 0 0; }
 .plcov td, .plcov th { text-align: center; min-width: 44px; }
 pre.pltxt { white-space: pre-wrap; background: var(--line2); padding: 10px; border-radius: 6px; font: 13px/1.45 var(--f); }
+tfoot tr.ttot td { border-top: 2px solid var(--line); font-weight: 600; background: var(--line2); }
