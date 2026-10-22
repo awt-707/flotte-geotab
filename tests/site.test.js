@@ -222,6 +222,11 @@ test('en direct : chauffeurs en ce moment, compteurs Geotab depuis le début du 
   try {
     await login(page, '#/direct');
     await page.waitForFunction(() => LIVE.drvAt > 0 && LIVE.drv['968199WW'], null, { timeout: 30000 });
+    // cadran dessiné dès la lecture des compteurs (22/10/2026 : il attendait la position suivante, ou disparaissait page rouverte)
+    assert.ok(await page.evaluate(() => !!document.querySelector('[data-vk="968199WW"] .cgauge')), 'cadran dès la lecture');
+    await page.evaluate(() => { location.hash = '#/alertes'; }); await page.waitForFunction(() => pageOf() === 'alertes' && !document.querySelector('#vlist'));
+    await page.evaluate(() => { location.hash = '#/direct'; });
+    await page.waitForSelector('[data-vk="968199WW"]'); assert.ok(await page.evaluate(() => !!document.querySelector('[data-vk="968199WW"] .cgauge')), 'cadran gardé page rouverte');
     const st = await page.evaluate(() => ({ d: LIVE.drv['968199WW'], at: LIVE.drvGeoAt }));
     const G = (diag, t) => geo.handle('Get', { credentials: { sessionId: 'S1' }, typeName: 'StatusData', search: { deviceSearch: { id }, diagnosticSearch: { id: diag }, fromDate: t, toDate: t } }).result.slice(-1)[0].data;
     const r3 = v => Math.round(v * 1000) / 1000;

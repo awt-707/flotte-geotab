@@ -272,7 +272,23 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
     insert into cash_moves (caisse, kind, flow, amount, day, driver_code, signed, source) values ('rh', 'avance', 'out', 300, '2026-10-19', 'C1', true, 'Caisse RH');
     insert into cash_moves (caisse, kind, flow, amount, day, driver_code, label, status, source) values ('bonus', 'bonus', 'virement', 150, '2026-10-20', 'C1', 'Challenge Shift', 'A payer', 'Caisse');`);
   const serial = d => (Date.parse(d) - Date.UTC(1899, 11, 30)) / 86400000;
+  // listes déroulantes copiées du classeur d'origine, en « refuser la saisie » (22/10/2026 : écriture bloquée en B8) :
+  // chauffeurs = onglet d'origine absent du classeur (plage illisible), gestionnaires = onglet d'origine sans « Ludy »
+  const encT = tab('Caisse - Encaissements chauffeurs Ludy'), other = B.run(`SpreadsheetApp.create('origine').insertSheet('Base gestionnaire/Chauffeur')`);
+  const gest = book.insertSheet('Base gestionnaire/Chauffeur Ludy'); gest.data = [['Gestionnaire'], ['Gest Un']];
+  const dvAt = (r, c, o) => { encT.dv = encT.dv || {}; encT.dv[r + ',' + c] = new B.DV(Object.assign({ strict: true }, o)); };
+  for (const r of [8, 9]) {
+    dvAt(r, 2, { type: 'VALUE_IN_RANGE', vals: [null, true] });
+    dvAt(r, 4, { type: 'VALUE_IN_RANGE', vals: [other.getRange('A2:A50'), true] });
+    dvAt(r, 5, { type: 'VALUE_IN_LIST', vals: [['Chauffeur', 'Recharge de caisse', 'Dépôt en banque'], true] });
+    dvAt(r, 7, { type: 'VALUE_IN_LIST', vals: [['Cash Nico', 'Banque'], true] });
+  }
+  assert.throws(() => B.run(`SpreadsheetApp.openById('${id}').getSheetByName('Caisse - Encaissements chauffeurs Ludy').getRange(8, 2).setValues([['Test Alpha']])`), /violates the data validation/);
   assert.match(B.run('cashSheetStep_(Date.now())'), /Encaissements chauffeurs 2.*Dépenses chauffeurs 1.*1 transactions Uber/);
+  // règles gardées (même liste), en avertissement ; liste des gestionnaires rattachée à l'onglet « … Ludy »
+  assert.ok([2, 4, 5, 7].every(c => encT.dv['8,' + c] && encT.dv['8,' + c].getAllowInvalid()));
+  assert.deepStrictEqual(encT.dv['9,5'].vals[0], ['Chauffeur', 'Recharge de caisse', 'Dépôt en banque']);
+  assert.strictEqual(encT.dv['8,4'].vals[0].getSheet().getName(), 'Base gestionnaire/Chauffeur Ludy');
   const enc = tab('Caisse - Encaissements chauffeurs Ludy').data;
   assert.deepStrictEqual(enc[7].slice(0, 13), [serial('2026-10-20'), 'Test Alpha',
     '=IF(B8="","",XLOOKUP(B8,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G))', 'Gest Un', 'Chauffeur', 'Entrée de cash', 'Chauffeur', 913, 800, 77, '=I8-J8', '=H8-K8', '\'+ à contrôler']);
