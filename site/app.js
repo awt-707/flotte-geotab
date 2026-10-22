@@ -739,7 +739,8 @@ async function importFile(file) {
     let j = null;
     if (added + updated) j = await job('after_inject', localDay(r.min_start));
     out.innerHTML = msg(`<b>Contrats lus : ${res.read}</b>, dont ${added} nouveaux, ${updated} mis à jour, ${same + res.dup} déjà à jour${res.invalid ? ', ' + res.invalid + ' lignes invalides' : ''}${r.skipped ? ', ' + r.skipped + ' ignorés (véhicules d\'une autre agence)' : ''}.<br>` +
-      (j ? 'Calcul automatique demandé : chauffeurs, trajets, journal et alertes à jour dans 5 minutes maximum. Rien d\'autre à faire.' : 'Aucun changement.') +
+      (j ? 'Calcul automatique demandé : trajets, journal et alertes à jour dans 5 minutes maximum. Rien d\'autre à faire.' : 'Aucun changement.') +
+      ((r.new_drivers || []).length ? `<br><b>Nouveaux chauffeurs enregistrés (${r.new_drivers.length}) :</b> ${r.new_drivers.map(esc).join(', ')} : fiche créée dans <a href="#/fiches">Chauffeurs</a> (agence du véhicule, compte Uber relié s'il est connu).` : '') +
       (unknown.length ? `<br><b>Plaques non reconnues (${unknown.length}) :</b> ${unknown.map(esc).join(', ')}<br>Si c'est une nouvelle plaque d'un véhicule existant, ajoutez-la dans <a href="#/plaques">Plaques</a> : les contrats seront rattachés automatiquement.` : ''), unknown.length ? 'warn' : 'ok');
   } catch (e) { out.innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
 }
