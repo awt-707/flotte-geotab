@@ -127,6 +127,10 @@ test('page Planning chauffeurs : générer la semaine, case modifiée gardée, a
     // planning individuel sur WhatsApp : lien vers le numéro du chauffeur avec son planning
     const href = await page.getAttribute('#tpldrv a[href*="wa.me/212"]', 'href');
     assert.match(decodeURIComponent(href), /wa\.me\/2126\d+\?text=Bonjour .+, voici ton planning de la semaine du 26\/10 au 01\/11/);
+    // planning de la semaine en PDF sur WhatsApp : PDF déposé dans le stockage, lien signé dans le message
+    const [pop] = await Promise.all([page.waitForEvent('popup'), page.click('#plwapdf')]);
+    assert.match(decodeURIComponent(pop.url()).replace(/\+/g, ' '), /text=.*Planning chauffeurs · semaine du 26\/10\/2026 au 01\/11\/2026 · Casa\nPDF : .*plannings\/1\/2026-10-26_semaine_\d+\.pdf/);
+    await pop.close();
     // absence : Ali absent mercredi → remplacé, le reste ne bouge pas
     const before = env.psql(`select string_agg(day || shift || vehicle_key || coalesce(driver_code, '-'), ',' order by day, shift, vehicle_key) from driver_plan where not (day = '${DAYS[2]}' and driver_code = 'A')`);
     await page.goto(page.url().replace(/#.*/, '') + '#/plan?t=absences&a=1&w=' + MON);

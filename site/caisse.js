@@ -390,7 +390,7 @@ function cshTabRappro(p) {
     <div class="bar"><button class="ghost small" id="cshrpdf">PDF</button><button class="ghost small" id="cshrxls">Tableur</button></div>` + table('tcshrap', cshRapCols(), rap, { empty: 'Aucune espèce Uber ni encaissement sur la période', total: cshTot(null, ['Taux de collecte']) }));
   $('#cshrpdf').onclick = () => { try { reportPdf(rptSimple({ kind: 'caisse', agency: CS.agName || undefined, title: 'Rapprochement des espèces Uber', period: fmtDay(p.from) + ' → ' + fmtDay(p.to), from: p.from, to: p.to,
     summary: [['Espèces Uber', cshMoney(tot('uber'))], ['Frais justifiés', cshMoney(tot('frais'))], ['Encaissé net', cshMoney(tot('net'))], ['Manquant', cshMoney(man)], ['Excédent', cshMoney(exc)]],
-    tables: [colsTable('Par chauffeur', cshRapCols(), rap)], fileName: 'rapprochement_uber_' + p.from + '_' + p.to + '.pdf' })); } catch (e) { alert(e.message); } };
+    tables: [colsTable('Par chauffeur', cshRapCols(), rap)], fileName: 'rapprochement_uber_' + p.from + '_' + p.to })); } catch (e) { alert(e.message); } };
   $('#cshrxls').onclick = () => cshXls('rapprochement_uber_' + p.from + '_' + p.to, cshRapCols(), rap);
 }
 
@@ -411,7 +411,7 @@ function cshTabPaie(p) {
     `<div class="small">Règles du classeur : manquant d'espèces Uber retenu, excédent ajouté ; dépense sans justificatif OK retenue ; avance déjà versée retenue ; prime de course privée ajoutée (moins la part gardée par le chauffeur) ; bonus « A payer » ajouté. Choisir la période de paie ci-dessus.</div>
     <div class="bar"><button class="ghost small" id="cshppdf">PDF</button><button class="ghost small" id="cshpxls">Tableur</button></div>` + table('tcshpay', cshPaieCols(), pay, { empty: 'Aucun effet sur la paie sur la période', total: cshTot() }));
   $('#cshppdf').onclick = () => { try { reportPdf(rptSimple({ kind: 'caisse', agency: CS.agName || undefined, title: 'Effet de la caisse sur la paie', period: fmtDay(p.from) + ' → ' + fmtDay(p.to), from: p.from, to: p.to,
-    summary: [['Effet net total', cshMoney(tot('impact'))], ['Chauffeurs', f0(pay.length)]], tables: [colsTable('Par chauffeur', cshPaieCols(), pay)], fileName: 'paie_caisse_' + p.from + '_' + p.to + '.pdf' })); } catch (e) { alert(e.message); } };
+    summary: [['Effet net total', cshMoney(tot('impact'))], ['Chauffeurs', f0(pay.length)]], tables: [colsTable('Par chauffeur', cshPaieCols(), pay)], fileName: 'paie_caisse_' + p.from + '_' + p.to })); } catch (e) { alert(e.message); } };
   $('#cshpxls').onclick = () => cshXls('paie_caisse_' + p.from + '_' + p.to, cshPaieCols(), pay);
 }
 

@@ -114,7 +114,8 @@ function plTabWeek() {
       ['Cases non couvertes', f0(unf), unf ? 'crit' : 'ok'], ['Cases à vérifier', f0(nWarn), nWarn ? 'warn' : 'ok']]) +
     `<div class="bar">${PL.can ? `<button id="plgen">Générer / compléter la semaine</button><button class="ghost" id="plcopy">Reprendre la semaine précédente</button><button class="ghost" id="plreset">Tout recalculer</button><button class="ghost" id="plpub">Publier</button>` : ''}
       ${isAdmin() ? `<button class="ghost" id="pllock">${PL.week && PL.week.locked ? 'Déverrouiller' : 'Verrouiller'}</button>` : ''}
-      <button class="ghost" id="plpdf">PDF</button>${PL.cells.length ? `<a class="btn ghostb" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(planWeekText(plCtx()))}">Partager sur WhatsApp</a>` : ''}<button class="ghost" id="plcp">Copier le texte</button></div>
+      ${PL.cells.length ? '<button id="plwapdf">Partager le PDF sur WhatsApp</button>' : ''}<button class="ghost" id="plpdf">Télécharger le PDF</button><button class="ghost" id="plcp">Copier le texte</button><span class="small" id="plwast"></span></div>
+    ${act.some(d => (d.off || []).length !== 2) ? msg(act.filter(d => (d.off || []).length !== 2).length + ' chauffeur(s) actif(s) sans leurs 2 jours de repos réglés : la génération leur répartit des repos sur la semaine. Pour les fixer : onglet <a href="' + plHref('chauffeurs') + '">Chauffeurs et repos</a>, « Répartir les repos manquants ».', 'warn') : ''}
     <div class="bar"><input id="plf" placeholder="Rechercher plaque ou chauffeur" value="${esc(q.get('f') || '')}" size="26"><label>Shift <select id="pls"><option value="">Jour et nuit</option><option ${only === 'Jour' ? 'selected' : ''}>Jour</option><option ${only === 'Nuit' ? 'selected' : ''}>Nuit</option></select></label>
       <span class="small">● case modifiée à la main (gardée par la génération) · rouge : non couverte · orange : à vérifier (survol pour le détail)</span></div>
     <div class="tw plgrid"><table><thead><tr><th>Véhicule</th><th>Shift</th>${days.map((d, i) => `<th>${PLAN_DAYS[i].slice(0, 3)} ${d.slice(8, 10)}/${d.slice(5, 7)}${d === today() ? ' •' : ''}</th>`).join('')}</tr></thead>
@@ -143,6 +144,8 @@ function plTabWeek() {
   if ($('#pllock')) $('#pllock').onclick = async () => { try { await rpc('plan_week_set', { p_agency: PL.ag.id, p_week: PL.monday, p_action: PL.week && PL.week.locked ? 'déverrouiller' : 'verrouiller' }); pagePlan(); } catch (e) { alert(e.message); } };
   $('#plcp').onclick = () => { try { navigator.clipboard.writeText(planWeekText(plCtx())); $('#plcp').textContent = 'Copié'; } catch (e) { alert(e.message); } };
   $('#plpdf').onclick = () => plPdf();
+  if ($('#plwapdf')) $('#plwapdf').onclick = () => { const f = plPdf(true), d = planWeekDays(PL.monday);
+    plSharePdf(f, '📅 Planning chauffeurs · semaine du ' + fmtDay(d[0]) + ' au ' + fmtDay(d[6]) + (PL.ag ? ' · ' + PL.ag.name : ''), 'semaine', $('#plwast')); };
   $('#plsendall').onclick = () => {
     const l = drows.filter(r => r.n && manifWa(r.d.phone));
     if (!l.length) { alert('Aucun chauffeur planifié avec un numéro de téléphone.'); return; }
@@ -166,16 +169,50 @@ async function plEditCell(inp) {
   cells.push({ day, shift, vehicle_key, driver_code: d ? d.code : null, locked: true });
   try { await plSave(cells, 'case ' + plPlate(vehicle_key) + ' ' + shift + ' ' + day.slice(8, 10) + '/' + day.slice(5, 7)); pagePlan(); } catch (e) { alert(e.message); pagePlan(); }
 }
-function plPdf() {
+/** PDF de la semaine (grille véhicules × shifts × jours) ; asBlob : pour le partage */
+function plPdf(asBlob) {
   const days = planWeekDays(PL.monday), by = {}; PL.cells.forEach(c => { by[c.day + '|' + c.shift + '|' + c.vehicle_key] = c; });
   const rows = []; plVehicles().forEach(v => PLAN_SHIFTS.forEach(s => rows.push({ v, s })));
   const cols = [['Véhicule', r => esc(r.v.plate || r.v.key)], ['Shift', r => r.s + ' ' + planHours(r.s, S.P)]].concat(days.map((d, i) => [PLAN_DAYS[i].slice(0, 3) + ' ' + d.slice(8, 10) + '/' + d.slice(5, 7), r => { const c = by[d + '|' + r.s + '|' + r.v.key]; return c && c.driver_code ? esc(plName(c.driver_code)) : 'non couvert'; }]));
   const cnt = {}; PL.cells.forEach(c => { if (c.driver_code) cnt[c.driver_code] = (cnt[c.driver_code] || 0) + 1; });
   const drv = PL.drivers.filter(d => cnt[d.code]).map(d => ({ d, n: cnt[d.code] }));
-  try { reportPdf(rptSimple({ kind: 'planning', agency: PL.ag.name, title: 'Planning chauffeurs · semaine du ' + fmtDay(days[0]) + ' au ' + fmtDay(days[6]), period: fmtDay(days[0]) + ' → ' + fmtDay(days[6]), from: days[0], to: days[6],
+  try { return reportPdf(Object.assign(rptSimple({ kind: 'planning', agency: PL.ag.name, title: 'Planning chauffeurs · semaine du ' + fmtDay(days[0]) + ' au ' + fmtDay(days[6]), period: fmtDay(days[0]) + ' → ' + fmtDay(days[6]), from: days[0], to: days[6],
     summary: [['Véhicules', f0(plVehicles().length)], ['Chauffeurs planifiés', f0(drv.length)], ['Cases non couvertes', f0(PL.cells.filter(c => !c.driver_code).length)]],
     tables: [colsTable('Planning', cols, rows), colsTable('Chauffeurs', [['Chauffeur', r => esc(r.d.name || r.d.code)], ['Téléphone', r => esc(r.d.phone || '')], ['Shifts', r => f0(r.n), null, 'n'], ['Repos', r => (r.d.off || []).map(w => PLAN_DAYS[w - 1]).join(', ')]], drv)],
-    fileName: 'planning_' + (PL.ag.name || '').replace(/\W+/g, '_') + '_' + days[0] + '.pdf' })); } catch (e) { alert(e.message); }
+    fileName: 'planning_' + (PL.ag.name || '').replace(/\W+/g, '_') + '_' + days[0] }), { asBlob: !!asBlob })); } catch (e) { alert(e.message); }
+}
+/**
+ * Partage d'un PDF sur WhatsApp : sur téléphone, le fichier lui-même (partage du système) ; sinon PDF déposé dans le stockage
+ * privé « plannings » et lien signé (7 jours) dans le message WhatsApp ; sans stockage : PDF téléchargé, à joindre à la main.
+ */
+async function plSharePdf(f, caption, kind, st) {
+  if (!f || !f.blob) return;
+  const say = t => { if (st) st.textContent = t; };
+  const file = typeof File === 'function' ? new File([f.blob], f.name, { type: 'application/pdf' }) : null;
+  if (file && !window.LUDY_APP && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], text: caption }); say('PDF partagé.'); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  try {
+    say('Préparation du lien…');
+    const path = (PL.ag ? PL.ag.id : 0) + '/' + PL.monday + '_' + kind + '_' + Date.now() + '.pdf';
+    const up = await sb.storage.from('plannings').upload(path, f.blob, { contentType: 'application/pdf', upsert: false });
+    if (up.error) throw new Error(up.error.message);
+    const sg = await sb.storage.from('plannings').createSignedUrl(path, 7 * 86400, { download: f.name });
+    if (sg.error) throw new Error(sg.error.message);
+    window.open('https://wa.me/?text=' + encodeURIComponent(caption + '\nPDF : ' + sg.data.signedUrl), '_blank', 'noopener');
+    say('Lien du PDF envoyé dans WhatsApp (valable 7 jours).');
+  } catch (e) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(f.blob); a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
+    say('PDF téléchargé : à joindre dans WhatsApp (stockage indisponible : ' + e.message + ').');
+  }
+}
+/** PDF de la veille de shift : véhicule, chauffeur, téléphone */
+function plEvePdf(day, s, list) {
+  const ph = plCtx().phones;
+  try { return reportPdf(Object.assign(rptSimple({ kind: 'planning', agency: PL.ag.name, title: 'Shift ' + s.toLowerCase() + ' du ' + PLAN_DAYS[planWd(day) - 1].toLowerCase() + ' ' + fmtDay(day) + ' · ' + planHours(s, S.P), period: fmtDay(day), from: day, to: day,
+    summary: [['Véhicules', f0(list.length)], ['Non couverts', f0(list.filter(c => !c.driver_code).length)]],
+    tables: [colsTable('Chauffeurs du shift', [['Véhicule', c => esc(plPlate(c.vehicle_key))], ['Chauffeur', c => c.driver_code ? esc(plName(c.driver_code)) : 'non couvert'], ['Téléphone', c => esc(ph[c.driver_code] || '')]], list)],
+    fileName: 'shift_' + s.toLowerCase() + '_' + day }), { asBlob: true })); } catch (e) { alert(e.message); }
 }
 
 // ---------- Veille de shift ----------
@@ -190,7 +227,7 @@ async function plTabEve() {
   const missing = plVehicles().filter(v => !l.some(c => c.vehicle_key === v.key)).map(v => ({ day, shift: s, vehicle_key: v.key, driver_code: null }));
   const list = l.concat(missing), txt = planEveText(Object.assign(ctx, { cells: list }), day, s);
   plBody(`<div class="bar"><label>Jour <input type="date" id="pled" value="${day}"></label><label>Shift <select id="ples"><option ${s === 'Jour' ? 'selected' : ''}>Jour</option><option ${s === 'Nuit' ? 'selected' : ''}>Nuit</option></select></label>
-      <b>${s === 'Jour' ? '☀️' : '🌙'} ${esc(planHours(s, S.P))}</b><a class="btn ghostb" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(txt)}">Partager la liste sur WhatsApp</a><button class="ghost" id="plecp">Copier</button></div>` +
+      <b>${s === 'Jour' ? '☀️' : '🌙'} ${esc(planHours(s, S.P))}</b><button id="plewapdf">Partager le PDF sur WhatsApp</button><a class="btn ghostb" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(txt)}">Partager en texte</a><button class="ghost" id="plecp">Copier</button><span class="small" id="plewast"></span></div>` +
     table('tpleve', [['Véhicule', c => esc(plPlate(c.vehicle_key))], ['Chauffeur', c => c.driver_code ? esc(plName(c.driver_code)) : '<b class="red">non couvert</b>'], ['Téléphone', c => esc((ctx.phones || {})[c.driver_code] || '')],
       ['Rappel', c => c.driver_code && manifWa(ctx.phones[c.driver_code]) ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(plWa(ctx.phones[c.driver_code], planEveDriverText(ctx, day, s, c)))}">WhatsApp</a>` : ''],
       ['', c => PL.can && c.driver_code ? `<button class="ghost small" data-plabs="${esc(c.driver_code)}">Absent : remplacer</button>` : '']], list, { empty: 'Aucun véhicule actif' }) +
@@ -198,6 +235,7 @@ async function plTabEve() {
   const go = () => { location.hash = plHref('veille', { jour: $('#pled').value, s: $('#ples').value, w: planMonday($('#pled').value) }); };
   $('#pled').onchange = go; $('#ples').onchange = go;
   $('#plecp').onclick = () => { try { navigator.clipboard.writeText(txt); $('#plecp').textContent = 'Copié'; } catch (e) { alert(e.message); } };
+  $('#plewapdf').onclick = () => plSharePdf(plEvePdf(day, s, list), (s === 'Jour' ? '☀️' : '🌙') + ' Shift ' + s.toLowerCase() + ' du ' + fmtDay(day) + ' · ' + planHours(s, S.P) + (PL.ag ? ' · ' + PL.ag.name : ''), 'veille', $('#plewast'));
   document.querySelectorAll('[data-plabs]').forEach(b => { b.onclick = async () => {
     const why = prompt('Absence de ' + plName(b.dataset.plabs) + ' le ' + fmtDay(day) + ' : motif ?', 'absent'); if (why === null) return;
     try { const r = await plAbsence(b.dataset.plabs, day, day, why); alert(r); pagePlan(); } catch (e) { alert(e.message); }

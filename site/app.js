@@ -1045,6 +1045,7 @@ function reportPdf(rep) {
     font('normal', 7, C.mute); doc.text('Ludy · Supervision de flotte — données mesurées par Geotab uniquement ; « ' + RPT_NM + ' » quand Geotab ne fournit pas la valeur.', M, H - 7);
     doc.text('Page ' + i + ' / ' + n, W - M, H - 7, { align: 'right' });
   }
+  if (rep.asBlob) return { blob: doc.output('blob'), name: rptFileName(rep) + '.pdf' };   // partage (WhatsApp) au lieu du téléchargement
   doc.save(rptFileName(rep) + '.pdf');
 }
 

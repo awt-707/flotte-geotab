@@ -47,7 +47,10 @@ function planAutoOff(drivers) {
  * ou en jour juste après une nuit. Case sans chauffeur possible : non couverte.
  */
 function planWeek(o) {
-  const drivers = (o.drivers || []).filter(d => d.active !== false), byCode = {}, count = {}, cells = [];
+  // chauffeur sans ses 2 jours de repos réglés : repos répartis sur la semaine pour cette génération (sinon tous travailleraient
+  // du lundi au vendredi et d'autres tout le week-end)
+  const auto = planAutoOff((o.drivers || []).filter(d => d.active !== false).map(d => Object.assign({}, d)));
+  const drivers = (o.drivers || []).filter(d => d.active !== false).map(d => auto[d.code] ? Object.assign({}, d, { off: auto[d.code], autoOff: true }) : d), byCode = {}, count = {}, cells = [];
   drivers.forEach(d => { byCode[d.code] = d; count[d.code] = 0; });
   const lock = {}; (o.locked || []).forEach(c => { lock[c.day + '|' + c.shift + '|' + c.vehicle_key] = c; });
   // shifts déjà fixés (cases verrouillées) comptés d'avance
@@ -78,7 +81,7 @@ function planWeek(o) {
     });
     nights = tonight;
   });
-  return { cells, count, unfilled: cells.filter(c => !c.driver_code).length };
+  return { cells, count, unfilled: cells.filter(c => !c.driver_code).length, autoOff: auto };
 }
 
 /** Contrôle d'une semaine (cases modifiées à la main comprises) : { 'jour|shift|véhicule': ['…'] } */
