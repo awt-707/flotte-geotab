@@ -19,10 +19,10 @@ function plVehicles() { return S.vehList.filter(v => v.active === 'OUI' && (!PL.
 function plPlate(k) { const v = S.veh[k]; return v ? (v.plate || k) + (v.model ? ' · ' + v.model : '') : k; }
 function plName(c) { const d = PL.drivers.find(x => x.code === c); return d ? d.name || c : (S.drv && S.drv[c]) || c; }
 function plCtx() {
-  const names = {}, plates = {}, phones = {};
-  PL.drivers.forEach(d => { names[d.code] = d.name || d.code; phones[d.code] = d.phone || ''; });
+  const names = {}, plates = {}, phones = {}, off = {};
+  PL.drivers.forEach(d => { names[d.code] = d.name || d.code; phones[d.code] = d.phone || ''; off[d.code] = d.off || []; });
   S.vehList.forEach(v => { plates[v.key] = v.plate || v.key; });
-  return { monday: PL.monday, cells: PL.cells, names, plates, phones, P: S.P, agency: PL.ag ? PL.ag.name : '' };
+  return { monday: PL.monday, cells: PL.cells, names, plates, phones, off, absent: PL.absent, P: S.P, agency: PL.ag ? PL.ag.name : '' };
 }
 /** Absences → { code: { jour: true } } */
 function plAbsentMap(abs) { const m = {}; abs.forEach(a => { for (let d = a.day_from; d <= a.day_to; d = planAddDays(d, 1)) { (m[a.driver_code] = m[a.driver_code] || {})[d] = a.reason || 'absent'; } }); return m; }
@@ -40,7 +40,8 @@ async function plLoad() {
   PL.roster = {}; roster.forEach(r => { PL.roster[r.driver_code] = r; });
   const recent = addDays(today(), -45);
   PL.drivers = drv.map(d => { const r = PL.roster[d.code] || {};
-    return { code: d.code, name: d.name, phone: d.phone, shift: r.shift || '', vehicle: r.vehicle_key || '', off: r.off_days || [], active: r.driver_code ? r.active : !!(d.last_contract && d.last_contract >= recent) || d.status === 'NOUVEAU', inRoster: !!r.driver_code, note: r.note || '' }; });
+    return { code: d.code, name: d.name, phone: d.phone, shift: r.shift || '', vehicle: r.vehicle_key || '', off: r.off_days || [], active: r.left_at ? false : r.driver_code ? r.active : !!(d.last_contract && d.last_contract >= recent) || d.status === 'NOUVEAU',
+      inRoster: !!r.driver_code, note: r.note || '', left: r.left_at || '', leftReason: r.left_reason || '', replacedBy: r.replaced_by || '' }; });
   PL.cells = cells.map(c => ({ day: c.day, shift: c.shift, vehicle_key: c.vehicle_key, driver_code: c.driver_code, locked: c.locked, note: c.note }));
   PL.prevNight = prev.map(x => x.driver_code).filter(Boolean);
   PL.abs = abs; PL.absent = plAbsentMap(abs); PL.week = weeks[0] || null;
@@ -113,17 +114,18 @@ function plTabWeek() {
       ['Cases non couvertes', f0(unf), unf ? 'crit' : 'ok'], ['Cases à vérifier', f0(nWarn), nWarn ? 'warn' : 'ok']]) +
     `<div class="bar">${PL.can ? `<button id="plgen">Générer / compléter la semaine</button><button class="ghost" id="plcopy">Reprendre la semaine précédente</button><button class="ghost" id="plreset">Tout recalculer</button><button class="ghost" id="plpub">Publier</button>` : ''}
       ${isAdmin() ? `<button class="ghost" id="pllock">${PL.week && PL.week.locked ? 'Déverrouiller' : 'Verrouiller'}</button>` : ''}
-      <button class="ghost" id="plpdf">PDF</button><a class="btn ghostb" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(planWeekText(plCtx()))}">Partager sur WhatsApp</a><button class="ghost" id="plcp">Copier le texte</button></div>
+      <button class="ghost" id="plpdf">PDF</button>${PL.cells.length ? `<a class="btn ghostb" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(planWeekText(plCtx()))}">Partager sur WhatsApp</a>` : ''}<button class="ghost" id="plcp">Copier le texte</button></div>
     <div class="bar"><input id="plf" placeholder="Rechercher plaque ou chauffeur" value="${esc(q.get('f') || '')}" size="26"><label>Shift <select id="pls"><option value="">Jour et nuit</option><option ${only === 'Jour' ? 'selected' : ''}>Jour</option><option ${only === 'Nuit' ? 'selected' : ''}>Nuit</option></select></label>
       <span class="small">● case modifiée à la main (gardée par la génération) · rouge : non couverte · orange : à vérifier (survol pour le détail)</span></div>
     <div class="tw plgrid"><table><thead><tr><th>Véhicule</th><th>Shift</th>${days.map((d, i) => `<th>${PLAN_DAYS[i].slice(0, 3)} ${d.slice(8, 10)}/${d.slice(5, 7)}${d === today() ? ' •' : ''}</th>`).join('')}</tr></thead>
       <tbody>${rows.join('') || `<tr><td colspan="9" class="empty">${veh.length ? 'Aucune ligne' : 'Aucun véhicule actif dans cette agence'}</td></tr>`}</tbody></table></div>
     <h2>Planning individuel des chauffeurs</h2>
-    <div class="bar"><button class="ghost" id="plsendall">Envoyer à chaque chauffeur sur WhatsApp (un par un)</button><span class="small" id="plsendst">Chaque clic ouvre WhatsApp avec le planning du chauffeur suivant : il ne reste qu'à appuyer sur Envoyer.</span></div>` +
+    ${PL.cells.length ? '' : msg('Semaine pas encore générée : cliquer sur « Générer / compléter la semaine » avant d\'envoyer les plannings aux chauffeurs.', 'warn')}
+    <div class="bar"><button class="ghost" id="plsendall" ${PL.cells.length ? '' : 'disabled'}>Envoyer à chaque chauffeur sur WhatsApp (un par un)</button><span class="small" id="plsendst">Chaque clic ouvre WhatsApp avec le planning du chauffeur suivant : il ne reste qu'à appuyer sur Envoyer.</span></div>` +
     table('tpldrv', [['Chauffeur', r => esc(r.d.name || r.d.code) + (r.d.active ? '' : ' <span class="small">(inactif)</span>')], ['Téléphone', r => esc(r.d.phone || '')], ['Shift habituel', r => esc(r.d.shift || '—')],
       ['Véhicule habituel', r => esc(r.d.vehicle ? plPlate(r.d.vehicle) : '—')], ['Repos', r => esc(offTxt(r.d))], ['Shifts', r => f0(r.n) + (r.nights ? ` <span class="small">dont ${r.nights} nuits</span>` : ''), r => r.n, 'n'],
       ['Absences', r => esc(Object.keys(PL.absent[r.d.code] || {}).filter(d => d >= days[0] && d <= days[6]).map(d => d.slice(8, 10) + '/' + d.slice(5, 7)).join(' '))],
-      ['', r => manifWa(r.d.phone) ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(plWa(r.d.phone, planDriverText(plCtx(), r.d.code)))}">WhatsApp</a>` : '<span class="small">pas de numéro</span>']], drows, { empty: 'Aucun chauffeur actif : voir l\'onglet Chauffeurs et repos.' }));
+      ['', r => !PL.cells.length ? '' : !r.n ? '<span class="small">aucun shift cette semaine</span>' : manifWa(r.d.phone) ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(plWa(r.d.phone, planDriverText(plCtx(), r.d.code)))}">WhatsApp</a>` : '<span class="small">pas de numéro</span>']], drows, { empty: 'Aucun chauffeur actif : voir l\'onglet Chauffeurs et repos.' }));
   const goF = () => { location.hash = plHref('semaine', { f: $('#plf').value, s: $('#pls').value }); };
   $('#plf').onchange = goF; $('#pls').onchange = goF;
   document.querySelectorAll('.plgrid input[data-k]').forEach(inp => { inp.onchange = () => plEditCell(inp); });
@@ -225,7 +227,7 @@ async function plAbsence(code, from, to, reason) {
 
 // ---------- Chauffeurs et repos ----------
 function plTabDrivers() {
-  const veh = plVehicles(), ds = PL.drivers.slice().sort((a, b) => (b.active - a.active) || String(a.name || a.code).localeCompare(String(b.name || b.code)));
+  const veh = plVehicles(), ds = PL.drivers.filter(d => !d.left).sort((a, b) => (b.active - a.active) || String(a.name || a.code).localeCompare(String(b.name || b.code))), ex = PL.drivers.filter(d => d.left);
   const days = planWeekDays(PL.monday), act = ds.filter(d => d.active);
   const avail = s => days.map(d => act.filter(x => (x.shift === s || !x.shift) && !planOff(x, d) && !(PL.absent[x.code] || {})[d]).length);
   const regs = {}; act.forEach(d => { if (d.vehicle && d.shift) regs[d.vehicle + '|' + d.shift] = (regs[d.vehicle + '|' + d.shift] || 0) + 1; });
@@ -235,13 +237,21 @@ function plTabDrivers() {
       ${PLAN_SHIFTS.map(s => `<tr><td>${s === 'Jour' ? '☀️' : '🌙'} ${s} (besoin ${veh.length})</td>${avail(s).map(n => `<td class="n ${n < veh.length ? 'red' : 'ok'}">${n}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
     <div class="small">Disponibles = chauffeurs actifs de ce shift (ou sans shift habituel), hors repos et absences.</div>
     ${PL.can ? `<div class="bar"><button class="ghost" id="ploff">Répartir les repos manquants</button><button class="ghost" id="plassign">Répartir véhicules et shifts manquants</button></div>` : ''}
-    <div class="tw"><table class="plros"><thead><tr><th>Chauffeur</th><th>Actif</th><th>Shift habituel</th><th>Véhicule habituel</th><th>Repos (2 jours)</th><th>Note</th></tr></thead><tbody>
+    <div class="tw"><table class="plros"><thead><tr><th>Chauffeur</th><th>Actif</th><th>Shift habituel</th><th>Véhicule habituel</th><th>Repos (2 jours)</th><th>Note</th>${PL.can ? '<th></th>' : ''}</tr></thead><tbody>
     ${ds.map(d => `<tr data-c="${esc(d.code)}"><td>${esc(d.name || d.code)}<div class="small">${esc(d.code)}${d.phone ? ' · ' + esc(d.phone) : ''}</div></td>
       <td><input type="checkbox" class="pra" ${d.active ? 'checked' : ''} ${dis}></td>
       <td><select class="prs" ${dis}><option value="">—</option>${PLAN_SHIFTS.map(s => `<option ${d.shift === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
       <td><select class="prv" ${dis}><option value="">—</option>${veh.map(v => `<option value="${esc(v.key)}" ${d.vehicle === v.key ? 'selected' : ''}>${esc(v.plate || v.key)}</option>`).join('')}</select></td>
       <td class="proff">${PL_WD.map((w, i) => `<label title="${PLAN_DAYS[i]}"><input type="checkbox" value="${i + 1}" ${(d.off || []).indexOf(i + 1) >= 0 ? 'checked' : ''} ${dis}>${w}</label>`).join('')}</td>
-      <td><input class="prn" value="${esc(d.note || '')}" size="14" ${dis}></td></tr>`).join('') || '<tr><td colspan="6" class="empty">Aucun chauffeur dans cette agence</td></tr>'}</tbody></table></div>`);
+      <td><input class="prn" value="${esc(d.note || '')}" size="14" ${dis}></td>${PL.can ? `<td><button class="ghost small" data-plleave="${esc(d.code)}">Départ / remplacer</button></td>` : ''}</tr>`).join('') || '<tr><td colspan="7" class="empty">Aucun chauffeur dans cette agence</td></tr>'}</tbody></table></div>
+    <div id="plleave"></div>
+    <h3>Ex-chauffeurs (${ex.length})</h3>` + table('tplex', [['Chauffeur', d => esc(d.name || d.code) + `<div class="small">${esc(d.code)}${d.phone ? ' · ' + esc(d.phone) : ''}</div>`], ['Parti le', d => fmtDay(d.left), d => d.left], ['Motif', d => esc(d.leftReason)],
+      ['Remplacé par', d => esc(d.replacedBy ? plName(d.replacedBy) : '')], ['', d => PL.can ? `<button class="ghost small" data-plback="${esc(d.code)}">Réintégrer</button>` : '']], ex, { empty: 'Aucun ex-chauffeur' }));
+  document.querySelectorAll('[data-plleave]').forEach(b => { b.onclick = () => plLeaveForm(b.dataset.plleave); });
+  document.querySelectorAll('[data-plback]').forEach(b => { b.onclick = async () => {
+    if (!confirm('Réintégrer ' + plName(b.dataset.plback) + ' parmi les chauffeurs actifs ?')) return;
+    const r = await sb.from('driver_roster').update({ active: true, left_at: null, left_reason: null, replaced_by: null, updated_at: new Date().toISOString() }).eq('driver_code', b.dataset.plback);
+    if (r.error) alert(r.error.message); else pagePlan(); }; });
   const rowOf = tr => { const off = [...tr.querySelectorAll('.proff input:checked')].map(x => +x.value);
     return { driver_code: tr.dataset.c, agency_id: PL.ag ? PL.ag.id : null, active: tr.querySelector('.pra').checked, shift: tr.querySelector('.prs').value || null, vehicle_key: tr.querySelector('.prv').value || null, off_days: off, note: tr.querySelector('.prn').value || null, updated_at: new Date().toISOString() }; };
   document.querySelectorAll('.plros tr[data-c]').forEach(tr => tr.querySelectorAll('input,select').forEach(el => { el.onchange = async () => {
@@ -290,4 +300,34 @@ async function plTabLog() {
   if (my !== ROUTING) return;
   plBody('<div class="small">Qui a modifié le planning, déclaré une absence, publié ou verrouillé une semaine (60 derniers jours).</div>' +
     table('tpllog', [['Le', l => fmtDTY(l.at), l => l.at], ['Par', l => esc(PL.users[l.by] || '')], ['Action', l => esc(l.action)], ['Détail', l => esc(l.detail || '')]], rows, { empty: 'Aucune modification' }));
+}
+
+/** Départ d'un chauffeur : remplaçant (chauffeur existant ou nouveau), date ; le remplaçant reprend ses réglages et ses shifts planifiés */
+function plLeaveForm(code) {
+  const box = $('#plleave'); if (!box) return;
+  const others = PL.drivers.filter(d => d.code !== code && !d.left).sort((a, b) => String(a.name || a.code).localeCompare(String(b.name || b.code)));
+  box.innerHTML = `<div class="panel"><h3>Départ de ${esc(plName(code))}</h3>
+    <p class="small">Le remplaçant reprend son shift, son véhicule, ses jours de repos et tous ses shifts déjà planifiés à partir de la date choisie. Un jour où le remplaçant travaille déjà, la case reste à pourvoir (en rouge dans la semaine). ${esc(plName(code))} passe dans les ex-chauffeurs.</p>
+    <div class="mfrow"><label>Remplaçant <input id="plrep" list="plrepl" size="24" placeholder="chauffeur existant ou nouveau nom"></label><datalist id="plrepl">${others.map(d => `<option value="${esc(d.name || d.code)}"></option>`).join('')}</datalist>
+      <label>Téléphone (nouveau chauffeur) <input id="plrept" size="14" placeholder="06…"></label><label>À partir du <input type="date" id="plrepd" value="${today()}"></label>
+      <label>Motif <input id="plrepm" size="20" placeholder="licencié, démission…"></label><button id="plrepok">Confirmer le remplacement</button><button class="ghost" id="plrepx">Annuler</button></div><div id="plrepr"></div></div>`;
+  box.scrollIntoView({ block: 'nearest' });
+  $('#plrepx').onclick = () => { box.innerHTML = ''; };
+  $('#plrepok').onclick = async () => {
+    const v = $('#plrep').value.trim(), from = $('#plrepd').value, out = $('#plrepr');
+    if (!v || !from) { out.innerHTML = msg('Remplaçant et date obligatoires.', 'err'); return; }
+    let nd = others.find(d => String(d.name || d.code).toLowerCase() === v.toLowerCase() || String(d.code).toLowerCase() === v.toLowerCase());
+    try {
+      if (!nd) {   // nouveau chauffeur (pas encore de contrat) : fiche créée à la main dans l'agence
+        if (!confirm('« ' + v + ' » n\'existe pas dans Ludy : créer ce nouveau chauffeur ?')) return;
+        const c = 'M' + Date.now().toString(36).toUpperCase();
+        const r = await sb.from('drivers').insert({ code: c, name: v, phone: $('#plrept').value.trim() || null, agency_id: PL.ag ? PL.ag.id : null, source: 'manuel', status: 'NOUVEAU', detected_at: new Date().toISOString() });
+        if (r.error) throw new Error(r.error.message);
+        nd = { code: c, name: v };
+      }
+      const res = await rpc('plan_replace_driver', { p_agency: PL.ag ? PL.ag.id : null, p_old: code, p_new: nd.code, p_from: from, p_reason: $('#plrepm').value.trim() || null });
+      out.innerHTML = msg(esc(plName(code)) + ' remplacé par ' + esc(nd.name || nd.code) + ' : ' + res.moved + ' shift(s) repris' + (res.free ? ', <b>' + res.free + ' à pourvoir</b> (remplaçant déjà en service ces jours-là)' : '') + '.', res.free ? 'warn' : 'ok');
+      setTimeout(() => pagePlan(), 2500);
+    } catch (e) { out.innerHTML = msg(esc(e.message), 'err'); }
+  };
 }

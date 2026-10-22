@@ -127,7 +127,9 @@ function planDriverText(o, code) {
   out.push('Bonjour ' + (o.names[code] || '') + ', voici ton planning de la semaine du ' + planDdMm(days[0]) + ' au ' + planDdMm(days[6]) + ' :');
   days.forEach((d, i) => {
     const c = mine.filter(x => x.day === d);
-    out.push('• ' + PLAN_DAYS[i] + ' ' + planDdMm(d) + ' : ' + (c.length ? c.map(x => PLAN_ICON[x.shift] + ' ' + x.shift + ' ' + planHours(x.shift, o.P) + ' · ' + (o.plates[x.vehicle_key] || x.vehicle_key)).join(' + ') : 'repos'));
+    // « repos » seulement pour ses jours de repos (jamais un jour simplement sans shift)
+    const none = (o.off && (o.off[code] || []).indexOf(i + 1) >= 0) ? 'repos' : (o.absent && o.absent[code] && o.absent[code][d]) ? 'absent' : 'pas de shift prévu';
+    out.push('• ' + PLAN_DAYS[i] + ' ' + planDdMm(d) + ' : ' + (c.length ? c.map(x => PLAN_ICON[x.shift] + ' ' + x.shift + ' ' + planHours(x.shift, o.P) + ' · ' + (o.plates[x.vehicle_key] || x.vehicle_key)).join(' + ') : none));
   });
   out.push('', 'Merci de prévenir au plus tôt en cas d\'empêchement.');
   return out.join('\n');

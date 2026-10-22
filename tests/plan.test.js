@@ -58,12 +58,15 @@ test('repos répartis automatiquement : deux jours consécutifs, étalés sur la
 
 test('textes à partager : semaine de l\'agence, planning individuel, veille de shift', () => {
   const cells = P.planWeek({ days: DAYS, vehicles: VEH, drivers: DRV, absent: {}, locked: [], prevNight: [] }).cells;
-  const o = { monday: MON, cells, names: Object.fromEntries(DRV.map(d => [d.code, d.name])), plates: { V1: 'WW1', V2: 'WW2' }, phones: { A: '0611111111' }, P: { shiftDay: 7, shiftNight: 19 }, agency: 'Casa' };
+  const o = { monday: MON, cells, names: Object.fromEntries(DRV.map(d => [d.code, d.name])), plates: { V1: 'WW1', V2: 'WW2' }, phones: { A: '0611111111' }, off: Object.fromEntries(DRV.map(d => [d.code, d.off])), P: { shiftDay: 7, shiftNight: 19 }, agency: 'Casa' };
   const w = P.planWeekText(o);
   assert.match(w, /semaine du 26\/10 au 01\/11 · Casa/);
   assert.match(w, /\*Mercredi 28\/10\*\n☀️ Jour \(07:00 → 19:00\) : WW1 Ali · WW2 Chaimae/);
   const a = P.planDriverText(o, 'A');
-  assert.match(a, /Bonjour Ali/); assert.match(a, /Lundi 26\/10 : repos/); assert.match(a, /Mercredi 28\/10 : ☀️ Jour 07:00 → 19:00 · WW1/);
+  assert.match(a, /Bonjour Ali/); assert.match(a, /Lundi 26\/10 : repos/);
+  // jamais « repos » un jour simplement sans shift
+  const empty = P.planDriverText(Object.assign({}, o, { cells: [] }), 'C');
+  assert.match(empty, /Lundi 26\/10 : pas de shift prévu/); assert.match(empty, /Vendredi 30\/10 : repos/); assert.match(a, /Mercredi 28\/10 : ☀️ Jour 07:00 → 19:00 · WW1/);
   assert.match(P.planEveText(o, DAYS[2], 'Jour'), /Shift jour du mercredi 28\/10 · 07:00 → 19:00 · Casa\n\nWW1 : Ali \(0611111111\)/);
   assert.match(P.planEveDriverText(o, DAYS[2], 'Nuit', { driver_code: 'B', vehicle_key: 'V1' }), /mercredi 28\/10 tu es en shift nuit \(19:00 → 07:00\) sur le véhicule WW1/);
 });
@@ -142,4 +145,27 @@ test('page Planning chauffeurs : générer la semaine, case modifiée gardée, a
     assert.ok(await page.$('#tpleve a[href*="wa.me/212"]'));
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); }
+});
+
+test('départ d\'un chauffeur : le remplaçant reprend ses réglages et ses shifts planifiés, l\'ancien devient ex-chauffeur', () => {
+  setup();
+  try {
+    const g = P.planWeek({ days: DAYS, vehicles: VEH, drivers: DRV, absent: {}, locked: [], prevNight: [] });
+    as(MGR, `select plan_save(1, '${DAYS[0]}', '${DAYS[6]}', '${JSON.stringify(g.cells)}')`);
+    env.psql("insert into drivers (code, name, status, agency_id, source) values ('N', 'Nouveau', 'NOUVEAU', 1, 'manuel')");
+    const before = +env.psql(`select count(*) from driver_plan where driver_code = 'A' and day >= '${DAYS[3]}'`), early = env.psql(`select count(*) from driver_plan where driver_code = 'A' and day < '${DAYS[3]}'`);
+    const r = JSON.parse(as(MGR, `select plan_replace_driver(1, 'A', 'N', '${DAYS[3]}', 'démission')`));
+    assert.deepStrictEqual(r, { moved: before, free: 0 });
+    assert.strictEqual(env.psql(`select count(*) from driver_plan where driver_code = 'A' and day >= '${DAYS[3]}'`), '0');
+    assert.strictEqual(env.psql(`select count(*) from driver_plan where driver_code = 'A' and day < '${DAYS[3]}'`), early, 'avant la date : inchangé');
+    assert.strictEqual(env.psql("select shift || '|' || vehicle_key || '|' || array_to_string(off_days, ',') || '|' || active from driver_roster where driver_code = 'N'"), 'Jour|V1|1,2|true');
+    assert.strictEqual(env.psql("select active || '|' || left_at || '|' || left_reason || '|' || replaced_by from driver_roster where driver_code = 'A'"), `false|${DAYS[3]}|démission|N`);
+    // remplaçant déjà en service un jour : la case de l'ancien reste à pourvoir
+    const day = env.psql(`select min(day) from driver_plan where driver_code = 'B' and day >= '${DAYS[0]}'`);
+    const r2 = JSON.parse(as(MGR, `select plan_replace_driver(1, 'E', 'B', '${DAYS[0]}', null)`));
+    assert.ok(r2.free >= 1, JSON.stringify(r2));
+    assert.match(env.psql("select string_agg(action, ',') from plan_log where action = 'départ'"), /^départ,départ$/);
+    assert.throws(() => as(MGR, `select plan_replace_driver(2, 'Z', 'N', '${DAYS[0]}', null)`), /non autorisée/);
+    assert.ok(day);
+  } finally { env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'`); }
 });
