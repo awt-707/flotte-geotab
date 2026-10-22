@@ -118,8 +118,8 @@ function cshTabBord(p) {
       ['Bonus', cshMoney(sum('bonus'))], ['Dépôts en banque', cshMoney(sum('depots'))], ['Chiffre d\'affaires Uber', cshMoney(sum('revenue'))]]) +
     `<div class="panel"><h3>Espèces déclarées par Uber et encaissées, par jour de shift</h3>${daily.length ? `<svg viewBox="0 0 ${W} ${H}" class="cshchart" role="img" aria-label="Espèces par jour">${bars}</svg>
       <div class="small"><span class="lg-u">■</span> Espèces Uber · <span class="lg-n">■</span> Encaissé net</div>` : '<div class="empty">Aucun mouvement sur la période</div>'}</div>` +
-    `<div class="grid2"><div class="panel"><h3>Dépenses par catégorie</h3>${table('tcshcat', [['Catégorie', r => esc(r.label)], ['Montant', r => cshMoney(r.amount), r => r.amount, 'n']], cats, { empty: 'Aucune dépense sur la période' })}</div>
-      <div class="panel"><h3>Chauffeurs : cash manquant</h3>${table('tcshtop', [['Chauffeur', r => esc(r.name || r.key)], ['Espèces Uber', r => cshMoney(r.uber), r => r.uber, 'n'], ['Encaissé', r => cshMoney(r.net), r => r.net, 'n'], ['Manquant', r => '<b class="red">' + cshMoney(r.ecart) + '</b>', r => r.ecart, 'n']], top, { empty: 'Aucun manquant sur la période' })}
+    `<div class="grid2"><div class="panel"><h3>Dépenses par catégorie</h3>${table('tcshcat', [['Catégorie', r => esc(r.label)], ['Montant', r => cshMoney(r.amount), r => r.amount, 'n']], cats, { empty: 'Aucune dépense sur la période', total: cshTot() })}</div>
+      <div class="panel"><h3>Chauffeurs : cash manquant</h3>${table('tcshtop', [['Chauffeur', r => esc(r.name || r.key)], ['Espèces Uber', r => cshMoney(r.uber), r => r.uber, 'n'], ['Encaissé', r => cshMoney(r.net), r => r.net, 'n'], ['Manquant', r => '<b class="red">' + cshMoney(r.ecart) + '</b>', r => r.ecart, 'n']], top, { empty: 'Aucun manquant sur la période', total: cshTot() })}
       <a href="${cshHref('rappro')}">Rapprochement complet</a> · <a href="${cshHref('paie')}">Effet sur la paie</a></div></div>`);
 }
 
@@ -160,7 +160,9 @@ function cshBindRowActions() {
 }
 function cshActCol() { return ['', m => (m.cancelled_at ? `<span class="small crit" title="${esc(m.cancel_reason || '')}">annulé</span>` : cshCanFix(m) ? `<button class="ghost small" data-cshx="${m.id}">Annuler</button>` : '') + (isAdmin() ? ` <button class="ghost small" data-cshh="${m.id}">Historique</button>` : '')]; }
 function cshDrvCol() { return ['Chauffeur', m => esc(m.driver_code ? cshDrvName(m.driver_code) : m.driver_name || '') + (m.driver_code || !m.driver_name ? '' : ' <span class="small" title="Pas de chauffeur Ludy correspondant">(Uber)</span>'), m => m.driver_name || '']; }
-function cshList(id, rows, cols) { return table(id, cols, rows.slice().sort((a, b) => String(b.day).localeCompare(String(a.day)) || b.id - a.id), { empty: 'Aucun mouvement sur la période' }); }
+/** Total d'un tableau de la caisse : montants des lignes non annulées (kinds : seulement ces opérations, ex. les dépenses d'une liste qui contient aussi les recharges) */
+function cshTot(kinds, skip) { return { fmt: v => '<b>' + cshMoney(v) + '</b>', live: m => cshLive(m) && (!kinds || kinds.indexOf(m.kind) >= 0), skip: skip || [] }; }
+function cshList(id, rows, cols, kinds, skip) { return table(id, cols, rows.slice().sort((a, b) => String(b.day).localeCompare(String(a.day)) || b.id - a.id), { empty: 'Aucun mouvement sur la période', total: cshTot(kinds, skip) }); }
 /** Petit formulaire « recharge de caisse / dépôt en banque » d'une caisse */
 function cshMoveForm(caisse) {
   return `<details class="panel"><summary><h3>Recharge de caisse ou dépôt en banque</h3></summary><div class="mfrow">
@@ -209,7 +211,10 @@ function cshTabShift() {
         <td class="n"><input type="number" min="0" step="1" class="cgv" style="width:90px"></td><td class="n"><input type="number" min="0" step="1" class="cch" style="width:80px"></td>
         <td class="n cnet"></td><td class="n cman"></td><td><input class="ccm" size="18" placeholder="si manquant"></td><td><button class="small" data-csav="${i}">Enregistrer</button></td></tr>`; }).join('')
       : `<tr><td colspan="9" class="empty">Aucun contrat commencé dans ce shift${CS.ctr.length ? '' : ' (contrats non importés ?)'}.</td></tr>`}
-    </tbody></table></div>
+    </tbody>${rows.length ? (() => { const d = rows.map(r => r.done[0]).filter(Boolean), sum = f => cshR(d.reduce((t, m) => t + cshN(f(m)), 0)), ub = cshR(rows.reduce((t, r) => t + cshN(r.uber), 0));
+      const man = cshR(d.reduce((t, m) => t + (m.uber_cash == null ? 0 : cshN(m.uber_cash) - cshN(m.amount)), 0));
+      return `<tfoot><tr class="ttot"><td>Total · ${d.length} / ${rows.length} encaissé${d.length > 1 ? 's' : ''}</td><td></td><td class="n"><b>${cshMoney(ub)}</b></td><td class="n"><b>${cshMoney(sum(m => m.given))}</b></td><td class="n"><b>${cshMoney(sum(m => m.change))}</b></td>
+        <td class="n"><b>${cshMoney(sum(m => m.amount))}</b></td><td class="n">${cshSignedTxt(-man)}</td><td></td><td></td></tr></tfoot>`; })() : ''}</table></div>
     <details class="panel"><summary><h3>Encaissement d'un autre chauffeur (sans contrat dans ce shift)</h3></summary><div class="mfrow">
       ${cshField('cxd', 'Chauffeur', 'text', { list: 'cshdrv', size: 24 })}${cshField('cxu', 'Espèces Uber (MAD)', 'number', { min: 0 })}${cshField('cxg', 'Remis (MAD)', 'number', { min: 0 })}
       ${cshField('cxc', 'Monnaie rendue (MAD)', 'number', { min: 0 })}${cshField('cxm', 'Commentaire', 'text', { size: 24 })}<button class="small" id="cxsave">Enregistrer</button></div></details>
@@ -262,7 +267,7 @@ function cshTabDep(p) {
     cshList('tcshdep', rows, [['Date', m => fmtDay(m.day) + (m.shift ? ' <span class="small">' + m.shift + '</span>' : ''), m => m.day], cshDrvCol(), ['Opération', m => esc(m.label || CSH_KIND[m.kind] || '') + (m.kind !== 'depense' ? ' <span class="small">(' + CSH_FLOW_TXT[m.flow] + ')</span>' : '')],
       ['Type', m => esc(m.ride_type || '')], ['Montant', m => cshMoney(m.amount), m => cshN(m.amount), 'n'],
       ['Justificatif', m => m.kind !== 'depense' ? esc(m.justif || '') : `<select data-cshj="${m.id}" ${m.cancelled_at ? 'disabled' : ''}>${['En attente', 'OK', 'KO', 'N.A'].map(x => `<option ${x === (m.justif || 'En attente') ? 'selected' : ''}>${x}</option>`).join('')}</select>`, m => m.justif || ''],
-      ['Gestionnaire', m => esc(m.manager_name || '')], ['Commentaire', m => esc(m.comment || '')], cshActCol()]) + cshMoveForm('depenses'));
+      ['Gestionnaire', m => esc(m.manager_name || '')], ['Commentaire', m => esc(m.comment || '')], cshActCol()], ['depense']) + cshMoveForm('depenses'));
   $('#cdsave').onclick = async () => {
     const a = cshN(cshVal('cda')); if (!(a > 0) || !cshVal('cdd')) { alert('Date et montant obligatoires.'); return; }
     const who = cshVal('cdw') ? cshResolve(cshVal('cdw')) : {};
@@ -288,7 +293,7 @@ function cshTabRh(p) {
     cshList('tcshrh', rows, [['Date', m => fmtDay(m.day), m => m.day], cshDrvCol(), ['Opération', m => esc(CSH_KIND[m.kind] || m.kind) + (m.label && m.label !== CSH_KIND[m.kind] ? ' <span class="small">' + esc(m.label) + '</span>' : '')],
       ['Mode', m => esc(CSH_FLOW_TXT[m.flow] || '')], ['Montant', m => cshMoney(m.amount), m => cshN(m.amount), 'n'],
       ['Signée', m => m.kind === 'avance' ? `<input type="checkbox" data-cshg="${m.id}" ${m.signed ? 'checked' : ''} ${m.cancelled_at ? 'disabled' : ''} aria-label="Avance signée">` : ''],
-      ['Gestionnaire', m => esc(m.manager_name || '')], ['Commentaire', m => esc(m.comment || '')], cshActCol()]) + cshMoveForm('rh'));
+      ['Gestionnaire', m => esc(m.manager_name || '')], ['Commentaire', m => esc(m.comment || '')], cshActCol()], ['avance', 'remboursement']) + cshMoveForm('rh'));
   $('#crsave').onclick = async () => {
     const a = cshN(cshVal('cra')), who = cshResolve(cshVal('crw')), k = cshVal('crk');
     if (!(a > 0) || !who.driver_name) { alert('Chauffeur et montant obligatoires.'); return; }
@@ -314,7 +319,7 @@ async function cshTabCourses(p) {
       ['Montant des courses', cshMoney(live.reduce((s, m) => s + cshN(m.course_amount), 0))], ['Primes chauffeurs', cshMoney(live.reduce((s, m) => s + cshN(m.prime), 0))],
       ['Primes restant à payer', cshMoney(live.reduce((s, m) => s + cshN(m.prime) - cshN(m.prime_paid), 0))], ['Courses Ludy à encaisser', f0(todo.length), todo.length ? 'warn' : '']]) +
     (todo.length ? '<h3>Courses Ludy pas encore encaissées</h3>' + table('tcshtodo', [['N°', m => `<a href="#/courses?id=${m.id}">${esc(m.number || '#' + m.id)}</a>`], ['Début', m => fmtDTY(m.start_at), m => m.start_at], ['Client', m => esc(m.client_name || '')],
-      ['Chauffeur', m => esc(m.driver_name || '')], ['Statut', m => esc(m.status)], ['Montant TTC', m => m.total_ttc == null ? '' : cshMoney(m.total_ttc), m => cshN(m.total_ttc), 'n'], ['', m => `<button class="small" data-cshms="${m.id}">Encaisser</button>`]], todo) : '') +
+      ['Chauffeur', m => esc(m.driver_name || '')], ['Statut', m => esc(m.status)], ['Montant TTC', m => m.total_ttc == null ? '' : cshMoney(m.total_ttc), m => cshN(m.total_ttc), 'n'], ['', m => `<button class="small" data-cshms="${m.id}">Encaisser</button>`]], todo, { total: cshTot() }) : '') +
     `<div class="panel" id="cshcform"><h3>Encaissement d'une course privée${sel ? ' · ' + esc(sel.number || '') : ''}</h3><div class="mfrow">
       ${cshField('ccd', 'Date d\'encaissement', 'date', { value: today() })}${cshField('ccw', 'Chauffeur', 'text', { list: 'cshdrv', size: 22, value: sel ? sel.driver_name || '' : '' })}
       ${cshField('ccf', 'Départ', 'text', { size: 18, value: f.startAddr || f.startCity || '' })}${cshField('cct', 'Arrivée', 'text', { size: 18, value: f.endAddr || f.endCity || f.dest || '' })}
@@ -325,7 +330,7 @@ async function cshTabCourses(p) {
       ['Course', m => m.course_amount == null ? '' : cshMoney(m.course_amount), m => cshN(m.course_amount), 'n'], ['Encaissé', m => (m.flow === 'out' ? '−' : '') + cshMoney(m.amount), m => cshN(m.amount), 'n'],
       ['Prime', m => m.prime == null ? '' : cshMoney(m.prime) + (m.commission_pct != null ? ' <span class="small">(' + f1(m.commission_pct) + ' %)</span>' : ''), m => cshN(m.prime), 'n'],
       ['Déjà gardée', m => m.prime_paid == null ? '' : cshMoney(m.prime_paid), m => cshN(m.prime_paid), 'n'], ['Reste à payer', m => m.kind === 'course' ? cshSignedTxt(cshN(m.prime) - cshN(m.prime_paid)) : '', m => cshN(m.prime) - cshN(m.prime_paid), 'n'],
-      ['Commentaire', m => esc(m.comment || '')], cshActCol()]) + cshMoveForm('courses'));
+      ['Commentaire', m => esc(m.comment || '')], cshActCol()], ['course']) + cshMoveForm('courses'));
   const calc = () => { const c = cshCourse(cshVal('cca'), cshVal('ccp'), cshVal('ccr') === '' ? cshVal('cca') : cshVal('ccr'));
     $('#cccalc').innerHTML = cshVal('cca') === '' ? 'Prime = montant de la course × prime (%). Si le chauffeur garde sa prime, saisir le montant remis : la part gardée est comptée comme déjà payée.' :
       `Prime ${cshMoney(c.prime)} · déjà gardée par le chauffeur ${cshMoney(c.paid)} · reste à payer sur la paie ${cshSignedTxt(c.reste)}`; };
@@ -354,7 +359,7 @@ function cshTabBonus(p) {
       <div class="small">Payé : sorti de la caisse, à déclarer sur la paie. À payer : ajouté à la paie (pas encore sorti de la caisse).</div></div>` +
     cshList('tcshbon', rows, [['Date', m => fmtDay(m.day), m => m.day], cshDrvCol(), ['Motif', m => esc(m.label || CSH_KIND[m.kind])], ['Montant', m => cshMoney(m.amount), m => cshN(m.amount), 'n'],
       ['Statut', m => m.kind !== 'bonus' ? '' : `<select data-cshs="${m.id}" ${m.cancelled_at ? 'disabled' : ''}>${['Payé', 'A payer'].map(x => `<option ${x === (m.status || 'Payé') ? 'selected' : ''}>${x}</option>`).join('')}</select>`, m => m.status || ''],
-      ['Gestionnaire', m => esc(m.manager_name || '')], ['Commentaire', m => esc(m.comment || '')], cshActCol()]) + cshMoveForm('bonus'));
+      ['Gestionnaire', m => esc(m.manager_name || '')], ['Commentaire', m => esc(m.comment || '')], cshActCol()], ['bonus']) + cshMoveForm('bonus'));
   $('#cbsave').onclick = async () => {
     const a = cshN(cshVal('cba')), who = cshResolve(cshVal('cbw')), st = cshVal('cbs');
     if (!(a > 0) || !who.driver_name) { alert('Chauffeur et montant obligatoires.'); return; }
@@ -382,7 +387,7 @@ function cshTabRappro(p) {
   cshBody(cshUberWarn(p) + cards([['Espèces déclarées Uber', cshMoney(tot('uber'))], ['Dépenses Uber justifiées', cshMoney(tot('frais'))], ['Espèces encaissées nettes', cshMoney(tot('net'))],
       ['Manquant à retenir', cshMoney(man), man ? 'crit' : 'ok'], ['Excédent à ajouter', cshMoney(exc), exc ? 'warn' : '']]) +
     `<div class="small">Espèces Uber attribuées au shift du contrat du chauffeur (sinon au jour de la transaction). Frais justifiés = dépenses « Course Uber » au justificatif OK. Écart = théorique − encaissé : positif = manquant (retenu sur la paie), négatif = excédent (ajouté).</div>
-    <div class="bar"><button class="ghost small" id="cshrpdf">PDF</button><button class="ghost small" id="cshrxls">Tableur</button></div>` + table('tcshrap', cshRapCols(), rap, { empty: 'Aucune espèce Uber ni encaissement sur la période' }));
+    <div class="bar"><button class="ghost small" id="cshrpdf">PDF</button><button class="ghost small" id="cshrxls">Tableur</button></div>` + table('tcshrap', cshRapCols(), rap, { empty: 'Aucune espèce Uber ni encaissement sur la période', total: cshTot(null, ['Taux de collecte']) }));
   $('#cshrpdf').onclick = () => { try { reportPdf(rptSimple({ kind: 'caisse', agency: CS.agName || undefined, title: 'Rapprochement des espèces Uber', period: fmtDay(p.from) + ' → ' + fmtDay(p.to), from: p.from, to: p.to,
     summary: [['Espèces Uber', cshMoney(tot('uber'))], ['Frais justifiés', cshMoney(tot('frais'))], ['Encaissé net', cshMoney(tot('net'))], ['Manquant', cshMoney(man)], ['Excédent', cshMoney(exc)]],
     tables: [colsTable('Par chauffeur', cshRapCols(), rap)], fileName: 'rapprochement_uber_' + p.from + '_' + p.to + '.pdf' })); } catch (e) { alert(e.message); } };
@@ -404,7 +409,7 @@ function cshTabPaie(p) {
   cshBody(cshUberWarn(p) + cards([['Retenues (manquants, dépenses sans justificatif, avances)', cshMoney(tot('manquant') + tot('depKo') + tot('avances')), 'crit'], ['Ajouts (excédents, remboursements, primes, bonus à payer)', cshMoney(tot('excedent') + tot('rembours') + tot('primeReste') + tot('bonusToPay'))],
       ['Effet net total', cshSignedTxt(tot('impact'))], ['Chauffeurs concernés', f0(pay.length)]]) +
     `<div class="small">Règles du classeur : manquant d'espèces Uber retenu, excédent ajouté ; dépense sans justificatif OK retenue ; avance déjà versée retenue ; prime de course privée ajoutée (moins la part gardée par le chauffeur) ; bonus « A payer » ajouté. Choisir la période de paie ci-dessus.</div>
-    <div class="bar"><button class="ghost small" id="cshppdf">PDF</button><button class="ghost small" id="cshpxls">Tableur</button></div>` + table('tcshpay', cshPaieCols(), pay, { empty: 'Aucun effet sur la paie sur la période' }));
+    <div class="bar"><button class="ghost small" id="cshppdf">PDF</button><button class="ghost small" id="cshpxls">Tableur</button></div>` + table('tcshpay', cshPaieCols(), pay, { empty: 'Aucun effet sur la paie sur la période', total: cshTot() }));
   $('#cshppdf').onclick = () => { try { reportPdf(rptSimple({ kind: 'caisse', agency: CS.agName || undefined, title: 'Effet de la caisse sur la paie', period: fmtDay(p.from) + ' → ' + fmtDay(p.to), from: p.from, to: p.to,
     summary: [['Effet net total', cshMoney(tot('impact'))], ['Chauffeurs', f0(pay.length)]], tables: [colsTable('Par chauffeur', cshPaieCols(), pay)], fileName: 'paie_caisse_' + p.from + '_' + p.to + '.pdf' })); } catch (e) { alert(e.message); } };
   $('#cshpxls').onclick = () => cshXls('paie_caisse_' + p.from + '_' + p.to, cshPaieCols(), pay);
@@ -426,7 +431,7 @@ function cshTabCA(p) {
       <tr><td><b>Total CA Uber</b></td>${ca.cols.map(c => `<td class="n"><b>${cshMoney(ca.total[c])}</b></td>`).join('')}<td class="n"><b>${cshMoney(ca.sum)}</b></td></tr>
       <tr><td>CA moyen / chauffeur</td>${ca.cols.map(c => `<td class="n">${ca.active[c] ? cshMoney(ca.total[c] / ca.active[c]) : '—'}</td>`).join('')}<td class="n">${ca.rows.length ? cshMoney(ca.sum / ca.rows.length) : '—'}</td></tr>
       <tr><td>Courses privées</td>${ca.cols.map(c => `<td class="n">${priv[c] ? cshMoney(priv[c]) : ''}</td>`).join('')}<td class="n">${cshMoney(Object.values(priv).reduce((s, v) => s + v, 0))}</td></tr></tbody></table></div>
-    <h3>Par chauffeur</h3>` + table('tcshca', cols, ca.rows, { empty: 'Aucune transaction Uber sur la période' }) +
+    <h3>Par chauffeur</h3>` + table('tcshca', cols, ca.rows, { empty: 'Aucune transaction Uber sur la période', total: cshTot() }) +
     '<div class="small">Chiffre d\'affaires Uber = « Vos revenus » de l\'export Uber (comme le classeur), attribué au shift du contrat du chauffeur. Base pour la rentabilité : à rapprocher des dépenses, primes, bonus et du carburant (Consommation).</div>');
   $('#cshcxls').onclick = () => cshXls('chiffre_affaires_' + p.from + '_' + p.to, cols, ca.rows);
 }
@@ -444,7 +449,7 @@ function cshTabJournal(p) {
   const rows = CS.moves.filter(m => (!fc || m.caisse === fc) && (!fd || cshName(m.driver_code ? cshDrvName(m.driver_code) : m.driver_name).indexOf(cshName(fd)) >= 0));
   cshBody(`<div class="bar"><label>Caisse <select id="cshjc"><option value="">Toutes</option>${CASH_CAISSES.map(c => `<option value="${c[0]}" ${c[0] === fc ? 'selected' : ''}>${c[1]}</option>`).join('')}</select></label>
       <label>Chauffeur <input id="cshjd" list="cshdrv" value="${esc(fd)}" size="20"></label><button class="ghost small" id="cshjx">Tableur</button><span class="small">${rows.length} mouvements</span></div>` +
-    cshList('tcshjrn', rows, cshJournalCols().concat([cshActCol()])) + '<div id="cshlog"></div>');
+    cshList('tcshjrn', rows, cshJournalCols().concat([cshActCol()]), null, ['Montant']) + '<div id="cshlog"></div>');
   const go = () => { location.hash = cshHref('journal', { caisse: $('#cshjc').value, chauffeur: $('#cshjd').value }); };
   $('#cshjc').onchange = go; $('#cshjd').onchange = go;
   $('#cshjx').onclick = () => cshXls('journal_caisse_' + p.from + '_' + p.to, cshJournalCols(), rows);

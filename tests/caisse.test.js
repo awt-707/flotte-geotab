@@ -205,6 +205,8 @@ test('page Caisse : imports Uber, chauffeur relié, encaissement du shift, rappr
     assert.strictEqual(env.psql("select kind || '|' || amount || '|' || uber_cash || '|' || given || '|' || change || '|' || driver_code || '|' || contract_num from cash_moves"),
       'encaissement|160.00|180.00|200.00|40.00|C1|K1');
     assert.match(env.psql('select shift from cash_moves'), /^(Jour|Nuit)$/);
+    // total du shift : espèces Uber, remis, monnaie, net, manquant
+    assert.match(await page.innerText('.cshshift tfoot'), /Total · 1 \/ 1 encaissé\t\t180[\s\S]*200[\s\S]*40[\s\S]*160[\s\S]*20/);
 
     // dépense « Course Uber » justifiée : réduit le théorique ; rapprochement et paie
     await page.goto(page.url().replace(/#.*/, '') + '#/caisse?t=depenses');
@@ -213,6 +215,7 @@ test('page Caisse : imports Uber, chauffeur relié, encaissement du shift, rappr
     await page.click('#cdsave');
     await page.waitForFunction(() => /15/.test((document.querySelector('#tcshdep') || {}).innerText || ''));
     assert.strictEqual(env.psql("select driver_code || '|' || label || '|' || ride_type || '|' || justif from cash_moves where kind = 'depense'"), 'C1|Carburant|Course Uber|OK');
+    assert.match(await page.innerText('#tcshdep tfoot'), /Total · 1 ligne[\s\S]*15/);
     const day = env.psql('select day from cash_moves where kind = \'encaissement\'');
     await page.goto(page.url().replace(/#.*/, '') + `#/caisse?t=rappro&du=${day}&au=${day}`);
     await page.waitForSelector('#tcshrap');

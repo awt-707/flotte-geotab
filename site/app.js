@@ -348,7 +348,20 @@ function table(id, cols, rows, opt) {
   let list = rows.slice();
   if (st.c !== undefined && cols[st.c]) { const f = cols[st.c][2] || cols[st.c][1]; list.sort((a, b) => { const x = f(a), y = f(b); return (x > y ? 1 : x < y ? -1 : 0) * (st.d ? -1 : 1); }); }
   return `<div class="tw"><table id="${id}"><thead><tr>${cols.map((c, i) => `<th data-t="${id}" data-c="${i}" class="${c[3] || ''}">${c[0]}${st.c === i ? (st.d ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
-    <tbody>${list.map(r => `<tr>${cols.map(c => `<td class="${c[3] || ''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    <tbody>${list.map(r => `<tr>${cols.map(c => `<td class="${c[3] || ''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody>${opt.total ? tableTotal(cols, rows, opt.total) : ''}</table></div>`;
+}
+/**
+ * Ligne « Total » d'un tableau : somme des colonnes chiffrées (classe n, valeur de tri numérique) des lignes affichées.
+ * t = { fmt (valeur → html), live (ligne comptée ?), skip: [titres de colonnes à ne pas additionner : taux, pourcentages…] }
+ */
+function tableTotal(cols, rows, t) {
+  const l = rows.filter(t.live || (() => true)), skip = t.skip || [];
+  return `<tfoot><tr class="ttot">${cols.map((c, i) => {
+    if (i === 0) return `<td>Total · ${l.length} ligne${l.length > 1 ? 's' : ''}</td>`;
+    if (c[3] !== 'n' || !c[2] || skip.indexOf(txtOf(c[0])) >= 0) return '<td></td>';
+    let sum = 0, any = false; l.forEach(r => { const v = c[2](r); if (typeof v === 'number' && isFinite(v)) { sum += v; any = true; } });
+    return `<td class="n">${any ? (t.fmt ? t.fmt(Math.round(sum * 100) / 100) : f0(sum)) : ''}</td>`;
+  }).join('')}</tr></tfoot>`;
 }
 document.addEventListener('click', e => {
   const th = e.target.closest('th[data-t]'); if (!th) return;
