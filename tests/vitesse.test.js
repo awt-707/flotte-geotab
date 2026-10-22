@@ -66,3 +66,13 @@ test('alertes « Dépassement limite » selon les seuils réglés, recalculées 
   } finally { env.psql("update params set value = '' where key = 'overByLimit'"); B.run("memoClear_(); jobRecompute_('2026-09-29')"); }
   assert.deepStrictEqual(dep(), v6, 'seuils vidés : retour à la règle du v6');
 });
+
+test('fiche d\'alerte : pire dépassement sur tout l\'événement, pas seulement à l\'instant de la vitesse max (cas réel 86122-T-1 du 22/10)', () => {
+  const L = require('../site/lib.js'), t = Date.UTC(2026, 9, 22, 8, 52, 0);
+  // limite Geotab : 100, puis 80, puis 120 quelques secondes (route voisine ?), puis 80
+  const road = [[t - 120000, 100], [t, 80], [t + 7000, 120], [t + 11000, 80]];
+  const spd = [[t - 5000, 100], [t + 4000, 104], [t + 8000, 106], [t + 20000, 90]];
+  assert.strictEqual(L.limitAt(road, t + 8000), 120);   // à l'instant de la vitesse max : 106 sous 120
+  assert.deepStrictEqual(L.worstOver(spd, road), { t: t + 4000, v: 104, lim: 80, over: 24 });
+  assert.strictEqual(L.worstOver(spd, [[t - 120000, -1]]), null);   // limite inconnue : rien d'inventé
+});

@@ -384,8 +384,6 @@ function alertFromDb(a) {
   return { id: 'DB|' + a.id, vehicle_key: a.vehicle_key, plate: a.plate, at: t.toISOString(), end: null, severity: a.severity, type: a.type, cat: /vitesse/i.test(a.type || '') ? 'Vitesse' : '',
     detail: String(a.detail || '').replace(/https:\/\/maps\.google\.com\/\?q=\S+/g, '').trim(), driver_name: a.driver_name || '', driver_code: a.driver_code || '', contract_num: a.contract_num || '', shift: alertShift(a), approx: true };
 }
-/** Dernière limite de la route connue à l'instant t (Geotab : -1 ou 0 = limite inconnue) */
-function limitAt(road, t) { let v = null; for (const p of road || []) { if (p[0] > t) break; v = p[1] > 0 ? p[1] : null; } return v; }
 async function openAlertDetail(a) {
   let d = $('#adlg');
   if (!d) {
@@ -414,8 +412,12 @@ function renderDetail(d, a, j, t0, t1) {
   // pic de vitesse pendant l'événement : relevés compris dans l'événement + le relevé juste avant et juste après (le capteur
   // n'envoie une valeur que quand la vitesse change : ces deux relevés encadrent l'événement)
   const inEv = spd.filter(p => p[0] >= t0 && p[0] <= t1), before = spd.filter(p => p[0] < t0).slice(-1), after = spd.filter(p => p[0] > t1).slice(0, 1);
-  let pk = null; before.concat(inEv, after).forEach(p => { if (!pk || p[1] > pk[1]) pk = p; });
-  const lim = pk ? limitAt(road, pk[0]) : null, over = pk && lim ? pk[1] - lim : null;
+  const win = before.concat(inEv, after);
+  let pk = null; win.forEach(p => { if (!pk || p[1] > pk[1]) pk = p; });
+  // pire dépassement pendant l'événement (vitesse moins limite de la route à chaque relevé) : la limite fournie par Geotab peut
+  // changer pendant l'événement (ex. 100 puis 80, ou 120 quelques secondes), la limite à l'instant de la vitesse max ne suffit pas
+  const wo = worstOver(win, road), lims = [...new Set(win.map(p => limitAt(road, p[0])).filter(Boolean))];
+  const lim = wo ? wo.lim : null, over = wo ? wo.over : null, limPk = pk ? limitAt(road, pk[0]) : null;
   // temps au-dessus de la limite de la route pendant l'événement : chaque relevé vaut jusqu'au suivant, compté seulement dans [t0, t1]
   let above = 0, known = false;
   for (let i = 0; i + 1 < spd.length; i++) { const p = spd[i], q = spd[i + 1], x0 = Math.max(p[0], t0), x1 = Math.min(q[0], t1); if (x1 <= x0) continue;
@@ -424,8 +426,8 @@ function renderDetail(d, a, j, t0, t1) {
   const near = t => { let b = null; gps.forEach(p => { if (!b || Math.abs(p[0] - t) < Math.abs(b[0] - t)) b = p; }); return b; };
   const at = pk ? near(pk[0]) : near(t0);
   const c = [['Vitesse max ' + (src === 'capteur' ? '(capteur du véhicule)' : '(GPS)'), pk ? `<b>${f0(pk[1])} km/h</b> à ${esc(fmtHMS(pk[0]).slice(6))}` : `<span class="nm">${NM}</span>`],
-    ['Limite de la route à cet instant', lim ? f0(lim) + ' km/h' : '<span class="nm">non fournie par Geotab</span>'],
-    ['Dépassement', over != null ? (over > 0 ? `<b class="red">+${f0(over)} km/h</b>` : 'aucun (' + f0(over) + ' km/h)') : `<span class="nm">${NM}</span>`],
+    ['Limite de la route', lim ? f0(lim) + ' km/h' + (wo && wo.over > 0 ? ' à ' + esc(fmtHMS(wo.t).slice(6)) : '') + (lims.length > 1 ? `<div class="small">limites Geotab pendant l'événement : ${lims.map(f0).join(', ')} km/h</div>` : '') : '<span class="nm">non fournie par Geotab</span>'],
+    ['Dépassement max', over != null ? (over > 0 ? `<b class="red">+${f0(over)} km/h</b> <span class="small">(${f0(wo.v)} km/h à ${esc(fmtHMS(wo.t).slice(6))})</span>` : 'aucun (' + f0(over) + ' km/h)') : `<span class="nm">${NM}</span>`],
     ['Au-dessus de la limite pendant l\'événement', known ? Math.round(above / 1000) + ' s' : `<span class="nm">${NM}</span>`],
     ['Durée de l\'événement (Geotab)', ev && ev.dur_min != null ? Math.round(ev.dur_min * 60) + ' s' : t1 > t0 ? Math.round((t1 - t0) / 1000) + ' s' : '—'],
     ['Distance pendant l\'événement', ev && ev.km != null ? f1(ev.km) + ' km' : '—'],
@@ -443,7 +445,7 @@ function renderDetail(d, a, j, t0, t1) {
     const all = gps.map(p => [p[2], p[3]]), evp = gps.filter(p => p[0] >= t0 - 30000 && p[0] <= t1 + 30000).map(p => [p[2], p[3]]);
     L.polyline(all, { className: 'adpath', weight: 4, opacity: .8 }).addTo(m);
     if (evp.length > 1) L.polyline(evp, { className: 'adpath-ev', weight: 6, opacity: .95 }).addTo(m);
-    if (at) L.circleMarker([at[2], at[3]], { radius: 8, className: 'adpk', weight: 2, fillOpacity: 1 }).bindTooltip(pk ? f0(pk[1]) + ' km/h' + (lim ? ' (limite ' + lim + ')' : '') : esc(a.type), { permanent: true, direction: 'top' }).addTo(m);
+    if (at) L.circleMarker([at[2], at[3]], { radius: 8, className: 'adpk', weight: 2, fillOpacity: 1 }).bindTooltip(pk ? f0(pk[1]) + ' km/h' + (limPk ? ' (limite ' + limPk + ')' : '') : esc(a.type), { permanent: true, direction: 'top' }).addTo(m);
     m.fitBounds(L.latLngBounds(all).pad(0.15), { maxZoom: 16 }); setTimeout(() => m.invalidateSize(), 50);
   } else { const el = $('#admap'); if (el) el.outerHTML = '<div class="empty">Aucune position GPS transmise par Geotab sur ce moment</div>'; }
 }

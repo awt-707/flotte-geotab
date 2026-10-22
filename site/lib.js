@@ -219,4 +219,12 @@ function fuelVal(a) { return a.fuelN ? f1(a.fuel) : NM; }
 function l100Val(a) { return a.l100 !== null ? f1(a.l100) : (a.fuelN ? 'km insuffisants' : NM); }
 function srcTxt(a) { const s = Object.keys(a.srcs); return s.length ? (s.length > 1 ? 'Mixte' : s[0]) : 'Non mesuré'; }
 
-if (typeof module !== 'undefined') module.exports = { shiftStart, ctrEffEnds, shiftOf, shiftAt, shiftOfCtr, shiftDayName, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, parseFuelCard, numAny, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };
+/** Dernière limite de la route connue à l'instant t ([[ms, km/h]] triés ; Geotab : -1 ou 0 = limite inconnue) */
+function limitAt(road, t) { let v = null; for (const p of road || []) { if (p[0] > t) break; v = p[1] > 0 ? p[1] : null; } return v; }
+/** Pire dépassement de relevés de vitesse [[ms, km/h]] : vitesse moins limite de la route à l'instant du relevé (null sans limite connue) */
+function worstOver(spd, road) {
+  let w = null;
+  (spd || []).forEach(p => { const l = limitAt(road, p[0]); if (l && (!w || p[1] - l > w.over)) w = { t: p[0], v: p[1], lim: l, over: p[1] - l }; });
+  return w;
+}
+if (typeof module !== 'undefined') module.exports = { limitAt, worstOver, shiftStart, ctrEffEnds, shiftOf, shiftAt, shiftOfCtr, shiftDayName, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, parseFuelCard, numAny, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };
