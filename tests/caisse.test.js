@@ -319,6 +319,11 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
   assert.deepStrictEqual(enc[8].filter(x => x !== ''), []);
   assert.strictEqual(tab(PAY).data[6][3], 'tx-0009');
   assert.strictEqual(tab(PAY).data[6][0].slice(0, 8), '=IF(L7="');
+  // état du dernier passage publié pour le site (param cashSheetStatus), même quand le passage du collecteur est long
+  B.run('cshStatus_("Classeur de la caisse : Encaissements chauffeurs 3")');
+  assert.match(env.psql("select value from params where key = 'cashSheetStatus'"), /^\d\d\/\d\d\/\d{4} \d\d:\d\d · Classeur de la caisse : Encaissements chauffeurs 3$/);
+  B.run('cshStatus_("")');
+  assert.match(env.psql("select value from params where key = 'cashSheetStatus'"), / · Classeur de la caisse : à jour$/);
 });
 
 test('deux agences : chaque agence a sa caisse (page, saisies) et son classeur de sauvegarde', async () => {

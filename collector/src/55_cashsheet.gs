@@ -16,6 +16,22 @@ const CSH_DRV_TAB_ = 'Export Uber - Driver Status Ludy', CSH_PAY_TAB_ = 'Export 
 const CSH_FLOW_TXT_ = { in: 'Entrée de cash', out: 'Sortie de cash', virement: 'Virement' };
 const CSH_KIND_TXT_ = { depot: 'Dépôt en banque', recharge: 'Recharge de caisse', remboursement: 'Remboursement d\'avance', avance: 'Avance sur Salaire' };
 
+/**
+ * État du dernier passage (param cashSheetStatus, lisible sur le site) : écrit quand il change, au moins une fois par heure.
+ * Rien d'écrit sans classeur réglé ni caisse installée.
+ */
+function cshStatus_(m) {
+  const P = params_(), props = PropertiesService.getScriptProperties();
+  if (m === '' && !String(P.cashSheetId || '').trim() && !props.getProperty('CSH_STATUS')) return;
+  const txt = m || 'Classeur de la caisse : à jour', prev = props.getProperty('CSH_STATUS') || '', at = +(props.getProperty('CSH_STATUS_AT') || 0);
+  if (txt === prev && Date.now() - at < 60 * MIN) return;
+  try {
+    sbReq_('post', 'params?on_conflict=key', [{ key: 'cashSheetStatus', label: 'Classeur de la caisse : dernier passage (calculé par le collecteur)',
+      value: fmtMa_(new Date(), 'dd/MM/yyyy HH:mm') + ' · ' + txt.slice(0, 900), note: 'Ne pas modifier', sort: 999 }], { Prefer: 'resolution=merge-duplicates,return=minimal' });
+    props.setProperty('CSH_STATUS', txt); props.setProperty('CSH_STATUS_AT', String(Date.now()));
+  } catch (e) { }
+}
+
 /** Texte comparable (en-têtes de l'export Uber) : minuscules, sans accents, sans espace autour des « : » */
 function cshNorm_(s) { return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').replace(/\s*:\s*/g, ':').trim(); }
 /** Texte libre écrit tel quel (jamais pris pour une formule ou un nombre) */

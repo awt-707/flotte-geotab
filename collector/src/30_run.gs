@@ -199,6 +199,8 @@ function collect() {
     if (live && live.wrote) markDirty_(localDay_(Date.now() - DAY));
     // Demandes du site (contrats importés, plaques, synchro immédiate, recalcul)
     try { const j = processJobs_(t0); if (j) msg.push(j); } catch (e) { msg.push('Demandes du site : ' + e.message); }
+    // Caisse recopiée dans le classeur de sauvegarde (onglets « … Ludy ») : avant le journal, qui peut prendre tout le passage
+    { let m = ''; try { m = cashSheetStep_(t0); } catch (e) { m = 'Classeur de la caisse : ' + e.message; } if (m) msg.push(m); cshStatus_(m); }
     // Journal et alertes des derniers jours
     const every = Math.max(5, P.autoRenderMin || 15) * MIN, lastD = +(props.getProperty('DERIVED_LAST') || 0), dirty = props.getProperty('DERIVED_DIRTY');
     if (dirty && Date.now() - lastD >= every - 30000 && Date.now() - t0 < 150000) {
@@ -206,8 +208,6 @@ function collect() {
     }
     // Nouvelles alertes envoyées par e-mail aux destinataires choisis sur le site
     try { const m = notifyAlerts_(); if (m) msg.push(m); } catch (e) { msg.push('Alertes par e-mail : ' + e.message); }
-    // Caisse recopiée dans le classeur de sauvegarde (onglets « … Ludy »)
-    if (Date.now() - t0 < 200000) { try { const m = cashSheetStep_(t0); if (m) msg.push(m); } catch (e) { msg.push('Classeur de la caisse : ' + e.message); } }
     // Finalisation des journées terminées (une seule fois par véhicule-jour)
     if (Date.now() - t0 < 180000) {
       let n = 0; try { n = queueDays_(dueFinal_(P)); } catch (e) { msg.push('File de finalisation : ' + e.message); n = 1; }   // la file en place est traitée quand même
