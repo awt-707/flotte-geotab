@@ -199,9 +199,17 @@ function extPlace() {
   if (!site || !m || !$('#extzone')) return Promise.resolve();
   const r = m.getBoundingClientRect(), top = bar ? Math.round(bar.getBoundingClientRect().bottom + 8) : Math.round(r.top);
   const box = { x: Math.round(r.left), y: top, w: Math.round(r.width), h: Math.round(window.innerHeight - top) };
+  EXT_ON = true;
   return appMode() === 'ext' ? appInvoke('ext_show', Object.assign({ id: site.id, url: site.url }, box)) : appInvoke('uber_show', box);
 }
-function extHide() { const m = appMode(); return m === 'ext' ? appInvoke('ext_hide').catch(() => { }) : m === 'uber' ? appInvoke('uber_hide').catch(() => { }) : Promise.resolve(); }
+// volet externe affiché ? Masqué seulement s'il l'a été : sous Windows, l'application redonne alors le focus à la vue Ludy et
+// WebView2 bloque ensuite la molette (défilement) tant qu'on ne clique pas dans la page ; à chaque changement de page, plus de défilement
+let EXT_ON = false;
+function extHide() {
+  if (!EXT_ON) return Promise.resolve();
+  EXT_ON = false;
+  const m = appMode(); return m === 'ext' ? appInvoke('ext_hide').catch(() => { }) : m === 'uber' ? appInvoke('uber_hide').catch(() => { }) : Promise.resolve();
+}
 async function pageExt(id) {
   const site = navSites().find(x => x.id === id);
   if (!appEmbed() || !site) { $('#page').innerHTML = msg(site || !appEmbed() ? 'Ce volet s\'affiche dans l\'application Ludy (Mac / Windows). <a href="#/application">Télécharger l\'application</a>' : 'Volet inconnu : il a été retiré dans Réglages.', 'warn'); return; }
