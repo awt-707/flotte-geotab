@@ -167,6 +167,19 @@ test('base : gestionnaire limité à ses agences, ses saisies modifiables 24 h, 
   } finally { env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'`); }
 });
 
+test('dépense saisie après minuit pendant le shift de nuit : datée du jour où la nuit a commencé (comme son encaissement)', async () => {
+  env.resetDb();
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  await page.clock.setFixedTime(new Date('2026-10-22T23:30:00Z'));   // 00:30 le 23/10, heure du Maroc : nuit du 22/10
+  try {
+    await login(page, '#/caisse?t=depenses');
+    await page.waitForSelector('#cdd');
+    assert.strictEqual(await page.inputValue('#cdd'), '2026-10-22');
+    assert.strictEqual(await page.inputValue('#cds'), 'Nuit');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); }
+});
+
 test('page Caisse : imports Uber, chauffeur relié, encaissement du shift, rapprochement et paie', async () => {
   env.resetDb();
   // contrat du shift jour en cours (heure du Maroc), chauffeur Ludy au même téléphone que le chauffeur Uber

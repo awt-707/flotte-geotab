@@ -257,7 +257,7 @@ function cshTabDep(p) {
   cshBody(cards([['Solde de la caisse dépenses', cshMoney(bal.depenses), bal.depenses < 0 ? 'crit' : 'ok'], ['Dépenses de la période', cshMoney(rows.filter(m => cshLive(m) && m.kind === 'depense').reduce((s, m) => s + cshN(m.amount), 0))],
       ['Justificatifs à fournir', f0(rows.filter(m => cshLive(m) && m.kind === 'depense' && m.driver_name && m.justif !== 'OK' && m.justif !== 'N.A').length)]]) +
     `<div class="panel"><h3>Nouvelle dépense (ticket par ticket)</h3><div class="mfrow">
-      ${cshField('cdd', 'Date du shift', 'date', { value: today() })}${cshField('cds', 'Shift', 'select', { options: ['Jour', 'Nuit'], value: cur.s })}
+      ${cshField('cdd', 'Date du shift', 'date', { value: cur.day || today() })}${cshField('cds', 'Shift', 'select', { options: ['Jour', 'Nuit'], value: cur.s })}
       ${cshField('cdw', 'Chauffeur', 'text', { list: 'cshdrv', size: 22 })}${cshField('cdc', 'Catégorie', 'select', { options: CASH_DEP_CATS })}
       ${cshField('cdr', 'Type de course', 'select', { options: CASH_RIDE_TYPES })}${cshField('cda', 'Montant (MAD)', 'number', { min: 0, step: 1 })}
       ${cshField('cdj', 'Justificatif', 'select', { options: [['En attente', 'En attente'], ['OK', 'OK (rangé)'], ['KO', 'KO (absent)'], ['N.A', 'N.A']] })}
