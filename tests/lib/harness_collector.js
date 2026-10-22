@@ -23,7 +23,7 @@ class Sheet {
   constructor(n) { this.name = n; this.data = []; this.maxR = 1000; this.maxC = 26; this.charts = []; }
   _get(r, c) { return (this.data[r - 1] && this.data[r - 1][c - 1] !== undefined) ? this.data[r - 1][c - 1] : ''; }
   _set(r, c, v) { if (r > this.maxR) throw new Error(this.name + ' row ' + r + ' > ' + this.maxR); if (c > this.maxC) throw new Error(this.name + ' col ' + c + ' > ' + this.maxC); while (this.data.length < r) this.data.push([]); const row = this.data[r - 1]; while (row.length < c) row.push(''); row[c - 1] = v; }
-  getName() { return this.name; }
+  getName() { return this.name; } getParent() { return this.book; }
   getRange(a, b, c, d) { if (typeof a === 'string') return new Range(this, ...a1(a)); return new Range(this, a, b, c || 1, d || 1); }
   getDataRange() { return new Range(this, 1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); }
   getLastRow() { for (let i = this.data.length; i > 0; i--) if ((this.data[i - 1] || []).some(v => v !== '' && v != null)) return i; return 0; }
@@ -37,6 +37,16 @@ class Sheet {
   setConditionalFormatRules(r) { this.cf = r; }
 }
 ['hideSheet', 'setTabColor', 'setFrozenRows', 'setFrozenColumns', 'setColumnWidth', 'setRowHeight', 'setHiddenGridlines'].forEach(m => { Sheet.prototype[m] = function () { return this; }; });
+// règle de validation (liste déroulante) : stricte = Google refuse l'écriture d'une valeur hors liste, même par script ;
+// une plage de référence absente (onglet introuvable) n'accepte rien
+class DV {
+  constructor(o) { Object.assign(this, o); }
+  getAllowInvalid() { return !this.strict; } getCriteriaType() { return this.type; } getCriteriaValues() { return this.vals; }
+  copy() { const o = Object.assign({}, this), b = { setAllowInvalid(x) { o.strict = !x; return b; }, requireValueInRange(r, show) { o.type = 'VALUE_IN_RANGE'; o.vals = [r, show]; return b; }, build: () => new DV(o) }; return b; }
+  ok(x) { if (!this.strict || x === '' || (typeof x === 'string' && x[0] === '=')) return true;
+    if (this.type === 'VALUE_IN_LIST') return this.vals[0].includes(x);
+    return !!this.vals[0] && [].concat(...this.vals[0].getValues()).includes(x); }
+}
 class Range {
   constructor(s, r, c, nr, nc) { if (nr < 1 || nc < 1) throw new Error('Bad range ' + s.name + ' ' + [r, c, nr, nc]); Object.assign(this, { s, r, c, nr, nc });
     const px = new Proxy(this, { get(t, k) { if (k in t) { const v = t[k]; return typeof v === 'function' ? (...a) => { const r = v.apply(t, a); return r === t ? px : r; } : v; } return () => px; } }); return px; }
@@ -44,14 +54,19 @@ class Range {
   getValues() { const o = []; for (let i = 0; i < this.nr; i++) { const row = []; for (let j = 0; j < this.nc; j++) row.push(this.s._get(this.r + i, this.c + j)); o.push(row); } return o; }
   getValue() { return this.s._get(this.r, this.c); }
   setValues(v) { if (v.length !== this.nr || v.some(r => r.length !== this.nc)) throw new Error('setValues dims ' + this.s.name + ' ' + this.nr + 'x' + this.nc + ' vs ' + v.length + 'x' + (v[0] || []).length);
-    v.forEach((row, i) => row.forEach((x, j) => { if (x === undefined || x === null || (typeof x === 'number' && !isFinite(x))) throw new Error('Bad value ' + this.s.name + ' r' + (this.r + i) + ' c' + (this.c + j) + ': ' + x); if (x instanceof Date && isNaN(x)) throw new Error('Invalid date ' + this.s.name); this.s._set(this.r + i, this.c + j, x); })); return this; }
+    v.forEach((row, i) => row.forEach((x, j) => { const dv = (this.s.dv || {})[(this.r + i) + ',' + (this.c + j)];
+      if (dv && !dv.ok(x)) throw new Error('The data you entered in cell ' + this.s.name + ' r' + (this.r + i) + ' c' + (this.c + j) + ' violates the data validation rules set on this cell.');
+      if (x === undefined || x === null || (typeof x === 'number' && !isFinite(x))) throw new Error('Bad value ' + this.s.name + ' r' + (this.r + i) + ' c' + (this.c + j) + ': ' + x); if (x instanceof Date && isNaN(x)) throw new Error('Invalid date ' + this.s.name); this.s._set(this.r + i, this.c + j, x); })); return this; }
+  getDataValidations() { const o = []; for (let i = 0; i < this.nr; i++) { const row = []; for (let j = 0; j < this.nc; j++) row.push((this.s.dv || {})[(this.r + i) + ',' + (this.c + j)] || null); o.push(row); } return o; }
+  setDataValidations(m) { this.s.dv = this.s.dv || {}; m.forEach((row, i) => row.forEach((v, j) => { const k = (this.r + i) + ',' + (this.c + j); if (v) this.s.dv[k] = v; else delete this.s.dv[k]; })); return this; }
+  setDataValidation(v) { return this.setDataValidations(Array.from({ length: this.nr }, () => Array.from({ length: this.nc }, () => v))); }
   setNumberFormats(f) { if (f.length !== this.nr || f.some(r => r.length !== this.nc)) throw new Error('setNumberFormats dims ' + this.s.name); return this; }
   setValue(x) { this.s._set(this.r, this.c, x); return this; }
   clearContent() { for (let i = 0; i < this.nr; i++) for (let j = 0; j < this.nc; j++) if (this.s.data[this.r + i - 1]) this.s.data[this.r + i - 1][this.c + j - 1] = ''; return this; }
   clear() { return this.clearContent(); }
   sort(spec) { const vals = this.getValues(); const k = spec.column - this.c; vals.sort((a, b) => { const x = a[k], y = b[k]; const d = (x > y) - (x < y); return spec.ascending ? d : -d; }); this.setValues(vals); return this; }
 }
-class SS { constructor() { this.sheets = []; } getSheetByName(n) { return this.sheets.find(s => s.name === n) || null; } insertSheet(n) { if (this.getSheetByName(n)) throw new Error('dup ' + n); const s = new Sheet(n); this.sheets.push(s); return s; }
+class SS { constructor() { this.sheets = []; } getSheetByName(n) { return this.sheets.find(s => s.name === n) || null; } insertSheet(n) { if (this.getSheetByName(n)) throw new Error('dup ' + n); const s = new Sheet(n); s.book = this; this.sheets.push(s); return s; }
   getSheets() { return this.sheets; } deleteSheet(s) { this.sheets = this.sheets.filter(x => x !== s); } toast(m, t) { toasts.push((t || '') + ': ' + m); } setActiveSheet(s) { return s; } moveActiveSheet() { } getUrl() { return 'https://x'; } setSpreadsheetTimeZone() { } }
 const main = new SS(); main.insertSheet('Feuille 1');
 const parc = new SS(); const ps = parc.insertSheet('Parc Automobile');
@@ -84,7 +99,7 @@ function storageFetch(url, opt) {
   return { getResponseCode: () => code, getContentText: () => bytes.toString(), getBlob: () => blob };
 } const books = {}; const props = {}, triggers = [], folders = [], cache = {};
 const ctx = vm.createContext({ console, Utilities, Date: FakeDate, Math, JSON,
-  SpreadsheetApp: { getActive: () => main, openById: id => (id && books[id]) || parc, create: n => { const b = new SS(); b.name = n; b.id = 'ARCH' + Object.keys(books).length; b.getId = () => b.id; b.getUrl = () => 'https://archive/' + b.id; books[b.id] = b; return b; }, getUi: () => { throw new Error('no ui'); }, newConditionalFormatRule: () => chain(), newDataValidation: () => chain(), InterpolationType: { PERCENTILE: 'P' }, BorderStyle: { SOLID: 1, SOLID_THICK: 2 } },
+  SpreadsheetApp: { getActive: () => main, openById: id => (id && books[id]) || parc, create: n => { const b = new SS(); b.name = n; b.id = 'ARCH' + Object.keys(books).length; b.getId = () => b.id; b.getUrl = () => 'https://archive/' + b.id; books[b.id] = b; return b; }, getUi: () => { throw new Error('no ui'); }, newConditionalFormatRule: () => chain(), newDataValidation: () => chain(), DataValidationCriteria: { VALUE_IN_LIST: 'VALUE_IN_LIST', VALUE_IN_RANGE: 'VALUE_IN_RANGE', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE' }, InterpolationType: { PERCENTILE: 'P' }, BorderStyle: { SOLID: 1, SOLID_THICK: 2 } },
   PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => { props[k] = String(v); }, deleteProperty: k => { delete props[k]; }, getProperties: () => Object.assign({}, props), setProperties: o => { Object.keys(o).forEach(k => { props[k] = String(o[k]); }); } }) },
   LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() { } }) },
   ScriptApp: { getScriptId: () => 'SCRIPT_ID', getOAuthToken: () => 'tok', getProjectTriggers: () => triggers.slice(), deleteTrigger: t => { triggers.splice(triggers.indexOf(t), 1); }, newTrigger: fn => chain({ create: () => { const t = { getHandlerFunction: () => fn }; triggers.push(t); return t; } }) },
@@ -98,4 +113,4 @@ const ctx = vm.createContext({ console, Utilities, Date: FakeDate, Math, JSON,
   UrlFetchApp: { fetch: (url, opt) => { if (url.length > 2048) throw new Error('Limite dépassée : Longueur d\'URL URLFetch.'); if (url.indexOf('script.googleapis.com') >= 0) { scriptApi.push({ url, opt }); return scriptApiReply(url, opt); } if (url.indexOf('/storage/v1/') >= 0) return storageFetch(url, opt); if (url.indexOf('/apiv1') < 0) return dbFetch(url, opt); stats.calls++; global.__NOW = NOW0; const req = JSON.parse(opt.payload); const res = require('./geotab_fake.js').handle(req.method, req.params); const txt = JSON.stringify(res); stats.bytes += txt.length; return { getContentText: () => txt, getResponseCode: () => 200 }; }, fetchAll: reqs => { stats.batches++; return reqs.map(r => ctx.UrlFetchApp.fetch(r.url, r)); } }
 });
 vm.runInContext(fs.readFileSync(process.env.CODE, 'utf8'), ctx, { filename: 'Collecteur.gs' });
-module.exports = { scriptApi, setScriptApiReply: f => { scriptApiReply = f; }, folders, triggers, books, stats, ctx, main, toasts, mails, GMAIL, props, pdfs, setNow, run: c => vm.runInContext(c, ctx) };
+module.exports = { DV, scriptApi, setScriptApiReply: f => { scriptApiReply = f; }, folders, triggers, books, stats, ctx, main, toasts, mails, GMAIL, props, pdfs, setNow, run: c => vm.runInContext(c, ctx) };

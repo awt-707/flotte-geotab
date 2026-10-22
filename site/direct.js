@@ -150,8 +150,13 @@ async function loadConsoBase() {
   LIVE.base = {}; Object.keys(m).forEach(k => { if (m[k].km >= 200) LIVE.base[k] = m[k].l / m[k].km * 100; });
 }
 /** Cadran vert → rouge : consommation du contrat en cours (compteurs Geotab depuis son début, relus toutes les 30 s) comparée à la moyenne du modèle */
+/** Compteurs Geotab du contrat affiché (relais ?mode=drivers) ; ceux d'un contrat précédent du véhicule ne sont jamais repris */
+function liveDrv(r) {
+  const d = r && r.contract_num && LIVE.drv[r.vehicle_key];
+  return d && (!r.ctr_start || !d.from || Math.abs(new Date(d.from) - new Date(r.ctr_start)) < 2 * MIN) ? d : null;
+}
 function consoGauge(r) {
-  const d = r.contract_num && LIVE.drv[r.vehicle_key], base = (LIVE.base || {})[r.model];
+  const d = liveDrv(r), base = (LIVE.base || {})[r.model];
   if (!d) return '';
   const km = d.km, l = d.fuel_l, ok = km != null && l != null && km >= 10 && base;
   const v = ok ? l / km * 100 : null, ratio = ok ? v / base : null;
@@ -213,7 +218,7 @@ function liveDriversHtml(rows) {
   if (!list.length) return head + '<div class="empty">Aucun chauffeur sous contrat en ce moment</div>';
   if (LIVE.drvErr && LIVE.drvFallback) return head + msg('Lecture Geotab indisponible (' + esc(LIVE.drvErr) + ') : totaux du collecteur (trajets terminés).', 'warn') + LIVE.drvFallback;
   const items = list.map(r => {
-    const d = LIVE.drv[r.vehicle_key]; let pts = 0, nEv = 0;
+    const d = liveDrv(r); let pts = 0, nEv = 0;
     if (d) (d.events || []).forEach(e => { const w = num((S.rules[e.rule] || {}).weight); if (w > 0) { pts += w; nEv++; } });
     const km = d ? d.km : null, score = d && km != null ? pts / Math.max(km, num(P.kmMin, 20)) * 100 : null;
     return { r, d, km, nEv, score, level: score != null ? levelOf(score, P) : '' };
@@ -245,7 +250,8 @@ async function pageDirect(refresh) {
   if (refresh) { if ($('#tlive') && MAP) applyDirect(); return; }   // relecture : jamais de page redessinée (l'utilisateur a pu changer de page)
   if (rid !== ROUTING) return;   // autre page demandée pendant le chargement
   const rows = liveRows(), last = LIVE.rows.reduce((m, r) => Math.max(m, new Date(r.updated_at || 0).getTime()), 0);
-  LIVE.drv = {}; LIVE.drvAt = 0; LIVE.drvErr = ''; LIVE.drvFallback = ''; LIVE.trails = {};
+  // compteurs déjà lus gardés (page rouverte, menu recliqué) : le cadran reste affiché en attendant la lecture suivante
+  LIVE.drv = LIVE.drv || {}; LIVE.drvErr = ''; LIVE.drvFallback = ''; LIVE.trails = {};
   $('#page').innerHTML = `
     <div class="head"><h1>En direct</h1><div class="sub"><span id="livest">${liveStatusTxt()}</span></div>
       ${canEdit() ? '<button id="syncnow" class="ghost">Mettre à jour les totaux du jour</button>' : ''}</div>
@@ -299,13 +305,14 @@ async function liveDrvTick(my) {
   LIVE.drvBusy = true;
   try {
     const j = await relay({ mode: 'drivers', c: rows.map(r => r.vehicle_key + '@' + new Date(r.ctr_start).toISOString()).join(',') });
-    if (my !== ROUTING) return;
+    // gardés même si la page a été redessinée entre-temps (compteurs rattachés au véhicule et au début du contrat)
     LIVE.drv = j.drivers || {}; LIVE.drvAt = Date.now(); LIVE.drvGeoAt = j.at; LIVE.drvErr = '';
   } catch (e) {
     LIVE.drvErr = String(e.message || e).slice(0, 120);
     try { LIVE.drvFallback = await liveDrivers(rows) || ''; } catch (e2) { LIVE.drvFallback = ''; }
   } finally { LIVE.drvBusy = false; }
-  if (my === ROUTING) { const el = $('#livedrv'); if (el) el.innerHTML = liveDriversHtml(liveRows()); }
+  // cadrans de consommation (cartes des véhicules) et tableau des chauffeurs redessinés dès la lecture, sans attendre la position suivante
+  if (pageOf() === 'direct') { const rs = liveRows(), el = $('#livedrv'), vl = $('#vlist'); if (el) el.innerHTML = liveDriversHtml(rs); if (vl) vl.innerHTML = vcardsHtml(rs); }
 }
 
 // ---------- Carte ----------

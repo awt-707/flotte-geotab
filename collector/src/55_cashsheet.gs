@@ -75,10 +75,41 @@ function cshWrite_(sh, first, rows, ncols, prevN, textCols) {
   const need = first + rows.length - 1;
   if (need > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
   if (rows.length) {
+    cshLoosen_(sh, sh.getRange(first, 1, rows.length, ncols));
     (textCols || []).forEach(c => sh.getRange(first, c, rows.length, 1).setNumberFormat('@'));
     sh.getRange(first, 1, rows.length, ncols).setValues(rows);
   }
   if (prevN > rows.length) sh.getRange(first + rows.length, 1, prevN - rows.length, ncols).clearContent();
+}
+
+/**
+ * Listes déroulantes des onglets copiés du classeur d'origine : en mode « refuser la saisie », Google refuse aussi l'écriture
+ * du script (constaté le 22/10/2026 : écriture arrêtée en B8, chauffeur absent de la liste ; listes qui renvoient vers les onglets
+ * d'origine, absents du classeur de sauvegarde). Les règles des lignes écrites passent en « afficher un avertissement » (liste
+ * gardée, valeur hors liste signalée) et une liste qui renvoie vers un onglet « X » est rattachée à « X Ludy » s'il existe.
+ */
+function cshLoosen_(sh, rg) {
+  let dv; try { dv = rg.getDataValidations(); } catch (e) { return; }
+  let ss = null; try { ss = sh.getParent(); } catch (e) { }
+  const C = {}, VIR = SpreadsheetApp.DataValidationCriteria && SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE;
+  const loose = v => {
+    let b = v.copy().setAllowInvalid(true);
+    try {
+      const cv = v.getCriteriaType() === VIR ? v.getCriteriaValues() : null, r0 = cv && cv[0], nm = r0 && r0.getSheet().getName();
+      const lu = nm && !/ Ludy$/.test(nm) && ss && ss.getSheetByName(nm + ' Ludy');
+      if (lu) b = b.requireValueInRange(lu.getRange(r0.getA1Notation()), cv[1] !== false);
+    } catch (e) { }
+    return b.build();
+  };
+  let changed = false;
+  const out = dv.map(row => row.map((v, j) => {
+    if (!v || v.getAllowInvalid()) return v;
+    changed = true;
+    const k = j + '|' + v.getCriteriaType() + '|' + (v.getCriteriaValues() || []).map(x => { try { return x && typeof x === 'object' && x.getA1Notation ? x.getSheet().getName() + '!' + x.getA1Notation() : JSON.stringify(x); } catch (e) { return '?'; } }).join('|');
+    if (!(k in C)) { try { C[k] = loose(v); } catch (e) { C[k] = null; } }   // règle illisible : retirée (sinon l'écriture reste bloquée)
+    return C[k];
+  }));
+  if (changed) rg.setDataValidations(out);
 }
 
 /**
