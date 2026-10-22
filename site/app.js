@@ -9,7 +9,7 @@ const isAdmin = () => S.profile && S.profile.role === 'admin';
 const PARAM_DEFAULTS = { limDbMb: 500, limStorageMb: 1024, limLiveMonth: 500000, manifestKeepDays: 30, shiftAdvance: 2, minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
 
 // ---------- Accès aux données ----------
-const PK = { trips: 'id', user_sessions: 'id', vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key', manager_shifts: 'agency_id,user_id,day,shift', uber_payments: 'tx', uber_drivers: 'uuid' };
+const PK = { trips: 'id', user_sessions: 'id', vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key', manager_shifts: 'agency_id,user_id,day,shift', uber_payments: 'tx', uber_drivers: 'uuid', driver_roster: 'driver_code', plan_weeks: 'agency_id,week' };
 async function all(table, cols, build, order) {
   const page = 1000;
   const get = async i => {
@@ -272,7 +272,7 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
-  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['caisse', 'Caisse'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['caisse', 'Caisse'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
 function shell() {
   const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct';
@@ -1267,7 +1267,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, caisse: pageCaisse, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, caisse: pageCaisse, plan: pagePlan, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
