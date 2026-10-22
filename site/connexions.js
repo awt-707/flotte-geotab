@@ -19,8 +19,9 @@ async function sessPing() {
   catch (e) { if (/session_ping|404|not find|does not exist/i.test(e.message || '')) SESS.off = true; }   // migration pas encore exécutée : plus d'essai
   sessBadge();
 }
-/** Déconnexion : la session de cet onglet disparaît tout de suite de la liste */
-async function sessEnd() { try { if (S.session) await sb.from('user_sessions').delete().eq('id', SESS.id); } catch (e) { } }
+/** Déconnexion : la session de cet onglet est close tout de suite (gardée dans l'historique, marquée « Déconnecté ») */
+const SESS_OUT = 'Déconnecté';
+async function sessEnd() { try { if (S.session) await sb.from('user_sessions').update({ last_seen: new Date().toISOString(), active: false, page: SESS_OUT }).eq('id', SESS.id); } catch (e) { } }
 if (typeof document !== 'undefined') {   // navigateur seulement (le fichier est aussi chargé par les tests sous Node)
   ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, () => { SESS.act = Date.now(); }, { passive: true, capture: true }));
   let sessMove = 0; document.addEventListener('mousemove', () => { const t = Date.now(); if (t - sessMove > 15000) { sessMove = t; SESS.act = t; } }, { passive: true });
@@ -30,7 +31,7 @@ if (typeof document !== 'undefined') {   // navigateur seulement (le fichier est
 
 /** Sessions des 7 derniers jours regroupées par utilisateur : statut, appareils, page, depuis, dernière activité */
 function sessGroup(profiles, rows, now) {
-  const on = r => now - new Date(r.last_seen).getTime() < SESS_ONLINE_MIN * 60000, by = {};
+  const on = r => r.page !== SESS_OUT && now - new Date(r.last_seen).getTime() < SESS_ONLINE_MIN * 60000, by = {};
   rows.forEach(r => { (by[r.user_id] = by[r.user_id] || []).push(r); });
   return profiles.filter(p => p.role !== 'pending' || by[p.user_id]).map(p => {
     const l = (by[p.user_id] || []).sort((a, b) => new Date(b.last_seen) - new Date(a.last_seen)), live = l.filter(on);
@@ -38,11 +39,32 @@ function sessGroup(profiles, rows, now) {
     return { p, st, live, last: l[0] ? l[0].last_seen : null, since: live.length ? live.map(r => r.started_at).sort()[0] : null, page: (live.find(r => r.active) || live[0] || {}).page || '' };
   }).sort((a, b) => ['En ligne', 'Inactif', 'Hors ligne'].indexOf(a.st) - ['En ligne', 'Inactif', 'Hors ligne'].indexOf(b.st) || String(b.last || '').localeCompare(String(a.last || '')));
 }
+/**
+ * Historique des connexions : sessions d'un même utilisateur sur le même appareil réunies quand la suivante commence moins de
+ * 3 min après la fin de la précédente (page rechargée, nouvel onglet) ; début, fin (dernier signal), durée, dernière page.
+ * En cours = signal de moins de 3 min et pas déconnecté.
+ */
+function sessHistory(profiles, rows, now) {
+  const pr = {}; profiles.forEach(p => { pr[p.user_id] = p; });
+  const ms = x => new Date(x).getTime(), by = {}, out = [];
+  rows.slice().sort((a, b) => ms(a.started_at) - ms(b.started_at)).forEach(r => { const k = r.user_id + '|' + (r.client || ''); (by[k] = by[k] || []).push(r); });
+  Object.values(by).forEach(list => {
+    let c = null;
+    list.forEach(r => {
+      const a = ms(r.started_at), b = Math.max(a, ms(r.last_seen)), off = r.page === SESS_OUT;
+      if (c && !c.off && a - c.end < SESS_ONLINE_MIN * 60000) { if (b >= c.end) { c.end = b; c.page = r.page; c.off = off; } c.n++; return; }
+      c = { p: pr[r.user_id] || { user_id: r.user_id, email: '' }, client: r.client || '', start: a, end: b, page: r.page, off, n: 1 }; out.push(c);
+    });
+  });
+  out.forEach(c => { c.live = !c.off && now - c.end < SESS_ONLINE_MIN * 60000; c.dur = c.end - c.start; });
+  return out.sort((x, y) => y.start - x.start);
+}
+function sessDur(ms) { const m = Math.round(ms / 60000); return m < 1 ? 'moins d\'1 min' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0'); }
 /** Pastille « ● n en ligne » en bas du menu (administrateur) */
 async function sessBadge() {
   const el = document.getElementById('onl'); if (!el || !isAdmin() || SESS.off) return;
   try {
-    const rows = await all('user_sessions', 'id,user_id,last_seen,active', q => q.gte('last_seen', new Date(Date.now() - SESS_ONLINE_MIN * MIN).toISOString()));
+    const rows = (await all('user_sessions', 'id,user_id,last_seen,active,page', q => q.gte('last_seen', new Date(Date.now() - SESS_ONLINE_MIN * MIN).toISOString()))).filter(r => r.page !== SESS_OUT);
     const n = new Set(rows.map(r => r.user_id)).size;
     el.textContent = '● ' + n + ' connecté' + (n > 1 ? 's' : ''); el.hidden = false;
   } catch (e) { el.hidden = true; }
@@ -52,23 +74,36 @@ async function pageConnexions(refresh) {
   let profiles, rows;
   try {
     [profiles, rows] = await Promise.all([all('profiles', 'user_id,email,name,role', null, ['email']),
-      all('user_sessions', '*', q => q.gte('last_seen', new Date(Date.now() - 7 * DAY).toISOString()), ['last_seen', false])]);
+      all('user_sessions', '*', q => q.gte('last_seen', new Date(Date.now() - 30 * DAY).toISOString()), ['last_seen', false])]);
   } catch (e) {
     if (my === ROUTING) $('#page').innerHTML = head + msg('Suivi des connexions pas encore installé : exécuter <b>supabase/migrations/20261101000000_connexions.sql</b> dans Supabase &gt; SQL Editor. (' + esc(e.message) + ')', 'err');
     return;
   }
   if (my !== ROUTING) return;
   const now = Date.now(), list = sessGroup(profiles, rows, now), n = s => list.filter(x => x.st === s).length;
+  const q = qs(), jd = [1, 7, 30].includes(+q.get('j')) ? +q.get('j') : 7, fu = q.get('u') || '';
+  const hist = sessHistory(profiles, rows, now).filter(h => h.end >= now - jd * DAY && (!fu || h.p.user_id === fu));
+  const tot = {}; hist.forEach(h => { const t = tot[h.p.user_id] = tot[h.p.user_id] || { p: h.p, n: 0, ms: 0, last: 0 }; t.n++; t.ms += h.dur; t.last = Math.max(t.last, h.end); });
+  const who = h => esc(h.p.name || h.p.email || '') + (h.p.name ? '<div class="small">' + esc(h.p.email || '') + '</div>' : '');
   const dot = st => `<span class="sdot2 ${st === 'En ligne' ? 'on' : st === 'Inactif' ? 'idle' : 'off'}"></span>${esc(st)}`;
   $('#page').innerHTML = head + cards([['En ligne', f0(n('En ligne')), n('En ligne') ? 'ok' : ''], ['Onglet ouvert, inactif (plus de ' + SESS_IDLE_MIN + ' min)', f0(n('Inactif'))],
       ['Hors ligne', f0(n('Hors ligne'))], ['Comptes', f0(list.length)]]) +
     table('tsess', [['Utilisateur', x => esc(x.p.name || x.p.email || '') + (x.p.name ? '<div class="small">' + esc(x.p.email || '') + '</div>' : ''), x => x.p.email],
       ['Rôle', x => esc(ROLE_TXT[x.p.role] || x.p.role)], ['Statut', x => dot(x.st), x => ['En ligne', 'Inactif', 'Hors ligne'].indexOf(x.st)],
       ['Page actuelle', x => x.live.length ? esc(x.page) : ''], ['Appareils ouverts', x => x.live.map(r => `<div>${esc(r.client || '')}${r.active ? '' : ' <span class="small">(inactif)</span>'}</div>`).join(''), x => x.live.length],
-      ['Connecté depuis', x => x.since ? fmtDTY(x.since) : '', x => x.since || ''], ['Dernière activité', x => x.last ? fmtDTY(x.last) + ' <span class="small ago" data-t="' + esc(x.last) + '">' + (typeof ago === 'function' ? ago(x.last) : '') + '</span>' : '<span class="small">aucune (7 jours)</span>', x => x.last || '']],
+      ['Connecté depuis', x => x.since ? fmtDTY(x.since) : '', x => x.since || ''], ['Dernière activité', x => x.last ? fmtDTY(x.last) + ' <span class="small ago" data-t="' + esc(x.last) + '">' + (typeof ago === 'function' ? ago(x.last) : '') + '</span>' : '<span class="small">aucune (30 jours)</span>', x => x.last || '']],
       list, { empty: 'Aucun compte' }) +
-    '<div class="small">En ligne : onglet ou application ouvert et utilisé ces ' + SESS_IDLE_MIN + ' dernières minutes. Inactif : ouvert mais pas utilisé (ou en arrière-plan). Hors ligne : aucun signal depuis ' + SESS_ONLINE_MIN + ' min (fermé, ordinateur en veille ou sans réseau).</div>';
+    '<div class="small">En ligne : onglet ou application ouvert et utilisé ces ' + SESS_IDLE_MIN + ' dernières minutes. Inactif : ouvert mais pas utilisé (ou en arrière-plan). Hors ligne : aucun signal depuis ' + SESS_ONLINE_MIN + ' min (fermé, ordinateur en veille ou sans réseau).</div>' +
+    `<h2>Historique des connexions</h2><div class="bar"><label>Période <select id="shj">${[[1, 'Dernières 24 h'], [7, '7 derniers jours'], [30, '30 derniers jours']].map(x => `<option value="${x[0]}" ${x[0] === jd ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label>
+      <label>Utilisateur <select id="shu"><option value="">Tous</option>${profiles.filter(p => p.role !== 'pending').map(p => `<option value="${esc(p.user_id)}" ${p.user_id === fu ? 'selected' : ''}>${esc(p.name || p.email || '')}</option>`).join('')}</select></label></div>` +
+    table('thsum', [['Utilisateur', t => who(t)], ['Connexions', t => f0(t.n), t => t.n, 'n'], ['Temps connecté', t => sessDur(t.ms), t => t.ms, 'n'], ['Dernière connexion', t => fmtDTY(t.last), t => t.last]],
+      Object.values(tot).sort((a, b) => b.last - a.last), { empty: 'Aucune connexion sur la période' }) +
+    table('thist', [['Utilisateur', h => who(h)], ['Appareil', h => esc(h.client)], ['Début', h => fmtDTY(h.start), h => h.start], ['Fin', h => h.live ? '<span class="sdot2 on"></span>en cours' : fmtDTY(h.end) + (h.off ? ' <span class="small">(déconnexion)</span>' : ''), h => h.end],
+      ['Durée', h => sessDur(h.dur), h => h.dur, 'n'], ['Dernière page', h => h.off ? '' : esc(h.page || '')]], hist, { empty: 'Aucune connexion sur la période' }) +
+    '<div class="small">Une connexion = un onglet ou l\'application ouvert, du premier au dernier signal (pages rechargées réunies). Historique conservé 30 jours.</div>';
+  const go = () => { location.hash = '#/connexions?j=' + $('#shj').value + ($('#shu').value ? '&u=' + encodeURIComponent($('#shu').value) : ''); };
+  $('#shj').onchange = go; $('#shu').onchange = go;
   window.__rerender = () => pageConnexions(true);
   if (!refresh) S.timers.push(setInterval(() => { if (!document.hidden && my === ROUTING) pageConnexions(true); }, 15000));
 }
-if (typeof module !== 'undefined') module.exports = { sessGroup };
+if (typeof module !== 'undefined') module.exports = { sessGroup, sessHistory, sessDur };
