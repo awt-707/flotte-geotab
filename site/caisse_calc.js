@@ -252,10 +252,14 @@ function cshParseHistory(sheets, ctx) {
         const op = cshNorm(s(col('operation'))), uberCash = cshAmount(g(col('montant especes affiche sur uber'))), given = cshAmount(g(col('montant donne par chauffeur'))),
           change = cshAmount(g(col('monnaie rendue'))), net = cshAmount(g(col('montant encaisse net')));
         if (op === 'chauffeur') Object.assign(m, { kind: 'encaissement', flow: 'in', amount: Math.abs(net != null ? net : cshN(given) - cshN(change)), uber_cash: uberCash, given, change });
-        else if (op.indexOf('depot') >= 0) Object.assign(m, { kind: 'depot', flow: 'out', amount: Math.abs(cshN(net) || cshN(given)), label: 'Dépôt en banque' });
-        else if (op.indexOf('recharge') >= 0) Object.assign(m, { kind: 'recharge', flow: 'in', amount: Math.abs(cshN(net) || cshN(given)), label: 'Recharge de caisse' });
-        else Object.assign(m, { kind: 'autre', flow: flow0 || 'in', amount: Math.abs(cshN(net) || cshN(given)), label: s(col('operation')) || null });
-        if (m.kind === 'encaissement' && !who) { res.skipped++; continue; }
+        // l'« Entrée / Sortie » du classeur fait foi (solde identique) ; un dépôt noté en entrée est signalé
+        else if (op.indexOf('depot') >= 0) Object.assign(m, { kind: 'depot', flow: flow0 || 'out', amount: Math.abs(cshN(net) || cshN(given)), label: 'Dépôt en banque',
+          comment: [m.comment, flow0 === 'in' ? 'dépôt en banque noté « Entrée de cash » dans le classeur : à vérifier' : ''].filter(Boolean).join(' · ') || null });
+        else if (op.indexOf('recharge') >= 0) Object.assign(m, { kind: 'recharge', flow: flow0 || 'in', amount: Math.abs(cshN(net) || cshN(given)), label: 'Recharge de caisse',
+          comment: [m.comment, flow0 === 'out' ? 'recharge notée « Sortie de cash » dans le classeur : à vérifier' : ''].filter(Boolean).join(' · ') || null });
+        // ligne sans opération ni « Entrée / Sortie » : hors caisse, comme le solde du classeur (seules les entrées et sorties comptent)
+        else Object.assign(m, { kind: 'autre', flow: flow0 || 'virement', amount: Math.abs(cshN(net) || cshN(given)), label: s(col('operation')) || (flow0 ? null : 'Ligne sans opération ni entrée / sortie') });
+        if (m.kind === 'encaissement' && !who) m.comment = [m.comment, 'chauffeur non renseigné dans le classeur'].filter(Boolean).join(' · ');   // gardé : compté dans la caisse
       } else if (type === 'depenses') {
         const lab = s(col('operation')), ln = cshNorm(lab), a = Math.abs(cshN(cshAmount(g(col('montant decaisse')))));
         if (!a) { res.skipped++; continue; }

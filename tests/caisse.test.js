@@ -325,3 +325,20 @@ test('deux agences : chaque agence a sa caisse (page, saisies) et son classeur d
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); }
 });
+
+test('historique des encaissements : solde identique au classeur (chauffeur non renseigné gardé, ligne sans entrée / sortie hors caisse, sens du classeur respecté)', () => {
+  const H = ['Date début du shift', 'Chauffeur', 'UUID Chauffeur', 'Gestionnaire', 'Opération', 'Entrée / Sortie', 'Source', 'Montant espèces affiché sur Uber', 'Montant donné par chauffeur', 'Monnaie rendue', 'Montant encaissé net', 'Manquant', 'Commentaires'];
+  const sheet = { 'Caisse - Encaissements chauffeu': [H,
+    ['20/09/2026', 'Test Alpha', '', 'G', 'Chauffeur', 'Entrée de cash', 'Chauffeur', '500', '500', '', '500', '0', ''],
+    ['20/09/2026', '', '', 'G', 'Chauffeur', 'Entrée de cash', 'Chauffeur', '300', '300', '', '300', '0', ''],
+    ['20/09/2026', 'Test Alpha', '', 'G', 'Dépôt en banque', 'Entrée de cash', 'Chauffeur', '100', '100', '', '100', '0', ''],
+    ['', '', '', '', 'Dépôt en banque', 'Sortie de cash', 'Banque', '', '', '', '700', '', ''],
+    ['', '', '', '', '', '', 'Banque', '', '', '', '2 078', '', '']] };
+  // solde du classeur = SOMME.SI.ENS(net ; Entrée) − SOMME.SI.ENS(net ; Sortie) = 500 + 300 + 100 − 700 = 200
+  const h = C.cshParseHistory(sheet, {});
+  assert.deepStrictEqual([h.moves.length, h.skipped, C.cshBalances(h.moves).uber], [5, 0, 200]);
+  assert.match(h.moves[1].comment, /chauffeur non renseigné/);
+  assert.deepStrictEqual([h.moves[2].kind, h.moves[2].flow], ['depot', 'in']); assert.match(h.moves[2].comment, /à vérifier/);
+  assert.deepStrictEqual([h.moves[3].flow, h.moves[3].day], ['out', '2026-09-20']); assert.match(h.moves[3].comment, /date absente/);
+  assert.deepStrictEqual([h.moves[4].kind, h.moves[4].flow, h.moves[4].amount], ['autre', 'virement', 2078]);
+});
