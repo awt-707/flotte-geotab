@@ -430,3 +430,14 @@ details.panel > summary { cursor: pointer; list-style: none; } details.panel > s
 details.panel > summary::before { content: '▸ '; } details.panel[open] > summary::before { content: '▾ '; }
 b.ok, .small.ok { color: var(--ok); } b.warn { color: var(--warn); } .small.crit { color: var(--crit); }
 .bar a.on { font-weight: 700; text-decoration: none; color: var(--ink); }
+/* Planning chauffeurs */
+.plgrid table { font-size: 13px; }
+.plgrid th.plv { text-align: left; white-space: nowrap; } .plgrid th.plv .small { display: block; font-weight: 400; }
+.plgrid td.pls { white-space: nowrap; } .plgrid td.plj { background: var(--warn-bg); } .plgrid td.pln { background: var(--info-bg); }
+.plgrid td.plc { min-width: 118px; position: relative; } .plgrid td.plc input { width: 112px; padding: 3px 5px; font-size: 13px; }
+.plgrid td.plempty { background: var(--crit-bg); } .plgrid td.plwarn { background: var(--warn-bg); }
+.pllock { position: absolute; top: 2px; right: 3px; font-size: 9px; color: var(--acc); }
+.plreal { color: var(--mute); }
+.plros .proff label { margin-right: 4px; font-size: 12px; } .plros .proff input { margin: 0 1px 0 0; }
+.plcov td, .plcov th { text-align: center; min-width: 44px; }
+pre.pltxt { white-space: pre-wrap; background: var(--line2); padding: 10px; border-radius: 6px; font: 13px/1.45 var(--f); }

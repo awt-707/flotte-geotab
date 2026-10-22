@@ -134,7 +134,9 @@ test('base : gestionnaire limité à ses agences, ses saisies modifiables 24 h, 
     assert.match(id, /^\d+$/);
     assert.strictEqual(env.psql(`select created_by from cash_moves where id = ${id}`), MGR, 'auteur imposé par la base');
     assert.throws(() => as(MGR, "insert into cash_moves (caisse, kind, flow, amount, day, agency_id) values ('depenses', 'depense', 'out', 10, '2026-10-20', 2)"), /row-level security/);
-    assert.throws(() => as(MGR, "insert into cash_moves (caisse, kind, flow, amount, day) values ('depenses', 'depense', 'out', -5, '2026-10-20')"), /check constraint/);
+    assert.throws(() => as(MGR, "insert into cash_moves (caisse, kind, flow, amount, day, agency_id) values ('depenses', 'depense', 'out', -5, '2026-10-20', 1)"), /check constraint/);
+    // plusieurs agences : chaque caisse est séparée, une saisie sans agence est refusée
+    assert.throws(() => as(MGR, "insert into cash_moves (caisse, kind, flow, amount, day) values ('depenses', 'depense', 'out', 5, '2026-10-20')"), /agence obligatoire/);
     as(MGR, `update cash_moves set amount = 55 where id = ${id}`);   // sa saisie de moins de 24 h : modifiable
     env.psql(`update cash_moves set created_at = now() - interval '2 days' where id = ${id}`);
     assert.throws(() => as(MGR, `update cash_moves set amount = 60 where id = ${id}`), /seuls le justificatif/);
@@ -160,7 +162,7 @@ test('base : gestionnaire limité à ses agences, ses saisies modifiables 24 h, 
     // lecture seule et anonyme : rien
     env.psql(`update profiles set role = 'viewer' where user_id = '${MGR}'`);
     assert.strictEqual(as(MGR, 'select count(*) from cash_moves'), '0');
-    assert.throws(() => as(MGR, "insert into uber_payments (tx, at) values ('x', now())"), /row-level security/);
+    assert.throws(() => as(MGR, "insert into uber_payments (tx, at, agency_id) values ('x', now(), 1)"), /row-level security/);
     assert.throws(() => env.psql('begin; set local role anon; select count(*) from cash_moves; commit;'), /permission denied/);
   } finally { env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'`); }
 });
@@ -293,4 +295,33 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
   assert.deepStrictEqual(enc[8].filter(x => x !== ''), []);
   assert.strictEqual(tab(PAY).data[6][3], 'tx-0009');
   assert.strictEqual(tab(PAY).data[6][0].slice(0, 8), '=IF(L7="');
+});
+
+test('deux agences : chaque agence a sa caisse (page, saisies) et son classeur de sauvegarde', async () => {
+  const { collector } = require('./lib/v6');
+  const B = collector(Date.UTC(2026, 9, 22, 12, 0));
+  const mk = () => B.run(`(function () { const b = SpreadsheetApp.create('x'); ['Caisse - Encaissements chauffeurs Ludy', 'Caisse - Dépenses chauffeurs Ludy', 'Caisse - Avance RH Ludy', 'Caisse - Courses indep Ludy',
+    'Caisse - Bonus performance Ludy', 'Export Uber - Driver Status Ludy', 'Export Uber - Opérations de paiement Ludy'].forEach(n => b.insertSheet(n)); return b.getId(); })()`);
+  const s1 = mk(), s2 = mk();
+  env.psql(`insert into agencies (id, name, cash_sheet_id) overriding system value values (1, 'Casa', '${s1}'), (2, 'Rabat', '${s2}');
+    insert into cash_moves (caisse, kind, flow, amount, day, driver_name, label, agency_id) values ('depenses', 'depense', 'out', 11, '2026-10-20', 'Un', 'Péage', 1), ('depenses', 'depense', 'out', 22, '2026-10-20', 'Deux', 'Parking', 2);`);
+  B.run('cashSheetStep_(Date.now())');
+  const dep = id => B.books[id].getSheetByName('Caisse - Dépenses chauffeurs Ludy').data.slice(4).filter(r => r.some(x => x !== '')).map(r => r[5]);
+  assert.deepStrictEqual([dep(s1), dep(s2)], [[11], [22]]);
+
+  // page : l'administrateur choisit l'agence ; la saisie va dans la caisse de cette agence, les soldes ne mélangent pas les agences
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/caisse?t=depenses');
+    await page.waitForSelector('#cshag');
+    assert.match(await page.innerText('#page'), /Choisir l'agence/);
+    await page.selectOption('#cshag', '2');
+    await page.waitForSelector('#cdsave');
+    assert.match(await page.innerText('#cshbody'), /−22|-22/);
+    assert.doesNotMatch(await page.innerText('#tcshdep'), /Péage/);
+    await page.fill('#cdw', 'Trois'); await page.fill('#cda', '33'); await page.click('#cdsave');
+    await page.waitForFunction(() => /33/.test((document.querySelector('#tcshdep') || {}).innerText || ''));
+    assert.strictEqual(env.psql("select agency_id from cash_moves where amount = 33"), '2');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); }
 });

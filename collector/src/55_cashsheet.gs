@@ -1,5 +1,6 @@
 // ---------- Caisse : copie de sauvegarde dans Google Sheets ----------
-// Demande d'Ahmed (22/10/2026) : chaque saisie de la Caisse de Ludy recopiée dans le classeur de sauvegarde (param cashSheetId),
+// Demande d'Ahmed (22/10/2026) : chaque saisie de la Caisse de Ludy recopiée dans le classeur de sauvegarde de son agence
+// (agencies.cash_sheet_id ; sans agence : param cashSheetId),
 // onglets « … Ludy » copiés du classeur « Suivi Cash Chauffeurs » (même présentation, mêmes formules). À chaque passage (5 min) :
 // - onglets Caisse et « Export Uber - Driver Status Ludy » réécrits en entier s'ils ont changé (lignes annulées retirées) ;
 // - « Export Uber - Opérations de paiement Ludy » complété par les transactions importées depuis le passage précédent.
@@ -80,56 +81,81 @@ function cshWrite_(sh, first, rows, ncols, prevN, textCols) {
   if (prevN > rows.length) sh.getRange(first + rows.length, 1, prevN - rows.length, ncols).clearContent();
 }
 
+/**
+ * Un classeur de sauvegarde par agence (agencies.cash_sheet_id) : chaque agence a sa propre caisse. Sans classeur d'agence,
+ * param cashSheetId = classeur de toute la caisse (installation sans agences).
+ */
 function cashSheetStep_(t0) {
-  const P = params_(), id = String(P.cashSheetId || '').trim();
-  if (!id) return '';
-  const props = PropertiesService.getScriptProperties(), out = [];
+  const P = params_();
   let moves;
   try { moves = dbSelect_('cash_moves', 'select=*&cancelled_at=is.null', 'day,id'); }
   catch (e) { if (/cash_moves|404|does not exist|schema cache/i.test(e.message)) return ''; throw e; }   // caisse pas encore installée dans la base
-  const ss = SpreadsheetApp.openById(id);
-  const drv = dbSelect_('drivers', 'select=code,name,uber_uuid', 'code'), udrv = dbSelect_('uber_drivers', 'select=uuid,name,phone,email,status', 'uuid');
-  const D = {}, U = {}; drv.forEach(d => { D[d.code] = d; }); udrv.forEach(u => { U[u.uuid] = u; });
-  const who = m => { const d = D[m.driver_code] || {}, u = m.uber_uuid || d.uber_uuid; return (u && U[u] && U[u].name) || d.name || m.driver_name || ''; };
+  let ags = [];
+  try { ags = dbSelect_('agencies', 'select=id,name,cash_sheet_id&cash_sheet_id=not.is.null', 'id'); } catch (e) { ags = []; }   // colonne pas encore créée
+  let targets = ags.filter(a => String(a.cash_sheet_id || '').trim()).map(a => ({ ag: a.id, name: a.name, sheet: String(a.cash_sheet_id).trim() }));
+  if (!targets.length && String(P.cashSheetId || '').trim()) targets = [{ ag: null, name: '', sheet: String(P.cashSheetId).trim() }];
+  if (!targets.length) return '';
+  const drv = dbSelect_('drivers', 'select=code,name,uber_uuid', 'code'), udrv = dbSelect_('uber_drivers', 'select=*', 'uuid');
   const mis = moves.filter(m => m.mission_id).map(m => m.mission_id), crsDay = {};
   if (mis.length) dbSelect_('missions', 'select=id,start_at&id=in.(' + mis.join(',') + ')', 'id').forEach(x => { if (x.start_at) crsDay[x.id] = localDay_(x.start_at); });
-  const today = localDay_(Date.now()), daily = props.getProperty('CSH_SHEET_DAY') !== today;   // réécrit au moins une fois par jour (modification à la main dans le classeur)
-  Object.keys(CSH_SHEET_).forEach(c => {
-    const T = CSH_SHEET_[c], sh = ss.getSheetByName(T.tab);
-    if (!sh) { out.push('onglet « ' + T.tab + ' » absent'); return; }
-    const list = moves.filter(m => m.caisse === c), rows = list.map((m, i) => cshSheetRow_(c, m, T.first + i, who(m), crsDay[m.mission_id]));
-    const key = 'CSH_SHEET_' + c, prev = (props.getProperty(key) || '|0').split('|'), h = cshHashStr_(JSON.stringify(rows));
-    if (h === prev[0] && !daily) return;
-    cshWrite_(sh, T.first, rows, T.cols, +prev[1] || 0);
-    props.setProperty(key, h + '|' + rows.length);
-    if (h !== prev[0]) out.push(T.tab.replace(/^Caisse - | Ludy$/g, '') + ' ' + rows.length);
+  const out = [];
+  targets.forEach(T => {
+    if (Date.now() - t0 > MAX_RUN_MS - 90000) return;
+    try { const m = cashSheetOne_(t0, T, P, moves, drv, udrv, crsDay); if (m) out.push((targets.length > 1 || T.name ? T.name + ' : ' : '') + m); }
+    catch (e) { out.push((T.name ? T.name + ' : ' : '') + e.message); }
   });
-  // chauffeurs Uber (UUID des formules des onglets Caisse)
+  return out.length ? 'Classeur de la caisse : ' + out.join(' ; ') : '';
+}
+/** État d'écriture d'un classeur (clé par classeur ; reprend l'état de la version sans agences pour le même classeur) */
+function cshProp_(props, sheet, k, P) {
+  const key = 'CSH|' + sheet + '|' + k, v = props.getProperty(key);
+  if (v !== null) return { key, v };
+  const old = props.getProperty('CSH_SHEET_' + k);
+  return { key, v: old !== null && sheet === String(P.cashSheetId || '').trim() ? old : null };
+}
+function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay) {
+  const props = PropertiesService.getScriptProperties(), out = [], mine = x => T.ag == null || String(x.agency_id) === String(T.ag);
+  const moves = allMoves.filter(mine), udrv = udrv0.filter(mine);
+  const ss = SpreadsheetApp.openById(T.sheet);
+  const D = {}, U = {}; drv.forEach(d => { D[d.code] = d; }); udrv0.forEach(u => { U[u.uuid] = u; });
+  const who = m => { const d = D[m.driver_code] || {}, u = m.uber_uuid || d.uber_uuid; return (u && U[u] && U[u].name) || d.name || m.driver_name || ''; };
+  const today = localDay_(Date.now()), dayP = cshProp_(props, T.sheet, 'DAY', P), daily = dayP.v !== today;   // réécrit au moins une fois par jour (modification à la main dans le classeur)
+  Object.keys(CSH_SHEET_).forEach(c => {
+    const C = CSH_SHEET_[c], sh = ss.getSheetByName(C.tab);
+    if (!sh) { out.push('onglet « ' + C.tab + ' » absent'); return; }
+    const list = moves.filter(m => m.caisse === c), rows = list.map((m, i) => cshSheetRow_(c, m, C.first + i, who(m), crsDay[m.mission_id]));
+    const st = cshProp_(props, T.sheet, c, P), prev = (st.v || '|0').split('|'), h = cshHashStr_(JSON.stringify(rows));
+    if (h === prev[0] && !daily && st.v !== null && props.getProperty(st.key) !== null) return;
+    cshWrite_(sh, C.first, rows, C.cols, +prev[1] || 0);
+    props.setProperty(st.key, h + '|' + rows.length);
+    if (h !== prev[0]) out.push(C.tab.replace(/^Caisse - | Ludy$/g, '') + ' ' + rows.length);
+  });
+  // chauffeurs Uber de l'agence (UUID des formules des onglets Caisse)
   const dsh = ss.getSheetByName(CSH_DRV_TAB_);
   if (dsh) {
     const rows = udrv.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))).map(u => [cshTxt_(u.name), cshTxt_(u.status), '', u.phone || '', '', cshTxt_(u.email), u.uuid, '']);
-    const prev = (props.getProperty('CSH_SHEET_drv') || '|0').split('|'), h = cshHashStr_(JSON.stringify(rows));
-    if (h !== prev[0] || daily) { cshWrite_(dsh, 2, rows, 8, +prev[1] || 0, [4]); props.setProperty('CSH_SHEET_drv', h + '|' + rows.length); }
+    const st = cshProp_(props, T.sheet, 'drv', P), prev = (st.v || '|0').split('|'), h = cshHashStr_(JSON.stringify(rows));
+    if (h !== prev[0] || daily || props.getProperty(st.key) === null) { cshWrite_(dsh, 2, rows, 8, +prev[1] || 0, [4]); props.setProperty(st.key, h + '|' + rows.length); }
   }
-  // transactions Uber : ajoutées à la suite, dans l'ordre d'import
+  // transactions Uber de l'agence : ajoutées à la suite, dans l'ordre d'import
   const psh = ss.getSheetByName(CSH_PAY_TAB_);
   if (psh) {
-    const st = JSON.parse(props.getProperty('CSH_SHEET_pay') || '{"n":0,"at":"","tx":""}'), H = psh.getRange(5, 1, 1, CSH_PAY_COLS_).getValues()[0];
+    const sp = cshProp_(props, T.sheet, 'pay', P), st = JSON.parse(sp.v || '{"n":0,"at":"","tx":""}'), H = psh.getRange(5, 1, 1, CSH_PAY_COLS_).getValues()[0];
     let added = 0;
     for (let k = 0; k < 10 && Date.now() - t0 < MAX_RUN_MS - 90000; k++) {
       const after = st.at ? '&or=' + enc_('(imported_at.gt."' + st.at + '",and(imported_at.eq."' + st.at + '",tx.gt."' + st.tx + '"))') : '';
       let page;
-      try { page = sbReq_('get', 'uber_payments?select=*' + after + '&order=imported_at,tx&limit=2000') || []; }
-      catch (e) { if (/raw|first_name|404/i.test(e.message)) break; throw e; }
+      try { page = sbReq_('get', 'uber_payments?select=*' + (T.ag == null ? '' : '&agency_id=eq.' + T.ag) + after + '&order=imported_at,tx&limit=2000') || []; }
+      catch (e) { if (/raw|first_name|agency_id|404/i.test(e.message)) break; throw e; }
       if (!page.length) break;
       const rows = page.map((p, i) => cshPayRow_(p, 6 + st.n + i, H));
       cshWrite_(psh, 6 + st.n, rows, CSH_PAY_COLS_, 0, [4, 5, 8, 12]);
       st.n += rows.length; st.at = page[page.length - 1].imported_at; st.tx = page[page.length - 1].tx; added += rows.length;
-      props.setProperty('CSH_SHEET_pay', JSON.stringify(st));
+      props.setProperty(sp.key, JSON.stringify(st));
       if (page.length < 2000) break;
     }
     if (added) out.push(added + ' transactions Uber');
   }
-  if (daily) props.setProperty('CSH_SHEET_DAY', today);
-  return out.length ? 'Classeur de la caisse : ' + out.join(', ') : '';
+  if (daily) props.setProperty(dayP.key, today);
+  return out.join(', ');
 }
