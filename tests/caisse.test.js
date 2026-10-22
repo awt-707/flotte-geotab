@@ -289,6 +289,11 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
   assert.ok([2, 4, 5, 7].every(c => encT.dv['8,' + c] && encT.dv['8,' + c].getAllowInvalid()));
   assert.deepStrictEqual(encT.dv['9,5'].vals[0], ['Chauffeur', 'Recharge de caisse', 'Dépôt en banque']);
   assert.strictEqual(encT.dv['8,4'].vals[0].getSheet().getName(), 'Base gestionnaire/Chauffeur Ludy');
+  // règles illisibles par le script (Google refuse de les lire) : listes retirées des lignes écrites, la sauvegarde passe
+  const depT = tab('Caisse - Dépenses chauffeurs Ludy'); depT.dvBroken = true; depT.dv = { '5,3': new B.DV({ strict: true, type: 'VALUE_IN_RANGE', vals: [null, true] }) };
+  depT.data[4] = []; B.props['CSH|' + id + '|depenses'] = 'x|0';
+  B.run('cashSheetStep_(Date.now())');
+  assert.strictEqual(depT.data[4][2], 'Essai Beta'); assert.ok(!depT.dv['5,3']);
   const enc = tab('Caisse - Encaissements chauffeurs Ludy').data;
   assert.deepStrictEqual(enc[7].slice(0, 13), [serial('2026-10-20'), 'Test Alpha',
     '=IF(B8="","",XLOOKUP(B8,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G))', 'Gest Un', 'Chauffeur', 'Entrée de cash', 'Chauffeur', 913, 800, 77, '=I8-J8', '=H8-K8', '\'+ à contrôler']);
