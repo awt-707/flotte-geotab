@@ -50,6 +50,10 @@ test('application 1.2 : Uber Fleet et Clicar dans le menu, volet posé sous sa b
     await page.evaluate(() => { window.__calls = []; });
     await page.click('.side nav a[href="#/tableau"]');
     await page.waitForFunction(() => window.__calls.some(c => c[0] === 'ext_hide'));
+    // volet externe déjà masqué : pas de nouvel ext_hide d'une page Ludy à l'autre (sous Windows, le focus rendu bloque la molette)
+    await page.evaluate(() => { window.__calls = []; });
+    await page.click('.side nav a[href="#/alertes"]'); await page.waitForTimeout(800);
+    assert.deepStrictEqual(await calls(page, 'ext_hide'), []);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });

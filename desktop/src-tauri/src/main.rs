@@ -158,7 +158,8 @@ fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: Str
     v.set_size(size).map_err(|e| e.to_string())?;
     if op.get(&label).map(|u| u != &url).unwrap_or(true) { let _ = v.navigate(with_login(&app, &target)); op.insert(label.clone(), url); }
     v.show().map_err(|e| e.to_string())?;
-    let _ = v.set_focus();
+    #[cfg(not(target_os = "windows"))]
+    let _ = v.set_focus();   // pas sous Windows : molette bloquée après un focus donné par programme (voir ext_hide)
     return Ok(());
   }
   let win = app.get_window("main").ok_or("fenêtre absente")?;
@@ -173,7 +174,10 @@ fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: Str
     .on_navigation({ let h = app.clone(); move |u| { if matches!(u.scheme(), "mailto" | "tel" | "whatsapp") { let _ = open_out(&h, u); false } else { true } } });
   let v = win.add_child(with_downloads(b, &app, false), pos, size).map_err(|e| e.to_string())?;
   op.insert(label, url);
+  #[cfg(not(target_os = "windows"))]
   let _ = v.set_focus();
+  #[cfg(target_os = "windows")]
+  let _ = &v;
   Ok(())
 }
 
@@ -181,6 +185,9 @@ fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: Str
 #[tauri::command]
 fn ext_hide<R: Runtime>(app: AppHandle<R>) {
   for v in app.webviews().values() { if v.label().starts_with("ext-") { let _ = v.hide(); } }
+  // clavier rendu à Ludy (Mac) ; pas sous Windows : après un focus donné par programme, WebView2 ne fait plus défiler la page à la
+  // molette tant qu'on n'a pas cliqué dedans (MicrosoftEdge/WebView2Feedback#829)
+  #[cfg(not(target_os = "windows"))]
   if let Some(v) = app.get_webview("ludy") { let _ = v.set_focus(); }
 }
 
