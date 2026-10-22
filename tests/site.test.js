@@ -196,7 +196,7 @@ test('en direct : alertes à l\'instant (événements Geotab et vitesse au-dessu
     await page.click('#tlal .acard:has-text("Vitesse")');
     await page.waitForSelector('#adlg[open] .adgrid', { timeout: 20000 });
     const fiche = await page.innerText('#adlg');
-    assert.match(fiche, /Vitesse max/); assert.match(fiche, /Limite de la route à cet instant/); assert.match(fiche, /Rien n'est estimé/);
+    assert.match(fiche, /Vitesse max/); assert.match(fiche, /Limite de la route/); assert.match(fiche, /Dépassement max/); assert.match(fiche, /Historique des relevés/); assert.match(fiche, /Rien n'est estimé/);
     assert.match(fiche, /\d+ km\/h à \d{2}:\d{2}:\d{2}/, 'vitesse max lue dans Geotab');
     assert.ok((await page.getAttribute('#adlg svg path.spd', 'd')).length > 20, 'courbe de vitesse vide');
     assert.strictEqual(await page.locator('#admap.leaflet-container').count(), 1);
