@@ -74,6 +74,8 @@ test('lecture des exports Uber : transactions (heure avec décalage, espèces po
     ['tx-0001-aaaa-bbbb-cccc', '2026-10-20T08:15:00.232Z', 100, 64.5, -35.5, 60, 4.5, 0, 'Test Alpha'],
     ['tx-0002-aaaa-bbbb-cccc', '2026-10-20T22:40:00.000Z', 0, 45, 45, 45, 0, 20, 'Test Alpha']]);
   assert.match(C.cshParseUberPayments([['a', 'b']]).error, /UUID de la transaction/);
+  // classeur complet : l'onglet des paiements a aussi « UUID du chauffeur », il n'est pas pris pour la liste des chauffeurs
+  assert.deepStrictEqual(C.cshParseUberDrivers(UBER_ROWS).rows, []);
   const d = C.cshParseUberDrivers(DRV_ROWS).rows;
   assert.deepStrictEqual(d.map(x => [x.uuid.slice(0, 8), x.name, x.phone, x.status]), [['aaaaaaaa', 'Test Alpha', '+212 6 00 00 00 01', 'Actif'], ['bbbbbbbb', 'BETA Essai', null, 'Actif']]);
   const ludy = [{ code: 'C1', name: 'Alpha Test', phone: '0600000001' }, { code: 'C2', name: 'Essai Beta', phone: '' }];
