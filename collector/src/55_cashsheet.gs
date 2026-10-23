@@ -9,11 +9,11 @@ const CSH_SHEET_ = {
   uber: { tab: 'Caisse - Encaissements chauffeurs Ludy', first: 8, cols: 16 },
   depenses: { tab: 'Caisse - Dépenses chauffeurs Ludy', first: 5, cols: 12 },
   rh: { tab: 'Caisse - Avance RH Ludy', first: 5, cols: 10 },
-  courses: { tab: 'Caisse - Courses indep Ludy', first: 8, cols: 17 },
+  courses: { tab: 'Caisse - Courses indep Ludy', first: 8, cols: 17, dates: [1, 9] },
   bonus: { tab: 'Caisse - Bonus performance Ludy', first: 5, cols: 10 }
 };
-// version de l'écriture : la changer réécrit tous les onglets au passage suivant (v3 : formules au séparateur du classeur, 23/10/2026)
-let CSH_FMT_ = 'v3|';
+// version de l'écriture : la changer réécrit tous les onglets au passage suivant (v3 : formules au séparateur du classeur, v4 : format date, 23/10/2026)
+let CSH_FMT_ = 'v4|';
 const CSH_DRV_TAB_ = 'Export Uber - Driver Status Ludy', CSH_PAY_TAB_ = 'Export Uber - Opérations de paiement Ludy', CSH_PAY_COLS_ = 37;
 const CSH_FLOW_TXT_ = { in: 'Entrée de cash', out: 'Sortie de cash', virement: 'Virement' };
 const CSH_KIND_TXT_ = { depot: 'Dépôt en banque', recharge: 'Recharge de caisse', remboursement: 'Remboursement d\'avance', avance: 'Avance sur Salaire' };
@@ -89,13 +89,15 @@ function cshPayRow_(p, r, H) {
 }
 
 /** Écrit des lignes à partir de la ligne first (lignes ajoutées si l'onglet est trop court), efface celles d'avant en trop */
-function cshWrite_(sh, first, rows, ncols, prevN, textCols) {
+function cshWrite_(sh, first, rows, ncols, prevN, textCols, dateCols) {
   const need = first + rows.length - 1;
   if (need > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
   if (rows.length) {
     const rg = sh.getRange(first, 1, rows.length, ncols);
     cshLoosen_(sh, rg);
     (textCols || []).forEach(c => sh.getRange(first, c, rows.length, 1).setNumberFormat('@'));
+    // dates (numéros de série) : format date posé sur les lignes écrites (23/10 : 137 lignes du modèle sans format affichaient « 46337 »)
+    (dateCols || []).forEach(c => sh.getRange(first, c, rows.length, 1).setNumberFormat('dd/mm/yyyy'));
     // formules écrites avec le séparateur du classeur : Google les lit dans la langue du classeur, par setValues comme par
     // setFormulas (fr_FR : « ; » ; constaté le 23/10 : virgules = « Formula parse error », #ERROR!)
     const semi = cshSemi_(sh), vals = semi ? rows.map(r => r.map(v => typeof v === 'string' && v[0] === '=' ? cshLocalF_(v) : v)) : rows;
@@ -201,7 +203,7 @@ function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay) {
     const list = moves.filter(m => m.caisse === c), rows = list.map((m, i) => cshSheetRow_(c, m, C.first + i, who(m), crsDay[m.mission_id]));
     const st = cshProp_(props, T.sheet, c, P), prev = (st.v || '|0').split('|'), h = cshHashStr_(CSH_FMT_ + JSON.stringify(rows));
     if (h === prev[0] && !daily && st.v !== null && props.getProperty(st.key) !== null) return;
-    cshWrite_(sh, C.first, rows, C.cols, +prev[1] || 0);
+    cshWrite_(sh, C.first, rows, C.cols, +prev[1] || 0, null, C.dates || [1]);
     props.setProperty(st.key, h + '|' + rows.length);
     if (h !== prev[0]) out.push(C.tab.replace(/^Caisse - | Ludy$/g, '') + ' ' + rows.length);
   });
