@@ -4,7 +4,7 @@ const ROOT = path.join(__dirname, '..'), read = f => fs.readFileSync(path.join(R
 const errors = [], ok = m => console.log('  ok  ' + m), fail = m => errors.push(m);
 
 // 1. Syntaxe
-for (const f of ['collector/dist/Collecteur.gs', 'site/app.js', 'site/lib.js', 'site/report.js', 'site/pages2.js', 'site/direct.js', 'site/adresses.js', 'site/manifeste.js', 'site/courses.js', 'site/caisse_calc.js', 'site/caisse.js', 'site/plan_calc.js', 'site/plan.js', 'site/planning.js', 'site/connexions.js', 'site/config.js', 'collector/loader/Code.gs']) {
+for (const f of ['collector/dist/Collecteur.gs', 'site/app.js', 'site/lib.js', 'site/report.js', 'site/pages2.js', 'site/direct.js', 'site/adresses.js', 'site/manifeste.js', 'site/contrat_modele.js', 'site/contrat_pdf.js', 'site/contrat.js', 'site/courses.js', 'site/caisse_calc.js', 'site/caisse.js', 'site/plan_calc.js', 'site/plan.js', 'site/planning.js', 'site/connexions.js', 'site/config.js', 'collector/loader/Code.gs']) {
   try { new vm.Script(read(f), { filename: f }); ok('syntaxe ' + f); } catch (e) { fail('syntaxe ' + f + ' : ' + e.message); }
 }
 
@@ -17,7 +17,7 @@ const missing = [...called].filter(f => !defined.has(f));
 missing.length ? fail('fonctions appelées mais non définies : ' + missing.join(', ')) : ok(called.size + ' fonctions internes appelées, toutes définies');
 
 // 3. Versions des bibliothèques du site = versions épinglées dans package.json (celles testées)
-const pkg = JSON.parse(read('package.json')).devDependencies, html = read('site/index.html');
+const pkg = JSON.parse(read('package.json')).devDependencies, html = read('site/index.html') + read('site/contrat.js');   // contrat.js : bibliothèques chargées à la demande
 for (const m of html.matchAll(/cdn\.jsdelivr\.net\/npm\/((?:@[^/]+\/)?[^@/]+)@([^/"]+)\//g)) {
   pkg[m[1]] === m[2] ? ok('CDN ' + m[1] + '@' + m[2]) : fail('CDN ' + m[1] + '@' + m[2] + ' différent de package.json (' + pkg[m[1]] + ')');
 }

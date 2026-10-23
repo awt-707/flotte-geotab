@@ -272,14 +272,14 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
-  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['caisse', 'Caisse'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['caisse', 'Caisse'], ['travail', 'Contrats de travail'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
 function shell() {
   const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct';
   $('#app').innerHTML = `<div class="layout">
   <aside class="side">
     ${BRAND}
-    <nav aria-label="Pages">${NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (n[0] !== 'caisse' || canEdit()) && canSee(n[0])).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
+    <nav aria-label="Pages">${NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (!/^(caisse|travail)$/.test(n[0]) || canEdit()) && canSee(n[0])).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
       (n[0] !== 'direct' ? '' : appMode() === 'link' ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` :
         navSites().filter(x => canSee('x-' + x.id)).map(x => `<a href="#/x-${x.id}" class="navext${page === 'x-' + x.id ? ' on' : ''}" data-ext="${x.id}"${page === 'x-' + x.id ? ' aria-current="page"' : ''}>${esc(x.name)}</a>`).join(''))).join('')}</nav>
     <div class="foot">${mineFoot()}${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
@@ -1281,7 +1281,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, caisse: pageCaisse, plan: pagePlan, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, caisse: pageCaisse, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
@@ -1314,7 +1314,7 @@ async function route() {
   // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)
   S.timers.push(setInterval(async () => {
     const was = S.mine ? [...S.mine].sort().join() : '', k = S.mineKey; await mineLoad();
-    if (my === ROUTING && S.mineKey !== k && (S.mine ? [...S.mine].sort().join() : '') !== was && !/^(manifeste|courses|reglages|planning|x-)/.test(pageOf())) route();
+    if (my === ROUTING && S.mineKey !== k && (S.mine ? [...S.mine].sort().join() : '') !== was && !/^(manifeste|courses|travail|reglages|planning|x-)/.test(pageOf())) route();
   }, 60000));
   if (page === 'direct') {
     LIVE.retryAt = 0; LIVE.primed = false; liveTick(my);
