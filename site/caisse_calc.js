@@ -204,6 +204,8 @@ function cshParseUberPayments(rows, localToDate) {
 function cshParseUberDrivers(rows) {
   const h = cshHeader(rows, c => c === 'uuid du chauffeur'); if (h < 0) return { error: 'colonne « UUID du chauffeur » introuvable', rows: [] };
   const H = rows[h].map(cshNorm), eq = t => H.indexOf(t);
+  // onglet des opérations de paiement (il a aussi « UUID du chauffeur ») : pas une liste de chauffeurs (import du classeur complet)
+  if (eq('uuid de la transaction') >= 0) return { error: 'opérations de paiement, pas une liste de chauffeurs', rows: [] };
   const ix = { uuid: eq('uuid du chauffeur'), name: eq('nom du chauffeur'), phone: H.findIndex(c => c.indexOf('telephone') >= 0), email: H.findIndex(c => c.indexOf('e-mail') >= 0 || c.indexOf('email') >= 0), status: eq('statut') };
   const out = [];
   for (let i = h + 1; i < rows.length; i++) {
