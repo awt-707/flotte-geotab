@@ -286,12 +286,12 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
     insert into cash_moves (caisse, kind, flow, amount, day, driver_code, label, status, source) values ('bonus', 'bonus', 'virement', 150, '2026-10-20', 'C1', 'Challenge Shift', 'A payer', 'Caisse');`);
   const serial = d => (Date.parse(d) - Date.UTC(1899, 11, 30)) / 86400000;
   // listes déroulantes copiées du classeur d'origine, en « refuser la saisie » (22/10/2026 : écriture bloquée en B8) :
-  // chauffeurs = onglet d'origine absent du classeur (plage illisible), gestionnaires = onglet d'origine sans « Ludy »
+  // chauffeurs = onglet d'origine absent du classeur (Google : « Plage introuvable » dès qu'on lit la règle), gestionnaires = onglet d'origine sans « Ludy »
   const encT = tab('Caisse - Encaissements chauffeurs Ludy'), other = B.run(`SpreadsheetApp.create('origine').insertSheet('Base gestionnaire/Chauffeur')`);
   const gest = book.insertSheet('Base gestionnaire/Chauffeur Ludy'); gest.data = [['Gestionnaire'], ['Gest Un']];
   const dvAt = (r, c, o) => { encT.dv = encT.dv || {}; encT.dv[r + ',' + c] = new B.DV(Object.assign({ strict: true }, o)); };
   for (const r of [8, 9]) {
-    dvAt(r, 2, { type: 'VALUE_IN_RANGE', vals: [null, true] });
+    dvAt(r, 2, { type: 'VALUE_IN_RANGE', broken: true });
     dvAt(r, 4, { type: 'VALUE_IN_RANGE', vals: [other.getRange('A2:A50'), true] });
     dvAt(r, 5, { type: 'VALUE_IN_LIST', vals: [['Chauffeur', 'Recharge de caisse', 'Dépôt en banque'], true] });
     dvAt(r, 7, { type: 'VALUE_IN_LIST', vals: [['Cash Nico', 'Banque'], true] });
@@ -299,7 +299,8 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
   assert.throws(() => B.run(`SpreadsheetApp.openById('${id}').getSheetByName('Caisse - Encaissements chauffeurs Ludy').getRange(8, 2).setValues([['Test Alpha']])`), /violates the data validation/);
   assert.match(B.run('cashSheetStep_(Date.now())'), /Encaissements chauffeurs 2.*Dépenses chauffeurs 1.*1 transactions Uber/);
   // règles gardées (même liste), en avertissement ; liste des gestionnaires rattachée à l'onglet « … Ludy »
-  assert.ok([2, 4, 5, 7].every(c => encT.dv['8,' + c] && encT.dv['8,' + c].getAllowInvalid()));
+  assert.ok([4, 5, 7].every(c => encT.dv['8,' + c] && encT.dv['8,' + c].getAllowInvalid()));
+  assert.ok(!encT.dv['8,2'] && !encT.dv['9,2']);   // liste illisible : retirée
   assert.deepStrictEqual(encT.dv['9,5'].vals[0], ['Chauffeur', 'Recharge de caisse', 'Dépôt en banque']);
   assert.strictEqual(encT.dv['8,4'].vals[0].getSheet().getName(), 'Base gestionnaire/Chauffeur Ludy');
   // règles illisibles par le script (Google refuse de les lire) : listes retirées des lignes écrites, la sauvegarde passe

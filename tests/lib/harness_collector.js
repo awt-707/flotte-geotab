@@ -41,11 +41,11 @@ class Sheet {
 // une plage de référence absente (onglet introuvable) n'accepte rien
 class DV {
   constructor(o) { Object.assign(this, o); }
-  getAllowInvalid() { return !this.strict; } getCriteriaType() { return this.type; } getCriteriaValues() { return this.vals; }
-  copy() { const o = Object.assign({}, this), b = { setAllowInvalid(x) { o.strict = !x; return b; }, requireValueInRange(r, show) { o.type = 'VALUE_IN_RANGE'; o.vals = [r, show]; return b; }, build: () => new DV(o) }; return b; }
+  getAllowInvalid() { return !this.strict; } getCriteriaType() { return this.type; } getCriteriaValues() { if (this.broken) throw new Error('Plage introuvable'); return this.vals; }
+  copy() { if (this.broken) throw new Error('Plage introuvable'); const o = Object.assign({}, this), b = { setAllowInvalid(x) { o.strict = !x; return b; }, requireValueInRange(r, show) { o.type = 'VALUE_IN_RANGE'; o.vals = [r, show]; return b; }, build: () => new DV(o) }; return b; }
   ok(x) { if (!this.strict || x === '' || (typeof x === 'string' && x[0] === '=')) return true;
     if (this.type === 'VALUE_IN_LIST') return this.vals[0].includes(x);
-    return !!this.vals[0] && [].concat(...this.vals[0].getValues()).includes(x); }
+    return !this.broken && !!this.vals[0] && [].concat(...this.vals[0].getValues()).includes(x); }
 }
 class Range {
   constructor(s, r, c, nr, nc) { if (nr < 1 || nc < 1) throw new Error('Bad range ' + s.name + ' ' + [r, c, nr, nc]); Object.assign(this, { s, r, c, nr, nc });
