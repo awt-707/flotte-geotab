@@ -1171,7 +1171,7 @@ async function pageReglages() {
   if (my !== ROUTING) return;   // autre page demandée pendant le chargement : ne pas l'écraser
   const alTypes = [...new Set(types.map(x => x.type))].sort();
   const SEVS = ['Critique', 'Haute', 'Moyenne', 'Info'], FREQ = { jour: 'Chaque jour (veille)', semaine: 'Chaque lundi (semaine passée)', mois: 'Le 1er du mois (mois passé)' };
-  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, cashSheetStatus: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1, mailName: 1, mailReplyTo: 1, mailFrom: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
+  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, cashSheetStatus: 1, geoStudy: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1, mailName: 1, mailReplyTo: 1, mailFrom: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
   $('#page').innerHTML = `<div class="head"><h1>Réglages</h1></div>
     <h2>Limites de l'hébergement</h2><div class="sub">Offre Supabase (base, stockage, appels du temps réel). Le site lui-même (Cloudflare) n'a pas de limite. À 80 % : avertissement en bas du menu. Limites à changer dans les paramètres ci-dessous si l'offre change (Pro : 8 000 Mo, 102 400 Mo, 2 000 000 appels).</div>
     ${usageHtml(usage, S.P)}

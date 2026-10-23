@@ -201,6 +201,8 @@ function collect() {
     try { const j = processJobs_(t0); if (j) msg.push(j); } catch (e) { msg.push('Demandes du site : ' + e.message); }
     // Caisse recopiée dans le classeur de sauvegarde (onglets « … Ludy ») : avant le journal, qui peut prendre tout le passage
     { let m = ''; try { m = cashSheetStep_(t0); } catch (e) { m = 'Classeur de la caisse : ' + e.message; } if (m) msg.push(m); cshStatus_(m); }
+    // Étude ponctuelle de consommation dans Geotab (véhicules hors parc Ludy), une seule fois
+    if (Date.now() - t0 < 150000) { try { const m = geoStudyStep_(t0); if (m) msg.push(m); } catch (e) { msg.push('Étude Geotab : ' + e.message); } }
     // Journal et alertes des derniers jours
     const every = Math.max(5, P.autoRenderMin || 15) * MIN, lastD = +(props.getProperty('DERIVED_LAST') || 0), dirty = props.getProperty('DERIVED_DIRTY');
     if (dirty && Date.now() - lastD >= every - 30000 && Date.now() - t0 < 150000) {
