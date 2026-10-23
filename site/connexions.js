@@ -2,8 +2,12 @@
 // l'administrateur voit qui est en ligne, sur quelle page, depuis quel appareil (page Connexions, pastille en bas du menu).
 // Chargé avant app.js : utilise ses outils (sb, S, all, rpc, esc…) au moment de l'appel.
 function sessNewId() { return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12); }
-const SESS = { id: sessNewId(), act: Date.now(), off: false };
+// badge : dernier compte de la pastille { uid, n, at }, gardé d'une page à l'autre ; seen : premier signal de l'onglet envoyé
+const SESS = { id: sessNewId(), act: Date.now(), off: false, badge: null, seen: false };
 const SESS_ONLINE_MIN = 3, SESS_IDLE_MIN = 10;   // en ligne : signal de moins de 3 min ; actif : utilisé dans les 10 dernières minutes
+const SESS_BADGE_SEC = 45;   // pastille relue au plus toutes les 45 s en changeant de page (le signal de la minute la relit toujours)
+/** Autre utilisateur ou déconnexion : nouvelle session, compte des connectés oublié et pastille masquée (jamais montrée à un autre compte) */
+function sessReset() { SESS.id = sessNewId(); SESS.off = false; SESS.badge = null; SESS.seen = false; sessBadgePaint(); }
 
 /** Appareil : application Ludy (version) ou navigateur, et système */
 function sessClient() {
@@ -11,13 +15,13 @@ function sessClient() {
   return (window.LUDY_APP ? 'Application ' + (window.LUDY_APP.version || '') : 'Navigateur') + (os ? ' · ' + os : '');
 }
 function sessPageName(p) { const n = (typeof NAV !== 'undefined' ? NAV : []).find(x => x[0] === p); return n ? n[1] : p === 'application' ? 'Application' : /^x-/.test(p) ? 'Volet ' + p.slice(2) : p; }
-/** Signal de l'onglet : page affichée, appareil, actif (visible et utilisé récemment) */
-async function sessPing() {
+/** Signal de l'onglet : page affichée, appareil, actif (visible et utilisé récemment) ; tick = signal de la minute (pastille relue) */
+async function sessPing(tick) {
   if (SESS.off || !S.session || !S.profile || S.profile.role === 'pending') return;
-  const active = !document.hidden && Date.now() - SESS.act < SESS_IDLE_MIN * MIN;
-  try { await rpc('session_ping', { p_id: SESS.id, p_page: sessPageName(pageOf()), p_client: sessClient(), p_active: active }); }
+  const active = !document.hidden && Date.now() - SESS.act < SESS_IDLE_MIN * MIN, sid = SESS.id, first = !SESS.seen;
+  try { await rpc('session_ping', { p_id: SESS.id, p_page: sessPageName(pageOf()), p_client: sessClient(), p_active: active }); if (SESS.id === sid) SESS.seen = true; }
   catch (e) { if (/session_ping|404|not find|does not exist/i.test(e.message || '')) SESS.off = true; }   // migration pas encore exécutée : plus d'essai
-  sessBadge();
+  sessBadge(tick === true || first);   // premier signal : l'onglet vient de s'ajouter au compte
 }
 /** Déconnexion : la session de cet onglet est close tout de suite (gardée dans l'historique, marquée « Déconnecté ») */
 const SESS_OUT = 'Déconnecté';
@@ -25,7 +29,7 @@ async function sessEnd() { try { if (S.session) await sb.from('user_sessions').u
 if (typeof document !== 'undefined') {   // navigateur seulement (le fichier est aussi chargé par les tests sous Node)
   ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, () => { SESS.act = Date.now(); }, { passive: true, capture: true }));
   let sessMove = 0; document.addEventListener('mousemove', () => { const t = Date.now(); if (t - sessMove > 15000) { sessMove = t; SESS.act = t; } }, { passive: true });
-  setInterval(sessPing, 60000);
+  setInterval(() => sessPing(true), 60000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) SESS.act = Date.now(); sessPing(); });
 }
 
@@ -60,14 +64,26 @@ function sessHistory(profiles, rows, now) {
   return out.sort((x, y) => y.start - x.start);
 }
 function sessDur(ms) { const m = Math.round(ms / 60000); return m < 1 ? 'moins d\'1 min' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0'); }
-/** Pastille « ● n en ligne » en bas du menu (administrateur) */
-async function sessBadge() {
-  const el = document.getElementById('onl'); if (!el || !isAdmin() || SESS.off) return;
+/** Utilisateurs en ligne : signal de moins de 3 min, pas déconnectés (pastille du menu, même règle que la page) */
+function sessOnline(rows, now) { return new Set(rows.filter(r => r.page !== SESS_OUT && now - new Date(r.last_seen).getTime() < SESS_ONLINE_MIN * 60000).map(r => r.user_id)).size; }
+/** Pastille « ● n connectés » en bas du menu (administrateur) : dernier compte, affiché tout de suite quand le menu est reconstruit */
+function sessBadgePaint() {
+  const el = typeof document !== 'undefined' && document.getElementById('onl'), b = SESS.badge; if (!el) return;
+  const ok = !!b && !SESS.off && isAdmin() && !!S.session && b.uid === S.session.user.id;
+  if (ok) el.textContent = '● ' + b.n + ' connecté' + (b.n > 1 ? 's' : '');
+  el.hidden = !ok;
+}
+function sessBadgeSet(n) { if (!S.session) return; SESS.badge = { uid: S.session.user.id, n, at: Date.now() }; sessBadgePaint(); }
+/** Compte relu au plus toutes les SESS_BADGE_SEC s (force : tout de suite) ; la page Connexions le met aussi à jour à chaque lecture */
+async function sessBadge(force) {
+  if (!document.getElementById('onl') || !isAdmin() || SESS.off) return;
+  sessBadgePaint();
+  const b = SESS.badge, sid = SESS.id;
+  if (!force && b && b.uid === S.session.user.id && Date.now() - b.at < SESS_BADGE_SEC * 1000) return;
   try {
-    const rows = (await all('user_sessions', 'id,user_id,last_seen,active,page', q => q.gte('last_seen', new Date(Date.now() - SESS_ONLINE_MIN * MIN).toISOString()))).filter(r => r.page !== SESS_OUT);
-    const n = new Set(rows.map(r => r.user_id)).size;
-    el.textContent = '● ' + n + ' connecté' + (n > 1 ? 's' : ''); el.hidden = false;
-  } catch (e) { el.hidden = true; }
+    const rows = await all('user_sessions', 'id,user_id,last_seen,active,page', q => q.gte('last_seen', new Date(Date.now() - SESS_ONLINE_MIN * MIN).toISOString()));
+    if (SESS.id === sid) sessBadgeSet(sessOnline(rows, Date.now()));   // autre utilisateur entre-temps : rien gardé
+  } catch (e) { /* lecture en échec (réseau) : dernier compte gardé, nouvel essai au prochain signal */ }
 }
 async function pageConnexions(refresh) {
   const my = ROUTING, head = `<div class="head"><h1>Connexions</h1><div class="sub">Qui a Ludy ouvert en ce moment (site ou application), sur quelle page et depuis quel appareil. Mis à jour toutes les 15 s ; chaque onglet ouvert envoie un signal toutes les minutes.</div></div>`;
@@ -81,6 +97,7 @@ async function pageConnexions(refresh) {
   }
   if (my !== ROUTING) return;
   const now = Date.now(), list = sessGroup(profiles, rows, now), n = s => list.filter(x => x.st === s).length;
+  sessBadgeSet(sessOnline(rows, now));   // pastille du menu à jour avec la page, sans autre lecture
   const q = qs(), jd = [1, 7, 30].includes(+q.get('j')) ? +q.get('j') : 7, fu = q.get('u') || '';
   const hist = sessHistory(profiles, rows, now).filter(h => h.end >= now - jd * DAY && (!fu || h.p.user_id === fu));
   const tot = {}; hist.forEach(h => { const t = tot[h.p.user_id] = tot[h.p.user_id] || { p: h.p, n: 0, ms: 0, last: 0 }; t.n++; t.ms += h.dur; t.last = Math.max(t.last, h.end); });
@@ -106,4 +123,4 @@ async function pageConnexions(refresh) {
   window.__rerender = () => pageConnexions(true);
   if (!refresh) S.timers.push(setInterval(() => { if (!document.hidden && my === ROUTING) pageConnexions(true); }, 15000));
 }
-if (typeof module !== 'undefined') module.exports = { sessGroup, sessHistory, sessDur };
+if (typeof module !== 'undefined') module.exports = { sessGroup, sessHistory, sessDur, sessOnline };

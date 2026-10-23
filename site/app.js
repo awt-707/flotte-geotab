@@ -138,11 +138,12 @@ function usageHtml(u, P) {
     return `<div class="ub"><div class="ul"><b>${esc(r[0])}</b><span>${f0(r[1])}${r[3] ? ' ' + r[3] : ''} / ${f0(r[2])}${r[3] ? ' ' + r[3] : ''} (${f0(pct)} %)</span></div>
       <div class="ubar"><span class="${cls}" style="width:${pct.toFixed(1)}%"></span></div><div class="small">${esc(r[4])}</div></div>`; }).join('')}</div>`;
 }
-/** Bandeau en bas du menu (administrateur) quand une limite approche */
+/** Bandeau en bas du menu (administrateur) quand une limite approche ; menu gardé d'une page à l'autre : retiré ou mis à jour sur place */
 async function usageWarn() {
-  const u = await usageLoad(); const a = usageAlerts(u, S.P || {}), f = $('.side .foot');
-  if (!a.length || !f || $('#usewarn')) return;
-  f.insertAdjacentHTML('afterbegin', `<a id="usewarn" class="dlapp" href="#/reglages">Limite de l'hébergement bientôt atteinte : ${esc(a.map(r => r[0].toLowerCase()).join(', '))}</a>`);
+  const u = await usageLoad(); const a = usageAlerts(u, S.P || {}), f = $('.side .foot'), w = $('#usewarn');
+  if (!a.length || !f) { if (w) w.remove(); return; }
+  const t = 'Limite de l\'hébergement bientôt atteinte : ' + a.map(r => r[0].toLowerCase()).join(', ');
+  if (w) w.textContent = t; else f.insertAdjacentHTML('afterbegin', `<a id="usewarn" class="dlapp" href="#/reglages">${esc(t)}</a>`);
 }
 function appUber() { const u = window.LUDY_APP && window.LUDY_APP.uber; return /^https:\/\/([a-z0-9-]+\.)*uber\.com\//.test(u || '') ? u : ''; }
 function appIpc() { return !!(window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke); }
@@ -274,9 +275,9 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
   ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['caisse', 'Caisse'], ['travail', 'Contrats de travail'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
-function shell() {
-  const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct';
-  $('#app').innerHTML = `<div class="layout">
+/** Menu et bas du menu ; page = volet en surbrillance ('' : aucun, sert de clé du menu) */
+function shellHtml(page) {
+  return `<div class="layout">
   <aside class="side">
     ${BRAND}
     <nav aria-label="Pages">${NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (!/^(caisse|travail)$/.test(n[0]) || canEdit()) && canSee(n[0])).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
@@ -286,12 +287,26 @@ function shell() {
       ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span>${isAdmin() ? '<a id="onl" class="onl" href="#/connexions" hidden title="Qui est connecté en ce moment"></a>' : ''}${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
   <main id="page"><div class="loading">Chargement…</div></main></div>`;
-  $('#logout').onclick = async () => { await sessEnd(); await sb.auth.signOut(); location.hash = ''; };
-  $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
-  const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
-  const mo = $('#mineon'); if (mo) mo.onchange = () => { try { localStorage.setItem('mesveh', mo.checked ? '1' : '0'); } catch (e) { } route(); };
-  const nb = $('#notifon'); if (nb) nb.onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } nb.remove(); };
-  health(); openAlerts(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
+}
+// Menu reconstruit seulement s'il change (utilisateur, rôle, volets visibles, agences, « Mes véhicules », thème, notifications) ;
+// sinon d'une page à l'autre : volet en surbrillance et contenu seulement (pastilles, collecte, défilement du menu gardés tels quels)
+let SHELL_KEY = '';
+function shell() {
+  const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct', key = shellHtml('');
+  if (key === SHELL_KEY && $('#app > .layout') && $('#page')) {
+    document.querySelectorAll('.side nav a').forEach(a => { const on = a.getAttribute('href') === '#/' + page; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+    const ag = $('#agsel'), mo = $('#mineon'); if (ag) ag.value = agFilter(); if (mo) mo.checked = mineOn();   // stockage bloqué : réglage réellement appliqué
+    $('#page').innerHTML = '<div class="loading">Chargement…</div>';
+  } else {
+    SHELL_KEY = key; $('#app').innerHTML = shellHtml(page);
+    $('#logout').onclick = async () => { await sessEnd(); await sb.auth.signOut(); location.hash = ''; };
+    $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
+    const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
+    const mo = $('#mineon'); if (mo) mo.onchange = () => { try { localStorage.setItem('mesveh', mo.checked ? '1' : '0'); } catch (e) { } route(); };
+    const nb = $('#notifon'); if (nb) nb.onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } nb.remove(); };
+  }
+  // derniers états connus redessinés tout de suite (menu neuf), relus ensuite en arrière-plan
+  sessBadgePaint(); healthPaint(); nbalPaint(); health(); openAlerts(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
   const on = $('.side nav a.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   return page;
 }
@@ -304,14 +319,22 @@ function plate(p, others) {
   const temp = /WW$|^W\d|W18/i.test(String(p).replace(/[\s-]/g, ''));
   return `<span class="plate${temp ? ' temp' : ''}">${esc(p)}</span>${others ? `<span class="alias">aussi ${esc(others)}</span>` : ''}`;
 }
-/** Nombre d'alertes critiques encore à traiter (pastille du menu) */
+/** Nombre d'alertes critiques encore à traiter (pastille du menu) ; dernier compte gardé (S.nbal) pour cet utilisateur et ce filtre */
+function nbalKey() { return (S.session ? S.session.user.id : '') + '|' + agFilter() + '|' + (mineOn() ? [...S.mine].sort().join() : ''); }
+function nbalPaint() {
+  const el = $('#nbal'); if (!el) return;
+  const n = S.nbal && S.nbal.k === nbalKey() ? S.nbal.n : 0;
+  el.textContent = n || ''; el.hidden = !n; el.title = n + ' alertes critiques à traiter';
+}
 async function openAlerts() {
+  const k = nbalKey();
   try {
     // agence choisie ou « Mes véhicules » : seulement ces véhicules (les droits de la base limitent déjà aux agences de l'utilisateur)
     let q = sb.from('alerts').select('id', { count: 'exact', head: true }).eq('severity', 'Critique').eq('status', 'À traiter');
     if (agFilter() || mineOn()) { const ok = inAgency(); q = q.in('vehicle_key', S.vehList.filter(v => ok(v.key)).map(v => v.key).concat(['-'])); }
-    const { count } = await q;
-    const el = $('#nbal'); if (el) { el.textContent = count || ''; el.hidden = !count; el.title = (count || 0) + ' alertes critiques à traiter'; }
+    const { count, error } = await q;
+    if (error || nbalKey() !== k) return;   // erreur passagère : dernier compte gardé ; autre utilisateur / agence entre-temps : ignoré
+    S.nbal = { k, n: count || 0 }; nbalPaint();
   } catch (e) { }
 }
 /** Nouvelle alerte reçue en temps réel (Supabase Realtime) : bandeau dans le site, notification du navigateur si la page est en arrière-plan */
@@ -398,13 +421,19 @@ function periodBar(onchange) {
     <label>du <input type="date" id="pfrom" value="${p.from}"></label><label>au <input type="date" id="pto" value="${p.to}"></label>
     <span class="hint">Journées de travail (horaires des contrats)</span></div>`;
 }
+/** Dernière collecte Geotab (bas du menu) : dernière lecture gardée (S.health) et redessinée tout de suite, relue à chaque page et chaque minute */
+function healthPaint() {
+  const el = $('#health'), h = S.health; if (!el || !h || !S.session || h.uid !== S.session.user.id) return;
+  const m = h.t ? Math.round((Date.now() - h.t) / MIN) : null;
+  el.className = 'health ' + (m === null ? 'crit' : m <= 2 * (S.P ? S.P.liveMin : 5) + 2 ? 'ok' : m <= 30 ? 'warn' : 'crit');
+  el.title = 'Dernière collecte Geotab'; el.textContent = m === null ? 'Collecte : jamais' : 'Collecte : il y a ' + (m < 1 ? 'moins d\'1 min' : m < 120 ? m + ' min' : Math.round(m / 60) + ' h');
+}
 async function health() {
+  const uid = S.session && S.session.user.id;
   try {
-    const { data } = await sb.from('live_status').select('updated_at').order('updated_at', { ascending: false }).limit(1);
-    const t = data && data[0] ? new Date(data[0].updated_at).getTime() : 0, m = t ? Math.round((Date.now() - t) / MIN) : null;
-    const el = $('#health'); if (!el) return;
-    el.className = 'health ' + (m === null ? 'crit' : m <= 2 * (S.P ? S.P.liveMin : 5) + 2 ? 'ok' : m <= 30 ? 'warn' : 'crit');
-    el.title = 'Dernière collecte Geotab'; el.textContent = m === null ? 'Collecte : jamais' : 'Collecte : il y a ' + (m < 1 ? 'moins d\'1 min' : m < 120 ? m + ' min' : Math.round(m / 60) + ' h');
+    const { data, error } = await sb.from('live_status').select('updated_at').order('updated_at', { ascending: false }).limit(1);
+    if (error || !S.session || S.session.user.id !== uid) return;   // erreur passagère : dernière lecture gardée ; autre utilisateur entre-temps
+    S.health = { uid, t: data && data[0] ? new Date(data[0].updated_at).getTime() : 0 }; healthPaint();
   } catch (e) { }
 }
 
@@ -1333,8 +1362,9 @@ sb.auth.onAuthStateChange(async (ev, session) => {
   }
   const changed = (S.session && S.session.user.id) !== (session && session.user.id);
   if (changed) {   // autre utilisateur : rien de ce qui a été lu pour le précédent n'est gardé (droits par agence, planning)
-    SESS.id = sessNewId(); SESS.off = false;   // connexions : nouvelle session pour le nouvel utilisateur
+    sessReset();   // connexions : nouvelle session, pastille des connectés oubliée (jamais montrée à un autre compte)
     S.profile = null; S.P = null; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
+    S.health = null; S.nbal = null; SHELL_KEY = '';   // bas du menu : collecte et pastille Alertes oubliées, menu reconstruit
     Object.assign(LIVE, { rows: [], pos: {}, at: 0, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {}, drv: {}, drvAt: 0, sel: '' });
   }
   S.session = session; if (changed) route();
