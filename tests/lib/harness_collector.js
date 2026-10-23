@@ -66,6 +66,7 @@ class Range {
   clearDataValidations() { return this.setDataValidation(null); }
   setDataValidation(v) { return this.setDataValidations(Array.from({ length: this.nr }, () => Array.from({ length: this.nc }, () => v))); }
   setFormulas(f) { if (f.length !== this.nr || f.some(r => r.length !== this.nc)) throw new Error('setFormulas dims ' + this.s.name); f.forEach((row, i) => row.forEach((x, j) => this.s._set(this.r + i, this.c + j, this.s._parse(x)))); return this; }
+  setNumberFormat(f) { this.s.fmt = this.s.fmt || {}; for (let i = 0; i < this.nr; i++) for (let j = 0; j < this.nc; j++) this.s.fmt[(this.r + i) + ',' + (this.c + j)] = f; return this; }
   setNumberFormats(f) { if (f.length !== this.nr || f.some(r => r.length !== this.nc)) throw new Error('setNumberFormats dims ' + this.s.name); return this; }
   setValue(x) { this.s._set(this.r, this.c, x); return this; }
   clearContent() { for (let i = 0; i < this.nr; i++) for (let j = 0; j < this.nc; j++) if (this.s.data[this.r + i - 1]) this.s.data[this.r + i - 1][this.c + j - 1] = ''; return this; }

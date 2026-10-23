@@ -311,6 +311,9 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
   const enc = tab('Caisse - Encaissements chauffeurs Ludy').data;
   assert.deepStrictEqual(enc[7].slice(0, 13), [serial('2026-10-20'), 'Test Alpha',
     '=IF(B8="","",XLOOKUP(B8,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G))', 'Gest Un', 'Chauffeur', 'Entrée de cash', 'Chauffeur', 913, 800, 77, '=I8-J8', '=H8-K8', '\'+ à contrôler']);
+  // dates au format date (le modèle n'en avait pas sur toutes les lignes : « 46337 »), y compris la date de course
+  assert.strictEqual(tab('Caisse - Encaissements chauffeurs Ludy').fmt['8,1'], 'dd/mm/yyyy');
+  assert.strictEqual(tab('Caisse - Courses indep Ludy').fmt['8,9'], 'dd/mm/yyyy');
   assert.match(enc[7][13], /^=SUMIFS\('Export Uber - Opérations de paiement Ludy'!\$C\$6:\$C,.*\$B8,.*\$A8\)$/);
   assert.deepStrictEqual(enc[8].slice(4, 11), ['Dépôt en banque', 'Sortie de cash', 'Banque', '', 5000, '', '=I9-J9']);
   assert.deepStrictEqual(tab('Caisse - Dépenses chauffeurs Ludy').data[4], [serial('2026-10-20'), 'Shift 2', 'Essai Beta', '=IF(C5="","",XLOOKUP(C5,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G))',
