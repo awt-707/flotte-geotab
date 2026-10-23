@@ -124,11 +124,13 @@ function cshLoosen_(sh, rg) {
   };
   let changed = false;
   const out = dv.map(row => row.map((v, j) => {
-    if (!v || v.getAllowInvalid()) return v;
-    changed = true;
-    const k = j + '|' + v.getCriteriaType() + '|' + (v.getCriteriaValues() || []).map(x => { try { return x && typeof x === 'object' && x.getA1Notation ? x.getSheet().getName() + '!' + x.getA1Notation() : JSON.stringify(x); } catch (e) { return '?'; } }).join('|');
-    if (!(k in C)) { try { C[k] = loose(v); } catch (e) { C[k] = null; } }   // règle illisible : retirée (sinon l'écriture reste bloquée)
-    return C[k];
+    try {
+      if (!v || v.getAllowInvalid()) return v;
+      changed = true;
+      const k = j + '|' + v.getCriteriaType() + '|' + (v.getCriteriaValues() || []).map(x => x && typeof x === 'object' && x.getA1Notation ? x.getSheet().getName() + '!' + x.getA1Notation() : JSON.stringify(x)).join('|');
+      if (!(k in C)) C[k] = loose(v);
+      return C[k];
+    } catch (e) { changed = true; return null; }   // règle illisible (22/10 : « Plage introuvable », liste vers un onglet absent) : retirée, sinon l'écriture reste bloquée
   }));
   if (changed) rg.setDataValidations(out);
 }
