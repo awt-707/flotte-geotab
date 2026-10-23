@@ -76,7 +76,7 @@ function sessBadgePaint() {
 function sessBadgeSet(n) { if (!S.session) return; SESS.badge = { uid: S.session.user.id, n, at: Date.now() }; sessBadgePaint(); }
 /** Compte relu au plus toutes les SESS_BADGE_SEC s (force : tout de suite) ; la page Connexions le met aussi à jour à chaque lecture */
 async function sessBadge(force) {
-  if (!document.getElementById('onl') || !isAdmin() || SESS.off) return;
+  if (!document.getElementById('onl') || !isAdmin() || !S.session || SESS.off) return;
   sessBadgePaint();
   const b = SESS.badge, sid = SESS.id;
   if (!force && b && b.uid === S.session.user.id && Date.now() - b.at < SESS_BADGE_SEC * 1000) return;
