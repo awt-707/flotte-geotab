@@ -265,6 +265,7 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
     ['Caisse - Encaissements chauffeurs Ludy', 'Caisse - Dépenses chauffeurs Ludy', 'Caisse - Avance RH Ludy', 'Caisse - Courses indep Ludy', 'Caisse - Bonus performance Ludy',
      'Export Uber - Driver Status Ludy', 'Export Uber - Opérations de paiement Ludy'].forEach(n => b.insertSheet(n)); return b.getId(); })()`);
   const book = B.books[id], tab = n => book.getSheetByName(n), PAY = 'Export Uber - Opérations de paiement Ludy';
+  book.locale = 'fr_FR';   // comme le vrai classeur : formules écrites en valeurs = « #ERROR! » (23/10)
   // en-têtes de l'onglet du classeur d'origine (ligne 5) : colonnes d'aide A-C, export Uber de D à AJ, contrôle des doublons en AK
   const M = 'Montant vous étant versé';
   tab(PAY).maxC = 40; tab(PAY).data[4] = ['DATE', 'Prénom Nom', 'Espèces collectées', 'UUID de la transaction', 'UUID du chauffeur', 'Prénom du chauffeur', 'Nom du chauffeur', 'UUID de la course',

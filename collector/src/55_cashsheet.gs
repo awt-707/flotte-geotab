@@ -12,6 +12,8 @@ const CSH_SHEET_ = {
   courses: { tab: 'Caisse - Courses indep Ludy', first: 8, cols: 17 },
   bonus: { tab: 'Caisse - Bonus performance Ludy', first: 5, cols: 10 }
 };
+// version de l'écriture : la changer réécrit tous les onglets au passage suivant (v2 : formules par setFormulas, 23/10/2026)
+const CSH_FMT_ = 'v2|';
 const CSH_DRV_TAB_ = 'Export Uber - Driver Status Ludy', CSH_PAY_TAB_ = 'Export Uber - Opérations de paiement Ludy', CSH_PAY_COLS_ = 37;
 const CSH_FLOW_TXT_ = { in: 'Entrée de cash', out: 'Sortie de cash', virement: 'Virement' };
 const CSH_KIND_TXT_ = { depot: 'Dépôt en banque', recharge: 'Recharge de caisse', remboursement: 'Remboursement d\'avance', avance: 'Avance sur Salaire' };
@@ -94,11 +96,17 @@ function cshWrite_(sh, first, rows, ncols, prevN, textCols) {
     const rg = sh.getRange(first, 1, rows.length, ncols);
     cshLoosen_(sh, rg);
     (textCols || []).forEach(c => sh.getRange(first, c, rows.length, 1).setNumberFormat('@'));
-    try { rg.setValues(rows); }
+    // colonnes de formules écrites par setFormulas (syntaxe anglaise, quelle que soit la langue du classeur) : écrites par
+    // setValues, elles sont lues dans la langue du classeur (fr_FR : « ; ») et donnaient « #ERROR! » (constaté le 23/10)
+    const isF = v => typeof v === 'string' && v[0] === '=';   // un texte commençant par « = » est déjà protégé par cshTxt_
+    const fcols = []; for (let j = 0; j < ncols; j++) if (rows.some(r => isF(r[j])) && rows.every(r => isF(r[j]) || r[j] === '')) fcols.push(j);
+    const vals = fcols.length ? rows.map(r => r.map((v, j) => fcols.indexOf(j) >= 0 ? '' : v)) : rows;
+    try { rg.setValues(vals); }
     catch (e) {   // règle que Google n'a pas laissé assouplir : listes retirées des lignes écrites (la sauvegarde passe avant les listes)
       if (!/validation/i.test(e.message)) throw e;
-      rg.clearDataValidations(); rg.setValues(rows);
+      rg.clearDataValidations(); rg.setValues(vals);
     }
+    fcols.forEach(j => sh.getRange(first, j + 1, rows.length, 1).setFormulas(rows.map(r => [r[j]])));
   }
   if (prevN > rows.length) sh.getRange(first + rows.length, 1, prevN - rows.length, ncols).clearContent();
 }
@@ -178,7 +186,7 @@ function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay) {
     const C = CSH_SHEET_[c], sh = ss.getSheetByName(C.tab);
     if (!sh) { out.push('onglet « ' + C.tab + ' » absent'); return; }
     const list = moves.filter(m => m.caisse === c), rows = list.map((m, i) => cshSheetRow_(c, m, C.first + i, who(m), crsDay[m.mission_id]));
-    const st = cshProp_(props, T.sheet, c, P), prev = (st.v || '|0').split('|'), h = cshHashStr_(JSON.stringify(rows));
+    const st = cshProp_(props, T.sheet, c, P), prev = (st.v || '|0').split('|'), h = cshHashStr_(CSH_FMT_ + JSON.stringify(rows));
     if (h === prev[0] && !daily && st.v !== null && props.getProperty(st.key) !== null) return;
     cshWrite_(sh, C.first, rows, C.cols, +prev[1] || 0);
     props.setProperty(st.key, h + '|' + rows.length);
@@ -188,7 +196,7 @@ function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay) {
   const dsh = ss.getSheetByName(CSH_DRV_TAB_);
   if (dsh) {
     const rows = udrv.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))).map(u => [cshTxt_(u.name), cshTxt_(u.status), '', u.phone || '', '', cshTxt_(u.email), u.uuid, '']);
-    const st = cshProp_(props, T.sheet, 'drv', P), prev = (st.v || '|0').split('|'), h = cshHashStr_(JSON.stringify(rows));
+    const st = cshProp_(props, T.sheet, 'drv', P), prev = (st.v || '|0').split('|'), h = cshHashStr_(CSH_FMT_ + JSON.stringify(rows));
     if (h !== prev[0] || daily || props.getProperty(st.key) === null) { cshWrite_(dsh, 2, rows, 8, +prev[1] || 0, [4]); props.setProperty(st.key, h + '|' + rows.length); }
   }
   // transactions Uber de l'agence : ajoutées à la suite, dans l'ordre d'import
