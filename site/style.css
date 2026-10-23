@@ -442,3 +442,7 @@ b.ok, .small.ok { color: var(--ok); } b.warn { color: var(--warn); } .small.crit
 .plcov td, .plcov th { text-align: center; min-width: 44px; }
 pre.pltxt { white-space: pre-wrap; background: var(--line2); padding: 10px; border-radius: 6px; font: 13px/1.45 var(--f); }
 tfoot tr.ttot td { border-top: 2px solid var(--line); font-weight: 600; background: var(--line2); }
+/* Contrats de travail : fiche de la société (administrateur) */
+.ctco { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 4px; }
+.ctco h3 { margin: 8px 0 4px; }
+input[dir="rtl"] { text-align: right; }
