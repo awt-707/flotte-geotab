@@ -12,8 +12,8 @@ const CSH_SHEET_ = {
   courses: { tab: 'Caisse - Courses indep Ludy', first: 8, cols: 17 },
   bonus: { tab: 'Caisse - Bonus performance Ludy', first: 5, cols: 10 }
 };
-// version de l'écriture : la changer réécrit tous les onglets au passage suivant (v2 : formules par setFormulas, 23/10/2026)
-const CSH_FMT_ = 'v2|';
+// version de l'écriture : la changer réécrit tous les onglets au passage suivant (v3 : formules au séparateur du classeur, 23/10/2026)
+let CSH_FMT_ = 'v3|';
 const CSH_DRV_TAB_ = 'Export Uber - Driver Status Ludy', CSH_PAY_TAB_ = 'Export Uber - Opérations de paiement Ludy', CSH_PAY_COLS_ = 37;
 const CSH_FLOW_TXT_ = { in: 'Entrée de cash', out: 'Sortie de cash', virement: 'Virement' };
 const CSH_KIND_TXT_ = { depot: 'Dépôt en banque', recharge: 'Recharge de caisse', remboursement: 'Remboursement d\'avance', avance: 'Avance sur Salaire' };
@@ -96,19 +96,32 @@ function cshWrite_(sh, first, rows, ncols, prevN, textCols) {
     const rg = sh.getRange(first, 1, rows.length, ncols);
     cshLoosen_(sh, rg);
     (textCols || []).forEach(c => sh.getRange(first, c, rows.length, 1).setNumberFormat('@'));
-    // colonnes de formules écrites par setFormulas (syntaxe anglaise, quelle que soit la langue du classeur) : écrites par
-    // setValues, elles sont lues dans la langue du classeur (fr_FR : « ; ») et donnaient « #ERROR! » (constaté le 23/10)
-    const isF = v => typeof v === 'string' && v[0] === '=';   // un texte commençant par « = » est déjà protégé par cshTxt_
-    const fcols = []; for (let j = 0; j < ncols; j++) if (rows.some(r => isF(r[j])) && rows.every(r => isF(r[j]) || r[j] === '')) fcols.push(j);
-    const vals = fcols.length ? rows.map(r => r.map((v, j) => fcols.indexOf(j) >= 0 ? '' : v)) : rows;
+    // formules écrites avec le séparateur du classeur : Google les lit dans la langue du classeur, par setValues comme par
+    // setFormulas (fr_FR : « ; » ; constaté le 23/10 : virgules = « Formula parse error », #ERROR!)
+    const semi = cshSemi_(sh), vals = semi ? rows.map(r => r.map(v => typeof v === 'string' && v[0] === '=' ? cshLocalF_(v) : v)) : rows;
     try { rg.setValues(vals); }
     catch (e) {   // règle que Google n'a pas laissé assouplir : listes retirées des lignes écrites (la sauvegarde passe avant les listes)
       if (!/validation/i.test(e.message)) throw e;
       rg.clearDataValidations(); rg.setValues(vals);
     }
-    fcols.forEach(j => sh.getRange(first, j + 1, rows.length, 1).setFormulas(rows.map(r => [r[j]])));
   }
   if (prevN > rows.length) sh.getRange(first + rows.length, 1, prevN - rows.length, ncols).clearContent();
+}
+
+/** Classeur dont les arguments de formule sont séparés par « ; » (virgule décimale : fr, de, es…) ; anglais et langues à point décimal : « , » */
+function cshSemi_(sh) {
+  let loc = ''; try { loc = String(sh.getParent().getSpreadsheetLocale() || ''); } catch (e) { }
+  return !!loc && !/^(en|ja|zh|ko|th|he|iw|hi|ms|fil|tl)(_|$)/i.test(loc);
+}
+/** Formule écrite en syntaxe anglaise → séparateurs « ; » (virgules hors textes « … » et noms d'onglets '…') */
+function cshLocalF_(f) {
+  let out = '', q = '';
+  for (const ch of f) {
+    if (q) { if (ch === q) q = ''; out += ch; continue; }
+    if (ch === '"' || ch === "'") { q = ch; out += ch; continue; }
+    out += ch === ',' ? ';' : ch;
+  }
+  return out;
 }
 
 /**
@@ -203,6 +216,8 @@ function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay) {
   const psh = ss.getSheetByName(CSH_PAY_TAB_);
   if (psh) {
     const sp = cshProp_(props, T.sheet, 'pay', P), st = JSON.parse(sp.v || '{"n":0,"at":"","tx":""}'), H = psh.getRange(5, 1, 1, CSH_PAY_COLS_).getValues()[0];
+    if (sp.v && st.fmt !== CSH_FMT_) { st.n = 0; st.at = ''; st.tx = ''; }   // format changé : transactions réécrites depuis le début (même ordre)
+    st.fmt = CSH_FMT_;
     let added = 0;
     for (let k = 0; k < 10 && Date.now() - t0 < MAX_RUN_MS - 90000; k++) {
       const after = st.at ? '&or=' + enc_('(imported_at.gt."' + st.at + '",and(imported_at.eq."' + st.at + '",tx.gt."' + st.tx + '"))') : '';

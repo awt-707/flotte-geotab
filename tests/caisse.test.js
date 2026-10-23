@@ -265,7 +265,6 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
     ['Caisse - Encaissements chauffeurs Ludy', 'Caisse - Dépenses chauffeurs Ludy', 'Caisse - Avance RH Ludy', 'Caisse - Courses indep Ludy', 'Caisse - Bonus performance Ludy',
      'Export Uber - Driver Status Ludy', 'Export Uber - Opérations de paiement Ludy'].forEach(n => b.insertSheet(n)); return b.getId(); })()`);
   const book = B.books[id], tab = n => book.getSheetByName(n), PAY = 'Export Uber - Opérations de paiement Ludy';
-  book.locale = 'fr_FR';   // comme le vrai classeur : formules écrites en valeurs = « #ERROR! » (23/10)
   // en-têtes de l'onglet du classeur d'origine (ligne 5) : colonnes d'aide A-C, export Uber de D à AJ, contrôle des doublons en AK
   const M = 'Montant vous étant versé';
   tab(PAY).maxC = 40; tab(PAY).data[4] = ['DATE', 'Prénom Nom', 'Espèces collectées', 'UUID de la transaction', 'UUID du chauffeur', 'Prénom du chauffeur', 'Nom du chauffeur', 'UUID de la course',
@@ -334,6 +333,16 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
   assert.deepStrictEqual(enc[8].filter(x => x !== ''), []);
   assert.strictEqual(tab(PAY).data[6][3], 'tx-0009');
   assert.strictEqual(tab(PAY).data[6][0].slice(0, 8), '=IF(L7="');
+  // classeur en français (comme le vrai, fr_FR) : formules écrites avec « ; » (virgules = #ERROR!, constaté le 23/10)
+  // (onglets déjà copiés en anglais : le changement de format les réécrit, transactions Uber comprises)
+  book.locale = 'fr_FR'; B.run(`CSH_FMT_ = 'test|'`);
+  const payBefore = tab(PAY).data.filter(r => r[3]).length;
+  B.run('cashSheetStep_(Date.now())');
+  assert.strictEqual(tab(PAY).data.filter(r => r[3]).length, payBefore, 'transactions réécrites, pas ajoutées');
+  const fr = tab('Caisse - Encaissements chauffeurs Ludy').data;
+  assert.strictEqual(fr[7][2], '=IF(B8="";"";XLOOKUP(B8;\'Export Uber - Driver Status Ludy\'!$A:$A;\'Export Uber - Driver Status Ludy\'!$G:$G))');
+  assert.strictEqual(fr[7][14], '=IF(G8="Chauffeur";IF(N8-K8=0;"OK";"KO");"N.A")');
+  assert.ok(!book.sheets.some(sh => sh.data.some(r => r.includes('#ERROR!'))), 'aucune formule en erreur');
   // état du dernier passage publié pour le site (param cashSheetStatus), même quand le passage du collecteur est long
   B.run('cshStatus_("Classeur de la caisse : Encaissements chauffeurs 3")');
   assert.match(env.psql("select value from params where key = 'cashSheetStatus'"), /^\d\d\/\d\d\/\d{4} \d\d:\d\d · Classeur de la caisse : Encaissements chauffeurs 3$/);

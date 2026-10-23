@@ -24,6 +24,8 @@ class Sheet {
   _get(r, c) { return (this.data[r - 1] && this.data[r - 1][c - 1] !== undefined) ? this.data[r - 1][c - 1] : ''; }
   _set(r, c, v) { if (r > this.maxR) throw new Error(this.name + ' row ' + r + ' > ' + this.maxR); if (c > this.maxC) throw new Error(this.name + ' col ' + c + ' > ' + this.maxC); while (this.data.length < r) this.data.push([]); const row = this.data[r - 1]; while (row.length < c) row.push(''); row[c - 1] = v; }
   getName() { return this.name; } getParent() { return this.book; }
+  // classeur en français : une formule est lue avec « ; » (setValues comme setFormulas), virgules = erreur d'analyse (#ERROR!) comme Google
+  _parse(x) { return typeof x === 'string' && x[0] === '=' && this.book && this.book.locale === 'fr_FR' && /,/.test(x.replace(/"[^"]*"|'[^']*'/g, '')) ? '#ERROR!' : x; }
   getRange(a, b, c, d) { if (typeof a === 'string') return new Range(this, ...a1(a)); return new Range(this, a, b, c || 1, d || 1); }
   getDataRange() { return new Range(this, 1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); }
   getLastRow() { for (let i = this.data.length; i > 0; i--) if ((this.data[i - 1] || []).some(v => v !== '' && v != null)) return i; return 0; }
@@ -56,14 +58,14 @@ class Range {
   setValues(v) { if (v.length !== this.nr || v.some(r => r.length !== this.nc)) throw new Error('setValues dims ' + this.s.name + ' ' + this.nr + 'x' + this.nc + ' vs ' + v.length + 'x' + (v[0] || []).length);
     v.forEach((row, i) => row.forEach((x, j) => { const dv = (this.s.dv || {})[(this.r + i) + ',' + (this.c + j)];
       // classeur en français : une formule écrite comme valeur est lue avec « ; » (virgules = erreur d'analyse, comme Google)
-      if (typeof x === 'string' && x[0] === '=' && this.s.book && this.s.book.locale === 'fr_FR' && /,/.test(x.replace(/"[^"]*"/g, ''))) x = '#ERROR!';
+      x = this.s._parse(x);
       if (dv && !dv.ok(x)) throw new Error('The data you entered in cell ' + this.s.name + ' r' + (this.r + i) + ' c' + (this.c + j) + ' violates the data validation rules set on this cell.');
       if (x === undefined || x === null || (typeof x === 'number' && !isFinite(x))) throw new Error('Bad value ' + this.s.name + ' r' + (this.r + i) + ' c' + (this.c + j) + ': ' + x); if (x instanceof Date && isNaN(x)) throw new Error('Invalid date ' + this.s.name); this.s._set(this.r + i, this.c + j, x); })); return this; }
   getDataValidations() { if (this.s.dvBroken) throw new Error('Service error: Spreadsheets'); const o = []; for (let i = 0; i < this.nr; i++) { const row = []; for (let j = 0; j < this.nc; j++) row.push((this.s.dv || {})[(this.r + i) + ',' + (this.c + j)] || null); o.push(row); } return o; }
   setDataValidations(m) { this.s.dv = this.s.dv || {}; m.forEach((row, i) => row.forEach((v, j) => { const k = (this.r + i) + ',' + (this.c + j); if (v) this.s.dv[k] = v; else delete this.s.dv[k]; })); return this; }
   clearDataValidations() { return this.setDataValidation(null); }
   setDataValidation(v) { return this.setDataValidations(Array.from({ length: this.nr }, () => Array.from({ length: this.nc }, () => v))); }
-  setFormulas(f) { if (f.length !== this.nr || f.some(r => r.length !== this.nc)) throw new Error('setFormulas dims ' + this.s.name); f.forEach((row, i) => row.forEach((x, j) => this.s._set(this.r + i, this.c + j, x))); return this; }
+  setFormulas(f) { if (f.length !== this.nr || f.some(r => r.length !== this.nc)) throw new Error('setFormulas dims ' + this.s.name); f.forEach((row, i) => row.forEach((x, j) => this.s._set(this.r + i, this.c + j, this.s._parse(x)))); return this; }
   setNumberFormats(f) { if (f.length !== this.nr || f.some(r => r.length !== this.nc)) throw new Error('setNumberFormats dims ' + this.s.name); return this; }
   setValue(x) { this.s._set(this.r, this.c, x); return this; }
   clearContent() { for (let i = 0; i < this.nr; i++) for (let j = 0; j < this.nc; j++) if (this.s.data[this.r + i - 1]) this.s.data[this.r + i - 1][this.c + j - 1] = ''; return this; }
@@ -71,7 +73,7 @@ class Range {
   sort(spec) { const vals = this.getValues(); const k = spec.column - this.c; vals.sort((a, b) => { const x = a[k], y = b[k]; const d = (x > y) - (x < y); return spec.ascending ? d : -d; }); this.setValues(vals); return this; }
 }
 class SS { constructor() { this.sheets = []; } getSheetByName(n) { return this.sheets.find(s => s.name === n) || null; } insertSheet(n) { if (this.getSheetByName(n)) throw new Error('dup ' + n); const s = new Sheet(n); s.book = this; this.sheets.push(s); return s; }
-  getSheets() { return this.sheets; } deleteSheet(s) { this.sheets = this.sheets.filter(x => x !== s); } toast(m, t) { toasts.push((t || '') + ': ' + m); } setActiveSheet(s) { return s; } moveActiveSheet() { } getUrl() { return 'https://x'; } setSpreadsheetTimeZone() { } }
+  getSheets() { return this.sheets; } getSpreadsheetLocale() { return this.locale || 'en_US'; } deleteSheet(s) { this.sheets = this.sheets.filter(x => x !== s); } toast(m, t) { toasts.push((t || '') + ': ' + m); } setActiveSheet(s) { return s; } moveActiveSheet() { } getUrl() { return 'https://x'; } setSpreadsheetTimeZone() { } }
 const main = new SS(); main.insertSheet('Feuille 1');
 const parc = new SS(); const ps = parc.insertSheet('Parc Automobile');
 ps.data = [['Double', 'N', 'ORG', 'DS', 'A', 'Liv', 'Immatriculation DEFINITIVE', 'Marque', 'Modèle', 'NUM CHASSIS', 'D1', 'IP', 'BA', 'U', 'G', 'TA', 'F', 'Carburant']];
