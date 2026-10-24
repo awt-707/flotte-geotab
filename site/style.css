@@ -456,3 +456,4 @@ tfoot tr.ttot td { border-top: 2px solid var(--line); font-weight: 600; backgrou
 .ctco { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 4px; }
 .ctco h3 { margin: 8px 0 4px; }
 input[dir="rtl"] { text-align: right; }
+input[data-ctd].bad { border-color: #c0392b; }
