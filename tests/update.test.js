@@ -18,7 +18,7 @@ test('sans nouvelle version : rien ne change', () => {
 });
 
 test('nouvelle version publiée : le collecteur remplace son code, une seule fois', () => {
-  assert.match(release('abc1234'), new RegExp('Collecteur publié : version .*\\.abc1234 \\(' + (files().length + 1) + ' fichiers\\)'));   // fichiers de collector/src + 60_report
+  assert.match(release('abc1234'), new RegExp('Collecteur publié : version .*\\.abc1234 \\(' + (files().length + 2) + ' fichiers\\)'));   // fichiers de collector/src + 60_report + 61_rh
   B.setNow(NOW + 5 * 60000); B.run('collect()');
   assert.strictEqual(B.scriptApi.length, 1);
   const call = B.scriptApi[0], body = JSON.parse(call.opt.payload);
@@ -27,6 +27,7 @@ test('nouvelle version publiée : le collecteur remplace son code, une seule foi
   assert.ok(body.files.some(f => f.name === 'appsscript' && f.type === 'JSON'));
   assert.ok(body.files.some(f => f.name === '30_run' && /function collect\(\)/.test(f.source)));
   assert.ok(body.files.some(f => f.name === '60_report' && /function rptBuild/.test(f.source)), 'calcul des rapports (site/report.js) publié avec le collecteur');
+  assert.ok(body.files.some(f => f.name === '61_rh' && /function rhAlerts/.test(f.source)), 'calculs RH (site/rh_calc.js) publiés avec le collecteur');
   assert.strictEqual(B.props.CODE_SHA, 'abc1234');
   assert.match(env.psql("select detail from logs where action = 'Collecte' order by id desc limit 1"), new RegExp('collecteur mis à jour : version ' + TODAY + '\\.abc1234'));
   B.setNow(NOW + 10 * 60000); B.run('collect()');

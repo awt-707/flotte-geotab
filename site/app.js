@@ -3,9 +3,12 @@ const CFG = window.FLOTTE_CONFIG || {};
 const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true }, global: { fetch: cacheFetch(() => CACHE) } });   // écriture = lectures gardées oubliées (site/cache.js)
 const S = { session: null, profile: null, P: null, veh: null, vehList: [], rules: null, drv: null, timers: [], channel: null, agencies: [], agName: {}, alertCh: null };
 const $ = sel => document.querySelector(sel);
-const ROLE_TXT = { admin: 'Administrateur', manager: 'Gestionnaire', viewer: 'Lecture seule', pending: 'En attente' };
+const ROLE_TXT = { admin: 'Administrateur', manager: 'Gestionnaire', viewer: 'Lecture seule', rh: 'Ressources humaines', pending: 'En attente' };
 const canEdit = () => S.profile && ['admin', 'manager'].includes(S.profile.role);
 const isAdmin = () => S.profile && S.profile.role === 'admin';
+// Compte « Ressources humaines » : seulement le dossier Ressources humaines (droits de la base : 20261111000000_rh_acces.sql)
+const isRH = () => S.profile && S.profile.role === 'rh';
+const RH_ONLY = { rh: 1, travail: 1, moi: 1, application: 1 };
 const PARAM_DEFAULTS = { limDbMb: 500, limStorageMb: 1024, limLiveMonth: 500000, manifestKeepDays: 30, shiftAdvance: 2, minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
 
 // ---------- Accès aux données ----------
@@ -294,6 +297,7 @@ async function pageApplication() {
 const ALWAYS_PAGES = { vehicule: 1, chauffeur: 1, application: 1, moi: 1 };   // fiches ouvertes depuis les autres volets, page de téléchargement
 function allPages() { return NAV.filter(n => !ADMIN_PAGES[n[0]]).map(n => [n[0], n[1]]).concat(extSites().map(x => ['x-' + x.id, x.name + ' (application)'])); }
 function canSee(page) {
+  if (isRH()) return !!RH_ONLY[page];
   if (isAdmin() || ALWAYS_PAGES[page] || !S.profile || !Array.isArray(S.profile.pages)) return true;
   return S.profile.pages.includes(page === 'travail' ? 'rh' : page);   // contrats de travail : dans le dossier Ressources humaines
 }
@@ -311,11 +315,11 @@ const NAV_GROUPS = { cc: { label: 'Conduite et consommation', pages: ['chauffeur
 const navGroupOf = k => k === 'rh' || k === 'travail' ? 'rh' : Object.keys(NAV_GROUPS).find(g => NAV_GROUPS[g].pages.includes(k));
 const navCmp = (a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' });
 function navHtml() {
-  const vis = NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (!/^(caisse|rh)$/.test(n[0]) || canEdit()) && canSee(n[0])), done = {}, out = [];
+  const vis = NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (n[0] === 'caisse' ? canEdit() : n[0] !== 'rh' || canEdit() || isRH()) && canSee(n[0])), done = {}, out = [];
   const link = (href, label, extra) => ({ label, html: `<a href="${esc(href)}"${extra || ''}>${esc(label)}${href === '#/alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` });
   const grp = (g, label, subs) => {
     subs = subs.map(x => ({ href: x[0], label: x[1] })).sort(navCmp);
-    return { label, html: `<div class="navfold" data-grp="${g}"><a href="#" class="navgrp" data-grp="${g}" role="button" aria-expanded="false">${esc(label)}</a>`
+    return { label, html: `<div class="navfold" data-grp="${g}"><a href="#" class="navgrp" data-grp="${g}" role="button" aria-expanded="false">${esc(label)}${g === 'rh' ? '<span class="nb" id="nbrh" hidden></span>' : ''}</a>`
       + `<div class="navsubs closed" data-grp="${g}">${subs.map(x => `<a href="${x.href}" class="navsub">${esc(x.label)}</a>`).join('')}</div></div>` };
   };
   vis.forEach(n => {
@@ -367,7 +371,7 @@ function shellHtml() {
     ${BRAND}
     <nav aria-label="Pages">${navHtml()}</nav>
     <div class="foot">${rhFoot()}${mineFoot()}${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
-      ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span>${isAdmin() ? '<a id="onl" class="onl" href="#/connexions" hidden title="Qui est connecté en ce moment"></a>' : ''}${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
+      ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}${isRH() ? '' : '<span id="health" class="health">Collecte…</span>'}${isAdmin() ? '<a id="onl" class="onl" href="#/connexions" hidden title="Qui est connecté en ce moment"></a>' : ''}${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
   <main id="page"><div class="loading">Chargement…</div></main></div>`;
 }
@@ -394,7 +398,7 @@ function shell() {
   }
   navMark(page);
   // derniers états connus redessinés tout de suite (menu neuf), relus ensuite en arrière-plan
-  sessBadgePaint(); healthPaint(); nbalPaint(); health(); openAlerts(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
+  sessBadgePaint(); healthPaint(); nbalPaint(); rhBadgePaint(); health(); openAlerts(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
   const on = $('.side nav a.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   return page;
 }
@@ -1483,7 +1487,7 @@ sb.auth.onAuthStateChange(async (ev, session) => {
   const changed = (S.session && S.session.user.id) !== (session && session.user.id);
   if (changed) {   // autre utilisateur : rien de ce qui a été lu pour le précédent n'est gardé (droits par agence, planning)
     sessReset();   // connexions : nouvelle session, pastille des connectés oubliée (jamais montrée à un autre compte)
-    S.profile = null; S.P = null; S.rhMe = undefined; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
+    S.profile = null; S.P = null; S.rhMe = undefined; S.rhAlertN = 0; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
     S.health = null; S.nbal = null; SHELL_KEY = '';   // bas du menu : collecte et pastille Alertes oubliées, menu reconstruit
     Object.assign(LIVE, { rows: [], pos: {}, at: 0, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {}, drv: {}, drvAt: 0, sel: '' });
   }

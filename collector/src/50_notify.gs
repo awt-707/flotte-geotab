@@ -289,3 +289,45 @@ function jobQuoteMail_(arg, by) {
   sbReq_('patch', 'missions?id=eq.' + enc_(m.id), { data: Object.assign({}, data, { history: hist }) }, { Prefer: 'return=minimal' });
   return 'Devis envoyé à ' + to.join(', ') + note;
 }
+
+/**
+ * Ressources humaines : alertes (fin de période d'essai, contrats à légaliser, CDD, CNSS, pièces expirées…, calcul rhAlerts de
+ * site/rh_calc.js) envoyées une fois par jour aux comptes « Ressources humaines » (à défaut aux administrateurs) quand une
+ * alerte critique ou haute est nouvelle, et chaque lundi s'il en reste. RH rattaché à des agences : salariés de ces agences.
+ * Sans les tables RH (migration pas encore exécutée) : rien.
+ */
+function rhDigest_() {
+  let emps;
+  try { emps = dbSelect_('hr_employees', 'select=*', 'id'); } catch (e) { return ''; }
+  if (!emps.length) return '';
+  const today = localDay_(new Date()), P = {};
+  dbSelect_('params', 'select=key,value&key=like.rh*', 'key').forEach(p => { P[p.key] = p.value; });
+  const ctx = { emps, today, P, events: dbSelect_('hr_events', 'select=*&cancelled_at=is.null', 'id'),
+    contracts: dbSelect_('work_contracts', 'select=id,employee_id,created_at,effective_on,signed_on,legalized_on,legal_path,ended_on', 'id'),
+    docs: dbSelect_('hr_documents', 'select=employee_id,category,expires_on', 'id') };
+  const all = rhAlerts(ctx).filter(a => a.level !== 'Moyenne');
+  const props = PropertiesService.getScriptProperties(), key = a => a.type + '|' + a.emp.id + '|' + a.text;
+  const sent = JSON.parse(props.getProperty('RH_SENT') || '[]'), fresh = all.filter(a => sent.indexOf(key(a)) < 0);
+  const monday = new Date(rhD(today)).getUTCDay() === 1;
+  if (!fresh.length && !(monday && all.length)) { props.setProperty('RH_SENT', JSON.stringify(all.map(key).slice(0, 400))); return ''; }
+  let rec = dbSelect_('profiles', 'select=user_id,email,role&role=in.(rh,admin)', 'user_id');
+  rec = rec.some(r => r.role === 'rh') ? rec.filter(r => r.role === 'rh') : rec;
+  const ua = dbSelect_('user_agencies', 'select=user_id,agency_id', 'user_id'), ag = {};
+  dbSelect_('agencies', 'select=id,name', 'id').forEach(a => { ag[a.id] = a.name; });
+  let n = 0; const err = [];
+  rec.forEach(r => {
+    const mine = r.role === 'rh' ? ua.filter(x => x.user_id === r.user_id).map(x => x.agency_id) : [];
+    const ok = a => !mine.length || a.emp.agency_id == null || mine.indexOf(a.emp.agency_id) >= 0;
+    const list = all.filter(ok), nw = fresh.filter(ok);
+    if (!list.length || (!nw.length && !monday)) return;
+    const row = a => '<tr><td style="color:' + (a.level === 'Critique' ? '#b42318' : '#c4320a') + '"><b>' + rptEsc(a.level) + '</b></td><td>' + rptEsc(a.type) + '</td><td><b>' + rptEsc(a.emp.name) + '</b>' +
+      (a.emp.agency_id && ag[a.emp.agency_id] ? ' <span style="color:#5d6b74">(' + rptEsc(ag[a.emp.agency_id]) + ')</span>' : '') + '</td><td>' + rptEsc(a.text) + (nw.indexOf(a) >= 0 ? ' <b style="color:#5b4bd6">nouveau</b>' : '') + '</td></tr>';
+    const html = '<div style="font-family:Arial,sans-serif;font-size:13px"><p>' + list.length + ' alerte' + (list.length > 1 ? 's' : '') + ' RH à traiter' + (nw.length ? ', dont ' + nw.length + ' nouvelle' + (nw.length > 1 ? 's' : '') : '') + ' :</p>' +
+      '<table cellpadding="4" style="border-collapse:collapse;font-size:12px"><tr style="background:#eef0f7"><th align="left">Gravité</th><th align="left">Type</th><th align="left">Salarié</th><th align="left">Détail</th></tr>' +
+      list.map(row).join('') + '</table><p style="color:#5d6b74;font-size:11px">Toutes les alertes RH (y compris de gravité moyenne) : ' + SITE_URL + '/#/rh?t=alertes</p></div>';
+    try { MailApp.sendEmail({ to: r.email, subject: 'Ludy RH : ' + list.length + ' alerte' + (list.length > 1 ? 's' : '') + ' à traiter' + (nw.length ? ' (' + nw.length + ' nouvelle' + (nw.length > 1 ? 's' : '') + ')' : ''), htmlBody: html, name: 'Ludy' }); n++; }
+    catch (e) { err.push(r.email + ' : ' + mailErr_(e)); }
+  });
+  if (n || !err.length) props.setProperty('RH_SENT', JSON.stringify(all.map(key).slice(0, 400)));
+  return (n ? 'alertes RH envoyées à ' + n + ' destinataire' + (n > 1 ? 's' : '') : '') + (err.length ? ' | e-mail RH impossible : ' + err.join(' ; ') : '');
+}
