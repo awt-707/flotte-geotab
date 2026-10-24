@@ -204,7 +204,7 @@ function ctrHistory() {
   box.innerHTML = table('cth', [['Créé le', h => esc(fmtDTY(h.created_at)), h => h.created_at], ['Salarié', h => esc(h.name || '')], ['CIN', h => esc(h.cin || '')], ['Société', h => esc(coName(h))],
     ['Effet', h => esc(ctrDate(h.effective_on)), h => h.effective_on || ''], ['Agence', h => esc(S.agName[h.agency_id] || '')],
     ['', h => `<span class="mfha">${h.pdf_path ? `<button class="ghost small" data-ctpdf="${h.id}">PDF</button><button class="ghost small" data-ctwa="${h.id}">WhatsApp</button>` : ''}<button class="ghost small" data-ctre="${h.id}">Reprendre</button>${isAdmin() ? `<button class="ghost small" data-ctdel="${h.id}">Supprimer</button>` : ''}</span>`]],
-    CT.hist, { empty: 'Aucun contrat généré' });
+    CT.hist, { empty: 'Aucun contrat généré', page: true });
   window.__rerender = ctrHistory;
   const byId = id => CT.hist.find(h => String(h.id) === String(id));
   box.querySelectorAll('[data-ctpdf]').forEach(b => b.onclick = async () => { try { const u = await ctrLink(byId(b.dataset.ctpdf).pdf_path); if (!openOut(u)) window.open(u, '_blank', 'noopener'); } catch (e) { alert('PDF inaccessible : ' + e.message); } });

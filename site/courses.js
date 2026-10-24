@@ -223,6 +223,7 @@ async function pageCourses() {
   const fst = q.get('s') || 'actives', act = m => !['Terminée', 'Facturée', 'Annulée', 'Refusée'].includes(m.status);
   const list = CR.list.filter(m => fst === 'toutes' ? true : fst === 'actives' ? act(m) : m.status === fst);
   const n = s => CR.list.filter(m => m.status === s).length, toVal = CR.list.filter(m => m.needs_validation && !m.validated_at && act(m)).length;
+  const draw = () => {   // page ou tri de la liste : redessinée avec les courses déjà lues
   $('#page').innerHTML = head + crsTabs('') + `
     ${cards([['À valider par l\'exploitation', f0(toVal), toVal ? 'warn' : ''], ['Demandes', f0(n('Demande'))], ['Devis envoyés', f0(n('Devis envoyé'))],
       ['Acceptés / acompte reçu', f0(n('Accepté') + n('Acompte reçu'))], ['Confirmées', f0(n('Confirmée'))], ['En cours', f0(n('En cours'))]])}
@@ -232,9 +233,11 @@ async function pageCourses() {
       ['Prestation', m => esc(m.kind || '') + '<div class="small">' + esc(crsCatName(m.category)) + '</div>'], ['Début', m => fmtDTY(m.start_at), m => m.start_at || ''], ['Fin', m => fmtDTY(m.end_at), m => m.end_at || ''],
       ['Véhicule', m => m.vehicle_key ? plate((S.veh[m.vehicle_key] || {}).plate || m.vehicle_key) : '<span class="small">à affecter</span>'],
       ['Niveau', m => badge(m.level, CRS_LVL_CLS[m.level])], ['Statut', m => badge(m.status, CRS_ST_CLS[m.status]) + (m.needs_validation ? (m.validated_at ? ' <span class="small ok">validé</span>' : ' <span class="small crit">à valider</span>') : '')],
-      ['Total TTC', m => m.total_ttc == null ? '' : crsMoney(m.total_ttc), m => m.total_ttc || 0, 'n']], list, { empty: CR.listErr ? 'Erreur : ' + esc(CR.listErr) : 'Aucune demande' })}`;
+      ['Total TTC', m => m.total_ttc == null ? '' : crsMoney(m.total_ttc), m => m.total_ttc || 0, 'n']], list, { empty: CR.listErr ? 'Erreur : ' + esc(CR.listErr) : 'Aucune demande', page: true })}`;
   $('#crsf').onchange = e => { location.hash = '#/courses?s=' + encodeURIComponent(e.target.value); };
-  window.__rerender = () => pageCourses();
+  };
+  draw();
+  window.__rerender = () => pageCourses(); window.__repage = draw;
 }
 
 // planning : véhicules × 14 jours, missions qui bloquent le véhicule (acompte reçu, confirmée, en cours)

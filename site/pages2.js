@@ -131,7 +131,7 @@ async function pageCarburant() {
     <h2>Jauge en ce moment</h2>
     ${table('tjauge', [['Véhicule', k => vlink(k), k => vehOf(k).plate], ['Modèle', k => esc(vehOf(k).model || '')],
       ['Jauge (%)', k => { const a = lv[k]; return a && a.length ? `<b>${f0(a[a.length - 1].v)} %</b>` : `<span class="nm">${NM}</span>`; }, k => (lv[k] || []).slice(-1).map(x => x.v)[0] || -1, 'n'],
-      ['Relevée le', k => { const a = lv[k]; return a && a.length ? fmtDT(a[a.length - 1].t) : ''; }]], vk, { empty: 'Aucun véhicule' })}
+      ['Relevée le', k => { const a = lv[k]; return a && a.length ? fmtDT(a[a.length - 1].t) : ''; }]], vk, { empty: 'Aucun véhicule', page: true })}
     ${key && lv[key] ? '<h2>Jauge, 72 dernières heures (%)</h2>' + svgLine(lv[key], { min: 0, max: 100, title: 'Jauge' }) : ''}
     <h2>Par véhicule</h2>
     ${table('tcv', [['Véhicule', k => vlink(k), k => vehOf(k).plate], ['Modèle', k => esc(vehOf(k).model || '')], ['Trajets', k => f0((byV[k] || mk()).trips), k => (byV[k] || mk()).trips, 'n'],
@@ -139,7 +139,7 @@ async function pageCarburant() {
       ['L/100 km', k => nmv(l100(byV[k] || mk())), null, 'n'], ['Litres moteur à l\'arrêt', k => idleL(byV[k] || mk()), k => (byV[k] || mk()).idleL, 'n'],
       ['Temps moteur à l\'arrêt', k => fH((byV[k] || mk()).idleMin / 60), k => (byV[k] || mk()).idleMin, 'n'], ['Pleins', k => f0((byV[k] || mk()).pleins), null, 'n'],
       ['Litres des pleins', k => f1((byV[k] || mk()).pleinsL), null, 'n'],
-      ['Coût (MAD)', k => cost(byV[k] || mk()), null, 'n'], ['Trajets mesurés', k => cov(byV[k] || mk()), null, 'n']], vk)}
+      ['Coût (MAD)', k => cost(byV[k] || mk()), null, 'n'], ['Trajets mesurés', k => cov(byV[k] || mk()), null, 'n']], vk, { page: true })}
     <h2>Par chauffeur</h2>
     ${shiftSections(Object.keys(byD).sort((a, b) => byD[b].fuel - byD[a].fuel), k => byD[k].shift, (ks, sfx) => table('tcd' + sfx, [['Chauffeur', k => dlink(byD[k].code, drvName(byD[k].code, byD[k].name)), k => drvName(byD[k].code, byD[k].name)], ['Code', k => byD[k].code === HORS ? '' : esc(byD[k].code)], ['Trajets', k => byD[k].trips, null, 'n'],
       ['Km', k => f1(byD[k].km), k => byD[k].km, 'n'], ['Carburant (L)', k => byD[k].fuelN ? f1(byD[k].fuel) : `<span class="nm">${NM}</span>`, k => byD[k].fuel, 'n'],
@@ -333,7 +333,7 @@ async function pageRalenti() {
       ['Moteur tournant', r => r.engine_check === 'Régime moteur' ? fH(num(r.engine_min) / 60) : 'non vérifiable', r => num(r.engine_min), 'n'], ['Véhicule', r => vlink(r.vehicle_key, r.plate)],
       ['Chauffeur', r => dlink(r.driver_code, drvName(r.driver_code, r.driver_name))], ['Contrat', r => esc(r.contract_num || '')],
       ['Litres', r => r.liters === null ? `<span class="nm">${NM}</span>` : f1(r.liters), null, 'n'], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']],
-      idl.sort((a, b) => new Date(b.start_at) - new Date(a.start_at)), { empty: 'Aucun arrêt prolongé' })}`;
+      idl.sort((a, b) => new Date(b.start_at) - new Date(a.start_at)), { empty: 'Aucun arrêt prolongé', page: true })}`;
   };
   window.__rerender = render; render();
 }
@@ -401,6 +401,7 @@ async function pageArrets() {
     ['Ceinture conducteur pendant les arrêts', a => a.nBelt ? `bouclée ${fH(a.on / 60)}, débouclée ${fH(a.off / 60)}` : `<span class="nm">${NM}</span>`]];
   const det = rows.slice().sort((a, b) => new Date(b.start_at) - new Date(a.start_at)), shOf = await contractShifts(rows.map(r => r.contract_num));
   const sk = r => (r.driver_code && r.driver_code !== HORS ? shOf(r.contract_num) : '') + '|' + (r.driver_code || HORS), kc = k => k.slice(k.indexOf('|') + 1);
+  const render = () => {   // page ou tri d'un tableau : redessiné avec les lignes déjà lues
   $('#page').innerHTML = `<div class="head"><h1>Arrêts moteur tournant</h1><div class="sub">Chaque arrêt de ${esc(minS)} min et plus, véhicule immobile (moins de 2 km/h) et moteur thermique tournant (plus de ${esc(P.rpmMin || 300)} tr/min).
     <b>Litres</b> = compteur Geotab du carburant brûlé au ralenti, relevé juste avant et juste après l'arrêt : valeur réelle. Le boîtier ne relève ce compteur qu'à certains moments (surtout au contact mis ou coupé) :
     quand aucun relevé n'encadre l'arrêt, les litres de l'arrêt sont « non mesuré » et la colonne « Ralenti du trajet » donne le total réel du trajet, qui inclut cet arrêt (plafond).
@@ -418,13 +419,15 @@ async function pageArrets() {
       ['L/h', r => r.lph !== null ? f1(r.lph) : '', r => num(r.lph), 'n'], ['Coût (MAD)', r => { const c = cost(r); return c !== null ? f1(c) : ''; }, r => cost(r) || 0, 'n'],
       ['Ralenti du trajet (réel)', r => { const t = trip[r.trip_id]; return t && t.idle_fuel_l !== null ? f1(t.idle_fuel_l) + ' L en ' + f0(t.idle_min) + ' min' : ''; }],
       ['Ceinture conducteur', r => beltTxt(r)], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']],
-      det, { empty: 'Aucun arrêt moteur tournant sur la période' })}`;
+      det, { empty: 'Aucun arrêt moteur tournant sur la période', page: true })}`;
   $('#vsel').onchange = e => { location.hash = '#/arrets' + (e.target.value ? '?k=' + encodeURIComponent(e.target.value) : ''); };
   const bk = $('#stopsback');
   if (bk) bk.onclick = async () => {
     if (!confirm('Retélécharger les 14 derniers jours depuis Geotab pour calculer leurs arrêts moteur tournant ? (les autres chiffres sont recalculés à l\'identique)')) return;
     try { await job('resync', addDays(today(), -14) + '|' + addDays(today(), -1)); $('#stopsres').textContent = 'Demandé : calcul en arrière-plan (Journal technique).'; bk.disabled = true; }
     catch (e) { $('#stopsres').textContent = 'Erreur : ' + e.message; } };
+  };
+  window.__rerender = render; render();
 }
 
 // ---------- CONDUITE (classement conduite du Sheet : événements par type, vitesses, dépassements) ----------
@@ -466,13 +469,14 @@ async function pageConduite() {
       ['Pire dépassement', o => o.worst ? `<b class="${o.worst.lim && o.worst.ex >= rptOverTol(P, num(o.worst.lim)) ? 'red' : ''}">+${f0(o.worst.ex)}</b> (${esc(o.worst.v)} / ${esc(o.worst.lim)})` : '', o => o.worst ? o.worst.ex : 0, 'n'],
       ['Pire dépassement : où et quand', o => o.worst ? esc(o.worst.plate) + ' le ' + fmtDay(localDay(o.worst.t)).slice(0, 5) + ' ' + esc(o.worst.hm) : ''],
       ['Trajets au-dessus du seuil d\'alerte de dépassement', o => f0(o.nOver), o => o.nOver, 'n'], ['Trajets', o => f0(o.trips), null, 'n']]);
+  const render = () => {   // page ou tri d'un tableau : redessiné avec les lignes déjà lues
   $('#page').innerHTML = `<div class="head"><h1>Conduite</h1><div class="sub">Du plus dangereux au plus sûr. Chiffres bruts : événements détectés par le boîtier Geotab (règles de conduite, une seule version par règle), vitesse du capteur du véhicule, limite de la route fournie par Geotab. Classés : au moins ${esc(P.kmMin || 20)} km.</div>
       <button id="cdpdf">Télécharger le PDF</button></div>
     ${periodBar(go)}
     ${cards([['Le plus dangereux', ranked[0] ? esc(ranked[0].nom) : '—', 'crit'], ['Son score /100 km', ranked[0] ? f1(ranked[0].score) : ''], ['Le plus sûr', ranked.length ? esc(ranked[ranked.length - 1].nom) : '—', 'ok'],
       ['Son score /100 km', ranked.length ? f1(ranked[ranked.length - 1].score) : ''], ['Chauffeurs classés', ranked.length + ' / ' + list.length], ['Km analysés', f0(kmT)], ['Événements de conduite', f0(evT)]])}
     ${svgBars(ranked.map(o => ({ label: o.nom + ' (' + (o.shift === 'Jour' ? 'jour' : 'nuit') + ')', value: Math.max(o.score, 0.5), color: LVL_COLOR[o.level], text: f1(o.score) + ' pts' })), { title: 'Score par chauffeur' })}
-    <h2>Classement par shift (1 = le plus dangereux du shift)</h2>${shiftSections(ranked, o => o.shift, (sub, sfx) => table('tcond' + sfx, cols(true), sub))}
+    <h2>Classement par shift (1 = le plus dangereux du shift)</h2>${shiftSections(ranked, o => o.shift, (sub, sfx) => table('tcond' + sfx, cols(true), sub, { page: true }))}
     ${small.length ? `<h2>Non classés : moins de ${esc(P.kmMin || 20)} km (pour information)</h2>${shiftSections(small, o => o.shift, (sub, sfx) => table('tcond2' + sfx, cols(false), sub))}` : ''}`;
   $('#cdpdf').onclick = () => { try {
     const tabs = [];
@@ -485,6 +489,8 @@ async function pageConduite() {
         ['Chauffeurs classés', ranked.length + ' / ' + list.length], ['Km analysés', f0(kmT)], ['Événements de conduite', f0(evT)],
         ['Sources', 'événements du boîtier Geotab, vitesse du capteur du véhicule, limite de la route fournie par Geotab']], tables: tabs }));
   } catch (e) { alert('PDF impossible : ' + e.message); } };
+  };
+  window.__rerender = render; render();
 }
 
 // ---------- FICHE VÉHICULE ----------
@@ -510,6 +516,7 @@ async function pageFicheVehicule() {
     const rl = S.rules[e.rule_id] || { name: e.rule_id, weight: 0 }, k = e.rule_id + '|' + e.driver_code;
     const o = er[k] || (er[k] = { rule: rl.name, code: e.driver_code, n: 0, dur: 0, w: num(rl.weight) }); o.n++; o.dur += num(e.dur_s); });
   const byDay = aggJournal(jrn.filter(r => r.day >= from31), r => r.day, P), dkeys = Object.keys(byDay).sort();
+  const render = () => {   // page ou tri d'un tableau : redessiné avec les lignes déjà lues
   $('#page').innerHTML = `<div class="head"><h1>${plate(v.plate, v.other_plates)} <span class="small">${esc((v.brand || '') + ' ' + (v.model || ''))}</span></h1>
       <div class="sub">${esc(v.fuel || '')} · réservoir ${esc(v.tank_l || '?')} L · Geotab ${esc(v.geotab_name || 'non associé')} · ${v.agency_id ? 'agence ' + agTxt(v.agency_id) : 'sans agence'}</div></div>
     ${periodBar(go)}
@@ -525,20 +532,22 @@ async function pageFicheVehicule() {
       ['Ralenti', r => fH(r.idle_h), r => r.idle_h, 'n'], ['dont prolongé', r => fH(r.long_idle_h), r => r.long_idle_h, 'n'], ['Carburant (L)', r => r.fuel_l === null ? `<span class="nm">${NM}</span>` : f1(r.fuel_l), r => r.fuel_l, 'n'],
       ['L/100', r => r.l100 === null ? '' : f1(r.l100), r => r.l100, 'n'], ['Vmax', r => f0(r.vmax), r => r.vmax, 'n'], ['Pire dépassement', r => r.worst_over === null ? '' : '+' + f0(r.worst_over), r => r.worst_over, 'n'],
       ['Événements', r => r.n_events, null, 'n'], ['Score', r => f1(r.score), r => r.score, 'n'], ['Pleins', r => r.n_fills, null, 'n'], ['Siphonages', r => r.n_siphon ? `<b class="red">${r.n_siphon}</b>` : '0', r => r.n_siphon, 'n']],
-      jrn.filter(r => r.day >= from31).sort((x, y) => String(y.contract_start || y.day).localeCompare(String(x.contract_start || x.day))), { empty: 'Aucune journée' })}
+      jrn.filter(r => r.day >= from31).sort((x, y) => String(y.contract_start || y.day).localeCompare(String(x.contract_start || x.day))), { empty: 'Aucune journée', page: true })}
     <h2>Événements Geotab par règle et chauffeur (période)</h2>
     ${table('tfve', [['Règle', o => esc(o.rule)], ['Chauffeur', o => dlink(o.code)], ['Nombre', o => o.n, null, 'n'], ['Durée cumulée', o => fH(o.dur / 3600), o => o.dur, 'n'], ['Poids', o => f1(o.w), null, 'n'], ['Points', o => f1(o.n * o.w), o => o.n * o.w, 'n']],
       Object.values(er).sort((x, y) => y.n * y.w - x.n * x.w || y.n - x.n), { empty: 'Aucun événement' })}
     <h2>Arrêts moteur allumé (31 jours)</h2>
     ${table('tfvi', [['Début', r => fmtDTY(r.start_at), r => r.start_at], ['Durée', r => fH(num(r.stop_min) / 60), r => num(r.stop_min), 'n'], ['Moteur tournant', r => r.engine_check === 'Régime moteur' ? fH(num(r.engine_min) / 60) : 'non vérifiable'],
       ['Chauffeur', r => dlink(r.driver_code, drvName(r.driver_code, r.driver_name))], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']],
-      idl.sort((x, y) => new Date(y.start_at) - new Date(x.start_at)), { empty: 'Aucun arrêt prolongé' })}
+      idl.sort((x, y) => new Date(y.start_at) - new Date(x.start_at)), { empty: 'Aucun arrêt prolongé', page: true })}
     <h2>Pleins et siphonages suspects (31 jours)</h2>
     ${table('tfvf', [['Date / heure', f => fmtDTY(f.stop_start), f => f.stop_start], ['Type', f => f.type === 'PLEIN' ? badge('Plein', 'ok') : f.type === 'SIPHONAGE_SUSPECT' ? badge('Siphonage suspect', 'crit') : badge('Boîtier coupé', 'crit')],
       ['Jauge avant → après (%)', f => f1(f.lvl_before) + ' → ' + f1(f.lvl_after)], ['Litres', f => f.type === 'PLEIN' ? f1(rptFillL(f)) : f1(f.liters_gauge), null, 'n'], ['Mesure', f => f.type === 'PLEIN' ? esc(rptFillSrc(f)) : 'jauge'],
       ['Chauffeur', f => dlink(f.driver_code, drvName(f.driver_code, f.driver_name))], ['Chauffeur au redémarrage', f => esc(f.next_driver || '')], ['Statut', f => esc(f.status || '')]],
-      fuel.sort((x, y) => new Date(y.stop_start) - new Date(x.stop_start)), { empty: 'Aucun' })}
+      fuel.sort((x, y) => new Date(y.stop_start) - new Date(x.stop_start)), { empty: 'Aucun', page: true })}
     <h2>Alertes (30 plus récentes)</h2>${alertTable('tfva', alS, false)}`;
+  };
+  window.__rerender = render; render();
 }
 
 // ---------- FICHE CHAUFFEUR (compte rendu chauffeur du Sheet, imprimable en PDF) ----------

@@ -105,9 +105,20 @@ test('arrêts moteur tournant : chaque arrêt de la base affiché, litres non me
     await page.waitForFunction(() => !document.querySelector('#page .loading'), null, { timeout: 15000 });
     const n = +env.psql("select count(*) from engine_stops where day between '2026-09-07' and '2026-10-06'");
     assert.ok(n > 0, 'aucun arrêt calculé');
-    assert.strictEqual(await page.locator('#tstops tbody tr').count(), n);
     const nm = +env.psql("select count(*) from engine_stops where day between '2026-09-07' and '2026-10-06' and liters is null");
-    assert.strictEqual(await page.locator('#tstops tbody tr td:nth-child(8) .nm').count(), nm, 'litres non mesurés');
+    // détail par pages de 50 : toutes les pages parcourues
+    const bar = '.pager[data-pg="tstops"]';
+    if (await page.locator(bar).count()) assert.strictEqual(+await page.getAttribute(bar, 'data-total'), n);
+    let seen = 0, seenNm = 0;
+    for (;;) {
+      seen += await page.locator('#tstops tbody tr').count(); seenNm += await page.locator('#tstops tbody tr td:nth-child(8) .nm').count();
+      const next = page.locator(bar + ' [data-k="next"]');
+      if (!await next.count() || await next.isDisabled()) break;
+      const was = await page.innerText(bar + ' .pgi'); await next.click();
+      await page.waitForFunction(([b, x]) => document.querySelector(b + ' .pgi').innerText !== x, [bar, was]);
+    }
+    assert.strictEqual(seen, n);
+    assert.strictEqual(seenNm, nm, 'litres non mesurés');
     assert.match(await page.innerText('.cards'), new RegExp(`${n - nm} / ${n}`));
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }

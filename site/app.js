@@ -459,7 +459,7 @@ async function pageTableau() {
       ['Coût carburant (MAD)', x => x.a.costN ? f0(x.a.cost) : '', x => x.a.cost, 'n'], ['Pleins', x => x.a.fills, null, 'n'], ['Vmax', x => f0(x.a.vmax), x => x.a.vmax, 'n'],
       ['Pire dépassement', x => x.a.worst === null ? '' : '+' + f0(x.a.worst), x => x.a.worst || 0, 'n'], ['Événements', x => x.a.evts, null, 'n'],
       ['Score /100 km', x => f1(scoreOf(x.a, P)), x => scoreOf(x.a, P), 'n'], ['Siphonages suspects', x => x.a.siph ? `<b class="red">${x.a.siph}</b>` : '0', x => x.a.siph, 'n'],
-      ['Km hors contrat', x => x.a.kmHors ? `<b class="red">${f1(x.a.kmHors)}</b>` : '0', x => x.a.kmHors, 'n'], ['Alertes', x => x.al, null, 'n']], vrows)}
+      ['Km hors contrat', x => x.a.kmHors ? `<b class="red">${f1(x.a.kmHors)}</b>` : '0', x => x.a.kmHors, 'n'], ['Alertes', x => x.al, null, 'n']], vrows, { page: true })}
     <h2>Chauffeurs les plus dangereux, par shift <a class="more" href="#/chauffeurs">Voir le classement complet</a></h2>
     ${shiftSections(drows, d => d.sh, (sub, sfx) => table('tdrv' + sfx, [['Rang', (d) => sub.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${dlink(d.code, d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
       ['Niveau', d => badge(d.level, LEVEL_CLS[d.level]), d => d.score], ['Score /100 km', d => f1(d.score), d => d.score, 'n'], ['Événements', d => d.a.evts, null, 'n'],
@@ -596,11 +596,11 @@ async function pageJour() {
       ['Pire dépassement', r => r.worst_over === null ? '' : '+' + f0(r.worst_over), r => r.worst_over, 'n'], ['Événements', r => r.n_events, null, 'n'],
       ['Score', r => f1(r.score), r => r.score, 'n'], ['Niveau', r => r.driver_code === HORS ? '' : badge(levelOf(r.score, P), LEVEL_CLS[levelOf(r.score, P)]), r => r.score],
       ['Pleins', r => r.n_fills, null, 'n'], ['Siphonages', r => r.n_siphon ? `<b class="red">${r.n_siphon}</b>` : '0', r => r.n_siphon, 'n']],
-      sub), { unit: 'journées', empty: 'Aucune journée de travail ce jour-là' })}
+      sub, { page: true }), { unit: 'journées', empty: 'Aucune journée de travail ce jour-là' })}
     <h2>Arrêts moteur allumé ≥ ${P.idleLongMin} min</h2>
     ${table('tidl', [['Début', r => fmtDT(r.start_at), r => r.start_at], ['Fin', r => fmtDT(r.end_at)], ['Durée arrêt', r => fH(r.stop_min / 60), r => r.stop_min, 'n'],
       ['Moteur tournant', r => r.engine_check === 'Régime moteur' ? fH(r.engine_min / 60) : 'non vérifiable', r => r.engine_min, 'n'], ['Plaque', r => plate(r.plate), r => r.plate],
-      ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name || '')], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']], idl, { empty: 'Aucun arrêt prolongé' })}
+      ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name || '')], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']], idl, { empty: 'Aucun arrêt prolongé', page: true })}
     <h2>Alertes de la journée, par shift</h2>${alertSections('tjal', al, false)}`;
     $('#jday').onchange = e => { location.hash = '#/jour?jour=' + e.target.value; };
     $('#jprev').onclick = () => { location.hash = '#/jour?jour=' + addDays(day, -1); };
@@ -653,7 +653,7 @@ async function pageChauffeurs() {
       ['dont prolongé', d => fH(d.a.idleLong), d => d.a.idleLong, 'n'], ['Carburant (L)', d => nmv(fuelVal(d.a)), d => d.a.fuel, 'n'], ['L/100 km', d => nmv(l100Val(d.a)), d => d.a.l100 || 0, 'n'],
       ['Vmax', d => f0(d.a.vmax), d => d.a.vmax, 'n'], ['Pire dépassement', d => d.a.worst === null ? '' : '+' + f0(d.a.worst), d => d.a.worst || 0, 'n']]
       .concat(ruleIds.map(id => [esc((S.rules[id] || {}).name || id) + ` <span class="small">×${(S.rules[id] || {}).weight || ''}</span>`, d => d.rules[id] || 0, d => d.rules[id] || 0, 'n']))
-      .concat([['Pleins', d => d.a.fills, null, 'n'], ['Siphonages suspects', d => d.a.siph, null, 'n'], ['Véhicules', d => esc(Object.keys(d.a.plates).join(', '))]]), sub))}`;
+      .concat([['Pleins', d => d.a.fills, null, 'n'], ['Siphonages suspects', d => d.a.siph, null, 'n'], ['Véhicules', d => esc(Object.keys(d.a.plates).join(', '))]]), sub, { page: true }))}`;
     $('#rkpdf').onclick = () => { try { pdf(); } catch (e) { alert('PDF impossible : ' + e.message); } };
   };
   window.__rerender = render; render();
@@ -944,7 +944,7 @@ async function pageFiches() {
       ['Origine', d => d.source === 'manuel' ? '<span class="badge info">ajouté</span>' : 'contrats', d => d.source], ['Statut', d => badge(d.status, d.status === 'NOUVEAU' ? 'info' : ''), d => d.status],
       ['Contrats', d => d.n_contracts || 0, d => d.n_contracts || 0, 'n'], ['Dernier contrat', d => fmtDTY(d.last_contract), d => d.last_contract || ''],
       ['Note', d => canEdit() ? `<input class="ded" data-c="note" data-k="${esc(d.code)}" value="${esc(d.note || '')}" size="16">` : esc(d.note || '')],
-      ['', d => canEdit() && d.source === 'manuel' && !d.n_contracts ? `<button class="ghost small" data-ddel="${esc(d.code)}">Supprimer</button>` : '']], sub), { none: 'Sans contrat', empty: 'Aucun chauffeur' })}`;
+      ['', d => canEdit() && d.source === 'manuel' && !d.n_contracts ? `<button class="ghost small" data-ddel="${esc(d.code)}">Supprimer</button>` : '']], sub, { page: true, sig: q }), { none: 'Sans contrat', empty: 'Aucun chauffeur' })}`;
     document.querySelectorAll('.ded').forEach(i => { i.onchange = async () => {
       const c = i.dataset.c, val = c === 'agency_id' ? (i.value ? +i.value : null) : (i.value.trim() || null);
       const { error } = await sb.from('drivers').update({ [c]: val }).eq('code', i.dataset.k);

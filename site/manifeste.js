@@ -411,7 +411,7 @@ function mfHistory() {
   const ok = inAgency(), rows = MF.hist.filter(h => ok(h.vehicle_key));
   box.innerHTML = table('mfh', [['Départ', h => esc(fmtDTY(h.depart_at)), h => h.depart_at], ['Véhicule', h => plate(h.plate)], ['Chauffeur', h => esc(h.driver_name || '')], ['Client', h => esc(h.client || '')],
     ['Trajet', h => { const r = (h.data && h.data.raw) || {}; return esc((r.depart || '') + ' → ' + (r.terminus || '')); }],
-    ['', h => `<span class="mfha">${h.file_path && canEdit() ? `<button class="ghost small" data-mfpdf="${h.id}">PDF</button><button class="ghost small" data-mfwa="${h.id}">WhatsApp</button>` : ''}${canEdit() ? `<button class="ghost small" data-mfre="${h.id}">Reprendre</button>` : ''}</span>`]], rows, { empty: 'Aucun manifeste sur les 60 derniers jours' });
+    ['', h => `<span class="mfha">${h.file_path && canEdit() ? `<button class="ghost small" data-mfpdf="${h.id}">PDF</button><button class="ghost small" data-mfwa="${h.id}">WhatsApp</button>` : ''}${canEdit() ? `<button class="ghost small" data-mfre="${h.id}">Reprendre</button>` : ''}</span>`]], rows, { empty: 'Aucun manifeste sur les 60 derniers jours', page: true });
   window.__rerender = mfHistory;
   const byId = id => rows.find(h => String(h.id) === String(id));
   box.querySelectorAll('[data-mfpdf]').forEach(b => b.onclick = async () => { try { { const u = await mfLink(byId(b.dataset.mfpdf).file_path); if (!openOut(u)) window.open(u, '_blank', 'noopener'); } } catch (e) { alert('PDF inaccessible : ' + e.message); } });

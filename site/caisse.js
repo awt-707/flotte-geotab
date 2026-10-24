@@ -490,9 +490,9 @@ function cshTabImport() {
     <h3>Chauffeurs Uber non reliés à un chauffeur Ludy (${unmapped.length})</h3>
     ${table('tcshmap', [['Chauffeur Uber', u => esc(u.name || '')], ['Téléphone', u => esc(u.phone || '')], ['Statut Uber', u => esc(u.status || '')],
       ['Chauffeur Ludy', u => { const s = sugg(u); return `<select data-cshmap="${esc(u.uuid)}"><option value="">—</option>${CS.drivers.filter(d => !d.uber_uuid).map(d => `<option value="${esc(d.code)}" ${s && s.code === d.code ? 'selected' : ''}>${esc(d.name || d.code)}</option>`).join('')}</select>${s ? ' <span class="small">proposé</span>' : ''}`; }],
-      ['', u => `<button class="small" data-cshmapok="${esc(u.uuid)}">Relier</button>`]], unmapped, { empty: 'Tous les chauffeurs Uber importés sont reliés.' })}
+      ['', u => `<button class="small" data-cshmapok="${esc(u.uuid)}">Relier</button>`]], unmapped, { empty: 'Tous les chauffeurs Uber importés sont reliés.', page: true })}
     <details class="panel"><summary><h3>Chauffeurs reliés (${mapped.length})</h3></summary>${table('tcshmapd', [['Chauffeur Ludy', d => esc(d.name || d.code)], ['Chauffeur Uber', d => esc((CS.udrv.find(u => u.uuid === d.uber_uuid) || {}).name || d.uber_uuid)],
-      ['', d => `<button class="ghost small" data-cshunmap="${esc(d.code)}">Délier</button>`]], mapped)}</details>`);
+      ['', d => `<button class="ghost small" data-cshunmap="${esc(d.code)}">Délier</button>`]], mapped, { page: true })}</details>`);
   if (CS.flash) { const x = $('#' + CS.flash.id); if (x) x.innerHTML = CS.flash.html; CS.flash = null; }
   const shIn = $('#cshsheet');
   if (shIn) {
