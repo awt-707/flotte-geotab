@@ -117,6 +117,14 @@ td.n, th.n { text-align: right; white-space: nowrap; font-family: var(--fc); fon
 th.n { font-size: 13px; }
 td.wide { min-width: 300px; max-width: 70ch; }
 td input { width: 100%; min-width: 90px; }
+th.ns { cursor: default; } th.ns:hover { color: var(--mute); }
+/* Pages d'un tableau long (pager.js) : sous le tableau */
+.pager { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 8px 0 16px; font-size: 13px; color: var(--mute); }
+.pager .pgi { color: var(--ink); white-space: nowrap; font-family: var(--fc); font-size: 14px; }
+.pager .pgn { white-space: nowrap; }
+.pager .pgs { display: flex; align-items: center; gap: 6px; margin-left: auto; white-space: nowrap; }
+.pager select { min-height: 30px; padding: 3px 6px; font-size: 13px; }
+@media (max-width: 900px) { .pager .pgx { display: none; } .pager .pgs { margin-left: 0; } }
 
 /* ---------- Plaque d'immatriculation ---------- */
 .plate { display: inline-flex; align-items: center; font: 600 14px/1 var(--fc); letter-spacing: .04em; color: var(--plate-ink); background: var(--plate-bg);

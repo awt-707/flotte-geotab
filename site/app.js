@@ -340,15 +340,23 @@ function badge(t, cls) { return t ? `<span class="badge ${cls || ''}">${esc(t)}<
 const LEVEL_CLS = { 'Faible': 'ok', 'Modéré': 'warn', 'Élevé': 'high', 'Dangereux': 'crit' };
 const GRAV_CLS = { 'Critique': 'crit', 'Haute': 'high', 'Moyenne': 'warn', 'Info': 'info' };
 const STATE_CLS = { 'En route': 'ok', 'Arrêté, contact mis': 'warn', 'Garé': '', 'Boîtier hors ligne': 'crit', 'Pas de réponse Geotab': 'crit', 'Non relié à Geotab': 'info' };
-/** Tableau triable : cols = [[titre, fonction(ligne) -> html, valeur de tri (facultatif), classe]] */
+/**
+ * Tableau triable : cols = [[titre, fonction(ligne) -> html, valeur de tri (facultatif), classe]]
+ * Pages (pager.js) : opt.page = true : toutes les lignes triées et totalisées, seule la page dessinée (opt.sig = filtres / recherche,
+ * changés = page 1) ; opt.server = page lue dans la base (pgLoad) : rows = lignes de la page, tri par la base (opt.sortable = colonnes triables).
+ */
 function table(id, cols, rows, opt) {
   opt = opt || {};
-  if (!rows.length) return `<div class="empty">${opt.empty || 'Aucune donnée sur la période'}</div>`;
+  const srv = opt.server;
+  if (!rows.length && !(srv && srv.total)) return `<div class="empty">${opt.empty || 'Aucune donnée sur la période'}</div>`;
   const st = (window.__sort || {})[id] || {};
-  let list = rows.slice();
-  if (st.c !== undefined && cols[st.c]) { const f = cols[st.c][2] || cols[st.c][1]; list.sort((a, b) => { const x = f(a), y = f(b); return (x > y ? 1 : x < y ? -1 : 0) * (st.d ? -1 : 1); }); }
-  return `<div class="tw"><table id="${id}"><thead><tr>${cols.map((c, i) => `<th data-t="${id}" data-c="${i}" class="${c[3] || ''}">${c[0]}${st.c === i ? (st.d ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
-    <tbody>${list.map(r => `<tr>${cols.map(c => `<td class="${c[3] || ''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody>${opt.total ? tableTotal(cols, rows, opt.total) : ''}</table></div>`;
+  let list = rows.slice(), pg = '';
+  if (!srv && st.c !== undefined && cols[st.c]) { const f = cols[st.c][2] || cols[st.c][1]; list.sort((a, b) => { const x = f(a), y = f(b); return (x > y ? 1 : x < y ? -1 : 0) * (st.d ? -1 : 1); }); }
+  if (srv) pg = pgBar(id, srv);
+  else if (opt.page) { const s = pgGet(id, pgSigOf(st, opt.sig)), c = pgCalc(list.length, s.page, s.size); list = pgSlice(list, c); pg = pgBar(id, c); }
+  const can = i => !srv || (opt.sortable || []).indexOf(i) >= 0;   // tri par la base : seulement les colonnes prévues
+  return `<div class="tw"><table id="${id}"><thead><tr>${cols.map((c, i) => `<th${can(i) ? ` data-t="${id}" data-c="${i}"` : ''} class="${c[3] || ''}${can(i) ? '' : ' ns'}">${c[0]}${st.c === i && can(i) ? (st.d ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
+    <tbody>${list.map(r => `<tr>${cols.map(c => `<td class="${c[3] || ''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody>${opt.total ? tableTotal(cols, rows, opt.total) : ''}</table></div>${pg}`;
 }
 /**
  * Ligne « Total » d'un tableau : somme des colonnes chiffrées (classe n, valeur de tri numérique) des lignes affichées.
@@ -367,7 +375,8 @@ document.addEventListener('click', e => {
   const th = e.target.closest('th[data-t]'); if (!th) return;
   const id = th.dataset.t, c = +th.dataset.c; window.__sort = window.__sort || {};
   const cur = window.__sort[id] || {}; window.__sort[id] = { c, d: cur.c === c ? !cur.d : true };
-  if (window.__rerender) window.__rerender();
+  // tableau lu par la base : sa relecture (page 1, nouvel ordre) ; sinon redessin léger de la page (__repage) ou complet
+  const fn = PG.cb[id] || window.__repage || window.__rerender; if (fn) fn();
 });
 function cards(items) { return `<div class="cards">${items.map(i => `<div class="card ${i[2] || ''}"><div class="cv">${i[1]}</div><div class="cl">${i[0]}</div></div>`).join('')}</div>`; }
 /** Sélecteur de période (comme le tableau de bord du Sheet) */
