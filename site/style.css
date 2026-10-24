@@ -493,3 +493,4 @@ button.small:not(.ghost) { color: var(--acc-ink); }
   .side nav .navsubs { flex-direction: row; margin: 0; padding: 0; border: 0; }
   .side nav a.navgrp.cur, .side nav > a.on { box-shadow: inset 0 -3px 0 var(--acc); }
 }
+.rhdays { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }

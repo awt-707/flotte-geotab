@@ -210,6 +210,8 @@ function collect() {
     }
     // Nouvelles alertes envoyées par e-mail aux destinataires choisis sur le site
     try { const m = notifyAlerts_(); if (m) msg.push(m); } catch (e) { msg.push('Alertes par e-mail : ' + e.message); }
+    // Staff : arrivée non pointée signalée par e-mail (une fois par salarié et par jour)
+    try { const m = rhClockStep_(); if (m) msg.push(m); } catch (e) { msg.push('Pointage : ' + e.message); }
     // Finalisation des journées terminées (une seule fois par véhicule-jour)
     if (Date.now() - t0 < 180000) {
       let n = 0; try { n = queueDays_(dueFinal_(P)); } catch (e) { msg.push('File de finalisation : ' + e.message); n = 1; }   // la file en place est traitée quand même
