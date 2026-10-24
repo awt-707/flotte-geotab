@@ -29,6 +29,11 @@ test('montants en lettres (français et arabe, comme le modèle : « trois mille
   assert.strictEqual(M.ctrAmount(125000), '125.000');
 });
 
+test('dates tapées au clavier : JJ/MM/AAAA, sans séparateur ou ISO ; dates impossibles refusées', () => {
+  assert.deepStrictEqual(['31/01/1990', '31-01-1990', '31011990', '1990-01-31', '1/2/1990', ' ', '31/02/2026', '12/13/2026', '31/01/90', 'abc'].map(M.ctrParseDate),
+    ['1990-01-31', '1990-01-31', '1990-01-31', '1990-01-31', '1990-02-01', '', null, null, null, null]);
+});
+
 test('champs du contrat : salarié(e), société, valeurs saisies prioritaires, rien d\'inventé', () => {
   const v = M.ctrFields(CO, EMP);
   assert.strictEqual(v.nom_ar, 'Ali TEST', 'sans traduction : nom latin dans la colonne arabe');
@@ -110,9 +115,14 @@ test('page Contrats de travail : nouvelle société, salarié, PDF généré, en
     await page.waitForFunction(() => { const x = document.querySelector('#ctemp'); return x && x.selectedOptions[0] && /ATLAS TEST/.test(x.selectedOptions[0].textContent); });
     await page.fill('#ctdrv', 'Ali TEST'); await page.dispatchEvent('#ctdrv', 'change');
     assert.strictEqual(await page.inputValue('#ct_tel'), '0611223344');
-    for (const k of ['naiss', 'lieu', 'cin', 'adresse', 'effet', 'sal']) await page.fill('#ct_' + k, String(EMP[k]));
-    await page.dispatchEvent('#ct_effet', 'change');
-    assert.strictEqual(await page.inputValue('#ct_date_sig'), '2026-08-31', 'date de signature = date d\'effet par défaut');
+    for (const k of ['lieu', 'cin', 'adresse', 'sal']) await page.fill('#ct_' + k, String(EMP[k]));
+    // dates tapées au clavier : « / » ajoutés tout seuls, année modifiable
+    await page.click('#ct_naiss'); await page.keyboard.type('31011990');
+    assert.strictEqual(await page.inputValue('#ct_naiss'), '31/01/1990');
+    await page.fill('#ct_effet', '31/02/2026'); await page.dispatchEvent('#ct_effet', 'change');
+    assert.match(await page.innerText('#ctmiss'), /Date d'effet invalide/);
+    await page.fill('#ct_effet', '31/08/2026'); await page.dispatchEvent('#ct_effet', 'change');
+    assert.strictEqual(await page.inputValue('#ct_date_sig'), '31/08/2026', 'date de signature = date d\'effet par défaut');
     assert.strictEqual(await page.getAttribute('#ct_sal_fr', 'placeholder'), 'trois mille deux cents');
     assert.match(await page.innerText('#ctmiss'), /Prêt/);
     await page.click('#ctgen');
