@@ -89,8 +89,10 @@ async function pageCaisse() {
   const go = () => { location.hash = cshHref(t, { du: $('#cshdu').value, au: $('#cshau').value }); };
   if ($('#cshdu')) { $('#cshdu').onchange = go; $('#cshau').onchange = go; }
   bindAg();
-  ({ bord: cshTabBord, shift: cshTabShift, depenses: cshTabDep, rh: cshTabRh, courses: cshTabCourses, bonus: cshTabBonus, rappro: cshTabRappro, paie: cshTabPaie, ca: cshTabCA, journal: cshTabJournal, import: cshTabImport })[t](p);
+  const tab = ({ bord: cshTabBord, shift: cshTabShift, depenses: cshTabDep, rh: cshTabRh, courses: cshTabCourses, bonus: cshTabBonus, rappro: cshTabRappro, paie: cshTabPaie, ca: cshTabCA, journal: cshTabJournal, import: cshTabImport })[t];
+  tab(p);
   window.__rerender = () => pageCaisse();
+  window.__repage = () => tab(p);   // page ou tri d'une liste : onglet redessiné avec les mouvements déjà lus (sans relire la base)
 }
 function cshBody(html) { const b = $('#cshbody'); if (b) b.innerHTML = html; }
 function cshRap(p) { return cshRappro({ payments: CS.pay, moves: CS.moves, from: p.from, to: p.to, uuid2code: CS.uuid2code, dayOfPayment: cshPayDay, names: CS.names }); }
@@ -162,7 +164,8 @@ function cshActCol() { return ['', m => (m.cancelled_at ? `<span class="small cr
 function cshDrvCol() { return ['Chauffeur', m => esc(m.driver_code ? cshDrvName(m.driver_code) : m.driver_name || '') + (m.driver_code || !m.driver_name ? '' : ' <span class="small" title="Pas de chauffeur Ludy correspondant">(Uber)</span>'), m => m.driver_name || '']; }
 /** Total d'un tableau de la caisse : montants des lignes non annulées (kinds : seulement ces opérations, ex. les dépenses d'une liste qui contient aussi les recharges) */
 function cshTot(kinds, skip) { return { fmt: v => '<b>' + cshMoney(v) + '</b>', live: m => cshLive(m) && (!kinds || kinds.indexOf(m.kind) >= 0), skip: skip || [] }; }
-function cshList(id, rows, cols, kinds, skip) { return table(id, cols, rows.slice().sort((a, b) => String(b.day).localeCompare(String(a.day)) || b.id - a.id), { empty: 'Aucun mouvement sur la période', total: cshTot(kinds, skip) }); }
+/** Liste de mouvements (du plus récent au plus ancien), par pages de 50 / 100 / 200 : total de toutes les lignes, tableur de toutes les lignes */
+function cshList(id, rows, cols, kinds, skip) { return table(id, cols, rows.slice().sort((a, b) => String(b.day).localeCompare(String(a.day)) || b.id - a.id), { empty: 'Aucun mouvement sur la période', total: cshTot(kinds, skip), page: true }); }
 /** Petit formulaire « recharge de caisse / dépôt en banque » d'une caisse */
 function cshMoveForm(caisse) {
   return `<details class="panel"><summary><h3>Recharge de caisse ou dépôt en banque</h3></summary><div class="mfrow">

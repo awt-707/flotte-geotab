@@ -101,6 +101,20 @@ function pgSortOrder(id, map, def) {
   const st = (window.__sort || {})[id] || {}, m = st.c !== undefined && map[st.c];
   return { order: m ? m.map(x => [x[0], !st.d, x[1]]) : def, sig: m ? st.c + (st.d ? 'd' : 'a') : '' };
 }
+/**
+ * Tableau lu par la base dans le bloc boxId (le reste de la page n'est pas redessiné) : relu à chaque page ou tri.
+ * opt = { select (colonnes lues), build (filtres), order (tri par défaut), sort ({ index de colonne: [[colonne de la base]] }), sig, empty }
+ */
+async function pgBox(boxId, id, tbl, cols, opt) {
+  const load = async () => {
+    const o = pgSortOrder(id, opt.sort || {}, opt.order);
+    const r = await pgLoad(id, JSON.stringify([opt.sig || '', o.sig]), pgQuery(tbl, opt.select, opt.build, o.order));
+    const b = document.getElementById(boxId); if (!b) return;
+    b.innerHTML = table(id, cols, r.rows, { server: r.c, sortable: Object.keys(opt.sort || {}).map(Number), empty: opt.empty });
+  };
+  PG.cb[id] = load;
+  try { await load(); } catch (e) { const b = document.getElementById(boxId); if (b) b.innerHTML = msg('Lecture impossible : ' + esc(e.message || e), 'err'); }
+}
 if (typeof document !== 'undefined') {
   document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('button[data-pgp]'); if (!b || b.disabled) return; pgGo(b.dataset.pgp, +b.dataset.to, b.dataset.k); });
   document.addEventListener('change', e => { const s = e.target.closest && e.target.closest('select[data-pgs]'); if (s) pgSize(s.dataset.pgs, +s.value); });

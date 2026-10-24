@@ -555,7 +555,8 @@ function alertSections(id, rows, editable) {
     const title = x ? 'Shift ' + shiftDayName(x).replace(/^J/, 'j').replace(/^N/, 'n') + ' (' + shiftName(x.s, S.P).replace(/^.*\(/, '') : 'Sans heure';
     return `<h3 class="shift ${x ? 'sh-' + x.s.toLowerCase() : ''}">${esc(title)} <span class="small">· ${n} alerte${n > 1 ? 's' : ''}</span></h3>` + alertTable(id + (i ? '_' + i : ''), groups[k], editable); }).join('');
 }
-function alertTable(id, rows, editable) {
+/** Tableau d'alertes ; srv = page lue dans la base (pgLoad) : tri par la base sur Date, Heure, Plaque, Chauffeur, Type, Valeur, Statut */
+function alertTable(id, rows, editable, srv) {
   return table(id, [['Date', a => fmtDay(a.day), a => a.day + (a.time || '')], ['Heure', a => esc(a.time || '')], ['Shift', a => { const x = alertShiftDay(a); return x ? shiftBadge(x.s) + `<div class="small">${esc(shiftDayName(x).replace(/^(Jour|Nuit) du /, ''))}</div>` : ''; }, a => { const x = alertShiftDay(a); return x ? x.day + x.s : ''; }],
     ['Plaque', a => plate(a.plate), a => a.plate], ['Chauffeur', a => esc(a.driver_name || '')],
     ['Type', a => esc(a.type)], ['Gravité', a => badge(a.severity, GRAV_CLS[a.severity]), a => ({ Critique: 0, Haute: 1, Moyenne: 2, Info: 3 }[a.severity])],
@@ -563,7 +564,7 @@ function alertTable(id, rows, editable) {
     ['Statut', a => editable ? `<select data-al="${esc(a.id)}" class="alst">${['À traiter', 'En cours', 'Traité', 'Faux positif'].map(s => `<option ${s === a.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(a.status), a => a.status],
     ['Commentaire', a => editable ? `<input data-alc="${esc(a.id)}" class="alc" value="${esc(a.comment || '')}" placeholder="…">` : esc(a.comment || '')],
     // fiche de l'alerte : vitesse, limite et positions lues dans Geotab autour de l'heure de l'alerte (site/direct.js)
-    ['Fiche', a => { if (!a.time || !a.vehicle_key) return ''; (S.alIdx = S.alIdx || {})[a.id] = a; return `<button type="button" class="small ghost" data-ad="${esc(a.id)}">Détail</button>`; }]], rows, { empty: 'Aucune alerte' });
+    ['Fiche', a => { if (!a.time || !a.vehicle_key) return ''; (S.alIdx = S.alIdx || {})[a.id] = a; return `<button type="button" class="small ghost" data-ad="${esc(a.id)}">Détail</button>`; }]], rows, srv ? { empty: 'Aucune alerte', server: srv, sortable: [0, 1, 3, 4, 5, 7, 9] } : { empty: 'Aucune alerte' });
 }
 /** Les alertes du moteur v6 contiennent un lien Google Maps : affiché comme lien OpenStreetMap */
 function linkify(t) { return esc(t).replace(/https:\/\/maps\.google\.com\/\?q=(-?[0-9.]+),(-?[0-9.]+)/g, (m, la, lo) => `<a target="_blank" rel="noopener" href="${osmUrl(la, lo)}">carte</a>`); }
@@ -663,26 +664,41 @@ async function pageAlertes() {
   const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const qs = new URLSearchParams(location.hash.split('?')[1] || ''), p = period();
   const from = qs.get('jour') || p.from, to = qs.get('jour') || p.to;
-  const ok = inAgency(), rows = await alertShifts((await all('alerts', '*', q => q.gte('day', from).lte('day', to), ['day', false])).filter(r => ok(r.vehicle_key)));
+  const ok = inAgency(), keys = agFilter() || mineOn() ? S.vehList.filter(v => ok(v.key)).map(v => v.key) : null, kset = keys && new Set(keys);
   const f = Object.assign({}, lsJSON('fal')); if (qs.get('plaque')) f.plate = qs.get('plaque');
-  const types = [...new Set(rows.map(r => r.type))].sort();
-  if (rid !== ROUTING) return;
+  // une page d'alertes lue à la fois (une alerte par véhicule, règle et événement : des milliers par mois) ; types proposés et
+  // total de la période comptés dans la base (alert_counts), sans lire toutes les alertes
+  const [ac, pc] = await Promise.all([rpcAll('alert_counts', { p_from: from, p_to: to }, ['vehicle_key', 'type', 'severity', 'status']), all('plate_changes', 'old_plate,new_plate').catch(() => [])]);
+  const mine = ac.filter(x => !kset || kset.has(x.vehicle_key)), nAll = mine.reduce((s, x) => s + x.n, 0), types = [...new Set(mine.map(x => x.type))].sort();
+  const cm = buildCanonMap(S.vehList, pc);
+  const pk = () => f.plate && normPlate(f.plate) ? cm[normPlate(f.plate)] || normPlate(f.plate) : '';   // plaque saisie -> véhicule (toutes ses plaques)
+  const SORT = { 0: [['day'], ['time', false]], 1: [['time', false]], 3: [['plate']], 4: [['driver_name']], 5: [['type']], 7: [['value']], 9: [['status']] };
+  let rows = [], c = pgCalc(0, 1, PG_DEF);
+  const load = async () => {
+    const k = pk(), o = pgSortOrder('talall', SORT, [['day', false], ['time', false, false]]);
+    const build = q => { q = q.gte('day', from).lte('day', to); if (keys) q = q.in('vehicle_key', keys.concat(['-']));
+      if (f.sev) q = q.eq('severity', f.sev); if (f.st) q = q.eq('status', f.st); if (f.type) q = q.eq('type', f.type); if (k) q = q.eq('vehicle_key', k); return q; };
+    const r = await pgLoad('talall', JSON.stringify([from, to, keys, f.sev, f.st, f.type, k, o.sig]), pgQuery('alerts', '*', build, o.order));
+    const sh = await alertShifts(r.rows);   // shift de chaque alerte de la page (contrat en cours à son heure)
+    if (rid !== ROUTING) return;
+    rows = sh; c = r.c; render();
+  };
   const render = () => {
-    const list = rows.filter(r => (!f.sev || r.severity === f.sev) && (!f.st || r.status === f.st) && (!f.type || r.type === f.type) && (!f.plate || normPlate(r.plate) === normPlate(f.plate)));
-    $('#page').innerHTML = `<div class="head"><h1>Alertes</h1><div class="sub">${list.length} alertes sur ${rows.length}${qs.get('jour') ? ' le ' + esc(fmtDay(qs.get('jour'))) : ''}. ${canEdit() ? 'Statut et commentaire enregistrés automatiquement.' : ''}</div></div>
+    $('#page').innerHTML = `<div class="head"><h1>Alertes</h1><div class="sub">${c.total} alertes sur ${nAll}${qs.get('jour') ? ' le ' + esc(fmtDay(qs.get('jour'))) : ''}. ${canEdit() ? 'Statut et commentaire enregistrés automatiquement.' : ''}</div></div>
     ${qs.get('jour') ? '' : periodBar(go)}
     <div class="bar"><label>Gravité <select id="fsev"><option value="">Toutes</option>${['Critique', 'Haute', 'Moyenne', 'Info'].map(x => `<option ${f.sev === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
       <label>Statut <select id="fst"><option value="">Tous</option>${['À traiter', 'En cours', 'Traité', 'Faux positif'].map(x => `<option ${f.st === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
       <label>Type <select id="ftype"><option value="">Tous</option>${types.map(x => `<option ${f.type === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
       <label>Plaque <input id="fplate" value="${esc(f.plate || '')}" size="10"></label></div>
-    ${alertTable('talall', list, canEdit())}`;
-    const set = (k, v) => { f[k] = v; const s = Object.assign({}, f); delete s.plate; lsSet('fal', s); render(); };
+    ${alertTable('talall', rows, canEdit(), c)}`;
+    const set = (k, v) => { f[k] = v; const s = Object.assign({}, f); delete s.plate; lsSet('fal', s); load().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }); };
     $('#fsev').onchange = e => set('sev', e.target.value); $('#fst').onchange = e => set('st', e.target.value); $('#ftype').onchange = e => set('type', e.target.value);
     $('#fplate').onchange = e => set('plate', e.target.value);
     document.querySelectorAll('.alst').forEach(s => { s.onchange = () => saveAlert(s.dataset.al, { status: s.value }, rows); });
     document.querySelectorAll('.alc').forEach(s => { s.onchange = () => saveAlert(s.dataset.alc, { comment: s.value }, rows); });
   };
-  window.__rerender = render; render();
+  PG.cb.talall = load; window.__rerender = load;   // page, tri : relecture de la page dans la base
+  await load();
 }
 async function saveAlert(id, patch, rows) {
   const { error } = await sb.from('alerts').update(patch).eq('id', id);
@@ -730,7 +746,7 @@ async function pageContrats() {
     <h2>Contrats des 40 derniers jours <input id="csearch" placeholder="Rechercher (nom, plaque, n°…)" value="${esc(search)}"></h2>
     ${table('tctr', [['N° contrat', c => esc(c.num)], ['Chauffeur', c => `<b>${esc(c.name)}</b>`, c => c.name], ['Code', c => esc(c.client_code)], ['Plaque', c => plate(c.plate), c => c.plate],
       ['Véhicule', c => S.veh[c.vehicle_key] ? plate(S.veh[c.vehicle_key].plate) : `<span class="badge high">inconnu</span>`, c => c.vehicle_key], ['Début', c => fmtDTY(c.start_at), c => c.start_at],
-      ['Fin', finTxt, c => c.end_at || (c._next ? 'y' : 'z')], ['Statut', c => esc(c.status || '')], ['Téléphone', c => esc(c.phone || '')]], list.slice(0, 500))}`;
+      ['Fin', finTxt, c => c.end_at || (c._next ? 'y' : 'z')], ['Statut', c => esc(c.status || '')], ['Téléphone', c => esc(c.phone || '')]], list, { page: true, sig: s, empty: s ? 'Aucun contrat trouvé' : 'Aucun contrat' })}`;
     const fi = $('#cfile'); if (fi) fi.onchange = () => importFile(fi.files[0]);
     const cs = $('#csearch'); cs.oninput = () => { search = cs.value; const pos = cs.selectionStart; render(); const n = $('#csearch'); n.focus(); n.setSelectionRange(pos, pos); };
   };
@@ -1174,8 +1190,7 @@ async function pageAgences() {
 // ---------- RÉGLAGES (admin) ----------
 async function pageReglages() {
   const my = ROUTING;
-  const [params, rules, users, logs, jobs, recs, scheds, types, usage] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
-    sb.from('logs').select('*').order('id', { ascending: false }).limit(150), sb.from('jobs').select('*').order('id', { ascending: false }).limit(30),
+  const [params, rules, users, recs, scheds, types, usage] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
     all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), all('alerts', 'type', q => q.gte('day', addDays(today(), -60))), usageLoad(true)]);
   if (my !== ROUTING) return;   // autre page demandée pendant le chargement : ne pas l'écraser
   const alTypes = [...new Set(types.map(x => x.type))].sort();
@@ -1214,9 +1229,9 @@ async function pageReglages() {
     <h2>Règles Geotab (poids dans le score de danger)</h2>
     ${table('trul', [['Règle', r => esc(rptRuleFr(r.name)) + (rptRuleFr(r.name) !== r.name ? ` <span class="small">(Geotab : ${esc(r.name)})</span>` : '')], ['Catégorie', r => esc(r.category || '')], ['Poids', r => `<input class="red_" data-k="${esc(r.id)}" value="${esc(r.weight)}" size="4">`, r => r.weight], ['Note', r => esc(r.note || ''), null, 'wide']], rules)}
     <h2>Demandes au collecteur</h2>
-    ${table('tjob', [['Demande', j => esc(j.kind) + (j.arg ? ' (' + esc(j.arg) + ')' : '')], ['Le', j => fmtDTY(j.created_at)], ['Terminée', j => j.done_at ? fmtDTY(j.done_at) : '<span class="badge warn">en attente</span>'], ['Résultat', j => esc(j.result || ''), null, 'wide']], jobs.data || [])}
+    <div id="tjobbox"><div class="loading">Chargement…</div></div>
     <h2>Journal technique</h2>
-    ${table('tlog', [['Le', l => fmtDTY(l.at)], ['Action', l => esc(l.action)], ['Détail', l => esc(l.detail), null, 'wide'], ['Durée (s)', l => l.dur_s == null ? '' : f1(l.dur_s), null, 'n']], logs.data || [])}`;
+    <div id="tlogbox"><div class="loading">Chargement…</div></div>`;
   document.querySelectorAll('[data-upg]').forEach(b => { b.onclick = () => {
     const u = users.find(x => x.user_id === b.dataset.upg), cur = Array.isArray(u.pages) ? u.pages : null;
     $('#upgbox').innerHTML = `<div class="panel"><b>Volets visibles par ${esc(u.email)}</b> <span class="small">(${ROLE_TXT[u.role]})</span>
@@ -1243,6 +1258,11 @@ async function pageReglages() {
   $('#rsgo').onclick = async () => { await job('resync', $('#rsfrom').value + '|' + $('#rsto').value).then(() => done('Retéléchargement demandé.'), fail); };
   $('#vhgo').onclick = async () => { await job('import_vehicles').then(() => done('Mise à jour des véhicules demandée.'), fail); };
   const reload = () => pageReglages().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message), 'err'); });
+  // demandes au collecteur et journal technique (30 jours conservés, plusieurs lignes par passage de 5 min) : une page lue à la fois
+  pgBox('tjobbox', 'tjob', 'jobs', [['Demande', j => esc(j.kind) + (j.arg ? ' (' + esc(j.arg) + ')' : '')], ['Le', j => fmtDTY(j.created_at)], ['Terminée', j => j.done_at ? fmtDTY(j.done_at) : '<span class="badge warn">en attente</span>'], ['Résultat', j => esc(j.result || ''), null, 'wide']],
+    { order: [['id', false]], sort: { 0: [['kind']], 1: [['created_at']], 2: [['done_at']] }, empty: 'Aucune demande' });
+  pgBox('tlogbox', 'tlog', 'logs', [['Le', l => fmtDTY(l.at)], ['Action', l => esc(l.action)], ['Détail', l => esc(l.detail), null, 'wide'], ['Durée (s)', l => l.dur_s == null ? '' : f1(l.dur_s), null, 'n']],
+    { order: [['id', false]], sort: { 0: [['at']], 1: [['action']], 3: [['dur_s']] }, empty: 'Journal vide' });
   bindSpeedSettings(params);
   bindExtSettings(params);
   $('#radd').onclick = async () => {

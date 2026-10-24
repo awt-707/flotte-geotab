@@ -151,24 +151,24 @@ async function pageCarburant() {
     ${table('tpl', [['Date / heure', f => fmtDTY(f.stop_start), f => f.stop_start], ['Véhicule', f => vlink(f.vehicle_key, f.plate), f => f.plate], ['Chauffeur', f => dlink(f.driver_code, drvName(f.driver_code, f.driver_name))],
       ['Jauge avant (%)', f => f0(f.lvl_before), null, 'n'], ['Jauge après (%)', f => f0(f.lvl_after), null, 'n'], ['Litres', f => f1(rptFillL(f)), f => rptFillL(f), 'n'], ['Mesure retenue', f => esc(rptFillSrc(f))],
       ['Volume Geotab (L)', f => f.liters_geotab === null ? `<span class="nm">${NM}</span>` : f1(f.liters_geotab), f => num(f.liters_geotab), 'n'], ['Jauge × réservoir (L)', f => f1(f.liters_gauge), f => num(f.liters_gauge), 'n'], ['Lieu', f => mapLink(f.lat, f.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(f.lat, f.lon)}">carte</a>` : '']],
-      fillsP.sort((a, b) => new Date(b.stop_start) - new Date(a.stop_start)), { empty: 'Aucun plein sur la période' })}
+      fillsP.sort((a, b) => new Date(b.stop_start) - new Date(a.stop_start)), { empty: 'Aucun plein sur la période', page: true })}
     <h2>Consommation plein à plein</h2><div class="sub">Entre deux pleins complets (jauge ≥ ${esc(P.fullPct || 90)} % après le plein) : litres des pleins (volume calculé par Geotab) / km roulés. Écart = litres mesurés trajet par trajet comparés à ce volume : les deux viennent du compteur du véhicule, l'écart contrôle seulement qu'aucun trajet ne manque. Litres réellement facturés : onglet « Anomalies carburant ».</div>
     ${table('tff', [['Véhicule', x => vlink(x.key), x => vehOf(x.key).plate], ['Plein de départ', x => fmtDTY(x.from), x => x.from], ['Plein d\'arrivée', x => fmtDTY(x.to), x => x.to],
       ['Km roulés', x => f1(x.km), x => x.km, 'n'], ['Litres remis', x => f1(x.litres), x => x.litres, 'n'], ['L/100 km', x => x.l100 !== null ? `<b>${f1(x.l100)}</b>` : '<span class="nm">km insuffisants</span>', x => x.l100 || 0, 'n'],
       ['Chauffeur(s)', x => x.codes.map(c => dlink(c)).join(', ')], ['Attribuable à', x => x.single ? esc(x.single) : 'Plusieurs chauffeurs'],
       ['Litres mesurés par trajet', x => x.measured !== null ? f1(x.measured) : `<span class="nm">${NM}</span>`, null, 'n'],
-      ['Écart (%)', x => x.gap === null ? '' : `<span class="${Math.abs(x.gap) > 15 ? 'red' : ''}">${f1(x.gap)}</span>`, x => x.gap || 0, 'n']], ff, { empty: 'Aucun intervalle entre deux pleins complets sur les données conservées' })}
+      ['Écart (%)', x => x.gap === null ? '' : `<span class="${Math.abs(x.gap) > 15 ? 'red' : ''}">${f1(x.gap)}</span>`, x => x.gap || 0, 'n']], ff, { empty: 'Aucun intervalle entre deux pleins complets sur les données conservées', page: true })}
     <h2>Récapitulatif des pleins par mois et par véhicule</h2>
-    ${table('trec', [['Mois', o => o.m.slice(5) + '/' + o.m.slice(0, 4), o => o.m], ['Véhicule', o => vlink(o.key)], ['Pleins', o => o.n, null, 'n'], ['Litres', o => f1(o.l), null, 'n']], Object.values(rec).sort((a, b) => b.m.localeCompare(a.m)), { empty: 'Aucun plein' })}
+    ${table('trec', [['Mois', o => o.m.slice(5) + '/' + o.m.slice(0, 4), o => o.m], ['Véhicule', o => vlink(o.key)], ['Pleins', o => o.n, null, 'n'], ['Litres', o => f1(o.l), null, 'n']], Object.values(rec).sort((a, b) => b.m.localeCompare(a.m)), { empty: 'Aucun plein', page: true })}
     <h2>Siphonages suspects (baisse de jauge moteur coupé, sans trajet)</h2>
     ${table('tsi', [['Arrêt', f => fmtDTY(f.stop_start), f => f.stop_start], ['Redémarrage', f => fmtDTY(f.stop_end)], ['Véhicule', f => vlink(f.vehicle_key, f.plate)],
       ['Chauffeur à l\'arrêt', f => dlink(f.driver_code, drvName(f.driver_code, f.driver_name))], ['Chauffeur au redémarrage', f => esc(f.next_driver || '')], ['Durée arrêt (min)', f => f0(f.stop_min), null, 'n'],
       ['Jauge avant → après (%)', f => f1(f.lvl_before) + ' → ' + f1(f.lvl_after)], ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n'],
       ['Statut', f => canEdit() ? `<select class="fst" data-f="${esc(f.id)}">${['À vérifier', 'Vérifié', 'Faux positif'].map(s => `<option ${s === f.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(f.status || '')],
-      ['Lieu', f => mapLink(f.lat, f.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(f.lat, f.lon)}">carte</a>` : '']], siph, { empty: 'Aucun siphonage suspect' })}
+      ['Lieu', f => mapLink(f.lat, f.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(f.lat, f.lon)}">carte</a>` : '']], siph, { empty: 'Aucun siphonage suspect', page: true })}
     <h2>Trajets non enregistrés (boîtier coupé, le compteur km du véhicule a avancé)</h2>
     ${table('ttne', [['De', f => fmtDTY(f.stop_start), f => f.stop_start], ['À', f => fmtDTY(f.stop_end)], ['Véhicule', f => vlink(f.vehicle_key, f.plate)], ['Chauffeur', f => dlink(f.driver_code, drvName(f.driver_code, f.driver_name))],
-      ['Km non enregistrés', f => esc(String(f.engine || '').split(' ')[0]), null, 'n'], ['Statut', f => esc(f.status || '')]], tne, { empty: 'Aucun' })}`;
+      ['Km non enregistrés', f => esc(String(f.engine || '').split(' ')[0]), null, 'n'], ['Statut', f => esc(f.status || '')]], tne, { empty: 'Aucun', page: true })}`;
     $('#vsel').onchange = e => { location.hash = '#/carburant' + (e.target.value ? '?k=' + encodeURIComponent(e.target.value) : ''); };
     document.querySelectorAll('.fst').forEach(s => { s.onchange = async () => {
       const { error } = await sb.from('fuel').update({ status: s.value }).eq('id', s.dataset.f); if (error) { alert(error.message); return; }
