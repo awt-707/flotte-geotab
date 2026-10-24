@@ -138,7 +138,7 @@ test('page Ressources humaines : fiche, congé posé dans le planning, présence
     await page.waitForSelector('#rhdrv');
     assert.strictEqual(await page.locator('.side nav .navsubs[data-grp="rh"] a.navsub').count() >= 9, true, 'dossier Ressources humaines dans le menu');
     // menu allégé : conduite et consommation dans un seul dossier, refermé hors de ses pages
-    assert.deepStrictEqual(await page.$$eval('.side nav .navsubs[data-grp="cc"] a', a => a.map(x => x.textContent)), ['Classement', 'Comportement chauffeur', 'Fin de shift', 'Conduite', 'Carburant', 'Consommation', 'Ralenti', 'Arrêts moteur']);
+    assert.deepStrictEqual(await page.$$eval('.side nav .navsubs[data-grp="cc"] a', a => a.map(x => x.textContent)), ['Arrêts moteur', 'Carburant', 'Classement', 'Comportement chauffeur', 'Conduite', 'Consommation', 'Fin de shift', 'Ralenti']);
     assert.strictEqual(await page.$eval('.side nav .navsubs[data-grp="cc"]', d => d.classList.contains('closed')), true);
     assert.strictEqual(await page.$eval('.side nav a[href="#/rh?t=salaries"]', a => a.classList.contains('on')), true);
     page.once('dialog', d => d.accept());
@@ -163,9 +163,22 @@ test('page Ressources humaines : fiche, congé posé dans le planning, présence
     await page.waitForFunction(() => /Congé/.test((document.querySelector('#rhfev table') || {}).innerText || ''));
     assert.strictEqual(env.psql("select status || '|' || days || '|' || (plan_absence_id is not null) from hr_events"), 'Validé|' + env.psql(`select count(*) from generate_series('${m}-20'::date, '${m}-22'::date, '1 day') g where extract(isodow from g) <> 7`) + '.00|true');
     assert.strictEqual(env.psql("select driver_code || '|' || day_from || '|' || day_to || '|' || reason from driver_absences"), `C9|${m}-20|${m}-22|RH : Congé`);
+    // menu : titre de dossier = ouvrir / fermer (sans changer de page), ordre alphabétique, Flotte = Plaques + Véhicules
+    const closed = g => page.$eval(`.side nav .navsubs[data-grp="${g}"]`, d => d.classList.contains('closed'));
+    const h0 = await page.evaluate(() => location.hash);
     await page.click('.side nav a.navgrp[data-grp="cc"]');
-    await page.waitForFunction(() => location.hash === '#/chauffeurs' && !document.querySelector('.side nav .navsubs[data-grp="cc"]').classList.contains('closed') && document.querySelector('.side nav .navsubs[data-grp="rh"]').classList.contains('closed'));
+    assert.strictEqual(await closed('cc'), false); assert.strictEqual(await page.evaluate(() => location.hash), h0);
+    await page.click('.side nav a.navgrp[data-grp="cc"]');
+    assert.strictEqual(await closed('cc'), true);
+    await page.click('.side nav a.navgrp[data-grp="rh"]');
+    assert.strictEqual(await closed('rh'), true);
+    await page.click('.side nav a.navgrp[data-grp="cc"]'); await page.click('.side nav a.navsub[href="#/chauffeurs"]');
+    await page.waitForFunction(() => location.hash === '#/chauffeurs' && document.querySelector('.side nav a[href="#/chauffeurs"].on') && !document.querySelector('.side nav .navsubs[data-grp="cc"]').classList.contains('closed') && document.querySelector('.side nav .navsubs[data-grp="rh"]').classList.contains('closed'));
     assert.deepStrictEqual(await page.$$eval('.side nav a[aria-current]', a => a.map(x => x.getAttribute('href'))), ['#/chauffeurs']);
+    const top = await page.$$eval('.side nav > a, .side nav > .navfold > a.navgrp', a => a.map(x => x.textContent.trim()));
+    assert.deepStrictEqual(top, [...top].sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' })));
+    assert.ok(top.includes('Flotte') && !top.includes('Plaques') && !top.includes('Véhicules'), top.join(', '));
+    assert.deepStrictEqual(await page.$$eval('.side nav .navsubs[data-grp="flotte"] a', a => a.map(x => x.textContent)), ['Plaques', 'Véhicules']);
     // présences du mois : 2 contrats = 2 jours, 24 h 30
     await page.goto('http://localhost:8080/#/rh?t=presences');
     await page.waitForSelector('#rhpres');

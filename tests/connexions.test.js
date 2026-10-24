@@ -92,7 +92,9 @@ test('menu gardé d\'une page à l\'autre : pastille des connectés, collecte et
   const { br, page, errors } = await openBrowser();
   let reads = 0; page.on('request', r => { if (r.method() === 'GET' && /\/rest\/v1\/user_sessions/.test(r.url())) reads++; });
   const open = async (p, h1) => {
-    await page.click(`.side nav a[href="#/${p}"]`);
+    const sel = `.side nav a[href="#/${p}"]`;   // volet dans un dossier fermé (Flotte…) : dossier ouvert d'abord
+    if (!(await page.isVisible(sel))) await page.click(`.side nav a.navgrp[data-grp="${await page.$eval(sel, a => a.closest('.navfold').dataset.grp)}"]`);
+    await page.click(sel);
     await page.waitForFunction(([p, h1]) => location.hash === '#/' + p && !document.querySelector('#page .loading') && ((document.querySelector('#page h1') || {}).innerText || '').startsWith(h1), [p, h1], { timeout: 15000 });
   };
   try {

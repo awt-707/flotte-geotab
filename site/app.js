@@ -303,37 +303,62 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
   ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
-// Dossiers du menu (demande d'Ahmed : menu allégé) : un titre, puis ses volets, montrés quand la page affichée en fait partie.
-// Ressources humaines : onglets de la page #/rh. Dossier réduit à un seul volet visible : lien simple.
-const NAV_GROUPS = { cc: { label: 'Conduite et consommation', pages: ['chauffeurs', 'comportement', 'conduite', 'finshift', 'carburant', 'conso', 'ralenti', 'arrets'] } };
-const navGroupOf = k => Object.keys(NAV_GROUPS).find(g => NAV_GROUPS[g].pages.includes(k));
+// Dossiers du menu (demande d'Ahmed : menu allégé) : un titre qui ouvre / ferme ses volets (clic sur le titre), ouvert
+// d'office quand la page affichée en fait partie. Ressources humaines : onglets de la page #/rh. Dossier réduit à un seul
+// volet visible : lien simple. Menu rangé par ordre alphabétique (dossiers et volets des dossiers compris).
+const NAV_GROUPS = { cc: { label: 'Conduite et consommation', pages: ['chauffeurs', 'comportement', 'conduite', 'finshift', 'carburant', 'conso', 'ralenti', 'arrets'] },
+  flotte: { label: 'Flotte', pages: ['plaques', 'vehicules'] } };
+const navGroupOf = k => k === 'rh' || k === 'travail' ? 'rh' : Object.keys(NAV_GROUPS).find(g => NAV_GROUPS[g].pages.includes(k));
+const navCmp = (a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' });
 function navHtml() {
-  const vis = NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (!/^(caisse|rh)$/.test(n[0]) || canEdit()) && canSee(n[0])), done = {};
-  const grp = (g, label, href, subs) => `<a href="${href}" class="navgrp" data-grp="${g}">${label}</a><div class="navsubs closed" data-grp="${g}">${subs.map(x => `<a href="${x[0]}" class="navsub">${x[1]}</a>`).join('')}</div>`;
-  return vis.map(n => {
-    const g = navGroupOf(n[0]);
+  const vis = NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (!/^(caisse|rh)$/.test(n[0]) || canEdit()) && canSee(n[0])), done = {}, out = [];
+  const link = (href, label, extra) => ({ label, html: `<a href="${esc(href)}"${extra || ''}>${esc(label)}${href === '#/alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` });
+  const grp = (g, label, subs) => {
+    subs = subs.map(x => ({ href: x[0], label: x[1] })).sort(navCmp);
+    return { label, html: `<div class="navfold" data-grp="${g}"><a href="#" class="navgrp" data-grp="${g}" role="button" aria-expanded="false">${esc(label)}</a>`
+      + `<div class="navsubs closed" data-grp="${g}">${subs.map(x => `<a href="${x.href}" class="navsub">${esc(x.label)}</a>`).join('')}</div></div>` };
+  };
+  vis.forEach(n => {
+    const g = n[0] === 'rh' ? null : navGroupOf(n[0]);
     if (g) {
-      if (done[g]) return '';
+      if (done[g]) return;
       done[g] = 1; const its = vis.filter(x => navGroupOf(x[0]) === g);
-      if (its.length > 1) return grp(g, NAV_GROUPS[g].label, '#/' + its[0][0], its.map(x => ['#/' + x[0], x[1]]));
+      if (its.length > 1) { out.push(grp(g, NAV_GROUPS[g].label, its.map(x => ['#/' + x[0], x[1]]))); return; }
     }
-    if (n[0] === 'rh') return grp('rh', n[1], '#/rh', rhTabsFor().map(x => [rhHref(x[0]), x[1]]));
-    return `<a href="#/${n[0]}">${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
-      (n[0] !== 'direct' ? '' : appMode() === 'link' ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` :
-        navSites().filter(x => canSee('x-' + x.id)).map(x => `<a href="#/x-${x.id}" class="navext" data-ext="${x.id}">${esc(x.name)}</a>`).join(''));
-  }).join('');
+    if (n[0] === 'rh') { out.push(grp('rh', n[1], rhTabsFor().map(x => [rhHref(x[0]), x[1]]))); return; }
+    out.push(link('#/' + n[0], n[1]));
+    if (n[0] === 'direct') {
+      if (appMode() === 'link') out.push(link(appUber(), 'Uber Fleet', ' id="navuber"'));
+      else navSites().filter(x => canSee('x-' + x.id)).forEach(x => out.push(link('#/x-' + x.id, x.name, ` class="navext" data-ext="${x.id}"`)));
+    }
+  });
+  return out.sort(navCmp).map(x => x.html).join('');
 }
-/** Volet en surbrillance, dossier de la page ouvert (les autres refermés) */
+/** Dossiers ouverts : celui de la page affichée à chaque changement de page (les autres refermés), puis au clic sur leur titre */
+let NAV_OPEN = {}, NAV_PAGE = null;
+function navFold() {
+  document.querySelectorAll('.side nav .navfold').forEach(f => {
+    const open = !!NAV_OPEN[f.dataset.grp], hd = f.querySelector('.navgrp'), sub = f.querySelector('.navsubs');
+    f.classList.toggle('open', open); sub.classList.toggle('closed', !open); hd.classList.toggle('open', open); hd.setAttribute('aria-expanded', open ? 'true' : 'false');
+    hd.classList.toggle('cur', !!f.querySelector('a.on'));
+  });
+}
+function navBind() {
+  const nav = $('.side nav'); if (!nav) return;
+  nav.addEventListener('click', e => {
+    const h = e.target.closest('a.navgrp'); if (!h) return;
+    e.preventDefault(); NAV_OPEN[h.dataset.grp] = !NAV_OPEN[h.dataset.grp]; navFold();
+  });
+}
+/** Volet en surbrillance, dossier de la page ouvert */
 function navMark(page) {
   let t = new URLSearchParams(location.hash.split('?')[1] || '').get('t') || 'bord'; if (t === 'fiche') t = 'salaries';
   document.querySelectorAll('.side nav a').forEach(a => {
     const h = a.getAttribute('href') || '', on = !a.classList.contains('navgrp') && (/^#\/rh\?t=/.test(h) ? page === 'rh' && h === '#/rh?t=' + t : h === '#/' + page);
     a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
-  document.querySelectorAll('.side nav .navsubs').forEach(d => {
-    const g = d.dataset.grp, open = g === 'rh' ? /^(rh|travail)$/.test(page) : !!NAV_GROUPS[g] && NAV_GROUPS[g].pages.includes(page);
-    d.classList.toggle('closed', !open); const hd = d.previousElementSibling; if (hd) hd.classList.toggle('open', open);
-  });
+  if (page !== NAV_PAGE) { NAV_PAGE = page; const g = navGroupOf(page); NAV_OPEN = g ? { [g]: true } : {}; }
+  navFold();
 }
 /** Menu et bas du menu (sans surbrillance : sert aussi de clé du menu, navMark marque le volet) */
 function shellHtml() {
@@ -361,7 +386,7 @@ function shell() {
       if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && confirm('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).catch(() => { });
       await sessEnd(); await sb.auth.signOut(); location.hash = '';
     };
-    rhFootBind();
+    rhFootBind(); navBind();
     $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
     const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
     const mo = $('#mineon'); if (mo) mo.onchange = () => { try { localStorage.setItem('mesveh', mo.checked ? '1' : '0'); } catch (e) { } route(); };

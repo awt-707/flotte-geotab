@@ -27,7 +27,7 @@ test('application 1.2 : Uber Fleet et Clicar dans le menu, volet posé sous sa b
   try {
     await login(page, '#/tableau');
     await page.waitForSelector('.navext');
-    assert.deepStrictEqual(await page.$$eval('.navext', as => as.map(a => a.textContent + ' ' + a.getAttribute('href'))), ['Uber Fleet #/x-uber', 'Clicar #/x-clicar']);
+    assert.deepStrictEqual(await page.$$eval('.navext', as => as.map(a => a.textContent + ' ' + a.getAttribute('href'))), ['Clicar #/x-clicar', 'Uber Fleet #/x-uber']);
     await page.click('.navext[data-ext="clicar"]');
     await page.waitForFunction(() => window.__calls.some(c => c[0] === 'ext_show'));
     const s = (await calls(page, 'ext_show')).pop(), bar = await page.evaluate(() => document.querySelector('#extbar').getBoundingClientRect().bottom);
@@ -99,7 +99,7 @@ test('volets visibles par utilisateur : l\'administrateur choisit, le gestionnai
     await login(o.page, '#/tableau');
     await o.page.waitForFunction(() => location.hash === '#/direct', null, { timeout: 15000 });
     const nav = await o.page.$$eval('.side nav a', as => as.map(a => a.getAttribute('href')));
-    assert.deepStrictEqual(nav, ['#/direct', '#/x-clicar', '#/carburant']);
+    assert.deepStrictEqual(nav, ['#/carburant', '#/x-clicar', '#/direct']);   // ordre alphabétique : Carburant, Clicar, En direct
     await o.page.goto('http://localhost:8080/#/x-uber');
     await o.page.waitForFunction(() => location.hash === '#/direct');
     await o.page.goto('http://localhost:8080/#/application');
