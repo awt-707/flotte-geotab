@@ -235,6 +235,24 @@ function rhLegal(c) {
   return { step: 'genere', txt: 'À faire signer' };
 }
 /**
+ * Pointage du staff : arrivée non pointée. e.work_start (« 08:30 ») et e.work_days (jours ISO, « 1,2,3,4,5,6 » = lundi → samedi) ;
+ * alerte rhClockLateMin minutes (30) après l'heure prévue, sauf jour non travaillé, jour férié (rhHolidays : « 2026-11-06,… »),
+ * congé validé, arrêt maladie ou absence déclarés, salarié pas encore entré ou sorti. clock : pointages du jour [{ kind }].
+ * Renvoie null (rien à signaler) ou { due: heure limite « HH:MM » }.
+ */
+function rhClockMissing(e, clock, events, day, nowHM, P) {
+  P = P || {};
+  if (!e || e.kind !== 'staff' || !e.pointage || !e.work_start || (e.hired_on && e.hired_on > day) || (e.left_on && e.left_on <= day)) return null;
+  const wd = new Date(rhD(day)).getUTCDay() || 7, days = String(e.work_days == null ? '1,2,3,4,5,6' : e.work_days).split(',').map(Number);
+  if (days.indexOf(wd) < 0 || String(P.rhHolidays || '').split(/[,;\s]+/).indexOf(day) >= 0) return null;
+  if (rhEventDays((events || []).filter(x => x.employee_id == null || x.employee_id === e.id), ['conge', 'maladie', 'absence'], day, day).length) return null;
+  const late = P.rhClockLateMin == null || P.rhClockLateMin === '' || isNaN(+P.rhClockLateMin) ? 30 : +P.rhClockLateMin;
+  const m = String(e.work_start).slice(0, 5).split(':').map(Number), lim = m[0] * 60 + m[1] + late, due = String(Math.floor(lim / 60) % 24).padStart(2, '0') + ':' + String(lim % 60).padStart(2, '0');
+  if (nowHM < due || (clock || []).some(c => c.kind === 'in')) return null;
+  return { due };
+}
+
+/**
  * Alertes RH d'après les règles du Code du travail et le dossier du salarié. ctx : { emps, events, contracts, docs, today, P }.
  * Renvoie [{ level: Critique | Haute | Moyenne, type, emp, text, due }] triées par gravité puis échéance.
  */
@@ -284,6 +302,14 @@ function rhAlerts(ctx) {
     // prime d'ancienneté : nouveau palier dans les 30 jours
     const sn = rhSeniority(e.hired_on, d0);
     if (sn && sn.next && rhDaysBetween(d0, sn.next.on) <= 30) add('Moyenne', 'Ancienneté', e, 'Prime d\'ancienneté de ' + sn.next.pct + ' % à partir du ' + rhFr(sn.next.on) + ' (article 350)', sn.next.on);
+    // pointage du staff : arrivée non pointée aujourd'hui, départ non pointé hier (ctx.clock : { id: [{ kind, day }] }, ctx.nowHM)
+    if (ctx.clock && e.kind === 'staff' && e.pointage) {
+      const ck = ctx.clock[e.id] || [], miss = rhClockMissing(e, ck.filter(c => c.day === d0), ev, d0, ctx.nowHM || '00:00', P);
+      if (miss) add('Haute', 'Pointage', e, 'Arrivée non pointée aujourd\'hui (prévue à ' + String(e.work_start).slice(0, 5) + ', alerte à ' + miss.due + ')', d0);
+      const y = rhAddDays(d0, -1), yk = ck.filter(c => c.day === y).map(c => c.kind);
+      if (yk.indexOf('in') >= 0 && yk.lastIndexOf('out') < Math.max(yk.lastIndexOf('in'), yk.lastIndexOf('resume'), yk.lastIndexOf('pause')))
+        add('Moyenne', 'Pointage', e, 'Départ non pointé hier (' + rhFr(y) + ') : fin de journée prise à la dernière activité sur Ludy, à vérifier', y);
+    }
     // fiche
     if (e.pointage && !e.birth_date) add('Haute', 'Fiche', e, 'Date de naissance absente : pointage impossible');
     const inc = [!e.hired_on && 'date d\'entrée', e.salary == null && 'salaire', !e.employer_id && 'société', !e.cin && 'N° CIN'].filter(Boolean);
@@ -342,5 +368,5 @@ function rhReport(ctx) {
   return { cur, prev, legal, evoTotal: prev ? evo(cur.total, prev.total) : null, evoEnd: prev ? cur.end - prev.end : null };
 }
 
-if (typeof module === 'object' && module.exports) module.exports = { RH_KINDS, RH_DOCS, RH_LEVELS, rhDocsRequired, rhSeniority, rhAlerts, rhContractOf, rhLegal, rhBasePay, rhReport, rhFr, rhAddDays, rhMonday, rhAddMonths, rhMonths, rhMonthRange, rhWorkingDays, rhTrial, rhLeave, rhSalaryAt, rhNight,
+if (typeof module === 'object' && module.exports) module.exports = { RH_KINDS, RH_DOCS, RH_LEVELS, rhDocsRequired, rhClockMissing, rhSeniority, rhAlerts, rhContractOf, rhLegal, rhBasePay, rhReport, rhFr, rhAddDays, rhMonday, rhAddMonths, rhMonths, rhMonthRange, rhWorkingDays, rhTrial, rhLeave, rhSalaryAt, rhNight,
   rhDriverWork, rhDriverSum, rhOvertimePay, rhPlanGaps, rhEventDays, rhStaffDays, rhStaffOver, rhClockState, rhMin };

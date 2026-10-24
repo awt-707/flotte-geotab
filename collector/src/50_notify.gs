@@ -331,3 +331,39 @@ function rhDigest_() {
   if (n || !err.length) props.setProperty('RH_SENT', JSON.stringify(all.map(key).slice(0, 400)));
   return (n ? 'alertes RH envoyées à ' + n + ' destinataire' + (n > 1 ? 's' : '') : '') + (err.length ? ' | e-mail RH impossible : ' + err.join(' ; ') : '');
 }
+
+/**
+ * Pointage du staff : arrivée non pointée (rhClockMissing, site/rh_calc.js) signalée par e-mail dès le passage qui suit
+ * l'heure limite (heure prévue + rhClockLateMin), une seule fois par salarié et par jour, aux administrateurs et aux comptes
+ * Ressources humaines (RH rattaché à des agences : salariés de ces agences). Sans salarié concerné : aucune lecture de plus.
+ */
+function rhClockStep_() {
+  const now = new Date(), day = localDay_(now), hm = localHM_(now), props = PropertiesService.getScriptProperties();
+  let emps;
+  try { emps = dbSelect_('hr_employees', 'select=id,kind,name,agency_id,pointage,work_start,work_days,hired_on,left_on&kind=eq.staff&pointage=is.true&work_start=not.is.null', 'id'); }
+  catch (e) { return ''; }   // migration 20261112000000_pointage_alerte.sql pas encore exécutée
+  if (!emps.length) return '';
+  const sent = JSON.parse(props.getProperty('RH_CLK') || '{}'), done = sent.day === day ? sent.ids : [];
+  const P = {}; dbSelect_('params', 'select=key,value&key=like.rh*', 'key').forEach(p => { P[p.key] = p.value; });
+  const todo = emps.filter(e => done.indexOf(e.id) < 0 && rhClockMissing(e, [], [], day, hm, P));
+  if (!todo.length) return '';
+  const ids = todo.map(e => e.id).join(','), since = new Date(rhD(day) - 14 * HOUR).toISOString();
+  const ck = dbSelect_('hr_clock', 'select=employee_id,kind,at&employee_id=in.(' + ids + ')&at=gte.' + enc_(since), 'id').filter(c => localDay_(new Date(c.at)) === day);
+  const ev = dbSelect_('hr_events', 'select=employee_id,kind,day_from,day_to,status,cancelled_at&employee_id=in.(' + ids + ')&cancelled_at=is.null&day_from=lte.' + day, 'id');
+  const miss = todo.map(e => [e, rhClockMissing(e, ck.filter(c => c.employee_id === e.id), ev.filter(x => x.employee_id === e.id), day, hm, P)]).filter(x => x[1]);
+  props.setProperty('RH_CLK', JSON.stringify({ day, ids: done.concat(todo.map(e => e.id)) }));   // vérifiés : jamais renvoyés le même jour
+  if (!miss.length) return '';
+  const rec = dbSelect_('profiles', 'select=user_id,email,role&role=in.(rh,admin)', 'user_id'), ua = dbSelect_('user_agencies', 'select=user_id,agency_id', 'user_id');
+  let n = 0; const err = [];
+  rec.forEach(r => {
+    const mine = r.role === 'rh' ? ua.filter(x => x.user_id === r.user_id).map(x => x.agency_id) : [];
+    const list = miss.filter(x => !mine.length || x[0].agency_id == null || mine.indexOf(x[0].agency_id) >= 0);
+    if (!list.length) return;
+    const html = '<div style="font-family:Arial,sans-serif;font-size:13px"><p>Arrivée non pointée sur Ludy aujourd\'hui (' + rptDay(day) + ', ' + hm + ') :</p><ul>' +
+      list.map(x => '<li><b>' + rptEsc(x[0].name) + '</b> : arrivée prévue à ' + rptEsc(String(x[0].work_start).slice(0, 5)) + '</li>').join('') +
+      '</ul><p style="color:#5d6b74;font-size:11px">Pointage du staff : ' + SITE_URL + '/#/rh?t=pointage · heure prévue et jours travaillés dans la fiche du salarié.</p></div>';
+    try { MailApp.sendEmail({ to: r.email, subject: 'Ludy RH : ' + (list.length === 1 ? list[0][0].name + ' n\'a pas pointé son arrivée' : list.length + ' salariés n\'ont pas pointé leur arrivée'), htmlBody: html, name: 'Ludy' }); n++; }
+    catch (e) { err.push(r.email + ' : ' + mailErr_(e)); }
+  });
+  return 'pointage non fait : ' + miss.map(x => x[0].name).join(', ') + (n ? ' (e-mail à ' + n + ' destinataire' + (n > 1 ? 's' : '') + ')' : '') + (err.length ? ' | e-mail impossible : ' + err.join(' ; ') : '');
+}

@@ -16,6 +16,7 @@ const RH_CONTRACT_TYPES = ['CDI', 'CDD', 'ANAPEC', 'Stage', 'Autre'];
 // catégorie : durée de la période d'essai d'un CDI (article 14) : cadres 3 mois, employés 1,5 mois, ouvriers 15 jours
 const RH_CATS = [['cadre', 'Cadre ou assimilé', 3], ['employe', 'Employé', 1.5], ['ouvrier', 'Ouvrier', 0.5]];
 const RH_LV = { Critique: 'err', Haute: 'warn', Moyenne: '' };
+const RH_WD = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
 const rhTabsFor = () => RH_TABS.filter(x => !RH_ADMIN_TABS[x[0]] || rhFull());
 const rhHref = (t, extra) => t === 'travail' ? '#/travail' : '#/rh?t=' + t + (extra ? '&' + extra : '');
@@ -35,11 +36,16 @@ async function rhLoad() {
   // suivi des contrats (signature, légalisation) et dossiers : migration 20261111000000_rh_acces.sql
   const [wc, docs] = await Promise.all([all('work_contracts', '*', null, ['created_at', false]).catch(() => []), all('hr_documents', '*', null, ['created_at', false]).catch(() => null)]);
   RH.wc = wc; RH.docs = docs || []; RH.v2 = !!docs;
+  // pointage du staff (heure d'arrivée prévue : migration 20261112000000_pointage_alerte.sql) : aujourd'hui et hier, pour les alertes
+  RH.v3 = await sb.from('hr_employees').select('work_days').limit(1).then(r => !r.error, () => false);
+  const st = RH.emp.filter(e => e.kind === 'staff' && e.pointage && !e.left_on);
+  const ck = rhFull() && st.length ? await all('hr_clock', 'employee_id,kind,at', x => x.gte('at', new Date(Date.parse(addDays(today(), -1) + 'T00:00:00Z') - 14 * HOUR).toISOString()).in('employee_id', st.map(e => e.id)), ['at']).catch(() => []) : [];
+  RH.clock = {}; ck.forEach(c => { (RH.clock[c.employee_id] = RH.clock[c.employee_id] || []).push({ kind: c.kind, day: localDay(Date.parse(c.at)) }); });
   rhAlertsCalc();
 }
 /** Alertes RH (rh_calc.js) et pastille du dossier Ressources humaines dans le menu */
 function rhAlertsCalc() {
-  RH.alerts = rhAlerts({ emps: RH.emp, events: RH.ev, contracts: RH.wc, docs: RH.docs, today: today(), P: S.P || {} });
+  RH.alerts = rhAlerts({ emps: RH.emp, events: RH.ev, contracts: RH.wc, docs: RH.docs, today: today(), P: S.P || {}, clock: rhFull() ? RH.clock || {} : null, nowHM: localHM(Date.now()) });
   S.rhAlertN = RH.alerts.filter(a => a.level !== 'Moyenne').length; rhBadgePaint();
 }
 function rhBadgePaint() {
@@ -147,7 +153,10 @@ function rhEmpForm(e, box) {
     <div class="mfrow">${RH_EMP_FIELDS.filter(f => RH.v2 || !f[4]).map(f => `<label>${f[1]} <input data-rhe="${f[0]}" data-t="${f[3] || ''}" value="${esc(dv(f[0], f[3]))}" size="${f[2]}"${f[3] === 'date' ? ' placeholder="JJ/MM/AAAA" inputmode="numeric"' : f[3] === 'num' ? ' inputmode="decimal"' : ''}></label>`).join('')}
       <label class="chk"><input type="checkbox" id="rhe_renew" ${v.trial_renewable !== false ? 'checked' : ''}> Période d'essai renouvelable une fois</label></div>
     ${rhFull() ? `<div class="mfrow" id="rhe_staff"><label>Compte Ludy du salarié <select id="rhe_user"><option value="">—</option>${RH.profiles.filter(p => !usedUsers.has(p.user_id)).map(p => `<option value="${p.user_id}" ${p.user_id === v.user_id ? 'selected' : ''}>${esc(p.email)}</option>`).join('')}</select></label>
-      <label class="chk"><input type="checkbox" id="rhe_point" ${v.pointage ? 'checked' : ''}> Pointage obligatoire : date de naissance à chaque ouverture de Ludy, pauses, fin de journée</label></div>` : ''}
+      <label class="chk"><input type="checkbox" id="rhe_point" ${v.pointage ? 'checked' : ''}> Pointage obligatoire : date de naissance à chaque ouverture de Ludy, pauses, fin de journée</label>
+      ${RH.v3 ? `<label>Arrivée prévue <input id="rhe_start" placeholder="HH:MM" size="6" value="${esc(v.work_start ? String(v.work_start).slice(0, 5) : '')}"></label>
+      <span class="rhdays">Jours travaillés ${RH_WD.map((d, i) => `<label class="chk"><input type="checkbox" class="rhe_wd" value="${i + 1}" ${String(v.work_days == null ? '1,2,3,4,5,6' : v.work_days).split(',').includes(String(i + 1)) ? 'checked' : ''}> ${d}</label>`).join('')}</span>
+      <span class="small">Arrivée non pointée ${esc(num((S.P || {}).rhClockLateMin, 30))} min après l'heure prévue : alerte et e-mail aux administrateurs et aux ressources humaines (sauf congé, arrêt, absence déclarés, jour férié des Réglages).</span>` : ''}</div>` : ''}
     <div class="mfgo"><button id="rhesave">Enregistrer</button> <button class="ghost" id="rhecancel">Annuler</button> <span id="rheres"></span></div></div>`;
   const kindSync = () => { const k = $('#rhe_kind').value; $('#rhe_drvl').hidden = k !== 'chauffeur'; if ($('#rhe_staff')) $('#rhe_staff').hidden = k !== 'staff'; };
   $('#rhe_kind').onchange = kindSync; kindSync();
@@ -169,6 +178,12 @@ function rhEmpForm(e, box) {
     row.driver_code = row.kind === 'chauffeur' ? ($('#rhe_driver').value || null) : null;
     if (RH.v2) { row.contract_type = $('#rhe_ctype').value; row.category = $('#rhe_cat').value || null; if (row.contract_type === 'CDI') row.contract_end = null; }
     if (rhFull()) { row.user_id = row.kind === 'staff' ? ($('#rhe_user').value || null) : null; row.pointage = row.kind === 'staff' && $('#rhe_point').checked; }
+    if (rhFull() && RH.v3 && row.kind === 'staff') {
+      const t = $('#rhe_start').value.trim().replace(/h/i, ':'), m = t.match(/^(\d{1,2}):?(\d{2})$/);
+      if (t && !(m && +m[1] < 24 && +m[2] < 60)) bad.push('Arrivée prévue (HH:MM)');
+      row.work_start = m ? m[1].padStart(2, '0') + ':' + m[2] : null;
+      row.work_days = [...box.querySelectorAll('.rhe_wd:checked')].map(i => i.value).join(',');
+    }
     if (!row.name) bad.push('Nom et prénom');
     if (!rhFull() && !row.agency_id) bad.push('Agence');
     if (row.pointage && !row.birth_date) bad.push('Date de naissance (obligatoire pour le pointage)');
@@ -426,12 +441,15 @@ async function rhClockBoard(my, q) {
   const ck = staff.length ? await all('hr_clock', 'id,employee_id,kind,at,client,note,created_by', x => x.gte('at', new Date(Date.now() - 40 * 86400000).toISOString()).in('employee_id', staff.map(e => e.id)), ['at', false]).catch(() => []) : [];
   if (my !== ROUTING) return;
   const ev = id => ck.filter(c => c.employee_id === id).map(c => ({ kind: c.kind, at: Date.parse(c.at) }));
-  const st = staff.map(e => { const d = rhStaffDays(ev(e.id), [], { dayOf: t => localDay(t) }).find(x => x.day === today()); return { e, s: rhClockState(ev(e.id)), d }; });
+  const st = staff.map(e => { const d = rhStaffDays(ev(e.id), [], { dayOf: t => localDay(t) }).find(x => x.day === today());
+    const miss = rhClockMissing(e, ck.filter(c => c.employee_id === e.id && localDay(Date.parse(c.at)) === today()), RH.ev, today(), localHM(Date.now()), S.P || {});
+    return { e, s: rhClockState(ev(e.id)), d, miss }; });
   const KTXT = { in: 'Arrivée', pause: 'Pause', resume: 'Reprise', out: 'Départ', session: 'Ouverture de Ludy', fail: 'Date de naissance erronée' };
   $('#rhbody').innerHTML = `<div class="small">Chaque ouverture de Ludy par un salarié au pointage obligatoire demande sa date de naissance (contrôlée par la base) ; la première de la journée pointe l'arrivée. Pauses et fin de journée en bas du menu. Départ non pointé : dernière activité sur Ludy.</div>
     ${!staff.length ? msg('Aucun salarié staff : créez sa fiche (type Staff), rattachez son compte Ludy et cochez « Pointage obligatoire ».', 'warn') : ''}
     <div class="panel"><h2>Aujourd'hui</h2>${table('rhck', [['Salarié', x => rhLink(x.e)], ['Pointage', x => x.e.pointage ? (x.e.birth_date ? 'Obligatoire' : '<span class="warn">date de naissance manquante</span>') : 'Non'], ['État', x => rhStateTxt(x.s)],
-      ['Arrivée', x => x.d && x.d.in ? esc(localHM(x.d.in)) : ''], ['Pauses', x => x.d ? x.d.nPauses + (x.d.pauseMin ? ' · ' + rhMin(x.d.pauseMin) : '') : '', null, 'num'], ['Travaillé', x => x.d ? rhMin(x.d.workMin) : '', null, 'num']], st, { empty: 'Aucun' })}</div>
+      ['Arrivée prévue', x => x.e.work_start ? esc(String(x.e.work_start).slice(0, 5)) : '<span class="small">non réglée</span>'],
+      ['Arrivée', x => x.d && x.d.in ? esc(localHM(x.d.in)) : x.miss ? '<span class="err">non pointée</span>' : ''], ['Pauses', x => x.d ? x.d.nPauses + (x.d.pauseMin ? ' · ' + rhMin(x.d.pauseMin) : '') : '', null, 'num'], ['Travaillé', x => x.d ? rhMin(x.d.workMin) : '', null, 'num']], st, { empty: 'Aucun' })}</div>
     <div class="panel"><h2>Corriger un pointage</h2><div class="mfrow"><label>Salarié <select id="rhc_emp">${staff.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label>
       <label>Type <select id="rhc_kind">${['in', 'pause', 'resume', 'out'].map(k => `<option value="${k}">${KTXT[k]}</option>`).join('')}</select></label>
       <label>Date et heure <input type="datetime-local" id="rhc_at"></label><label>Motif <input id="rhc_note" size="28" placeholder="Ex. oubli de pointage"></label><button id="rhcadd">Ajouter</button> <span id="rhcres" class="small"></span></div></div>
