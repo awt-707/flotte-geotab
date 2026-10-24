@@ -138,8 +138,17 @@ test('litres d\'un plein : volume Geotab entre deux pleins complets, sinon jauge
   const l = [f('2026-10-01T08:00:00Z', 20, 100, 60, 70), f('2026-10-03T08:00:00Z', 15, 100, 64, 74.5), f('2026-10-05T08:00:00Z', 30, 60, 22.5, 41), f('2026-10-07T08:00:00Z', 25, 100, 56, 30)];
   R.rptFillMark(l.slice().reverse());   // ordre quelconque
   assert.deepStrictEqual(l.map(x => [R.rptFillL(x), R.rptFillSrc(x)]), [[60, 'jauge (plein précédent inconnu)'], [74.5, 'Geotab (plein à plein)'], [22.5, 'jauge'], [56, 'jauge']]);
-  // jauge absente : volume Geotab
-  const g = [f('2026-10-01T08:00:00Z', 20, 100, null, 70)]; R.rptFillMark(g); assert.strictEqual(R.rptFillL(g[0]), 70);
+  // jauge absente : volume Geotab seulement entre deux pleins complets, sinon non mesuré (jamais le volume d'un plein partiel, jamais 0)
+  const g = [f('2026-10-01T08:00:00Z', 20, 100, null, 70), f('2026-10-03T08:00:00Z', 20, 100, null, 72), f('2026-10-05T08:00:00Z', 30, 60, null, 41), f('2026-10-07T08:00:00Z', 30, 100, null, 30)];
+  R.rptFillMark(g);
+  assert.deepStrictEqual(g.map(x => [R.rptFillL(x), R.rptFillSrc(x)]), [[null, 'non mesuré'], [72, 'Geotab (plein à plein)'], [null, 'non mesuré'], [null, 'non mesuré']]);
+  // cumul : pleins non mesurés comptés à part, jamais pour 0 L
+  const s = R.rptFillSum(g); assert.deepStrictEqual(s, { n: 4, m: 1, l: 72 });
+  assert.strictEqual(R.rptFillTxt(s.n, s.m, s.l, ' L'), '72,0 L (1/4 mesurés)');
+  assert.strictEqual(R.rptFillTxt(2, 0, 0, ' L'), 'non mesuré');
+  assert.strictEqual(R.rptFillTxt(2, 2, 10.04), '10,0');
+  assert.strictEqual(R.rptFillTxt(0, 0, 0), '0,0');
+  assert.deepStrictEqual([R.rptFillCount(4, 1, 72), R.rptFillCount(2, 0, 0), R.rptFillCount(2, 2, 10), R.rptFillCount(0, 0, 0)], ['4 (72,0 L, 1/4 mesurés)', '2 (non mesuré)', '2 (10,0 L)', '0']);
 });
 
 test('relecture 18/10 : 2e ticket d\'un plein regroupé avant le « transmis en différé » ; tickets transmis ensemble dans l\'ordre de leurs pleins', () => {

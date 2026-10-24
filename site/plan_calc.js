@@ -70,9 +70,12 @@ function planWeek(o) {
         if (reg) { used.add(reg.code); count[reg.code]++; if (s === 'Nuit') tonight.add(reg.code); cells.push({ day, shift: s, vehicle_key: v.key, driver_code: reg.code, locked: false }); }
         else todo.push(v);
       });
+      const pending = new Set(todo.map(v => v.key));
       todo.forEach(v => {
-        // remplaçant : pas le chauffeur habituel d'un autre véhicule encore à servir ce shift, même shift d'abord, le moins chargé
-        const cand = drivers.filter(d => free(d, s) && !(d.vehicle && d.vehicle !== v.key && d.shift === s && vehicles.some(x => x.key === d.vehicle)))
+        // remplaçant : pas le chauffeur habituel d'un autre véhicule encore à servir ce shift (un véhicule déjà couvert ne le retient pas),
+        // même shift d'abord, le moins chargé
+        pending.delete(v.key);
+        const cand = drivers.filter(d => free(d, s) && !(d.vehicle && d.vehicle !== v.key && d.shift === s && pending.has(d.vehicle)))
           .sort((a, b) => ((a.shift === s ? 0 : a.shift ? 2 : 1) - (b.shift === s ? 0 : b.shift ? 2 : 1)) || count[a.code] - count[b.code] || String(a.name || a.code).localeCompare(String(b.name || b.code)));
         const c = cand[0];
         if (c) { used.add(c.code); count[c.code]++; if (s === 'Nuit') tonight.add(c.code); }

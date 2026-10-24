@@ -11,7 +11,10 @@ const RH_STATUS = { conge: ['Demandé', 'Validé', 'Refusé'], avance: ['À remb
 const RH = { emp: [], ev: [], employers: [], drivers: [], profiles: [], wc: [], docs: [], alerts: [], v2: true, err: '' };
 // administrateur ou compte « Ressources humaines » : toutes les ressources humaines (staff, salaires, pointage, sociétés) ; gestionnaire : chauffeurs de ses agences
 const rhFull = () => isAdmin() || isRH();
-const rhCan = () => canEdit() || isRH();
+// gestionnaires : seulement si le réglage rhManagers ne leur retire pas les ressources humaines
+const rhCan = () => isAdmin() || isRH() || (canEdit() && String((S.P || {}).rhManagers || 'oui').toLowerCase() !== 'non');
+// sorti = date de sortie passée (une sortie future, préavis compris, laisse le salarié en poste et au pointage jusque-là)
+const rhGone = e => !!e.left_on && e.left_on <= today();
 const RH_CONTRACT_TYPES = ['CDI', 'CDD', 'ANAPEC', 'Stage', 'Autre'];
 // catégorie : durée de la période d'essai d'un CDI (article 14) : cadres 3 mois, employés 1,5 mois, ouvriers 15 jours
 const RH_CATS = [['cadre', 'Cadre ou assimilé', 3], ['employe', 'Employé', 1.5], ['ouvrier', 'Ouvrier', 0.5]];
@@ -38,14 +41,14 @@ async function rhLoad() {
   RH.wc = wc; RH.docs = docs || []; RH.v2 = !!docs;
   // pointage du staff (heure d'arrivée prévue : migration 20261112000000_pointage_alerte.sql) : aujourd'hui et hier, pour les alertes
   RH.v3 = await sb.from('hr_employees').select('work_days').limit(1).then(r => !r.error, () => false);
-  const st = RH.emp.filter(e => e.kind === 'staff' && e.pointage && !e.left_on);
+  const st = RH.emp.filter(e => e.kind === 'staff' && e.pointage && !rhGone(e));
   const ck = rhFull() && st.length ? await all('hr_clock', 'employee_id,kind,at', x => x.gte('at', new Date(Date.parse(addDays(today(), -1) + 'T00:00:00Z') - 14 * HOUR).toISOString()).in('employee_id', st.map(e => e.id)), ['at']).catch(() => []) : [];
   RH.clock = {}; ck.forEach(c => { (RH.clock[c.employee_id] = RH.clock[c.employee_id] || []).push({ kind: c.kind, day: localDay(Date.parse(c.at)) }); });
   rhAlertsCalc();
 }
 /** Alertes RH (rh_calc.js) et pastille du dossier Ressources humaines dans le menu */
 function rhAlertsCalc() {
-  RH.alerts = rhAlerts({ emps: RH.emp, events: RH.ev, contracts: RH.wc, docs: RH.docs, today: today(), P: S.P || {}, clock: rhFull() ? RH.clock || {} : null, nowHM: localHM(Date.now()) });
+  RH.alerts = rhAlerts({ v2: RH.v2, emps: RH.emp, events: RH.ev, contracts: RH.wc, docs: RH.docs, today: today(), P: S.P || {}, clock: rhFull() ? RH.clock || {} : null, nowHM: localHM(Date.now()) });
   S.rhAlertN = RH.alerts.filter(a => a.level !== 'Moyenne').length; rhBadgePaint();
 }
 function rhBadgePaint() {
@@ -72,11 +75,13 @@ async function pageRH() {
   const V = { bord: rhBoard, alertes: rhAlertsView, salaries: rhList, fiche: rhFiche, dossiers: rhFiles, presences: rhPresence, pointage: rhClockBoard, absences: rhAbsences, avances: rhAdvances, avenants: rhAvenants,
     essai: rhTrials, mois: rhMonthly, rapport: rhReportView };
   try { await V[t](my, q); } catch (e) { if (my === ROUTING) $('#rhbody').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
+  // tri des colonnes : onglet redessiné avec les données déjà lues (les onglets qui ne le prévoient pas eux-mêmes)
+  if (my === ROUTING && !window.__rerender) window.__rerender = () => { const m2 = ROUTING; Promise.resolve(V[t](m2, qs())).catch(() => { }); };
 }
 
 // ---------- Tableau de bord ----------
 async function rhBoard(my) {
-  const ok = rhAgOk(), act = RH.emp.filter(e => !e.left_on && ok(e)), d0 = today(), P = S.P || {};
+  const ok = rhAgOk(), act = RH.emp.filter(e => !rhGone(e) && ok(e)), d0 = today(), P = S.P || {};
   const trials = act.map(e => [e, rhTrial(e, d0, num(P.rhAlertDays, 7))]).filter(x => x[1].alert).sort((a, b) => a[1].daysLeft - b[1].daysLeft);
   const ids = new Set(act.map(e => e.id)), cur = RH.ev.filter(x => ids.has(x.employee_id) && !x.cancelled_at && RH_ABS.includes(x.kind) && x.day_from <= d0 && (x.day_to || x.day_from) >= d0 && (x.kind !== 'conge' || x.status === 'Validé'));
   const pend = RH.ev.filter(x => ids.has(x.employee_id) && !x.cancelled_at && x.kind === 'conge' && x.status === 'Demandé');
@@ -108,13 +113,13 @@ async function rhBoard(my) {
     ${live}
     ${inc.length ? `<div class="panel"><h2>Fiches incomplètes</h2>${table('rhinc', [['Salarié', e => rhLink(e)], ['Manque', e => esc([!e.employer_id && 'société', !e.hired_on && 'date d\'entrée', e.salary == null && 'salaire', e.pointage && !e.birth_date && 'date de naissance (pointage impossible)'].filter(Boolean).join(', '))]], inc)}</div>` : ''}`;
 }
-const rhLink = e => e ? `<a href="${rhHref('fiche', 'id=' + e.id)}">${esc(e.name)}</a>${e.left_on ? ' <span class="small">(sorti)</span>' : ''}` : '';
+const rhLink = e => e ? `<a href="${rhHref('fiche', 'id=' + e.id)}">${esc(e.name)}</a>${e.left_on ? ' <span class="small">(' + (rhGone(e) ? 'sorti' : 'sortie le ' + esc(fmtDay(e.left_on))) + ')</span>' : ''}` : '';
 const rhStateTxt = s => s === 'on' ? '<span class="ok">● En service</span>' : s === 'pause' ? '<span class="warn">● En pause</span>' : '<span class="small">Hors service</span>';
 
 // ---------- Salariés ----------
 function rhList() {
   const q = qs(), kind = q.get('k') || '', stt = q.get('s') || 'actifs', ok = rhAgOk(), d0 = today();
-  const rows = RH.emp.filter(e => ok(e) && (!kind || e.kind === kind) && (stt === 'tous' || (stt === 'sortis' ? !!e.left_on : !e.left_on)));
+  const rows = RH.emp.filter(e => ok(e) && (!kind || e.kind === kind) && (stt === 'tous' || (stt === 'sortis' ? rhGone(e) : !rhGone(e))));
   const coded = new Set(RH.emp.map(e => e.driver_code).filter(Boolean)), noFile = RH.drivers.filter(d => !coded.has(d.code) && (!agFilter() || String(d.agency_id) === agFilter()));
   const emp = id => (RH.employers.find(x => x.id === id) || {}).name || '';
   const sel = (k, v, opts) => `<select data-rhf="${k}">${opts.map(o => `<option value="${o[0]}" ${o[0] === v ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>`;
@@ -206,7 +211,7 @@ async function rhFiche(my, q) {
   const kv = (k, v) => `<div class="kv"><span class="small">${k}</span><b>${v || '—'}</b></div>`;
   $('#rhbody').innerHTML = `<div class="bar"><a href="${rhHref('salaries')}">← Salariés</a></div>
     <div class="grid2 mfgrid"><div>
-      <div class="panel"><h2>${esc(e.name)} ${e.left_on ? '<span class="small">(sorti le ' + esc(fmtDay(e.left_on)) + ')</span>' : ''}</h2>
+      <div class="panel"><h2>${esc(e.name)} ${e.left_on ? '<span class="small">(' + (rhGone(e) ? 'sorti' : 'sortie prévue') + ' le ' + esc(fmtDay(e.left_on)) + ')</span>' : ''}</h2>
         <div class="kvs">${kv('Type', e.kind === 'staff' ? 'Staff (pointage)' : 'Chauffeur (contrats Ludy)')}${kv('Poste', esc(e.position || ''))}${kv('Société', esc(emp))}${kv('Agence', esc(S.agName[e.agency_id] || ''))}
           ${kv('Date d\'entrée', esc(fmtDay(e.hired_on)))}${kv('Salaire actuel', rhMoney(sal))}${kv('Durée hebdomadaire', esc(f1(e.weekly_hours)) + ' h')}${kv('CIN', esc(e.cin || ''))}
           ${kv('Date de naissance', esc(fmtDay(e.birth_date)))}${kv('Téléphone', esc(e.phone || ''))}${kv('Code chauffeur', esc(e.driver_code || ''))}${e.kind === 'staff' ? kv('Pointage', e.pointage ? 'Obligatoire' : 'Non') : ''}
@@ -229,12 +234,12 @@ async function rhFiche(my, q) {
   $('#rhfctr').onclick = () => {
     if (typeof CT === 'undefined') return;
     CT.draft = { civ: 'M', nat_fr: 'Marocaine', nom: e.name, naiss: e.birth_date || '', cin: e.cin || '', tel: e.phone || '', agency: e.agency_id || '', employer_id: e.employer_id || '', driver_code: e.driver_code || '',
-      effet: e.hired_on || '', sal: sal || '', employee_id: e.id }; CT.last = null; location.hash = '#/travail';
+      effet: e.hired_on || '', sal: sal || '', employee_id: e.id, _linkName: e.name }; CT.last = null; location.hash = '#/travail';
   };
   if ($('#rhfleft')) $('#rhfleft').onclick = async () => {
     const d = ctrParseDate(prompt('Date de sortie (JJ/MM/AAAA) :', fmtDay(d0)) || ''); if (!d) return;
     const why = prompt('Motif (démission, fin de période d\'essai, licenciement…) :') || null;
-    const r = await sb.from('hr_employees').update({ left_on: d, left_reason: why, pointage: false }).eq('id', e.id); if (r.error) alert(r.error.message); else route();
+    const r = await sb.from('hr_employees').update(Object.assign({ left_on: d, left_reason: why }, d <= today() ? { pointage: false } : {})).eq('id', e.id); if (r.error) alert(r.error.message); else route();
   };
   if ($('#rhfback')) $('#rhfback').onclick = async () => { const r = await sb.from('hr_employees').update({ left_on: null, left_reason: null }).eq('id', e.id); if (r.error) alert(r.error.message); else route(); };
   rhWcBind(e, wc);
@@ -260,8 +265,9 @@ function rhTrialBind(e) {
     const dec = b.dataset.rhtd || null, row = { trial_decision: dec, trial_decided_on: dec ? today() : null };
     if (dec === 'rompue') {
       const d = ctrParseDate(prompt('Date de fin du contrat (JJ/MM/AAAA). Préavis de 8 jours prévu au contrat :', fmtDay(addDays(today(), 8))) || ''); if (!d) return;
-      Object.assign(row, { trial_decided_on: today(), left_on: d, left_reason: 'Rupture de la période d\'essai', pointage: false });
-    } else if (dec && !confirm(dec === 'confirmée' ? 'Confirmer l\'embauche de ' + e.name + ' ?' : 'Renouveler la période d\'essai de ' + e.name + ' ?')) return;
+      Object.assign(row, { trial_decided_on: today(), left_on: d, left_reason: 'Rupture de la période d\'essai' }, d <= today() ? { pointage: false } : {});
+    } else if (!dec && e.trial_decision === 'rompue' && e.left_reason === 'Rupture de la période d\'essai') Object.assign(row, { left_on: null, left_reason: null });   // décision annulée : la sortie aussi
+    else if (dec && !confirm(dec === 'confirmée' ? 'Confirmer l\'embauche de ' + e.name + ' ?' : 'Renouveler la période d\'essai de ' + e.name + ' ?')) return;
     const r = await sb.from('hr_employees').update(row).eq('id', e.id); if (r.error) alert(r.error.message); else route();
   });
 }
@@ -278,7 +284,7 @@ function rhEventsBox(box, list, emps, kinds, opt) {
       ['', x => `<span class="mfha">${x.doc_path ? `<button class="ghost small" data-rhdoc="${x.id}">Justificatif</button>` : ''}${!x.cancelled_at && RH_STATUS[x.kind] ? RH_STATUS[x.kind].filter(s => s !== x.status).map(s => `<button class="ghost small" data-rhst="${x.id}" data-v="${esc(s)}">${esc(s)}</button>`).join('') : ''}${x.cancelled_at ? '' : `<button class="ghost small" data-rhcx="${x.id}">Annuler</button>`}</span>`]],
     rows, { empty: 'Aucun' }) : '<div class="empty">Aucun événement</div>'}
     ${opt.noForm ? '' : `<details class="rhadd"><summary>+ Ajouter</summary><div class="mfrow">
-      ${one ? '' : `<label>Salarié <select id="rhv_emp"><option value="">Choisir…</option>${emps.filter(e => !e.left_on).map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label>`}
+      ${one ? '' : `<label>Salarié <select id="rhv_emp"><option value="">Choisir…</option>${emps.filter(e => !rhGone(e)).map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label>`}
       <label>Type <select id="rhv_kind">${kinds.map(k => `<option value="${k}">${esc(RH_KINDS[k])}</option>`).join('')}</select></label>
       <label>Du <input id="rhv_from" placeholder="JJ/MM/AAAA" size="11" inputmode="numeric" value="${esc(fmtDay(today()))}"></label><label id="rhv_tol">Au <input id="rhv_to" placeholder="JJ/MM/AAAA" size="11" inputmode="numeric"></label>
       <label id="rhv_daysl">Jours décomptés <input id="rhv_days" size="5" inputmode="decimal"></label><label id="rhv_amtl">Montant (DH) <input id="rhv_amt" size="8" inputmode="decimal"></label>
@@ -384,15 +390,18 @@ async function rhPresenceData(emps, from, to) {
     });
   }
   if (staff.length && rhFull()) {
-    const a = localToDate(...from.split('-').map(Number), 0, 0).getTime() - 12 * HOUR, b = localToDate(...addDays(to, 1).split('-').map(Number), 0, 0).getTime() + 12 * HOUR;
+    // semaines entières : heures sup. d'une semaine à cheval sur deux mois comptées (portées par ses derniers jours travaillés)
+    const wF = mondayOf(from), wT = addDays(mondayOf(to), 6);
+    const a = localToDate(...wF.split('-').map(Number), 0, 0).getTime() - 12 * HOUR, b = localToDate(...addDays(wT, 1).split('-').map(Number), 0, 0).getTime() + 12 * HOUR;
     const [ck, ses] = await Promise.all([all('hr_clock', 'employee_id,kind,at', x => x.gte('at', new Date(a).toISOString()).lt('at', new Date(b).toISOString()).in('employee_id', staff.map(e => e.id)), ['at']).catch(() => []),
       all('user_sessions', 'user_id,started_at,last_seen', x => x.gte('last_seen', new Date(a).toISOString()).lt('started_at', new Date(b).toISOString()).in('user_id', staff.map(e => e.user_id).filter(Boolean)), ['started_at']).catch(() => [])]);
     staff.forEach(e => {
-      const r = out.get(e.id), days = rhStaffDays(ck.filter(c => c.employee_id === e.id).map(c => ({ kind: c.kind, at: Date.parse(c.at) })),
-        ses.filter(s => s.user_id === e.user_id).map(s => ({ started_at: Date.parse(s.started_at), last_seen: Date.parse(s.last_seen) })), { dayOf: t => localDay(t) }).filter(d => d.day >= from && d.day <= to);
-      const ov = rhStaffOver(days, e.weekly_hours), wk = days.filter(d => d.workMin > 0);
+      const r = out.get(e.id), all7 = rhStaffDays(ck.filter(c => c.employee_id === e.id).map(c => ({ kind: c.kind, at: Date.parse(c.at) })),
+        ses.filter(s => s.user_id === e.user_id).map(s => ({ started_at: Date.parse(s.started_at), last_seen: Date.parse(s.last_seen) })), { dayOf: t => localDay(t) });
+      const ovd = rhStaffOverDays(all7, e.weekly_hours), wk = all7.filter(d => d.day >= from && d.day <= to && d.workMin > 0);
+      const days = all7.filter(d => d.day >= from && d.day <= to);
       Object.assign(r, { staffDays: days, nDays: wk.length, days: wk.map(d => d.day), hours: Math.round(wk.reduce((s, d) => s + d.workMin, 0) / 6) / 10,
-        over: Object.keys(ov).filter(m => m >= mondayOf(from) && m <= to).reduce((s, m) => s + ov[m], 0), declared: evDays(e) });
+        over: Math.round(Object.keys(ovd).filter(d => d >= from && d <= to).reduce((s, d) => s + ovd[d], 0) * 100) / 100, declared: evDays(e) });
       r.overDay = r.over; r.flagged = days.filter(d => d.outAuto || d.fails).map(d => ({ day: d.day, flag: [d.outAuto && 'départ non pointé', d.fails && d.fails + ' date(s) de naissance erronée(s)'].filter(Boolean).join(', ') }));
     });
   }
@@ -437,7 +446,7 @@ async function rhPresence(my, q) {
 // ---------- Pointage du staff (administrateur) ----------
 async function rhClockBoard(my, q) {
   if (!rhFull()) { $('#rhbody').innerHTML = msg('Réservé à l\'administrateur.', 'warn'); return; }
-  const staff = RH.emp.filter(e => e.kind === 'staff' && !e.left_on);
+  const staff = RH.emp.filter(e => e.kind === 'staff' && !rhGone(e));
   const ck = staff.length ? await all('hr_clock', 'id,employee_id,kind,at,client,note,created_by', x => x.gte('at', new Date(Date.now() - 40 * 86400000).toISOString()).in('employee_id', staff.map(e => e.id)), ['at', false]).catch(() => []) : [];
   if (my !== ROUTING) return;
   const ev = id => ck.filter(c => c.employee_id === id).map(c => ({ kind: c.kind, at: Date.parse(c.at) }));
@@ -495,7 +504,7 @@ function rhAvenants() {
   rhEventsBox($('#rhavn'), list, emps, ['avenant'], { id: 'v' });
 }
 function rhTrials() {
-  const ok = rhAgOk(), d0 = today(), rows = RH.emp.filter(e => ok(e) && !e.left_on).map(e => [e, rhTrial(e, d0, num((S.P || {}).rhAlertDays, 7))]).filter(x => x[1].state !== '—')
+  const ok = rhAgOk(), d0 = today(), rows = RH.emp.filter(e => ok(e) && !rhGone(e)).map(e => [e, rhTrial(e, d0, num((S.P || {}).rhAlertDays, 7))]).filter(x => x[1].state !== '—')
     .sort((a, b) => (b[1].open - a[1].open) || (a[1].daysLeft - b[1].daysLeft));
   $('#rhbody').innerHTML = `<div class="small">Période d'essai du contrat (1,5 mois par défaut, article 14 de la loi 65-99), renouvelable une seule fois par tacite reconduction : sans décision à la fin de la 1re période, elle est renouvelée ; à la fin de la seconde, l'embauche est confirmée. Dernier jour inclus.</div>
     ${table('rhtrl', [['Salarié', x => rhLink(x[0])], ['Entrée', x => esc(fmtDay(x[0].hired_on)), x => x[0].hired_on], ['Fin 1re période', x => esc(fmtDay(x[1].end1)), x => x[1].end1], ['Fin si renouvelée', x => esc(fmtDay(x[1].end2 || '')), x => x[1].end2 || ''],
@@ -514,9 +523,10 @@ async function rhMonthly(my, q) {
   const rows = pres.map(r => {
     const e = r.e, ev = RH.ev.filter(x => x.employee_id === e.id && !x.cancelled_at), sal = rhSalaryAt(e, ev, R.to), sum = k => ev.filter(x => x.kind === k && x.day_from >= R.from && x.day_from <= R.to).reduce((s, x) => s + (+x.amount || 0), 0);
     const cs = k => cash.filter(c => c.driver_code === e.driver_code && c.kind === k).reduce((s, c) => s + (+c.amount || 0), 0);
-    const days = k => rhEventDays(ev, [k], R.from, R.to).length, pay = rhOvertimePay(sal, e.weekly_hours, r.overDay, r.overNight || 0);
-    return { e, sal, r, conge: days('conge'), maladie: days('maladie'), absJ: rhEventDays(ev.filter(x => x.kind === 'absence' && x.justified), ['absence'], R.from, R.to).length,
-      absNJ: rhEventDays(ev.filter(x => x.kind === 'absence' && !x.justified), ['absence'], R.from, R.to).length + r.gaps.length, avance: sum('avance') + cs('avance'), remb: sum('remboursement') + cs('remboursement'), prime: sum('prime') + cs('bonus'), pay };
+    // jours ouvrables (dimanches non comptés), comme le décompte des congés
+    const days = k => rhWorkOnly(rhEventDays(ev, [k], R.from, R.to)).length, pay = rhOvertimePay(sal, e.weekly_hours, r.overDay, r.overNight || 0);
+    return { e, sal, r, conge: days('conge'), maladie: days('maladie'), absJ: rhWorkOnly(rhEventDays(ev.filter(x => x.kind === 'absence' && x.justified), ['absence'], R.from, R.to)).length,
+      absNJ: rhWorkOnly(rhEventDays(ev.filter(x => x.kind === 'absence' && !x.justified), ['absence'], R.from, R.to)).length + r.gaps.length, avance: sum('avance') + cs('avance'), remb: sum('remboursement') + cs('remboursement'), prime: sum('prime') + cs('bonus'), pay };
   });
   const cols = [['Salarié', x => x.e.name], ['Type', x => x.e.kind === 'staff' ? 'Staff' : 'Chauffeur'], ['Salaire de base', x => x.sal == null ? '' : f0(x.sal), 'num'], ['Jours de présence', x => String(x.r.nDays), 'num'],
     ['Heures', x => rhH(x.r.hours), 'num'], ['HS jour (+25 %)', x => x.r.overDay ? rhH(x.r.overDay) : '', 'num'], ['HS nuit (+50 %)', x => x.r.overNight ? rhH(x.r.overNight) : '', 'num'],
@@ -619,9 +629,10 @@ function rhWcForm(e, c) {
     if (bad.length) { out.innerHTML = '<span class="err">À corriger : ' + esc(bad.join(', ')) + '.</span>'; return; }
     out.textContent = 'Enregistrement…';
     const row = { signed_on: sig || null, legalized_on: leg || null, legal_place: $('#rhw_place').value.trim() || null };
-    try { if (fl) row.legal_path = await rhUpload('contrats', String((c ? c.agency_id : e.agency_id) || 0), fl); } catch (x) { out.innerHTML = '<span class="err">Copie non envoyée : ' + esc(x.message) + '</span>'; return; }
+    // staff : dossier 0 (administrateur et RH seulement)
+    try { if (fl) row.legal_path = await rhUpload('contrats', String(e.kind === 'staff' ? 0 : (c ? c.agency_id : e.agency_id) || 0), fl); } catch (x) { out.innerHTML = '<span class="err">Copie non envoyée : ' + esc(x.message) + '</span>'; return; }
     const r = c ? await sb.from('work_contracts').update(row).eq('id', c.id)
-      : await sb.from('work_contracts').insert(Object.assign(row, { employee_id: e.id, external: true, effective_on: eff, employer_id: +$('#rhw_emp').value || null, agency_id: e.agency_id || null, driver_code: e.driver_code || null, name: e.name, cin: e.cin || null, data: {} }));
+      : await sb.from('work_contracts').insert(Object.assign(row, { employee_id: e.id, external: true, effective_on: eff, employer_id: +$('#rhw_emp').value || null, agency_id: e.kind === 'staff' ? null : e.agency_id || null, driver_code: e.driver_code || null, name: e.name, cin: e.cin || null, data: {} }));
     if (r.error) { out.innerHTML = '<span class="err">Erreur : ' + esc(r.error.message) + '</span>'; return; }
     route();
   };
@@ -665,7 +676,7 @@ function rhDocsBind(e, docs) {
 /** Onglet Dossiers salariés : complétude des dossiers, contrats, CNSS */
 function rhFiles() {
   const q = qs(), only = q.get('inc') === '1', ok = rhAgOk(), d0 = today(), P = S.P || {};
-  const rows = RH.emp.filter(e => ok(e) && !e.left_on).map(e => {
+  const rows = RH.emp.filter(e => ok(e) && !rhGone(e)).map(e => {
     const docs = RH.docs.filter(x => x.employee_id === e.id), need = rhDocsRequired(e.kind, P), miss = need.filter(k => !docs.some(x => x.category === k));
     const exp = docs.filter(x => x.expires_on).sort((a, b) => a.expires_on < b.expires_on ? -1 : 1)[0], lg = rhLegal(rhContractOf(e, RH.wc));
     return { e, docs, need, miss, exp, lg, bad: miss.length || lg.step !== 'legalise' || !e.cnss_no || (exp && exp.expires_on < d0) };
@@ -765,9 +776,10 @@ function rhOkGet() { try { return sessionStorage.getItem(RH_OK_KEY) === S.sessio
 function rhOkSet(v) { try { if (v) sessionStorage.setItem(RH_OK_KEY, S.session.user.id + '|' + today()); else sessionStorage.removeItem(RH_OK_KEY); } catch (e) { } }
 /** true : Ludy utilisable ; false : écran de pointage affiché (date de naissance, pause en cours) */
 async function rhGate(my) {
-  if (S.rhMe === undefined || (S.rhMe && S.rhMe.pointage)) {   // relu à chaque page : pause ou fin de journée pointée depuis un autre appareil
+  if (isAdmin()) { S.rhMe = null; return true; }   // l'administrateur n'est jamais bloqué par l'écran de pointage
+  if (S.rhMe === undefined || (S.rhMe && S.rhMe.pointage) || Date.now() - (S.rhMeAt || 0) > 5 * 60000) {   // relu à chaque page (pause ou fin de journée pointée ailleurs) et toutes les 5 min (pointage activé entre-temps)
     const r = await sb.rpc('hr_me').then(x => x, () => ({ error: 1 }));
-    S.rhMe = r && !r.error && r.data ? r.data : null;
+    if (r && !r.error) { S.rhMe = r.data || null; S.rhMeAt = Date.now(); }   // erreur passagère : relu à la page suivante
   }
   if (my !== ROUTING) return false;
   const me = S.rhMe;

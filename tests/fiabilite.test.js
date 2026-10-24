@@ -48,3 +48,21 @@ test('erreur passagère de finalisation : pas prise pour une migration absente (
   assert.strictEqual(B.run("stopsMissing_(new Error('Supabase post rpc/finalize_vdays : HTTP 503 upstream timeout'))"), false);
   assert.strictEqual(B.run(`stopsMissing_(new Error('Supabase post rpc/finalize_vdays : HTTP 404 {"code":"PGRST202","message":"Could not find the function"}'))`), true);
 });
+
+test('finalisation : Geotab en panne, la file est gardée (attente croissante, jamais vidée)', () => {
+  const P = 'PropertiesService.getScriptProperties()', get = k => B.run(`${P}.getProperty('${k}')`);
+  const k = B.run('memoClear_(); Object.values(vehicles_()).filter(v => v.active && v.geoId)[0].key');
+  B.run(`${P}.setProperty('SYNC_QUEUE', JSON.stringify([{ d: '2026-09-20', k: '${k}', solo: 1 }])); ['SYNC_FAILS', 'SYNC_DOWN', 'SYNC_WAIT'].forEach(k => ${P}.deleteProperty(k))`);
+  const fetch = B.ctx.UrlFetchApp.fetch;
+  let geo = 0;
+  B.ctx.UrlFetchApp.fetch = (url, opt) => { if (url.indexOf('/apiv1') >= 0) { geo++; throw new Error('Geotab indisponible'); } return fetch(url, opt); };
+  try {
+    for (let i = 0; i < 3; i++) B.run('syncStep_(Date.now())');
+    assert.strictEqual(JSON.parse(get('SYNC_QUEUE')).length, 1, 'file vidée après 3 échecs');
+    assert.strictEqual(get('SYNC_DOWN'), '3');
+    assert.ok(+get('SYNC_WAIT') > B.run('Date.now()'), 'pas d\'attente après 3 échecs');
+    const n = geo; B.run('syncStep_(Date.now())');
+    assert.strictEqual(geo, n, 'Geotab rappelé pendant l\'attente');
+  } finally { B.ctx.UrlFetchApp.fetch = fetch; }
+  B.run(`['SYNC_QUEUE', 'SYNC_FAILS', 'SYNC_DOWN', 'SYNC_WAIT'].forEach(k => ${P}.deleteProperty(k))`);
+});

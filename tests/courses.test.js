@@ -25,7 +25,9 @@ test('prix : mise à disposition, transferts, intervilles, suppléments ; rien d
   let p = P({ kind: 'Mise à disposition sur plusieurs jours', cat: 'SONATA', startDate: '2026-11-01', endDate: '2026-11-04', hoursDay: 10, kmDay: 200 });
   assert.deepStrictEqual(p.lines.map(l => l.amount), [6000, 1760, 600]);   // 4 × 1 500 ; 2 h × 4 j × 220 ; 50 km × 4 j × 3
   assert.deepStrictEqual([p.total, p.deposit, p.ht, p.tva], [8360, 2508, 7600, 760]);
-  assert.deepStrictEqual(p.included, { h: 8, km: 150 });
+  assert.deepStrictEqual(p.included, { h: 10, km: 200 }, 'inclus = forfait + dépassements prévus déjà facturés (le contrôle Geotab ne les refacture pas)');
+  assert.deepStrictEqual([C.crsActual([{ start_at: '2026-11-01T07:00:00Z', end_at: '2026-11-01T17:00:00Z', km: 200 }], {}, p, x => new Date(x).toISOString().slice(0, 10), x => '').amountH,
+    C.crsActual([{ start_at: '2026-11-01T07:00:00Z', end_at: '2026-11-01T17:00:00Z', km: 200 }], {}, p, x => new Date(x).toISOString().slice(0, 10), x => '').amountKm], [0, 0], 'usage prévu : rien de plus à facturer');
   // une journée de 4 h et 60 km : demi-journée ; tarif horaire : minimum 2 h
   assert.strictEqual(P({ kind: 'Mise à disposition à la journée', cat: 'STARIA', startDate: '2026-11-01', hoursDay: 4, kmDay: 60 }).total, 1100);
   assert.strictEqual(P({ kind: 'Mise à disposition à la journée', cat: 'STARIA', startDate: '2026-11-01', hoursDay: 9, kmDay: 120 }).total, 2000 + 300);
@@ -43,6 +45,12 @@ test('prix : mise à disposition, transferts, intervilles, suppléments ; rien d
   // interville : prix de la grille, acompte 30 %, péages compris (forfait)
   p = P({ kind: 'Déplacement interville', cat: 'SONATA', dest: 'Rabat', startDate: '2026-11-01' });
   assert.deepStrictEqual([p.total, p.deposit], [780, 234]);
+  // acompte : pas en ville, pas sur un transfert aéroport ni une mise à disposition d'un seul jour
+  assert.strictEqual(P({ kind: 'Déplacement interville', cat: 'SONATA', dest: 'En ville (Casa)', startDate: '2026-11-01' }).deposit, 0);
+  assert.strictEqual(P({ kind: 'Transfert aéroport', cat: 'STARIA', dest: 'Casablanca', roundTrip: true, startDate: '2026-11-01', endDate: '2026-11-03' }).deposit, 0);
+  // type « Aller-retour » : retour facturé, jamais de remise « course retour »
+  p = P({ kind: 'Aller-retour', cat: 'SONATA', dest: 'Rabat', returnEmpty: true, startDate: '2026-11-01' });
+  assert.deepStrictEqual(p.lines.map(l => l.amount), [780, 780]);
   // 24 h/24 : pas de prix inventé, à fixer par la direction
   p = P({ kind: 'Disponibilité 24 h/24', cat: 'STARIA', startDate: '2026-11-01', endDate: '2026-11-02', h24: true });
   assert.strictEqual(p.total, 0); assert.match(p.notes.join(' '), /fixer par la direction/);

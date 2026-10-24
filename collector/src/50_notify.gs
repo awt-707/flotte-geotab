@@ -54,7 +54,7 @@ function notifyAlerts_() {
   // aucun e-mail parti faute d'autorisation ou de quota : les alertes récentes repartiront au passage suivant (non perdues)
   if (!sent && err.length && err.every(x => /permission|autoris|script\.send_mail|too many times|quota/i.test(x))) {
     const fid = fresh.map(a => a.id);
-    for (let i = 0; i < fid.length; i += 40) sbReq_('patch', 'alerts?id=' + inList_(fid.slice(i, i + 40)), { notified_at: null }, { Prefer: 'return=minimal' });
+    for (let i = 0; i < fid.length; i += 15) sbReq_('patch', 'alerts?id=' + inList_(fid.slice(i, i + 15)), { notified_at: null }, { Prefer: 'return=minimal' });
   }
   return (sent ? 'alertes envoyées par e-mail à ' + sent + ' destinataire' + (sent > 1 ? 's' : '') : '') + (err.length ? ' | e-mail impossible : ' + err.join(' ; ') : '');
 }
@@ -302,22 +302,25 @@ function rhDigest_() {
   if (!emps.length) return '';
   const today = localDay_(new Date()), P = {};
   dbSelect_('params', 'select=key,value&key=like.rh*', 'key').forEach(p => { P[p.key] = p.value; });
-  const ctx = { emps, today, P, events: dbSelect_('hr_events', 'select=*&cancelled_at=is.null', 'id'),
-    contracts: dbSelect_('work_contracts', 'select=id,employee_id,created_at,effective_on,signed_on,legalized_on,legal_path,ended_on', 'id'),
-    docs: dbSelect_('hr_documents', 'select=employee_id,category,expires_on', 'id') };
+  const ctx = { emps, today, P, events: dbSelect_('hr_events', 'select=*&cancelled_at=is.null', 'id') };
+  // suivi des contrats, CNSS et dossiers : migration 20261111000000_rh_acces.sql (sans elle : pas de ces alertes)
+  try { ctx.contracts = dbSelect_('work_contracts', 'select=id,employee_id,created_at,effective_on,signed_on,legalized_on,legal_path,ended_on', 'id'); ctx.docs = dbSelect_('hr_documents', 'select=employee_id,category,expires_on', 'id'); }
+  catch (e) { ctx.v2 = false; ctx.contracts = []; ctx.docs = []; }
   const all = rhAlerts(ctx).filter(a => a.level !== 'Moyenne');
-  const props = PropertiesService.getScriptProperties(), key = a => a.type + '|' + a.emp.id + '|' + a.text;
+  const props = PropertiesService.getScriptProperties(), key = a => a.type + '|' + a.emp.id + '|' + a.due + '|' + String(a.text).replace(/\(?(dans )?\d+ j(ours)?\b\)?/g, '');   // comptes à rebours exclus : même alerte d'un jour à l'autre
   const sent = JSON.parse(props.getProperty('RH_SENT') || '[]'), fresh = all.filter(a => sent.indexOf(key(a)) < 0);
   const monday = new Date(rhD(today)).getUTCDay() === 1;
   if (!fresh.length && !(monday && all.length)) { props.setProperty('RH_SENT', JSON.stringify(all.map(key).slice(0, 400))); return ''; }
-  let rec = dbSelect_('profiles', 'select=user_id,email,role&role=in.(rh,admin)', 'user_id');
-  rec = rec.some(r => r.role === 'rh') ? rec.filter(r => r.role === 'rh') : rec;
+  const rec = dbSelect_('profiles', 'select=user_id,email,role&role=in.(rh,admin)', 'user_id');
   const ua = dbSelect_('user_agencies', 'select=user_id,agency_id', 'user_id'), ag = {};
   dbSelect_('agencies', 'select=id,name', 'id').forEach(a => { ag[a.id] = a.name; });
+  // comptes RH : leurs salariés (agences rattachées, sinon tous) ; administrateurs : ce qu'aucun compte RH ne suit
+  const rhs = rec.filter(r => r.role === 'rh').map(r => ua.filter(x => x.user_id === r.user_id).map(x => x.agency_id));
+  const covers = (mine, a) => !mine.length || a.emp.agency_id == null || mine.indexOf(a.emp.agency_id) >= 0;
   let n = 0; const err = [];
   rec.forEach(r => {
     const mine = r.role === 'rh' ? ua.filter(x => x.user_id === r.user_id).map(x => x.agency_id) : [];
-    const ok = a => !mine.length || a.emp.agency_id == null || mine.indexOf(a.emp.agency_id) >= 0;
+    const ok = a => r.role === 'rh' ? covers(mine, a) : !rhs.some(m => covers(m, a));
     const list = all.filter(ok), nw = fresh.filter(ok);
     if (!list.length || (!nw.length && !monday)) return;
     const row = a => '<tr><td style="color:' + (a.level === 'Critique' ? '#b42318' : '#c4320a') + '"><b>' + rptEsc(a.level) + '</b></td><td>' + rptEsc(a.type) + '</td><td><b>' + rptEsc(a.emp.name) + '</b>' +
@@ -351,7 +354,8 @@ function rhClockStep_() {
   const ck = dbSelect_('hr_clock', 'select=employee_id,kind,at&employee_id=in.(' + ids + ')&at=gte.' + enc_(since), 'id').filter(c => localDay_(new Date(c.at)) === day);
   const ev = dbSelect_('hr_events', 'select=employee_id,kind,day_from,day_to,status,cancelled_at&employee_id=in.(' + ids + ')&cancelled_at=is.null&day_from=lte.' + day, 'id');
   const miss = todo.map(e => [e, rhClockMissing(e, ck.filter(c => c.employee_id === e.id), ev.filter(x => x.employee_id === e.id), day, hm, P)]).filter(x => x[1]);
-  props.setProperty('RH_CLK', JSON.stringify({ day, ids: done.concat(todo.map(e => e.id)) }));   // vérifiés : jamais renvoyés le même jour
+  const mark = ids => props.setProperty('RH_CLK', JSON.stringify({ day, ids: done.concat(ids) }));   // vérifiés : jamais renvoyés le même jour
+  mark(todo.filter(e => !miss.some(x => x[0] === e)).map(e => e.id));
   if (!miss.length) return '';
   const rec = dbSelect_('profiles', 'select=user_id,email,role&role=in.(rh,admin)', 'user_id'), ua = dbSelect_('user_agencies', 'select=user_id,agency_id', 'user_id');
   let n = 0; const err = [];
@@ -365,5 +369,6 @@ function rhClockStep_() {
     try { MailApp.sendEmail({ to: r.email, subject: 'Ludy RH : ' + (list.length === 1 ? list[0][0].name + ' n\'a pas pointé son arrivée' : list.length + ' salariés n\'ont pas pointé leur arrivée'), htmlBody: html, name: 'Ludy' }); n++; }
     catch (e) { err.push(r.email + ' : ' + mailErr_(e)); }
   });
+  if (n || !err.length) mark(todo.map(e => e.id));   // aucun e-mail parti (autorisation, quota) : renvoyé au passage suivant
   return 'pointage non fait : ' + miss.map(x => x[0].name).join(', ') + (n ? ' (e-mail à ' + n + ' destinataire' + (n > 1 ? 's' : '') + ')' : '') + (err.length ? ' | e-mail impossible : ' + err.join(' ; ') : '');
 }

@@ -8,7 +8,7 @@ const CSH_TABS = [['bord', 'Tableau de bord'], ['shift', 'Encaissement du shift'
 const CSH_KIND = { encaissement: 'Encaissement', depense: 'Dépense', avance: 'Avance', remboursement: 'Remboursement d\'avance', course: 'Course privée', bonus: 'Bonus',
   recharge: 'Recharge de caisse', depot: 'Dépôt en banque', autre: 'Autre' };
 const CSH_FLOW_TXT = { in: 'Entrée de cash', out: 'Sortie de cash', virement: 'Virement' };
-const CSH_ST_CLS = { 'Cadré': 'ok', 'Manquant': 'crit', 'Non remis': 'crit', 'Excédent': 'warn', 'Sans activité': '' };
+const CSH_ST_CLS = { 'Cadré': 'ok', 'Manquant': 'crit', 'Non remis': 'crit', 'Excédent': 'warn', 'Sans activité': '', 'Compte Uber non relié': 'warn' };
 function cshMoney(v) { return typeof crsMoney === 'function' ? crsMoney(v) : f0(v) + ' MAD'; }
 function cshSignedTxt(v) { const n = cshR(v); return n > 0 ? '<b class="ok">+' + cshMoney(n) + '</b>' : n < 0 ? '<b class="red">' + cshMoney(n) + '</b>' : cshMoney(0); }
 
@@ -36,27 +36,32 @@ function cshAg() {
   return l.find(x => String(x.id) === a) || l.find(x => String(x.id) === agFilter()) || null;
 }
 function cshAgency() { return CS.agId; }
-/** Jour du shift d'une transaction Uber : contrat du chauffeur à cette heure (shift du contrat), sinon date de la transaction */
-function cshPayDay(p) {
-  const code = CS.uuid2code[p.driver_uuid], t = new Date(p.at).getTime();
-  const c = code && (CS.ctrByDrv[code] || []).find(x => t >= x._s && t <= x._e);
-  return c ? c._day : localDay(t);
+/** Contrat du chauffeur d'une transaction Uber à son heure : parmi ceux qui la couvrent, le plus récent */
+function cshPayCtr(p) {
+  const code = (CS.u2c || CS.uuid2code)[p.driver_uuid], t = new Date(p.at).getTime();
+  return code ? (CS.ctrByDrv[code] || []).filter(x => t >= x._s && t <= x._e).reduce((b, x) => !b || x._s > b._s ? x : b, null) : null;
 }
-function cshPayShift(p) { const code = CS.uuid2code[p.driver_uuid], t = new Date(p.at).getTime(); const c = code && (CS.ctrByDrv[code] || []).find(x => t >= x._s && t <= x._e); return c ? c._shift : ''; }
+/** Jour du shift d'une transaction Uber : contrat du chauffeur à cette heure (shift du contrat), sinon date de la transaction */
+function cshPayDay(p) { const c = cshPayCtr(p); return c ? c._day : localDay(new Date(p.at).getTime()); }
+function cshPayShift(p) { const c = cshPayCtr(p); return c ? c._shift : ''; }
 
 async function cshLoad(from, to) {
   const lo = addDays(from, -2), hi = addDays(to, 2), ag = CS.agId, A = q => ag ? q.eq('agency_id', ag) : q;
   const keys = ag ? S.vehList.filter(v => String(v.agency_id) === String(ag)).map(v => v.key) : null;
-  const [drv, udrv, moves, all_, pay, ctr] = await Promise.all([
+  const [drv, udrv, moves, all_, pay, ctr, last] = await Promise.all([
     all('drivers', 'code,name,phone,email,uber_uuid,agency_id', null, ['name']),
     all('uber_drivers', 'uuid,name,phone,email,status', A, ['name']),
     all('cash_moves', '*', q => A(q).gte('day', from).lte('day', to), ['day']),
     all('cash_moves', 'id,caisse,flow,amount,cancelled_at', A),
     all('uber_payments', 'tx,at,driver_uuid,driver_name,cash,revenue', q => A(q).gte('at', dayBounds(lo).start.toISOString()).lt('at', dayBounds(hi).end.toISOString()), ['at']),
-    keys && !keys.length ? Promise.resolve([]) : all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => { q = q.lt('start_at', dayBounds(hi).end.toISOString()).gte('start_at', dayBounds(addDays(lo, -7)).start.toISOString()); return keys ? q.in('vehicle_key', keys) : q; }, ['start_at'])]);
+    keys && !keys.length ? Promise.resolve([]) : all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => { q = q.lt('start_at', dayBounds(hi).end.toISOString()).gte('start_at', dayBounds(addDays(lo, -7)).start.toISOString()); return keys ? q.in('vehicle_key', keys) : q; }, ['start_at']),
+    A(sb.from('uber_payments').select('at')).order('at', { ascending: false }).limit(1)]);
+  CS.lastAt = last && !last.error && last.data && last.data[0] ? last.data[0].at : '';   // dernière transaction Uber importée (toutes dates)
   CS.drivers = drv; CS.udrv = udrv; CS.moves = moves; CS.all = all_; CS.pay = pay;
   CS.uuid2code = {}; drv.forEach(d => { if (d.uber_uuid) CS.uuid2code[d.uber_uuid] = d.code; });
   CS.names = {}; drv.forEach(d => { CS.names[d.code] = d.name; }); udrv.forEach(u => { if (!CS.uuid2code[u.uuid]) CS.names['U:' + u.uuid] = u.name; });
+  // comptes Uber rattachés aussi par les saisies (code + UUID) ou par un nom unique : calculs de la caisse (pas les liens enregistrés)
+  CS.u2c = cshLinks({ uuid2code: CS.uuid2code, moves, drivers: drv, udrv, payments: pay });
   // contrats par chauffeur : fin réelle (contrat jamais clôturé = début du suivant sur le véhicule), shift du contrat
   const byVeh = {}; ctr.forEach(c => { (byVeh[c.vehicle_key || '?'] = byVeh[c.vehicle_key || '?'] || []).push(c); });
   CS.ctr = []; Object.values(byVeh).forEach(l => ctrEffEnds(l).forEach(c => { const sh = shiftOfCtr(c.start_at, S.P) || {}; c._s = new Date(c.start_at).getTime(); c._e = c._end || Date.now(); c._day = sh.day; c._shift = sh.s; CS.ctr.push(c); }));
@@ -95,7 +100,8 @@ async function pageCaisse() {
   window.__repage = () => tab(p);   // page ou tri d'une liste : onglet redessiné avec les mouvements déjà lus (sans relire la base)
 }
 function cshBody(html) { const b = $('#cshbody'); if (b) b.innerHTML = html; }
-function cshRap(p) { return cshRappro({ payments: CS.pay, moves: CS.moves, from: p.from, to: p.to, uuid2code: CS.uuid2code, dayOfPayment: cshPayDay, names: CS.names }); }
+function cshCalcCtx(p) { return { payments: CS.pay, moves: CS.moves, from: p.from, to: p.to, uuid2code: CS.uuid2code, drivers: CS.drivers, udrv: CS.udrv, dayOfPayment: cshPayDay, names: CS.names }; }
+function cshRap(p) { return cshRappro(cshCalcCtx(p)); }
 function cshLastImport() { const l = CS.pay.reduce((m, x) => x.at > m ? x.at : m, ''); return l; }
 function cshUberWarn(p) {
   const l = cshLastImport();
@@ -106,9 +112,9 @@ function cshUberWarn(p) {
 // ---------- Tableau de bord ----------
 function cshTabBord(p) {
   const bal = cshBalances(CS.all), rap = cshRap(p), daily = cshDaily({ payments: CS.pay, moves: CS.moves, from: p.from, to: p.to, dayOfPayment: cshPayDay });
-  const sum = k => cshR(daily.reduce((s, d) => s + d[k], 0)), man = cshR(rap.reduce((s, r) => s + Math.max(0, r.ecart), 0)), exc = cshR(rap.reduce((s, r) => s + Math.max(0, -r.ecart), 0));
+  const sum = k => cshR(daily.reduce((s, d) => s + d[k], 0)), man = cshR(rap.reduce((s, r) => s + (r.unlinked ? 0 : Math.max(0, r.ecart)), 0)), exc = cshR(rap.reduce((s, r) => s + (r.unlinked ? 0 : Math.max(0, -r.ecart)), 0));
   const cats = cshByCategory(CS.moves, p.from, p.to), courses = CS.moves.filter(m => cshLive(m) && m.kind === 'course'), caCourses = cshR(courses.reduce((s, m) => s + cshN(m.course_amount), 0));
-  const top = rap.filter(r => r.ecart > 0).slice(0, 10);
+  const top = rap.filter(r => r.ecart > 0 && !r.unlinked).slice(0, 10);
   const W = 760, H = 180, mx = Math.max(1, ...daily.map(d => Math.max(d.uber, d.net))), bw = daily.length ? Math.max(4, Math.min(28, (W - 40) / daily.length / 2.4)) : 10;
   const bars = daily.map((d, i) => { const x = 30 + i * ((W - 40) / Math.max(1, daily.length)); const hu = d.uber / mx * (H - 30), hn = d.net / mx * (H - 30);
     return `<rect x="${x}" y="${H - 20 - hu}" width="${bw}" height="${hu}" class="cb-u"><title>${fmtDay(d.day)} · espèces Uber ${cshMoney(d.uber)}</title></rect><rect x="${x + bw + 1}" y="${H - 20 - hn}" width="${bw}" height="${hn}" class="cb-n"><title>${fmtDay(d.day)} · encaissé ${cshMoney(d.net)}</title></rect>` +
@@ -189,33 +195,48 @@ function cshShiftSel() {
   const q = qs(), cur = shiftAt(new Date(), S.P) || { s: 'Jour', day: today() };
   return { day: /^\d{4}-\d{2}-\d{2}$/.test(q.get('jour') || '') ? q.get('jour') : cur.day, s: q.get('s') === 'Nuit' || q.get('s') === 'Jour' ? q.get('s') : cur.s };
 }
+/** Shift d'un encaissement : celui saisi, sinon celui de son contrat, sinon du premier contrat du chauffeur ce jour-là, sinon Jour (affiché une seule fois) */
+function cshMoveShift(m) {
+  if (m.shift) return m.shift;
+  const c = (m.contract_num && CS.ctr.find(x => x.num === m.contract_num)) || CS.ctr.filter(x => x._day === m.day && x.client_code && x.client_code === m.driver_code).sort((a, b) => a._s - b._s)[0];
+  return c && c._day === m.day && c._shift ? c._shift : 'Jour';
+}
 function cshTabShift() {
   const { day, s } = cshShiftSel();
-  const ctr = CS.ctr.filter(c => c._day === day && c._shift === s && c.client_code).sort((a, b) => String(cshDrvName(a.client_code)).localeCompare(String(cshDrvName(b.client_code))));
-  const enc = CS.moves.filter(m => cshLive(m) && m.caisse === 'uber' && m.kind === 'encaissement' && m.day === day && (m.shift === s || !m.shift));
-  const cashOf = c => { const u = (CS.drivers.find(d => d.code === c.client_code) || {}).uber_uuid; if (!u) return null;
-    return cshR(CS.pay.filter(x => x.driver_uuid === u && new Date(x.at).getTime() >= c._s && new Date(x.at).getTime() <= c._e).reduce((t, x) => t + cshN(x.cash), 0)); };
-  const lastImp = cshLastImport();
-  const rows = ctr.map(c => { const done = enc.filter(m => m.driver_code === c.client_code); const u = cashOf(c);
-    return { c, done, uber: u, uuid: (CS.drivers.find(d => d.code === c.client_code) || {}).uber_uuid }; });
-  const others = enc.filter(m => !ctr.some(c => c.client_code === m.driver_code));
+  const ctr = CS.ctr.filter(c => c._day === day && c._shift === s && c.client_code).sort((a, b) => String(cshDrvName(a.client_code)).localeCompare(String(cshDrvName(b.client_code))) || a._s - b._s);
+  const enc = CS.moves.filter(m => cshLive(m) && m.caisse === 'uber' && m.kind === 'encaissement' && m.day === day && cshMoveShift(m) === s);
+  // espèces Uber du contrat : comptes Uber du chauffeur ; export pas encore importé jusqu'à la fin du contrat = « non importé » (jamais 0)
+  const uuidsOf = code => Object.keys(CS.u2c || {}).filter(u => CS.u2c[u] === code);
+  const cashOf = c => { const us = uuidsOf(c.client_code); if (!us.length) return { v: null };
+    if (!CS.lastAt || new Date(CS.lastAt).getTime() < c._e) return { v: null, pending: true };
+    return { v: cshR(CS.pay.filter(x => us.indexOf(x.driver_uuid) >= 0 && new Date(x.at).getTime() >= c._s && new Date(x.at).getTime() <= c._e).reduce((t, x) => t + cshN(x.cash), 0)) }; };
+  const lastImp = CS.lastAt || cshLastImport();
+  const rows = ctr.map(c => { const u = cashOf(c);
+    return { c, done: [], uber: u.v, pending: !!u.pending, uuid: (CS.drivers.find(d => d.code === c.client_code) || {}).uber_uuid || uuidsOf(c.client_code)[0] }; });
+  // chaque encaissement compté une fois : sur son contrat (numéro), sinon sur le premier contrat du chauffeur encore sans encaissement ;
+  // encaissement en plus sur un même contrat : dans « Autres encaissements »
+  const others = [];
+  enc.forEach(m => { const r = m.contract_num ? rows.find(x => x.c.num === m.contract_num)
+    : rows.find(x => x.c.client_code === m.driver_code && !x.done.length);
+    if (r && !r.done.length) r.done.push(m); else others.push(m); });
+  const ucOf = (r, d) => d.uber_cash != null ? cshN(d.uber_cash) : r.uber;   // saisi sans export : espèces Uber relues depuis l'export importé ensuite
   const link = (d, sh) => '#/caisse?t=shift&jour=' + d + '&s=' + sh;
   const prev = s === 'Nuit' ? [day, 'Jour'] : [addDays(day, -1), 'Nuit'], next = s === 'Jour' ? [day, 'Nuit'] : [addDays(day, 1), 'Jour'];
   cshBody(`<div class="bar"><a class="btn small ghostb" href="${link(prev[0], prev[1])}">← Shift précédent</a><label>Jour <input type="date" id="cshsd" value="${day}"></label>
       <label>Shift <select id="cshss"><option ${s === 'Jour' ? 'selected' : ''}>Jour</option><option ${s === 'Nuit' ? 'selected' : ''}>Nuit</option></select></label>
       <b>${esc(shiftDayName({ s, day }))}</b><a class="btn small ghostb" href="${link(next[0], next[1])}">Shift suivant →</a></div>
-    <div class="small">Chauffeurs dont le contrat a commencé dans ce shift. Espèces Uber = espèces collectées pendant le contrat (export Uber importé${lastImp ? ', jusqu\'au ' + esc(fmtDTY(lastImp)) : ''}). Encaissé net = remis par le chauffeur − monnaie rendue. Manquant = espèces Uber − encaissé net : déduit de la paie (dépenses justifiées comptées au rapprochement).</div>
+    <div class="small">Chauffeurs dont le contrat a commencé dans ce shift. Espèces Uber = espèces collectées pendant le contrat (export Uber importé${lastImp ? ', jusqu\'au ' + esc(fmtDTY(lastImp)) : ''} ; « non importé » : export pas encore importé jusqu'à la fin du contrat, manquant calculé au rapprochement). Encaissé net = remis par le chauffeur − monnaie rendue. Manquant = espèces Uber − encaissé net : déduit de la paie (dépenses justifiées comptées au rapprochement).</div>
     <div class="tw"><table class="cshshift"><thead><tr><th>Chauffeur</th><th>Contrat</th><th class="n">Espèces Uber</th><th class="n">Remis</th><th class="n">Monnaie rendue</th><th class="n">Encaissé net</th><th class="n">Manquant</th><th>Commentaire</th><th></th></tr></thead><tbody>
-    ${rows.length ? rows.map((r, i) => { const d = r.done[0];
-      if (d) return `<tr class="done"><td>${esc(cshDrvName(r.c.client_code))}</td><td class="small">${esc(r.c.num)} · ${esc(fmtDT(r.c.start_at))}</td><td class="n">${r.uber == null ? '<span class="nm">UUID Uber non relié</span>' : cshMoney(r.uber)}</td>
-        <td class="n">${cshMoney(d.given)}</td><td class="n">${cshMoney(d.change)}</td><td class="n"><b>${cshMoney(d.amount)}</b></td><td class="n">${d.uber_cash == null ? '' : cshSignedTxt(-(cshN(d.uber_cash) - cshN(d.amount)))}</td><td class="small">${esc(d.comment || '')}</td><td>${cshCanFix(d) ? `<button class="ghost small" data-cshx="${d.id}">Annuler</button>` : '<span class="small ok">enregistré</span>'}</td></tr>`;
+    ${rows.length ? rows.map((r, i) => { const d = r.done[0], ub = r.pending ? '<span class="nm" title="Export Uber « Opérations de paiement » pas encore importé jusqu\'à la fin du contrat">non importé</span>' : null;
+      if (d) { const uc = ucOf(r, d); return `<tr class="done"><td>${esc(cshDrvName(r.c.client_code))}</td><td class="small">${esc(r.c.num)} · ${esc(fmtDT(r.c.start_at))}</td><td class="n">${r.uber == null ? ub || '<span class="nm">UUID Uber non relié</span>' : cshMoney(r.uber)}</td>
+        <td class="n">${cshMoney(d.given)}</td><td class="n">${cshMoney(d.change)}</td><td class="n"><b>${cshMoney(d.amount)}</b></td><td class="n">${uc == null ? '' : cshSignedTxt(-(uc - cshN(d.amount)))}</td><td class="small">${esc(d.comment || '')}</td><td>${cshCanFix(d) ? `<button class="ghost small" data-cshx="${d.id}">Annuler</button>` : '<span class="small ok">enregistré</span>'}</td></tr>`; }
       return `<tr data-row="${i}"><td>${esc(cshDrvName(r.c.client_code))}</td><td class="small">${esc(r.c.num)} · ${esc(fmtDT(r.c.start_at))}</td>
-        <td class="n">${r.uber == null ? `<a class="nm" href="${cshHref('import')}">UUID Uber non relié</a>` : cshMoney(r.uber)}</td>
+        <td class="n">${r.uber == null ? ub || `<a class="nm" href="${cshHref('import')}">UUID Uber non relié</a>` : cshMoney(r.uber)}</td>
         <td class="n"><input type="number" min="0" step="1" class="cgv" style="width:90px"></td><td class="n"><input type="number" min="0" step="1" class="cch" style="width:80px"></td>
         <td class="n cnet"></td><td class="n cman"></td><td><input class="ccm" size="18" placeholder="si manquant"></td><td><button class="small" data-csav="${i}">Enregistrer</button></td></tr>`; }).join('')
       : `<tr><td colspan="9" class="empty">Aucun contrat commencé dans ce shift${CS.ctr.length ? '' : ' (contrats non importés ?)'}.</td></tr>`}
-    </tbody>${rows.length ? (() => { const d = rows.map(r => r.done[0]).filter(Boolean), sum = f => cshR(d.reduce((t, m) => t + cshN(f(m)), 0)), ub = cshR(rows.reduce((t, r) => t + cshN(r.uber), 0));
-      const man = cshR(d.reduce((t, m) => t + (m.uber_cash == null ? 0 : cshN(m.uber_cash) - cshN(m.amount)), 0));
+    </tbody>${rows.length ? (() => { const dr = rows.filter(r => r.done[0]), d = dr.map(r => r.done[0]), sum = f => cshR(d.reduce((t, m) => t + cshN(f(m)), 0)), ub = cshR(rows.reduce((t, r) => t + cshN(r.uber), 0));
+      const man = cshR(dr.reduce((t, r) => { const uc = ucOf(r, r.done[0]); return t + (uc == null ? 0 : uc - cshN(r.done[0].amount)); }, 0));
       return `<tfoot><tr class="ttot"><td>Total · ${d.length} / ${rows.length} encaissé${d.length > 1 ? 's' : ''}</td><td></td><td class="n"><b>${cshMoney(ub)}</b></td><td class="n"><b>${cshMoney(sum(m => m.given))}</b></td><td class="n"><b>${cshMoney(sum(m => m.change))}</b></td>
         <td class="n"><b>${cshMoney(sum(m => m.amount))}</b></td><td class="n">${cshSignedTxt(-man)}</td><td></td><td></td></tr></tfoot>`; })() : ''}</table></div>
     <details class="panel"><summary><h3>Encaissement d'un autre chauffeur (sans contrat dans ce shift)</h3></summary><div class="mfrow">
@@ -274,7 +295,8 @@ function cshTabDep(p) {
   $('#cdsave').onclick = async () => {
     const a = cshN(cshVal('cda')); if (!(a > 0) || !cshVal('cdd')) { alert('Date et montant obligatoires.'); return; }
     const who = cshVal('cdw') ? cshResolve(cshVal('cdw')) : {};
-    try { await cshInsert(Object.assign(who, { caisse: 'depenses', kind: 'depense', flow: 'out', amount: a, day: cshVal('cdd'), shift: cshVal('cds'), label: cshVal('cdc'), ride_type: cshVal('cdr'),
+    // payée par la banque : hors caisse (virement), comme les avances et bonus
+    try { await cshInsert(Object.assign(who, { caisse: 'depenses', kind: 'depense', flow: cshVal('cdo') === 'Banque' ? 'virement' : 'out', amount: a, day: cshVal('cdd'), shift: cshVal('cds'), label: cshVal('cdc'), ride_type: cshVal('cdr'),
       justif: cshVal('cdj'), source: cshVal('cdo'), comment: cshVal('cdm') || null })); pageCaisse(); }
     catch (e) { alert(e.message); }
   };
@@ -386,10 +408,10 @@ function cshRapCols() {
 }
 function cshTabRappro(p) {
   const rap = cshRap(p), tot = k => cshR(rap.reduce((s, r) => s + r[k], 0));
-  const man = cshR(rap.reduce((s, r) => s + Math.max(0, r.ecart), 0)), exc = cshR(rap.reduce((s, r) => s + Math.max(0, -r.ecart), 0));
-  cshBody(cshUberWarn(p) + cards([['Espèces déclarées Uber', cshMoney(tot('uber'))], ['Dépenses Uber justifiées', cshMoney(tot('frais'))], ['Espèces encaissées nettes', cshMoney(tot('net'))],
+  const man = cshR(rap.reduce((s, r) => s + (r.unlinked ? 0 : Math.max(0, r.ecart)), 0)), exc = cshR(rap.reduce((s, r) => s + (r.unlinked ? 0 : Math.max(0, -r.ecart)), 0)), nu = rap.filter(r => r.unlinked && r.statut !== 'Sans activité').length;
+  cshBody(cshUberWarn(p) + (nu ? msg(nu + ' compte' + (nu > 1 ? 's' : '') + ' Uber non relié' + (nu > 1 ? 's' : '') + ' à un chauffeur Ludy : écart affiché pour information, sans effet sur la paie. <a href="' + cshHref('import') + '">Relier les comptes Uber</a>', 'warn') : '') + cards([['Espèces déclarées Uber', cshMoney(tot('uber'))], ['Dépenses Uber justifiées', cshMoney(tot('frais'))], ['Espèces encaissées nettes', cshMoney(tot('net'))],
       ['Manquant à retenir', cshMoney(man), man ? 'crit' : 'ok'], ['Excédent à ajouter', cshMoney(exc), exc ? 'warn' : '']]) +
-    `<div class="small">Espèces Uber attribuées au shift du contrat du chauffeur (sinon au jour de la transaction). Frais justifiés = dépenses « Course Uber » au justificatif OK. Écart = théorique − encaissé : positif = manquant (retenu sur la paie), négatif = excédent (ajouté).</div>
+    `<div class="small">Espèces Uber attribuées au shift du contrat du chauffeur (sinon au jour de la transaction). Frais justifiés = dépenses « Course Uber » au justificatif OK. Écart = théorique − encaissé : positif = manquant (retenu sur la paie), négatif = excédent (ajouté). Compte Uber non relié : sans effet sur la paie.</div>
     <div class="bar"><button class="ghost small" id="cshrpdf">PDF</button><button class="ghost small" id="cshrxls">Tableur</button></div>` + table('tcshrap', cshRapCols(), rap, { empty: 'Aucune espèce Uber ni encaissement sur la période', total: cshTot(null, ['Taux de collecte']) }));
   $('#cshrpdf').onclick = () => { try { reportPdf(rptSimple({ kind: 'caisse', agency: CS.agName || undefined, title: 'Rapprochement des espèces Uber', period: fmtDay(p.from) + ' → ' + fmtDay(p.to), from: p.from, to: p.to,
     summary: [['Espèces Uber', cshMoney(tot('uber'))], ['Frais justifiés', cshMoney(tot('frais'))], ['Encaissé net', cshMoney(tot('net'))], ['Manquant', cshMoney(man)], ['Excédent', cshMoney(exc)]],
@@ -407,11 +429,11 @@ function cshPaieCols() {
     ['Effet net sur la paie', r => cshSignedTxt(r.impact), r => r.impact, 'n'], ['Déjà versé / à déclarer', r => cshMoney(r.declarer), r => r.declarer, 'n']];
 }
 function cshTabPaie(p) {
-  const pay = cshPayroll({ payments: CS.pay, moves: CS.moves, from: p.from, to: p.to, uuid2code: CS.uuid2code, dayOfPayment: cshPayDay, names: CS.names });
+  const pay = cshPayroll(cshCalcCtx(p));
   const tot = k => cshR(pay.reduce((s, r) => s + r[k], 0));
   cshBody(cshUberWarn(p) + cards([['Retenues (manquants, dépenses sans justificatif, avances)', cshMoney(tot('manquant') + tot('depKo') + tot('avances')), 'crit'], ['Ajouts (excédents, remboursements, primes, bonus à payer)', cshMoney(tot('excedent') + tot('rembours') + tot('primeReste') + tot('bonusToPay'))],
       ['Effet net total', cshSignedTxt(tot('impact'))], ['Chauffeurs concernés', f0(pay.length)]]) +
-    `<div class="small">Règles du classeur : manquant d'espèces Uber retenu, excédent ajouté ; dépense sans justificatif OK retenue ; avance déjà versée retenue ; prime de course privée ajoutée (moins la part gardée par le chauffeur) ; bonus « A payer » ajouté. Choisir la période de paie ci-dessus.</div>
+    `<div class="small">Règles du classeur : manquant d'espèces Uber retenu, excédent ajouté ; dépense sans justificatif OK retenue (sauf « Course Uber » déjà comptée dans le manquant d'espèces Uber) ; compte Uber non relié sans effet ; avance déjà versée retenue ; prime de course privée ajoutée (moins la part gardée par le chauffeur) ; bonus « A payer » ajouté. Choisir la période de paie ci-dessus.</div>
     <div class="bar"><button class="ghost small" id="cshppdf">PDF</button><button class="ghost small" id="cshpxls">Tableur</button></div>` + table('tcshpay', cshPaieCols(), pay, { empty: 'Aucun effet sur la paie sur la période', total: cshTot() }));
   $('#cshppdf').onclick = () => { try { reportPdf(rptSimple({ kind: 'caisse', agency: CS.agName || undefined, title: 'Effet de la caisse sur la paie', period: fmtDay(p.from) + ' → ' + fmtDay(p.to), from: p.from, to: p.to,
     summary: [['Effet net total', cshMoney(tot('impact'))], ['Chauffeurs', f0(pay.length)]], tables: [colsTable('Par chauffeur', cshPaieCols(), pay)], fileName: 'paie_caisse_' + p.from + '_' + p.to })); } catch (e) { alert(e.message); } };
@@ -421,7 +443,7 @@ function cshTabPaie(p) {
 // ---------- Chiffre d'affaires ----------
 function cshTabCA(p) {
   const q = qs(), by = q.get('par') === 'jour' ? 'day' : 'week';
-  const ca = cshCA({ payments: CS.pay, from: p.from, to: p.to, by, uuid2code: CS.uuid2code, dayOfPayment: cshPayDay, names: CS.names });
+  const ca = cshCA(Object.assign(cshCalcCtx(p), { by }));
   const priv = {}; CS.moves.filter(m => cshLive(m) && m.kind === 'course').forEach(m => { const c = by === 'week' ? cshWeek(m.day) : m.day; priv[c] = cshR((priv[c] || 0) + cshN(m.course_amount)); });
   const lab = c => by === 'week' ? 'Sem. du ' + fmtDay(c).slice(0, 5) : fmtDay(c).slice(0, 5);
   const cols = [['Chauffeur', r => esc(r.name || r.key)]].concat(ca.cols.map(c => [lab(c), r => r.v[c] ? cshMoney(r.v[c]) : '', r => r.v[c] || 0, 'n'])).concat([['Total', r => '<b>' + cshMoney(r.total) + '</b>', r => r.total, 'n']]);
@@ -506,37 +528,65 @@ function cshTabImport() {
   const rowsOf = (wb, test) => { for (const n of wb.SheetNames) { const r = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: '' }); if (test(r)) return r; } return null; };
   // base sans la migration 20261104000000_caisse_classeur.sql : transactions enregistrées sans la ligne complète de l'export
   const slim = rows => rows.map(r => { const o = Object.assign({}, r); delete o.first_name; delete o.last_name; delete o.raw; return o; });
-  const withAg = rows => rows.map(r => CS.agId ? Object.assign(r, { agency_id: CS.agId }) : r);   // lignes de l'agence de la caisse
-  const batch = async (tbl, rows, conflict, out, label) => { let n = 0; for (let i = 0; i < rows.length; i += 500) {
-    let part = withAg(rows.slice(i, i + 500)), r = await sb.from(tbl).upsert(part, { onConflict: conflict, ignoreDuplicates: true });
-    if (r.error && tbl === 'uber_payments' && /first_name|last_name|raw/.test(r.error.message)) r = await sb.from(tbl).upsert(slim(part), { onConflict: conflict, ignoreDuplicates: true });
-    if (r.error) throw new Error(r.error.message); n += Math.min(500, rows.length - i); out.innerHTML = msg(label + ' : ' + n + ' / ' + rows.length + '…'); } };
+  // agence de chaque ligne Uber : chauffeur Ludy relié = la base la pose (cash_agency_trg, agence du chauffeur) ; sinon agence du compte Uber
+  // déjà enregistré ; sinon agence de la caisse. Ligne d'une agence que l'utilisateur ne voit pas : ignorée (la base la refuserait).
+  const uberAg = async uuids => {
+    const drv = {}, udrv = {}; CS.drivers.forEach(d => { if (d.uber_uuid && d.agency_id) drv[d.uber_uuid] = d.agency_id; });
+    const l = [...new Set(uuids.filter(Boolean))];
+    for (let i = 0; i < l.length; i += 100) { const r = await sb.from('uber_drivers').select('uuid,agency_id').in('uuid', l.slice(i, i + 100));
+      if (r.error) throw new Error(r.error.message); (r.data || []).forEach(x => { udrv[x.uuid] = x.agency_id; }); }
+    return { drv, udrv };
+  };
+  const mineAg = a => isAdmin() || S.agencies.some(x => String(x.id) === String(a));
+  /** false : autre agence (ignorée) ; sinon agency_id posé seulement sans chauffeur Ludy d'agence connue */
+  const place = (r, u, ag, st) => { const d = ag.drv[u], x = d || ag.udrv[u];
+    if (x && !mineAg(x)) { st.foreign++; return false; }
+    if (d) { if (String(d) !== String(CS.agId)) st.other++; } else r.agency_id = x || CS.agId;
+    return true; };
+  /** Insertion sans doublon (clé conflict) : { added, dup } = lignes ajoutées, lignes déjà présentes ignorées */
+  const batch = async (tbl, rows, conflict, out, label) => { let n = 0, added = 0; for (let i = 0; i < rows.length; i += 500) {
+    const part = rows.slice(i, i + 500); let r = await sb.from(tbl).upsert(part, { onConflict: conflict, ignoreDuplicates: true }).select(conflict);
+    if (r.error && tbl === 'uber_payments' && /first_name|last_name|raw/.test(r.error.message)) r = await sb.from(tbl).upsert(slim(part), { onConflict: conflict, ignoreDuplicates: true }).select(conflict);
+    if (r.error) throw new Error(r.error.message); added += (r.data || []).length; n += part.length; out.innerHTML = msg(label + ' : ' + n + ' / ' + rows.length + '…'); }
+    return { added, dup: rows.length - added }; };
+  const savePay = async (list, out, label) => { const ag = await uberAg(list.map(r => r.driver_uuid)), st = { foreign: 0, other: 0 };
+    const keep = list.filter(r => place(r, r.driver_uuid, ag, st)); return Object.assign(await batch('uber_payments', keep, 'tx', out, label), st); };
+  /** Chauffeurs Uber : compte déjà enregistré mis à jour sans toucher à son agence ; nouveau compte rangé comme les transactions */
+  const saveDrv = async list => { const ag = await uberAg(list.map(r => r.uuid)), st = { foreign: 0, other: 0 }, now = new Date().toISOString(), old = [], fresh = [];
+    list.forEach(r0 => { const r = Object.assign({}, r0, { updated_at: now }); if (r.uuid in ag.udrv) old.push(r); else if (place(r, r.uuid, ag, st)) fresh.push(r); });
+    for (let i = 0; i < old.length; i += 500) { const r = await sb.from('uber_drivers').upsert(old.slice(i, i + 500), { onConflict: 'uuid' }); if (r.error) throw new Error(r.error.message); }
+    for (let i = 0; i < fresh.length; i += 500) { const r = await sb.from('uber_drivers').upsert(fresh.slice(i, i + 500), { onConflict: 'uuid', ignoreDuplicates: true }); if (r.error) throw new Error(r.error.message); }
+    return st; };
+  const agTxt = st => (st.other ? ', ' + st.other + ' rangé' + (st.other > 1 ? 's' : '') + ' dans l\'agence de leur chauffeur' : '') + (st.foreign ? ', ' + st.foreign + ' d\'une autre agence ignoré' + (st.foreign > 1 ? 's' : '') : '');
+  const notLudy = wb => wb.SheetNames.filter(n => !/\sLudy$/i.test(String(n).trim()));   // onglets de la copie de sauvegarde : jamais relus
   $('#cshfp').onchange = async e => { const f = e.target.files[0], out = $('#cshfpr'); if (!f) return;
     try { const wb = await read(f, out), rows = rowsOf(wb, r => cshParseUberPayments(r).rows.length > 0) || [], res = cshParseUberPayments(rows, localToDate);
       if (res.error || !res.rows.length) throw new Error(res.error || 'aucune transaction trouvée');
-      await batch('uber_payments', res.rows, 'tx', out, 'Transactions');
+      const b = await savePay(res.rows, out, 'Transactions');
       const d = res.rows.map(r => r.at).sort();
-      out.innerHTML = msg(`<b>${res.rows.length} transactions lues</b> du ${fmtDTY(d[0])} au ${fmtDTY(d[d.length - 1])} (déjà présentes ignorées)${res.bad.length ? ', ' + res.bad.length + ' lignes sans heure ignorées' : ''}. Espèces : ${cshMoney(res.rows.reduce((s, r) => s + r.cash, 0))}.`, 'ok'); }
+      out.innerHTML = msg(`<b>${res.rows.length} transactions lues</b> du ${fmtDTY(d[0])} au ${fmtDTY(d[d.length - 1])} : ${b.added} ajoutées, ${b.dup} déjà présentes ignorées${agTxt(b)}${res.bad.length ? ', ' + res.bad.length + ' lignes sans heure ignorées' : ''}. Espèces : ${cshMoney(res.rows.reduce((s, r) => s + r.cash, 0))}.`, 'ok'); }
     catch (x) { out.innerHTML = msg('Erreur : ' + esc(x.message || x), 'err'); } };
   $('#cshfd').onchange = async e => { const f = e.target.files[0], out = $('#cshfdr'); if (!f) return;
     try { const wb = await read(f, out), rows = rowsOf(wb, r => cshParseUberDrivers(r).rows.length > 0) || [], res = cshParseUberDrivers(rows);
       if (res.error || !res.rows.length) throw new Error(res.error || 'aucun chauffeur trouvé');
-      const up = await sb.from('uber_drivers').upsert(withAg(res.rows.map(r => Object.assign(r, { updated_at: new Date().toISOString() }))), { onConflict: 'uuid' }); if (up.error) throw new Error(up.error.message);
-      const auto = await cshAutoMap(res.rows);
-      CS.flash = { id: 'cshfdr', html: msg(`<b>${res.rows.length} chauffeurs Uber</b> enregistrés ; ${auto} reliés automatiquement à leur chauffeur Ludy (même téléphone ou même nom).`, 'ok') };
+      const st = await saveDrv(res.rows), auto = await cshAutoMap(res.rows);
+      CS.flash = { id: 'cshfdr', html: msg(`<b>${res.rows.length} chauffeurs Uber</b> enregistrés${agTxt(st)} ; ${auto} reliés automatiquement à leur chauffeur Ludy (même téléphone, sinon même nom, candidat unique).`, 'ok') };
       await pageCaisse(); }
     catch (x) { out.innerHTML = msg('Erreur : ' + esc(x.message || x), 'err'); } };
   const fh = $('#cshfh'); if (fh) fh.onchange = async e => { const f = e.target.files[0], out = $('#cshfhr'); if (!f) return;
-    try { const wb = await read(f, out), sheets = {}; wb.SheetNames.forEach(n => { sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: '' }); });
+    try { const wb = await read(f, out), sheets = {}; notLudy(wb).forEach(n => { sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: '' }); });
       // 1. chauffeurs et transactions Uber du classeur, 2. mouvements des caisses (chauffeurs reconnus par UUID Uber ou par nom)
       const dRows = Object.values(sheets).find(r => cshParseUberDrivers(r).rows.length > 0);
-      let nd = 0; if (dRows) { const d = cshParseUberDrivers(dRows).rows; const up = await sb.from('uber_drivers').upsert(withAg(d), { onConflict: 'uuid' }); if (up.error) throw new Error(up.error.message); nd = await cshAutoMap(d); await cshLoad(today(), today()); }
+      let nd = 0; if (dRows) { const d = cshParseUberDrivers(dRows).rows; await saveDrv(d); nd = await cshAutoMap(d); await cshLoad(today(), today()); }
       const pRows = Object.values(sheets).find(r => cshHeader(r, c => c === 'uuid de la transaction') >= 0);
-      let np = 0; if (pRows) { const pr = cshParseUberPayments(pRows, localToDate).rows; await batch('uber_payments', pr, 'tx', out, 'Transactions Uber'); np = pr.length; }
+      let np = 0, npd = 0; if (pRows) { const pr = cshParseUberPayments(pRows, localToDate).rows, b = await savePay(pr, out, 'Transactions Uber'); np = b.added; npd = b.dup; }
       const h = cshParseHistory(sheets, { resolve: (n, u) => { const r = cshResolve(n, u); return { driver_code: r.driver_code, driver_name: r.driver_code ? cshDrvName(r.driver_code) : r.driver_name, uber_uuid: r.uber_uuid }; } });
-      h.moves.forEach(m => { m.agency_id = CS.agId; });
-      await batch('cash_moves', h.moves, 'import_key', out, 'Mouvements de caisse');
-      out.innerHTML = msg(`<b>Historique repris</b> : ${h.moves.length} mouvements (${Object.keys(h.counts).map(k => ((CASH_CAISSES.find(c => c[0] === k) || [])[1] || k) + ' ' + h.counts[k]).join(', ')}), ${h.skipped} lignes vides ou à 0 MAD ignorées ; ${np} transactions Uber ; ${nd} chauffeurs Uber reliés. Lignes déjà reprises ignorées.`, 'ok'); }
+      // lignes déjà reprises : clé actuelle ou clé de la version précédente (ligne entière), jamais reprises deux fois
+      const have = new Set((await all('cash_moves', 'import_key', q => q.like('import_key', 'xl%'))).map(x => x.import_key));
+      const fresh = h.moves.filter(m => !have.has(m.import_key) && !have.has(m.legacy_key));
+      h.moves.forEach(m => { delete m.legacy_key; m.agency_id = CS.agId; });
+      const bm = await batch('cash_moves', fresh, 'import_key', out, 'Mouvements de caisse');
+      out.innerHTML = msg(`<b>Historique repris</b> : ${h.moves.length} mouvements lus (${Object.keys(h.counts).map(k => ((CASH_CAISSES.find(c => c[0] === k) || [])[1] || k) + ' ' + h.counts[k]).join(', ')}), ${bm.added} ajoutés, ${h.moves.length - bm.added} déjà repris ignorés, ${h.skipped} lignes vides ou à 0 MAD ignorées${wb.SheetNames.length > notLudy(wb).length ? ', onglets « … Ludy » (copie de sauvegarde) ignorés' : ''} ; ${np} transactions Uber ajoutées (${npd} déjà présentes) ; ${nd} chauffeurs Uber reliés.`, 'ok'); }
     catch (x) { out.innerHTML = msg('Erreur : ' + esc(x.message || x), 'err'); } };
   document.querySelectorAll('[data-cshmapok]').forEach(b => { b.onclick = async () => { const u = b.dataset.cshmapok, s = document.querySelector('[data-cshmap="' + u + '"]'); if (!s.value) { alert('Choisir le chauffeur Ludy.'); return; }
     const r = await sb.from('drivers').update({ uber_uuid: u }).eq('code', s.value); if (r.error) { alert(r.error.message); return; } pageCaisse(); }; });
@@ -549,13 +599,11 @@ function cshReadBook(buf, name) {
   if (t.indexOf('\ufffd') >= 0) t = new TextDecoder('windows-1252').decode(buf);
   return XLSX.read(t.replace(/^\ufeff/, ''), { type: 'string', raw: true });
 }
-/** Relie automatiquement les chauffeurs Uber à leur chauffeur Ludy (même téléphone, sinon même nom) ; jamais un chauffeur déjà relié */
+/** Relie automatiquement les chauffeurs Uber à leur chauffeur Ludy (même téléphone, sinon même nom) : candidat unique dans les deux sens ; jamais un chauffeur déjà relié */
 async function cshAutoMap(list) {
   const drv = await all('drivers', 'code,name,phone,uber_uuid'), used = new Set(drv.filter(d => d.uber_uuid).map(d => d.uber_uuid)); let n = 0;
-  for (const u of list) {
-    if (used.has(u.uuid)) continue;
-    const d = cshMatchDriver(u, drv.filter(x => !x.uber_uuid)); if (!d) continue;
-    const r = await sb.from('drivers').update({ uber_uuid: u.uuid }).eq('code', d.code); if (!r.error) { d.uber_uuid = u.uuid; used.add(u.uuid); n++; }
+  for (const [u, d] of cshMatchAll(list.filter(u => !used.has(u.uuid)), drv.filter(x => !x.uber_uuid))) {
+    const r = await sb.from('drivers').update({ uber_uuid: u.uuid }).eq('code', d.code).is('uber_uuid', null); if (!r.error) { d.uber_uuid = u.uuid; used.add(u.uuid); n++; }
   }
   return n;
 }

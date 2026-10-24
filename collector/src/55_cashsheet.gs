@@ -41,6 +41,8 @@ function cshTxt_(v) { const s = v == null ? '' : String(v); return /^[=+\-@]/.te
 /** Date aaaa-mm-jj → numéro de série du tableur (sans fuseau horaire) */
 function cshSerial_(d) { if (!d) return ''; const p = String(d).slice(0, 10).split('-').map(Number); return (Date.UTC(p[0], p[1] - 1, p[2]) - Date.UTC(1899, 11, 30)) / DAY; }
 function cshNum_(v) { return v === null || v === undefined || v === '' ? '' : +v; }
+/** Décalage horaire du Maroc à cet instant (MA_TZ), au format de l'export Uber : « +0100 », « +0000 » */
+function cshOff_(at) { const o = tzOffsetMin_(at), a = Math.abs(o); return (o < 0 ? '-' : '+') + ('0' + Math.floor(a / 60)).slice(-2) + ('0' + a % 60).slice(-2); }
 function cshHashStr_(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + ':' + s.length; }
 
 /** Une ligne de l'onglet de la caisse (valeurs et formules), r = numéro de ligne dans le tableur */
@@ -59,10 +61,12 @@ function cshSheetRow_(caisse, m, r, who, crsDay) {
     cshTxt_(m.kind === 'depense' ? m.label || 'Autre' : op), flow, cshTxt_(m.source), m.justif === 'En attente' ? '' : cshTxt_(m.justif), com];
   if (caisse === 'rh') return [day, name, uuidF('B'), mgr, amt, flow, cshTxt_(m.source), cshTxt_(m.kind === 'avance' ? CSH_KIND_TXT_.avance : op), com, m.signed ? 'OK' : ''];
   if (caisse === 'courses') {
+    // prime (L) et montant déjà payé (P) : valeurs enregistrées dans Ludy (prime de l'historique, part gardée corrigée après coup) ;
+    // formules du classeur seulement quand la valeur manque
     const crs = m.kind === 'course', route = String(m.label || '').split(' → ');
     return [day, mgr, flow, amt, crs ? 'Encaissement chauffeur' : cshTxt_(op), crs ? cshTxt_(route[0]) : '', crs ? cshTxt_(route[1] || '') : '', name, crs ? cshSerial_(crsDay || m.day) : '',
-      crs ? cshNum_(m.course_amount) : '', crs && m.commission_pct != null ? +m.commission_pct / 100 : '', '=J' + r + '*K' + r, crs ? 'Oui' : '', com,
-      '=IF($E' + r + '="Encaissement chauffeur",L' + r + ',0)', '=IF($E' + r + '="Encaissement chauffeur",J' + r + '-D' + r + ',0)', '=IF($E' + r + '="Encaissement chauffeur",O' + r + '-P' + r + ',0)'];
+      crs ? cshNum_(m.course_amount) : '', crs && m.commission_pct != null ? +m.commission_pct / 100 : '', crs && m.prime != null ? +m.prime : '=J' + r + '*K' + r, crs ? 'Oui' : '', com,
+      '=IF($E' + r + '="Encaissement chauffeur",L' + r + ',0)', crs && m.prime_paid != null ? +m.prime_paid : '=IF($E' + r + '="Encaissement chauffeur",J' + r + '-D' + r + ',0)', '=IF($E' + r + '="Encaissement chauffeur",O' + r + '-P' + r + ',0)'];
   }
   return [day, name, uuidF('B'), mgr, amt, flow, cshTxt_(m.kind === 'bonus' ? m.label || 'Bonus' : op), cshTxt_(m.status), cshTxt_(m.source), com];
 }
@@ -71,7 +75,7 @@ function cshSheetRow_(caisse, m, r, who, crsDay) {
 function cshPayRow_(p, r, H) {
   const raw = {}; Object.keys(p.raw || {}).forEach(k => { raw[cshNorm_(k)] = p.raw[k]; });
   const fb = { 'uuid de la transaction': p.tx, 'uuid du chauffeur': p.driver_uuid, 'prenom du chauffeur': p.first_name || p.driver_name, 'nom du chauffeur': p.last_name, 'uuid de la course': p.trip,
-    'description': p.description, 'par rapport a la creation de rapport': fmtMa_(p.at, 'yyyy-MM-dd HH:mm:ss') + ' +0100',
+    'description': p.description, 'par rapport a la creation de rapport': fmtMa_(p.at, 'yyyy-MM-dd HH:mm:ss') + ' ' + cshOff_(p.at),
     'montant vous etant verse': p.payout, 'montant vous etant verse:vos revenus': p.revenue, 'montant vous etant verse:solde des courses:versements:especes collectees': p.cash == null ? '' : -p.cash,
     'montant vous etant verse:vos revenus:prix de la course': p.fare, 'montant vous etant verse:vos revenus:pourboire': p.tip };
   const row = []; let firstAmt = -1;
@@ -173,8 +177,9 @@ function cashSheetStep_(t0) {
   if (!targets.length && String(P.cashSheetId || '').trim()) targets = [{ ag: null, name: '', sheet: String(P.cashSheetId).trim() }];
   if (!targets.length) return '';
   const drv = dbSelect_('drivers', 'select=code,name,uber_uuid', 'code'), udrv = dbSelect_('uber_drivers', 'select=*', 'uuid');
-  const mis = moves.filter(m => m.mission_id).map(m => m.mission_id), crsDay = {};
-  if (mis.length) dbSelect_('missions', 'select=id,start_at&id=in.(' + mis.join(',') + ')', 'id').forEach(x => { if (x.start_at) crsDay[x.id] = localDay_(x.start_at); });
+  // jour des courses Ludy : identifiants dédoublonnés, lus par 100 (adresse limitée à 2 Ko)
+  const mis = [...new Set(moves.filter(m => m.mission_id).map(m => m.mission_id))], crsDay = {};
+  for (let i = 0; i < mis.length; i += 100) dbSelect_('missions', 'select=id,start_at&id=in.(' + mis.slice(i, i + 100).join(',') + ')', 'id').forEach(x => { if (x.start_at) crsDay[x.id] = localDay_(x.start_at); });
   const out = [];
   targets.forEach(T => {
     if (Date.now() - t0 > MAX_RUN_MS - 90000) return;
@@ -221,17 +226,17 @@ function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay) {
     if (sp.v && st.fmt !== CSH_FMT_) { st.n = 0; st.at = ''; st.tx = ''; }   // format changé : transactions réécrites depuis le début (même ordre)
     st.fmt = CSH_FMT_;
     let added = 0;
-    for (let k = 0; k < 10 && Date.now() - t0 < MAX_RUN_MS - 90000; k++) {
+    for (let k = 0; k < 20 && Date.now() - t0 < MAX_RUN_MS - 90000; k++) {   // pages de 1 000 lignes (plafond de PostgREST)
       const after = st.at ? '&or=' + enc_('(imported_at.gt."' + st.at + '",and(imported_at.eq."' + st.at + '",tx.gt."' + st.tx + '"))') : '';
       let page;
-      try { page = sbReq_('get', 'uber_payments?select=*' + (T.ag == null ? '' : '&agency_id=eq.' + T.ag) + after + '&order=imported_at,tx&limit=2000') || []; }
+      try { page = sbReq_('get', 'uber_payments?select=*' + (T.ag == null ? '' : '&agency_id=eq.' + T.ag) + after + '&order=imported_at,tx&limit=1000') || []; }
       catch (e) { if (/raw|first_name|agency_id|404/i.test(e.message)) break; throw e; }
       if (!page.length) break;
       const rows = page.map((p, i) => cshPayRow_(p, 6 + st.n + i, H));
       cshWrite_(psh, 6 + st.n, rows, CSH_PAY_COLS_, 0, [4, 5, 8, 12]);
       st.n += rows.length; st.at = page[page.length - 1].imported_at; st.tx = page[page.length - 1].tx; added += rows.length;
       props.setProperty(sp.key, JSON.stringify(st));
-      if (page.length < 2000) break;
+      if (page.length < 1000) break;
     }
     if (added) out.push(added + ' transactions Uber');
   }

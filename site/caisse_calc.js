@@ -51,14 +51,34 @@ function cshKey(code, uuid, name, uuid2code) {
   return name ? 'N:' + cshName(name) : '';
 }
 function cshMoveKey(m, uuid2code) { return cshKey(m.driver_code, m.uber_uuid, m.driver_name, uuid2code); }
+/**
+ * Comptes Uber rattachés à un chauffeur Ludy : drivers.uber_uuid (uuid2code), sinon mouvement de caisse qui porte le code Ludy et
+ * l'UUID Uber (un seul code pour cet UUID), sinon même nom qu'un seul chauffeur Ludy sans compte Uber, porté par un seul compte Uber non relié.
+ * o : { uuid2code, moves, drivers: [{ code, name, uber_uuid }], udrv: [{ uuid, name }], payments } → UUID → code Ludy
+ */
+function cshLinks(o) {
+  const map = Object.assign({}, o.uuid2code || {}), byMove = {};
+  (o.moves || []).filter(cshLive).forEach(m => { if (m.uber_uuid && m.driver_code && !map[m.uber_uuid]) (byMove[m.uber_uuid] = byMove[m.uber_uuid] || new Set()).add(m.driver_code); });
+  Object.keys(byMove).forEach(u => { if (byMove[u].size === 1) map[u] = [...byMove[u]][0]; });
+  if (!o.drivers || !o.drivers.length) return map;
+  const uname = {}; (o.udrv || []).forEach(u => { if (u.uuid && u.name) uname[u.uuid] = u.name; });
+  (o.payments || []).forEach(p => { if (p.driver_uuid && p.driver_name && !uname[p.driver_uuid]) uname[p.driver_uuid] = p.driver_name; });
+  const taken = new Set(Object.values(map)), codes = {}, uuids = {};
+  o.drivers.forEach(d => { const n = cshName(d.name); if (n && !d.uber_uuid && !taken.has(d.code)) (codes[n] = codes[n] || []).push(d.code); });
+  Object.keys(uname).forEach(u => { const n = cshName(uname[u]); if (n && !map[u]) (uuids[n] = uuids[n] || []).push(u); });
+  Object.keys(uuids).forEach(n => { if (uuids[n].length === 1 && codes[n] && codes[n].length === 1) map[uuids[n][0]] = codes[n][0]; });
+  return map;
+}
 
 /**
  * Rapprochement des espèces Uber par chauffeur sur une période (onglet « Dashboard - Rappro Uber » du classeur) :
  * espèces Uber − dépenses « Course Uber » justifiées OK = théorique à remettre ; écart = théorique − encaissé net ;
  * écart > 0 : à retenir sur la paie (manquant) ; < 0 : à ajouter (excédent).
- * o : { payments, moves, from, to, uuid2code, dayOfPayment(p) → aaaa-mm-jj (jour du shift), names: clé → nom }
+ * Compte Uber rattaché à aucun chauffeur Ludy (cshLinks) : ligne « Compte Uber non relié », sans effet sur la paie.
+ * o : { payments, moves, from, to, uuid2code, drivers, udrv, dayOfPayment(p) → aaaa-mm-jj (jour du shift), names: clé → nom }
  */
 function cshRappro(o) {
+  o = Object.assign({}, o, { uuid2code: cshLinks(o) });
   const by = {}, get = (k, name) => (by[k] = by[k] || { key: k, name: name || '', uber: 0, frais: 0, net: 0, trips: 0 });
   const inP = d => d && d >= o.from && d <= o.to;
   (o.payments || []).forEach(p => {
@@ -75,8 +95,9 @@ function cshRappro(o) {
   return Object.values(by).map(r => {
     if (o.names && o.names[r.key]) r.name = o.names[r.key];
     r.theo = cshR(r.uber - r.frais); r.ecart = cshR(r.theo - r.net);
-    r.statut = r.uber === 0 && r.net === 0 ? 'Sans activité' : r.theo > 0 && r.net === 0 ? 'Non remis' : Math.abs(r.ecart) < 0.01 ? 'Cadré' : r.ecart > 0 ? 'Manquant' : 'Excédent';
-    r.effet = r.ecart > 0.004 ? 'Retenir ' + Math.round(r.ecart) + ' MAD' : r.ecart < -0.004 ? 'Ajouter ' + Math.round(-r.ecart) + ' MAD' : 'Aucun';
+    r.unlinked = r.key.indexOf('U:') === 0;
+    r.statut = r.uber === 0 && r.net === 0 ? 'Sans activité' : r.unlinked ? 'Compte Uber non relié' : r.theo > 0 && r.net === 0 ? 'Non remis' : Math.abs(r.ecart) < 0.01 ? 'Cadré' : r.ecart > 0 ? 'Manquant' : 'Excédent';
+    r.effet = r.unlinked ? 'Aucun (relier le compte Uber)' : r.ecart > 0.004 ? 'Retenir ' + Math.round(r.ecart) + ' MAD' : r.ecart < -0.004 ? 'Ajouter ' + Math.round(-r.ecart) + ' MAD' : 'Aucun';
     r.taux = r.theo ? r.net / r.theo : 0;
     return r;
   }).sort((a, b) => b.ecart - a.ecart || String(a.name).localeCompare(String(b.name)));
@@ -84,20 +105,23 @@ function cshRappro(o) {
 
 /**
  * Effet sur la paie par chauffeur sur une période (onglet « Base Cash Consolidée » du classeur) :
- * - écart d'espèces Uber (rapprochement) : retenue (manquant) ou ajout (excédent) ;
- * - dépense d'un chauffeur sans justificatif OK (KO, en attente ou vide) : retenue ;
+ * - écart d'espèces Uber (rapprochement) : retenue (manquant) ou ajout (excédent) ; compte Uber non relié : rien ;
+ * - dépense d'un chauffeur sans justificatif OK (KO, en attente ou vide) : retenue ; sauf « Course Uber » d'un chauffeur qui a des
+ *   espèces Uber au rapprochement : non déduite du théorique, déjà dans le manquant (pas retenue deux fois, écart au classeur) ;
  * - avance sur salaire : déjà versée, à déclarer et à retenir ; remboursement d'avance en espèces : ajout ;
  * - course privée : prime à déclarer ; reste à payer (prime − déjà gardée par le chauffeur) : ajout (ou retenue si négatif) ;
  * - bonus : à déclarer ; « A payer » : ajout.
  */
 function cshPayroll(o) {
-  const rap = o.rappro || cshRappro(o), by = {};
+  const u2c = cshLinks(o), rap = o.rappro || cshRappro(o), by = {};
   const get = (k, name) => (by[k] = by[k] || { key: k, name: name || '', manquant: 0, excedent: 0, depKo: 0, nDepKo: 0, avances: 0, rembours: 0, primes: 0, primePaid: 0, primeReste: 0, bonusPaid: 0, bonusToPay: 0 });
-  rap.forEach(r => { if (r.ecart > 0) get(r.key, r.name).manquant = r.ecart; else if (r.ecart < 0) get(r.key, r.name).excedent = -r.ecart; });
+  const inRap = new Set(rap.filter(r => !r.unlinked && r.uber).map(r => r.key));
+  rap.forEach(r => { if (r.unlinked) return; if (r.ecart > 0) get(r.key, r.name).manquant = r.ecart; else if (r.ecart < 0) get(r.key, r.name).excedent = -r.ecart; });
   (o.moves || []).filter(cshLive).forEach(m => {
     if (!(m.day >= o.from && m.day <= o.to)) return;
-    const k = cshMoveKey(m, o.uuid2code); if (!k || k.indexOf('N:') === 0 && !m.driver_name) return;
+    const k = cshMoveKey(m, u2c); if (!k || k.indexOf('N:') === 0 && !m.driver_name) return;
     const a = cshN(m.amount);
+    if (m.kind === 'depense' && m.ride_type === 'Course Uber' && inRap.has(k)) return;
     if (m.kind === 'depense' && a > 0 && m.justif !== 'OK' && m.justif !== 'N.A') { const r = get(k, m.driver_name); r.depKo = cshR(r.depKo + a); r.nDepKo++; }
     else if (m.kind === 'avance') { const r = get(k, m.driver_name); r.avances = cshR(r.avances + a); }
     else if (m.kind === 'remboursement') { const r = get(k, m.driver_name); r.rembours = cshR(r.rembours + a); }
@@ -118,10 +142,10 @@ function cshPayroll(o) {
 function cshWeek(d) { const t = Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)), w = (new Date(t).getUTCDay() + 6) % 7; return new Date(t - w * 86400000).toISOString().slice(0, 10); }
 /** Chiffre d'affaires Uber (« Vos revenus ») par chauffeur et par jour ou par semaine (onglet « Suivi Chiffre d'affaires ») */
 function cshCA(o) {
-  const cols = new Set(), by = {}, tot = {};
+  const cols = new Set(), by = {}, tot = {}, u2c = cshLinks(o);
   (o.payments || []).forEach(p => {
     const d = o.dayOfPayment ? o.dayOfPayment(p) : String(p.day || '').slice(0, 10); if (!(d >= o.from && d <= o.to)) return;
-    const c = o.by === 'week' ? cshWeek(d) : d, k = cshKey(null, p.driver_uuid, p.driver_name, o.uuid2code);
+    const c = o.by === 'week' ? cshWeek(d) : d, k = cshKey(null, p.driver_uuid, p.driver_name, u2c);
     cols.add(c); const r = by[k] = by[k] || { key: k, name: (o.names && o.names[k]) || p.driver_name || '', total: 0, v: {} };
     r.v[c] = cshR((r.v[c] || 0) + cshN(p.revenue)); r.total = cshR(r.total + cshN(p.revenue)); tot[c] = cshR((tot[c] || 0) + cshN(p.revenue));
   });
@@ -215,10 +239,22 @@ function cshParseUberDrivers(rows) {
   }
   return { rows: out };
 }
-/** Chauffeur Ludy correspondant à un chauffeur Uber : même téléphone, sinon même nom (mots dans n'importe quel ordre) */
+/**
+ * Chauffeur Ludy correspondant à un chauffeur Uber : même téléphone, sinon même nom (mots dans n'importe quel ordre) ;
+ * seulement un candidat unique (même règle que refresh_drivers de la base) : deux chauffeurs au même téléphone = aucun.
+ */
 function cshMatchDriver(u, drivers) {
   const p = cshPhone(u.phone), n = cshName(u.name);
-  return (p && drivers.find(d => cshPhone(d.phone) === p)) || (n && drivers.find(d => cshName(d.name) === n)) || null;
+  const bp = p ? drivers.filter(d => cshPhone(d.phone) === p) : [];
+  if (bp.length) return bp.length === 1 ? bp[0] : null;
+  const bn = n ? drivers.filter(d => cshName(d.name) === n) : [];
+  return bn.length === 1 ? bn[0] : null;
+}
+/** Liens Uber → Ludy d'une liste de chauffeurs Uber : candidat unique dans les deux sens (un chauffeur Ludy proposé à deux comptes = aucun) */
+function cshMatchAll(list, drivers) {
+  const m = (list || []).map(u => [u, cshMatchDriver(u, drivers)]).filter(x => x[1]), n = {};
+  m.forEach(x => { n[x[1].code] = (n[x[1].code] || 0) + 1; });
+  return m.filter(x => n[x[1].code] === 1);
 }
 
 function cshHash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
@@ -227,23 +263,28 @@ const CSH_SHIFT = { 'shift 1': 'Jour', 'shift 2': 'Nuit', 'jour': 'Jour', 'nuit'
 /**
  * Historique du classeur (chaque onglet « Caisse - … », reconnu par ses en-têtes) → mouvements de caisse.
  * Lignes vides ou à 0 MAD ignorées ; une date absente reprend celle de la ligne précédente (signalé dans le commentaire) ;
- * import_key : même ligne réimportée = pas de doublon (deux lignes identiques gardent chacune la leur).
+ * onglets « … Ludy » (copie de sauvegarde écrite par le collecteur) ignorés.
+ * import_key : même ligne réimportée = pas de doublon (deux lignes identiques gardent chacune la leur) ; calculée sur les colonnes
+ * saisies seulement (date, chauffeur, gestionnaire, montants, opération, entrée / sortie, source, libellés), jamais sur les formules
+ * (UUID, net, manquant, check Uber, prime, reste) ni sur ce qui change après coup (justificatif, statut, signature, commentaire).
+ * legacy_key : clé de la version précédente (ligne entière) : lignes déjà reprises reconnues par le site, sans doublon.
  * ctx : { resolve(name, uuid) → { driver_code, driver_name, uber_uuid } }
  */
 function cshParseHistory(sheets, ctx) {
-  const res = { moves: [], counts: {}, skipped: 0 }, resolve = ctx && ctx.resolve ? ctx.resolve : (n, u) => ({ driver_code: null, driver_name: n || null, uber_uuid: u || null });
+  const res = { moves: [], counts: {}, skipped: 0, ignored: [] }, resolve = ctx && ctx.resolve ? ctx.resolve : (n, u) => ({ driver_code: null, driver_name: n || null, uber_uuid: u || null });
   const TYPES = [['uber', c => c.indexOf('montant especes affiche sur uber') >= 0], ['depenses', c => c.indexOf('montant decaisse') >= 0],
     ['courses', c => c === 'montant de la course'], ['rh', c => c === 'avance signee'], ['bonus', c => c === 'date de saisie']];
   Object.keys(sheets).forEach(name => {
+    if (/\sLudy$/i.test(String(name).trim())) { res.ignored.push(name); return; }
     const rows = sheets[name] || [];
     let type = null, h = -1;
     for (const t of TYPES) { h = cshHeader(rows, t[1], 20); if (h >= 0) { type = t[0]; break; } }
     if (!type) return;
     const H = rows[h].map(cshNorm), col = (...ts) => { for (const t of ts) { const i = H.findIndex(c => c === t || c.indexOf(t) === 0); if (i >= 0) return i; } return -1; };
-    const seen = {}; let last = '', n = 0;
+    const seen = {}, seenL = {}; let last = '', n = 0;
     for (let i = h + 1; i < rows.length; i++) {
       const r = rows[i] || [], g = c => c >= 0 ? r[c] : '', s = c => String(g(c) == null ? '' : g(c)).trim();
-      const sig = JSON.stringify(r.map(x => String(x == null ? '' : x).trim()));
+      const legacy = JSON.stringify(r.map(x => String(x == null ? '' : x).trim())), A = c => { const v = cshAmount(g(c)); return v == null ? '' : cshR(v); };
       if (!r.some(x => String(x == null ? '' : x).trim())) continue;
       let day = cshDay(g(col('date debut du shift', 'date d\'operation', 'date de saisie', 'date'))), note = '';
       if (!day) { if (!last) { res.skipped++; continue; } day = last; note = 'date absente dans le classeur : reprise de la ligne précédente'; } else last = day;
@@ -279,7 +320,9 @@ function cshParseHistory(sheets, ctx) {
         const mot = s(col('motif')), mn = cshNorm(mot), a = Math.abs(cshN(cshAmount(g(col('montant')))));
         if (!a) { res.skipped++; continue; }
         if (mn.indexOf('encaissement') >= 0) {
-          const ca = cshAmount(g(col('montant de la course'))), pc = cshAmount(g(col('commission chauffeur'))), pct = pc == null ? null : (Math.abs(pc) <= 1 ? pc * 100 : pc);
+          // commission : « 10% » / « 1% » = 10 / 1 % ; fraction seulement sans « % » et < 1 (0,1 = 10 %)
+          const ca = cshAmount(g(col('montant de la course'))), pcTxt = s(col('commission chauffeur')), pc = cshAmount(pcTxt.replace('%', '')),
+            pct = pc == null ? null : pcTxt.indexOf('%') < 0 && Math.abs(pc) < 1 ? cshR(pc * 100) : pc;
           const prime = cshAmount(g(col('prime chauffeur'))), paid = cshAmount(g(col('montant deja paye')));
           const route = [s(col('depart')), s(col('arrive'))].filter(Boolean).join(' → '), dc = cshDay(g(col('date de la course')));
           Object.assign(m, { kind: 'course', flow: flow0 || 'in', amount: a, course_amount: ca, commission_pct: pct, prime: prime != null ? prime : cshR(cshN(ca) * cshN(pct) / 100),
@@ -294,8 +337,16 @@ function cshParseHistory(sheets, ctx) {
       }
       if (who || uuid) Object.assign(m, resolve(who, /^[0-9a-f-]{20,}$/i.test(uuid) ? uuid : ''));
       m.amount = cshR(m.amount);
-      seen[sig] = (seen[sig] || 0) + 1;
-      m.import_key = 'xl:' + type + ':' + cshHash(sig) + ':' + seen[sig];
+      // colonnes saisies de chaque onglet (net d'encaissement : seulement quand le montant donné est vide, sinon c'est la formule)
+      const ent = type === 'uber' ? [s(col('operation')), A(col('montant especes affiche sur uber')), A(col('montant donne par chauffeur')), A(col('monnaie rendue')),
+          s(col('montant donne par chauffeur')) ? '' : A(col('montant encaisse net'))]
+        : type === 'depenses' ? [s(col('shift')), A(col('montant decaisse')), s(col('type de courses')), s(col('operation'))]
+        : type === 'courses' ? [A(col('montant')), s(col('motif')), s(col('depart')), s(col('arrive')), cshDay(g(col('date de la course'))), A(col('montant de la course')), m.commission_pct == null ? '' : m.commission_pct]
+        : [A(col('montant')), s(col('motif'))];
+      const sig = JSON.stringify([day, cshName(who), s(col('gestionnaire')), flowTxt, s(col('source'))].concat(ent));
+      seen[sig] = (seen[sig] || 0) + 1; seenL[legacy] = (seenL[legacy] || 0) + 1;
+      m.import_key = 'xl2:' + type + ':' + cshHash(sig) + ':' + seen[sig];
+      m.legacy_key = 'xl:' + type + ':' + cshHash(legacy) + ':' + seenL[legacy];
       res.moves.push(m); n++;
     }
     res.counts[type] = (res.counts[type] || 0) + n;
@@ -304,4 +355,4 @@ function cshParseHistory(sheets, ctx) {
 }
 
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
-  cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseUberDrivers, cshMatchDriver, cshParseHistory };
+  cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshParseHistory };

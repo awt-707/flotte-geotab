@@ -115,8 +115,9 @@ function noCtrHtml(r) {
 }
 function liveRows() {
   const ok = inAgency(), have = {}, now = Date.now(), cur = shiftAt(now, S.P);
-  // extract injecté pendant le shift en cours (ou dans l'heure et demie qui précède son début : contrats pris en avance)
-  const fresh = (LIVE.lastImport || 0) >= shiftStart(cur, S.P).getTime() - 90 * MIN;
+  // extract injecté pendant le shift en cours, ou avant son début : 1 h 30, au moins l'avance du shift (shiftAdvance, 2 h par défaut :
+  // contrats de nuit pris dès 17:00, extract injecté à 17:00-17:30)
+  const fresh = (LIVE.lastImport || 0) >= shiftStart(cur, S.P).getTime() - Math.max(90 * MIN, shiftAdv(S.P) * HOUR);
   LIVE.rows.forEach(r => { have[r.vehicle_key] = 1; });
   // véhicule vu en direct par Geotab mais pas encore par le collecteur : affiché quand même
   const extra = Object.values(LIVE.pos).filter(g => !have[g.key] && ok(g.key)).map(g => ({ vehicle_key: g.key, plate: g.plate, model: (S.veh[g.key] || {}).model || '' }));
@@ -267,6 +268,7 @@ async function pageDirect(refresh) {
     <section><div class="sechead"><h2>Totaux du jour par véhicule</h2><span class="small">${last ? 'Trajets terminés (contact coupé), calculés par le collecteur, mis à jour le ' + fmtDTY(last) + '.' : 'Le collecteur n\'a pas encore tourné.'}</span></div>
       <div id="livetab">${vehTableHtml(rows)}</div></section>`;
   LIVE.markers = {}; LIVE.fitted = false; drawMap(rows);
+  window.__rerender = () => { if (rid === ROUTING) applyDirect(); };   // tri d'un tableau : redessiné tout de suite avec les dernières lectures
   liveDrvTick(ROUTING);
   const b = $('#syncnow');
   if (b) b.onclick = async () => { b.disabled = true; try { await job('sync_now'); b.textContent = 'Demande envoyée (5 min max)'; } catch (e) { alert(e.message); b.disabled = false; } };

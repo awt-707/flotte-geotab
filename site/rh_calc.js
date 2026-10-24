@@ -138,6 +138,8 @@ function rhPlanGaps(plan, workDays, declared) {
   const w = new Set(workDays || []), d = new Set(declared || []);
   return [...new Set((plan || []).map(p => p.day))].filter(day => !w.has(day) && !d.has(day)).sort();
 }
+/** Jours ouvrables seulement (dimanches retirés), comme le dénominateur de l'absentéisme et le décompte des congés */
+function rhWorkOnly(days) { return (days || []).filter(d => new Date(rhD(d)).getUTCDay() !== 0); }
 /** Jours couverts par des événements (congé validé, arrêt, absence) entre deux dates */
 function rhEventDays(events, kinds, from, to) {
   const out = new Set();
@@ -163,13 +165,15 @@ function rhStaffDays(clock, sessions, opt) {
     const p = cur.pauses[cur.pauses.length - 1];
     if (auto) {
       const lim = Math.min(cur.in + 18 * RH_H, t), seen = lastSeen(cur.in, lim);
-      t = Math.max(cur.last, seen || 0); cur.outAuto = true;
+      t = Math.min(Math.max(cur.last, seen || 0), lim); cur.outAuto = true;
     }
     if (p && p.to == null) p.to = t;
     cur.out = t; per.push(cur); cur = null;
   };
   ev.forEach(x => {
     if (x.kind === 'fail') { const d = dayOf(x.at); fails[d] = (fails[d] || 0) + 1; return; }
+    // journée ouverte depuis plus de 18 h (départ oublié) : close à la dernière activité, l'événement suivant n'y est pas rattaché
+    if (cur && x.kind !== 'in' && x.at - cur.in >= 18 * RH_H) close(x.at, true);
     if (x.kind === 'session') { if (cur) cur.last = x.at; return; }
     if (x.kind === 'in') { if (cur) close(x.at, true); cur = { in: x.at, last: x.at, day: dayOf(x.at), pauses: [] }; return; }
     if (!cur) return;
@@ -204,6 +208,17 @@ function rhStaffOver(days, weekH) {
   const wk = {};
   (days || []).forEach(d => { const m = rhMonday(d.day); wk[m] = (wk[m] || 0) + (d.workMin || 0); });
   const out = {}; Object.keys(wk).forEach(m => { out[m] = Math.max(0, Math.round((wk[m] / 60 - (+weekH || 44)) * 100) / 100); });
+  return out;
+}
+/** Heures sup. du staff rattachées aux jours : dépassement de la semaine (lundi → dimanche) porté par ses derniers jours travaillés */
+function rhStaffOverDays(days, weekH) {
+  const ov = rhStaffOver(days, weekH), out = {};
+  Object.keys(ov).forEach(m => {
+    let left = ov[m];
+    (days || []).filter(d => rhMonday(d.day) === m && d.workMin > 0).sort((a, b) => a.day < b.day ? 1 : -1).forEach(d => {
+      if (left <= 0) return; const h = Math.min(left, d.workMin / 60); out[d.day] = Math.round(h * 100) / 100; left -= h;
+    });
+  });
   return out;
 }
 /** État du pointage (même règle que la base) : dernier événement des 18 dernières heures */
@@ -265,9 +280,10 @@ function rhAlerts(ctx) {
     // période d'essai
     const t = rhTrial(e, d0, n('rhAlertDays', 7));
     if (t.alert) add(t.daysLeft <= 2 ? 'Critique' : 'Haute', 'Période d\'essai', e, 'Fin de la période d\'essai ' + (t.state === 'en cours' ? '' : '(' + t.state + ') ') + 'le ' + rhFr(t.end) + (t.daysLeft ? ' (dans ' + t.daysLeft + ' j)' : ' (aujourd\'hui)') + ' : confirmer, renouveler ou rompre', t.end);
-    // contrat de travail : signature, légalisation
-    const c = rhContractOf(e, ctx.contracts), lg = rhLegal(c);
-    if (!c) add('Haute', 'Contrat de travail', e, 'Aucun contrat de travail enregistré (générer le contrat ou enregistrer le contrat signé)');
+    // contrat de travail : signature, légalisation (suivi, CNSS et dossier : migration 20261111, ctx.v2)
+    const v2 = ctx.v2 !== false, c = rhContractOf(e, ctx.contracts), lg = rhLegal(c);
+    if (!v2) { /* pas encore suivis */ }
+    else if (!c) add('Haute', 'Contrat de travail', e, 'Aucun contrat de travail enregistré (générer le contrat ou enregistrer le contrat signé)');
     else if (lg.step === 'genere') { const age = rhDaysBetween(String(c.created_at).slice(0, 10), d0); if (age > n('rhSignDays', 7)) add('Moyenne', 'Contrat de travail', e, 'Contrat généré le ' + rhFr(String(c.created_at).slice(0, 10)) + ', pas encore signé'); }
     else if (lg.step === 'signe') { const age = rhDaysBetween(c.signed_on, d0); add(age > n('rhLegalDays', 7) ? 'Haute' : 'Moyenne', 'Légalisation', e, 'Contrat signé le ' + rhFr(c.signed_on) + ', pas encore légalisé' + (age > 0 ? ' (' + age + ' j)' : ''), c.signed_on); }
     else if (!c.legal_path) add('Moyenne', 'Légalisation', e, 'Contrat légalisé le ' + rhFr(c.legalized_on) + ' : copie légalisée à ranger dans le dossier');
@@ -279,9 +295,9 @@ function rhAlerts(ctx) {
         else if (dl <= n('rhContractEndDays', 30)) add('Haute', 'Fin de contrat', e, e.contract_type + ' se termine le ' + rhFr(e.contract_end) + ' (dans ' + dl + ' j) : renouveler ou préparer la sortie', e.contract_end); }
     }
     // CNSS
-    if (!e.cnss_no) add('Haute', 'CNSS', e, 'N° CNSS non renseigné : immatriculation du salarié à la CNSS à vérifier');
+    if (v2 && !e.cnss_no) add('Haute', 'CNSS', e, 'N° CNSS non renseigné : immatriculation du salarié à la CNSS à vérifier');
     // pièces du dossier : manquantes, expirées, qui expirent
-    const miss = req(e.kind).filter(k => !docs.some(x => x.category === k));
+    const miss = v2 ? req(e.kind).filter(k => !docs.some(x => x.category === k)) : [];
     if (miss.length) add('Moyenne', 'Dossier', e, 'Pièces manquantes : ' + miss.map(k => RH_DOCS[k]).join(', '));
     Object.keys(RH_DOCS).forEach(k => {
       const ex = docs.filter(x => x.category === k && x.expires_on).map(x => x.expires_on).sort().pop(); if (!ex) return;
@@ -289,9 +305,11 @@ function rhAlerts(ctx) {
       if (dl < 0) add(vital ? 'Critique' : 'Haute', 'Dossier', e, RH_DOCS[k] + ' expiré depuis le ' + rhFr(ex), ex);
       else if (dl <= n('rhDocDays', 30)) add(vital ? 'Haute' : 'Moyenne', 'Dossier', e, RH_DOCS[k] + ' expire le ' + rhFr(ex) + ' (dans ' + dl + ' j)', ex);
     });
-    // arrêt maladie sans certificat (à fournir dans les 48 h, article 271)
-    ev.filter(x => x.kind === 'maladie' && !x.doc_path && rhDaysBetween(x.day_from, d0) <= 60 && x.day_from <= d0)
-      .forEach(x => add('Haute', 'Arrêt maladie', e, 'Arrêt maladie du ' + rhFr(x.day_from) + ' sans certificat médical', x.day_from));
+    // arrêt maladie sans certificat rangé (article 271 : au-delà de 4 jours, certificat médical à fournir s'il est demandé)
+    ev.filter(x => x.kind === 'maladie' && !x.doc_path && rhDaysBetween(x.day_from, d0) <= 60 && x.day_from <= d0).forEach(x => {
+      const nd = x.days != null ? +x.days : rhDaysBetween(x.day_from, x.day_to || x.day_from) + 1;
+      add(nd > 4 ? 'Haute' : 'Moyenne', 'Arrêt maladie', e, 'Arrêt maladie du ' + rhFr(x.day_from) + ' (' + nd + ' j) sans certificat médical rangé', x.day_from);
+    });
     // absences non justifiées sur 12 mois (au-delà de 4 jours : faute grave possible, article 39)
     const y0 = rhAddDays(d0, -365), nj = ev.filter(x => x.kind === 'absence' && !x.justified && x.day_from > y0 && x.day_from <= d0)
       .reduce((s, x) => s + (x.days != null ? +x.days : rhDaysBetween(x.day_from, x.day_to || x.day_from) + 1), 0);
@@ -324,8 +342,12 @@ function rhBasePay(e, events, from, to) {
   for (let m = from.slice(0, 7) + '-01'; m <= to; m = rhAddMonths(m, 1)) {
     const R = rhMonthRange(m.slice(0, 7)), a = [R.from, from, e.hired_on || R.from].sort().pop(), b = [R.to, to, e.left_on || R.to].sort()[0];
     if (b < a) continue;
-    const sal = rhSalaryAt(e, events, b); if (sal == null) continue;
-    any = true; tot += sal * (rhDaysBetween(a, b) + 1) / (rhDaysBetween(R.from, R.to) + 1);
+    // avenant en cours de mois : chaque salaire sur ses jours
+    const cut = (events || []).filter(x => x.kind === 'avenant' && !x.cancelled_at && x.new_salary != null && x.day_from > a && x.day_from <= b).map(x => x.day_from).sort();
+    [a].concat(cut).forEach((d1, i, l) => {
+      const d2 = i + 1 < l.length ? rhAddDays(l[i + 1], -1) : b, sal = rhSalaryAt(e, events, d1); if (sal == null || d2 < d1) return;
+      any = true; tot += sal * (rhDaysBetween(d1, d2) + 1) / (rhDaysBetween(R.from, R.to) + 1);
+    });
   }
   return any ? Math.round(tot * 100) / 100 : null;
 }
@@ -343,13 +365,13 @@ function rhReport(ctx) {
       const sum = k => ev.filter(x => x.kind === k && x.day_from >= q.from && x.day_from <= q.to).reduce((s, x) => s + (+x.amount || 0), 0);
       const cs = k => (q.cash || []).filter(c => e.driver_code && c.driver_code === e.driver_code && c.kind === k).reduce((s, c) => s + (+c.amount || 0), 0);
       const base = rhBasePay(e, ev, q.from, q.to), sal = rhSalaryAt(e, ev, q.to), hs = rhOvertimePay(sal, e.weekly_hours, pr.overDay || 0, pr.overNight || 0);
-      const days = k => rhEventDays(ev, [k], q.from, q.to).length;
+      const days = k => rhWorkOnly(rhEventDays(ev, [k], q.from, q.to)).length;
       const s0 = [q.from, e.hired_on || q.from].sort().pop(), s1 = [q.to, e.left_on || q.to].sort()[0], theo = s1 >= s0 ? rhWorkingDays(s0, s1) : 0;
       const hsAmt = hs && (pr.overDay || pr.overNight) ? hs.amount : 0, prime = sum('prime') + cs('bonus');
       return { e, base, hsAmt, prime, avance: sum('avance') + cs('avance'), remb: sum('remboursement') + cs('remboursement'), total: base == null ? null : Math.round((base + hsAmt + prime) * 100) / 100,
         nDays: pr.nDays || 0, hours: pr.hours || 0, over: (pr.overDay || 0) + (pr.overNight || 0), conge: days('conge'), maladie: days('maladie'),
-        absJ: rhEventDays(ev.filter(x => x.kind === 'absence' && x.justified), ['absence'], q.from, q.to).length,
-        absNJ: rhEventDays(ev.filter(x => x.kind === 'absence' && !x.justified), ['absence'], q.from, q.to).length + (pr.gaps || []).length, theo };
+        absJ: rhWorkOnly(rhEventDays(ev.filter(x => x.kind === 'absence' && x.justified), ['absence'], q.from, q.to)).length,
+        absNJ: rhWorkOnly(rhEventDays(ev.filter(x => x.kind === 'absence' && !x.justified), ['absence'], q.from, q.to)).length + (pr.gaps || []).length, theo };
     });
     const tot = k => Math.round(rows.reduce((s, r) => s + (+r[k] || 0), 0) * 100) / 100;
     const start = act(rhAddDays(q.from, -1)).length, end = act(q.to).length;
@@ -368,5 +390,5 @@ function rhReport(ctx) {
   return { cur, prev, legal, evoTotal: prev ? evo(cur.total, prev.total) : null, evoEnd: prev ? cur.end - prev.end : null };
 }
 
-if (typeof module === 'object' && module.exports) module.exports = { RH_KINDS, RH_DOCS, RH_LEVELS, rhDocsRequired, rhClockMissing, rhSeniority, rhAlerts, rhContractOf, rhLegal, rhBasePay, rhReport, rhFr, rhAddDays, rhMonday, rhAddMonths, rhMonths, rhMonthRange, rhWorkingDays, rhTrial, rhLeave, rhSalaryAt, rhNight,
+if (typeof module === 'object' && module.exports) module.exports = { rhStaffOverDays, rhWorkOnly, RH_KINDS, RH_DOCS, RH_LEVELS, rhDocsRequired, rhClockMissing, rhSeniority, rhAlerts, rhContractOf, rhLegal, rhBasePay, rhReport, rhFr, rhAddDays, rhMonday, rhAddMonths, rhMonths, rhMonthRange, rhWorkingDays, rhTrial, rhLeave, rhSalaryAt, rhNight,
   rhDriverWork, rhDriverSum, rhOvertimePay, rhPlanGaps, rhEventDays, rhStaffDays, rhStaffOver, rhClockState, rhMin };
