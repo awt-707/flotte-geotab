@@ -13,7 +13,8 @@ function cacheSig(s) {
 /**
  * Cache : get(clé, lecture, opt) → promesse de { v, at, stale }.
  * - lue il y a moins de fresh (et pas marquée à relire) : rendue telle quelle ;
- * - moins de max : rendue aussitôt (stale), relue en arrière-plan ; opt.stale(at) tout de suite, opt.done(changé, erreur) à la fin ;
+ * - moins de max : rendue aussitôt (stale), relue en arrière-plan ; opt.stale(at) tout de suite, opt.done(changé, erreur) à la fin
+ *   (changé aussi quand le cache a été vidé pendant la relecture : la page doit relire) ;
  * - sinon : lue ; deux appels en même temps pour la même clé partagent la même lecture.
  * drop() : tout oublier (une lecture commencée avant n'est pas gardée) ; touch() : tout à relire, encore affichable.
  */
@@ -44,7 +45,7 @@ function cacheNew(o) {
     if (e.has && t - e.at < C.max) {
       const at = e.at, s = e.s;
       if (opt.stale) opt.stale(at);
-      read(key, e, load).then(r => { if (opt.done) opt.done(r.changed && r.kept, null); }, err => { if (opt.done) opt.done(false, err); });
+      read(key, e, load).then(r => { if (opt.done) opt.done(r.changed || !r.kept, null); }, err => { if (opt.done) opt.done(false, err); });
       return Promise.resolve({ v: JSON.parse(s), at, stale: true });
     }
     return read(key, e, load).then(r => ({ v: JSON.parse(r.s), at: r.at, stale: false }));
@@ -66,14 +67,14 @@ function cacheWrites(url, method) {
 /** fetch du client Supabase : écriture = cache vidé avant l'envoi et à la réponse (lecture faite pendant l'écriture non gardée) */
 function cacheFetch(c, f) {
   return (url, opt) => {
-    const fx = f || fetch;
+    const fx = f || ((u, x) => fetch(u, x));
     if (!cacheWrites(url, opt && opt.method)) return fx(url, opt);
     c().drop();
     return fx(url, opt).finally(() => c().drop());
   };
 }
 let CACHE_UID = '';
-const CACHE = cacheNew({ who: () => CACHE_UID });
+const CACHE = cacheNew({ who: () => (typeof S !== 'undefined' && S.session && S.session.user && S.session.user.id) || '' });   // utilisateur de la session (app.js)
 /** Utilisateur connecté (session Supabase) : autre utilisateur ou déconnexion = tout est oublié (droits par agence) */
 function cacheUser(session) { const u = (session && session.user && session.user.id) || ''; if (u !== CACHE_UID) { CACHE_UID = u; CACHE.drop(); } }
 

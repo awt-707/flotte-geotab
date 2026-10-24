@@ -143,6 +143,8 @@ td input { width: 100%; min-width: 90px; }
 .leaflet-popup-content { font: 14px/1.4 var(--f); }
 
 .loading { padding: 48px; text-align: center; color: var(--mute); }
+/* page affichée depuis la dernière lecture gardée, relecture en cours (site/cache.js) */
+body.cachestale #page::before { content: 'Actualisation…'; position: fixed; top: 10px; right: 16px; z-index: 1500; background: var(--panel); color: var(--mute); border: 1px solid var(--line); border-radius: 12px; padding: 3px 10px; font-size: 12px; }
 
 /* ---------- Connexion ---------- */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; background: var(--side);

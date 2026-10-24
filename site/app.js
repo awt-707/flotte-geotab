@@ -1,6 +1,6 @@
 // Ludy (supervision de flotte, données Geotab) — site web (lecture de la base Supabase alimentée par le collecteur Apps Script)
 const CFG = window.FLOTTE_CONFIG || {};
-const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true }, global: { fetch: cacheFetch(() => CACHE) } });   // écriture = lectures gardées oubliées (site/cache.js)
 const S = { session: null, profile: null, P: null, veh: null, vehList: [], rules: null, drv: null, timers: [], channel: null, agencies: [], agName: {}, alertCh: null };
 const $ = sel => document.querySelector(sel);
 const ROLE_TXT = { admin: 'Administrateur', manager: 'Gestionnaire', viewer: 'Lecture seule', pending: 'En attente' };
@@ -42,6 +42,34 @@ async function rpcAll(fn, args, keys) {
     out.push(...(data || [])); if (!data || data.length < 1000) return out;
   }
 }
+// ---------- Lectures gardées (site/cache.js) : pages de consultation seulement (tableau de bord, classement, carburant) ----------
+// Page déjà vue : affichée aussitôt avec la dernière lecture (10 min au plus), relue en arrière-plan après 1 min et redessinée si la
+// base a changé et que la page est toujours affichée (ROUTING) ; relecture impossible : signalé en haut de la page. Ailleurs (saisies,
+// En direct) : lecture directe de la base, comme avant.
+function cacheOn() { const p = pageOf(); return p === 'tableau' || p === 'chauffeurs' || (p === 'carburant' && !/[?&]t=carte/.test(location.hash)); }
+const CREAD = { my: 0, n: 0, changed: false, err: null, at: 0 };
+function cacheRead(key, load) {
+  const my = ROUTING;
+  return CACHE.get(key, load, {
+    stale: at => { if (CREAD.my !== my || !CREAD.n) Object.assign(CREAD, { my, n: 0, changed: false, err: null, at }); CREAD.n++; CREAD.at = Math.min(CREAD.at, at); document.body.classList.add('cachestale'); },
+    done: (changed, err) => {
+      if (CREAD.my !== my) return;
+      CREAD.n--; CREAD.changed = CREAD.changed || changed; CREAD.err = CREAD.err || err;
+      if (CREAD.n > 0) return;
+      document.body.classList.remove('cachestale');
+      const e = CREAD.err, ch = CREAD.changed; CREAD.changed = false; CREAD.err = null;
+      if (my !== ROUTING) return;
+      if (e) { const pg = $('#page'); if (pg && !$('#cacheerr')) pg.insertAdjacentHTML('afterbegin', `<div id="cacheerr">${msg('Affiché : lecture de ' + localHM(CREAD.at) + '. Relecture impossible (' + esc(e.message || e) + ') : rechargez la page.', 'warn')}</div>`); return; }
+      if (ch && PAGES[pageOf()]) PAGES[pageOf()]().catch(x => { if (my === ROUTING) $('#page').innerHTML = msg('Erreur : ' + esc(x.message || x), 'err'); });
+    } }).then(r => r.v);
+}
+/** all() gardée sur les pages de consultation : clé = requête complète (table, colonnes, filtres, ordre) ; ailleurs all() */
+function allC(table, cols, build, order) {
+  if (!cacheOn()) return all(table, cols, build, order);
+  let q = sb.from(table).select(cols || '*'); if (build) q = build(q); if (order) q = q.order(order[0], { ascending: order[1] !== false });
+  return cacheRead('t|' + q.url.toString(), () => all(table, cols, build, order));
+}
+function rpcAllC(fn, args, keys) { return cacheOn() ? cacheRead('f|' + fn + '|' + JSON.stringify(args || {}) + '|' + (keys || []).join(), () => rpcAll(fn, args, keys)) : rpcAll(fn, args, keys); }
 async function job(kind, arg) {
   const { data, error } = await sb.from('jobs').insert({ kind, arg: arg || null }).select('id').single();
   if (error) throw new Error(error.message); return data.id;
@@ -333,7 +361,8 @@ function onNewAlert(a) {
 window.__onNewAlert = onNewAlert;
 function watchAlerts() {
   if (S.alertCh) return;
-  S.alertCh = sb.channel('alertes').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alerts' }, p => onNewAlert(p.new)).subscribe();
+  S.alertCh = sb.channel('alertes').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alerts' }, p => onNewAlert(p.new))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts' }, () => CACHE.touch()).on('postgres_changes', { event: '*', schema: 'public', table: 'live_status' }, () => CACHE.touch()).subscribe();   // alerte, passage du collecteur : pages gardées relues
 }
 function msg(text, kind) { return `<div class="msg ${kind || ''}">${text}</div>`; }
 function badge(t, cls) { return t ? `<span class="badge ${cls || ''}">${esc(t)}</span>` : ''; }
@@ -415,10 +444,10 @@ async function pageTableau() {
   const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const p = period(), P = S.P, ok = inAgency();
   let [jrn, ac, tne, top] = await Promise.all([
-    all('journal', '*', q => q.gte('day', p.from).lte('day', p.to)),
-    rpcAll('alert_counts', { p_from: p.from, p_to: p.to }, ['vehicle_key', 'type', 'severity', 'status']),
-    all('fuel', 'vehicle_key', q => q.eq('type', 'TRAJET_NON_ENREGISTRE').gte('day', p.from).lte('day', p.to)),
-    all('alerts', '*', q => q.in('severity', ['Critique', 'Haute']).gte('day', p.from).lte('day', p.to))]);
+    allC('journal', '*', q => q.gte('day', p.from).lte('day', p.to)),
+    rpcAllC('alert_counts', { p_from: p.from, p_to: p.to }, ['vehicle_key', 'type', 'severity', 'status']),
+    allC('fuel', 'vehicle_key', q => q.eq('type', 'TRAJET_NON_ENREGISTRE').gte('day', p.from).lte('day', p.to)),
+    allC('alerts', '*', q => q.in('severity', ['Critique', 'Haute']).gte('day', p.from).lte('day', p.to))]);
   // filtre agence AVANT de garder les 25 plus récentes
   jrn = jrn.filter(r => ok(r.vehicle_key)); ac = ac.filter(x => ok(x.vehicle_key)); tne = { count: tne.filter(r => ok(r.vehicle_key)).length };
   top = { data: await alertShifts(top.filter(a => ok(a.vehicle_key)).sort((x, y) => (String(y.day) + (y.time || '')).localeCompare(String(x.day) + (x.time || ''))).slice(0, 25)) };
@@ -493,7 +522,7 @@ async function withSuccessors(list) {
   const lim = new Date(Date.now() - (num(S.P && S.P.retentionDays, 62) + 45) * DAY).toISOString(), first = open.map(c => c.start_at).sort()[0], from = first < lim ? lim : first;   // même fenêtre que le collecteur (contractIndex_)
   const keys = [...new Set(open.map(c => c.vehicle_key))], have = new Set(list.map(c => c.num)), out = list.slice();
   for (let i = 0; i < keys.length; i += 100) {
-    (await all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.in('vehicle_key', keys.slice(i, i + 100)).gt('start_at', from)
+    (await allC('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.in('vehicle_key', keys.slice(i, i + 100)).gt('start_at', from)
       .lte('start_at', new Date(Date.now() + HOUR).toISOString()))).forEach(c => { if (!have.has(c.num)) { have.add(c.num); out.push(c); } });
   }
   return out;
@@ -514,12 +543,12 @@ async function alertShifts(rows) {
   try {
     const add = c => { if (byNum[c.num]) return; byNum[c.num] = c; (byVeh[c.vehicle_key] = byVeh[c.vehicle_key] || []).push(c); };
     for (let i = 0; i < veh.length && days.length; i += 100) {
-      (await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('vehicle_key', veh.slice(i, i + 100))
+      (await allC('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('vehicle_key', veh.slice(i, i + 100))
         .lte('start_at', dayBounds(addDays(days[days.length - 1], 1)).end.toISOString()).or('end_at.is.null,end_at.gte.' + dayBounds(addDays(days[0], -1)).start.toISOString()))).forEach(add);
     }
     (await withSuccessors(Object.values(byNum))).forEach(add);   // contrat jamais clôturé : son remplaçant, même terminé avant la période
     const miss = nums.filter(n => !byNum[n]);
-    for (let i = 0; i < miss.length; i += 150) (await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('num', miss.slice(i, i + 150)))).forEach(add);
+    for (let i = 0; i < miss.length; i += 150) (await allC('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('num', miss.slice(i, i + 150)))).forEach(add);
   } catch (e) { /* contrats illisibles : créneau horaire seul */ }
   Object.values(byVeh).forEach(l => ctrEffEnds(l));   // contrat jamais clôturé : fin au début du suivant
   rows.forEach(a => {
@@ -604,7 +633,7 @@ async function pageChauffeurs() {
   const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const p = period(), P = S.P;
   const ok = inAgency();
-  const [jrn0, rc] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAll('driver_rule_counts', { p_from: p.from, p_to: p.to }, ['driver_code', 'rule_id', 'vehicle_key', 'contract_num'])]);
+  const [jrn0, rc] = await Promise.all([allC('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAllC('driver_rule_counts', { p_from: p.from, p_to: p.to }, ['driver_code', 'rule_id', 'vehicle_key', 'contract_num'])]);
   // un chauffeur par shift : ses journées de jour et de nuit sont classées séparément
   const jrn = jrn0.filter(r => ok(r.vehicle_key)), agg = aggJournal(jrn, r => shiftOf(r.contract_start, P) + '|' + r.driver_code, P), used = {}, byD = {};
   const ctrSh = {}; jrn.forEach(r => { if (r.contract_num) ctrSh[r.contract_num] = shiftOf(r.contract_start, P); });
@@ -1327,6 +1356,7 @@ async function route() {
 }
 window.addEventListener('hashchange', route);
 sb.auth.onAuthStateChange(async (ev, session) => {
+  cacheUser(session);   // autre utilisateur ou déconnexion : lectures gardées oubliées (site/cache.js)
   if (ev === 'PASSWORD_RECOVERY') {
     const p = prompt('Nouveau mot de passe (6 caractères minimum) :');
     if (p) { const { error } = await sb.auth.updateUser({ password: p }); alert(error ? error.message : 'Mot de passe changé.'); }
