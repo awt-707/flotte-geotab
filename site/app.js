@@ -392,15 +392,23 @@ function badge(t, cls) { return t ? `<span class="badge ${cls || ''}">${esc(t)}<
 const LEVEL_CLS = { 'Faible': 'ok', 'Modéré': 'warn', 'Élevé': 'high', 'Dangereux': 'crit' };
 const GRAV_CLS = { 'Critique': 'crit', 'Haute': 'high', 'Moyenne': 'warn', 'Info': 'info' };
 const STATE_CLS = { 'En route': 'ok', 'Arrêté, contact mis': 'warn', 'Garé': '', 'Boîtier hors ligne': 'crit', 'Pas de réponse Geotab': 'crit', 'Non relié à Geotab': 'info' };
-/** Tableau triable : cols = [[titre, fonction(ligne) -> html, valeur de tri (facultatif), classe]] */
+/**
+ * Tableau triable : cols = [[titre, fonction(ligne) -> html, valeur de tri (facultatif), classe]]
+ * Pages (pager.js) : opt.page = true : toutes les lignes triées et totalisées, seule la page dessinée (opt.sig = filtres / recherche,
+ * changés = page 1) ; opt.server = page lue dans la base (pgLoad) : rows = lignes de la page, tri par la base (opt.sortable = colonnes triables).
+ */
 function table(id, cols, rows, opt) {
   opt = opt || {};
-  if (!rows.length) return `<div class="empty">${opt.empty || 'Aucune donnée sur la période'}</div>`;
+  const srv = opt.server;
+  if (!rows.length && !(srv && srv.total)) return `<div class="empty">${opt.empty || 'Aucune donnée sur la période'}</div>`;
   const st = (window.__sort || {})[id] || {};
-  let list = rows.slice();
-  if (st.c !== undefined && cols[st.c]) { const f = cols[st.c][2] || cols[st.c][1]; list.sort((a, b) => { const x = f(a), y = f(b); return (x > y ? 1 : x < y ? -1 : 0) * (st.d ? -1 : 1); }); }
-  return `<div class="tw"><table id="${id}"><thead><tr>${cols.map((c, i) => `<th data-t="${id}" data-c="${i}" class="${c[3] || ''}">${c[0]}${st.c === i ? (st.d ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
-    <tbody>${list.map(r => `<tr>${cols.map(c => `<td class="${c[3] || ''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody>${opt.total ? tableTotal(cols, rows, opt.total) : ''}</table></div>`;
+  let list = rows.slice(), pg = '';
+  if (!srv && st.c !== undefined && cols[st.c]) { const f = cols[st.c][2] || cols[st.c][1]; list.sort((a, b) => { const x = f(a), y = f(b); return (x > y ? 1 : x < y ? -1 : 0) * (st.d ? -1 : 1); }); }
+  if (srv) pg = pgBar(id, srv);
+  else if (opt.page) { const s = pgGet(id, pgSigOf(st, opt.sig)), c = pgCalc(list.length, s.page, s.size); list = pgSlice(list, c); pg = pgBar(id, c); }
+  const can = i => !srv || (opt.sortable || []).indexOf(i) >= 0;   // tri par la base : seulement les colonnes prévues
+  return `<div class="tw"><table id="${id}"><thead><tr>${cols.map((c, i) => `<th${can(i) ? ` data-t="${id}" data-c="${i}"` : ''} class="${c[3] || ''}${can(i) ? '' : ' ns'}">${c[0]}${st.c === i && can(i) ? (st.d ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
+    <tbody>${list.map(r => `<tr>${cols.map(c => `<td class="${c[3] || ''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody>${opt.total ? tableTotal(cols, rows, opt.total) : ''}</table></div>${pg}`;
 }
 /**
  * Ligne « Total » d'un tableau : somme des colonnes chiffrées (classe n, valeur de tri numérique) des lignes affichées.
@@ -419,7 +427,8 @@ document.addEventListener('click', e => {
   const th = e.target.closest('th[data-t]'); if (!th) return;
   const id = th.dataset.t, c = +th.dataset.c; window.__sort = window.__sort || {};
   const cur = window.__sort[id] || {}; window.__sort[id] = { c, d: cur.c === c ? !cur.d : true };
-  if (window.__rerender) window.__rerender();
+  // tableau lu par la base : sa relecture (page 1, nouvel ordre) ; sinon redessin léger de la page (__repage) ou complet
+  const fn = PG.cb[id] || window.__repage || window.__rerender; if (fn) fn();
 });
 function cards(items) { return `<div class="cards">${items.map(i => `<div class="card ${i[2] || ''}"><div class="cv">${i[1]}</div><div class="cl">${i[0]}</div></div>`).join('')}</div>`; }
 /** Sélecteur de période (comme le tableau de bord du Sheet) */
@@ -508,7 +517,7 @@ async function pageTableau() {
       ['Coût carburant (MAD)', x => x.a.costN ? f0(x.a.cost) : '', x => x.a.cost, 'n'], ['Pleins', x => x.a.fills, null, 'n'], ['Vmax', x => f0(x.a.vmax), x => x.a.vmax, 'n'],
       ['Pire dépassement', x => x.a.worst === null ? '' : '+' + f0(x.a.worst), x => x.a.worst || 0, 'n'], ['Événements', x => x.a.evts, null, 'n'],
       ['Score /100 km', x => f1(scoreOf(x.a, P)), x => scoreOf(x.a, P), 'n'], ['Siphonages suspects', x => x.a.siph ? `<b class="red">${x.a.siph}</b>` : '0', x => x.a.siph, 'n'],
-      ['Km hors contrat', x => x.a.kmHors ? `<b class="red">${f1(x.a.kmHors)}</b>` : '0', x => x.a.kmHors, 'n'], ['Alertes', x => x.al, null, 'n']], vrows)}
+      ['Km hors contrat', x => x.a.kmHors ? `<b class="red">${f1(x.a.kmHors)}</b>` : '0', x => x.a.kmHors, 'n'], ['Alertes', x => x.al, null, 'n']], vrows, { page: true })}
     <h2>Chauffeurs les plus dangereux, par shift <a class="more" href="#/chauffeurs">Voir le classement complet</a></h2>
     ${shiftSections(drows, d => d.sh, (sub, sfx) => table('tdrv' + sfx, [['Rang', (d) => sub.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${dlink(d.code, d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
       ['Niveau', d => badge(d.level, LEVEL_CLS[d.level]), d => d.score], ['Score /100 km', d => f1(d.score), d => d.score, 'n'], ['Événements', d => d.a.evts, null, 'n'],
@@ -604,7 +613,8 @@ function alertSections(id, rows, editable) {
     const title = x ? 'Shift ' + shiftDayName(x).replace(/^J/, 'j').replace(/^N/, 'n') + ' (' + shiftName(x.s, S.P).replace(/^.*\(/, '') : 'Sans heure';
     return `<h3 class="shift ${x ? 'sh-' + x.s.toLowerCase() : ''}">${esc(title)} <span class="small">· ${n} alerte${n > 1 ? 's' : ''}</span></h3>` + alertTable(id + (i ? '_' + i : ''), groups[k], editable); }).join('');
 }
-function alertTable(id, rows, editable) {
+/** Tableau d'alertes ; srv = page lue dans la base (pgLoad) : tri par la base sur Date, Heure, Plaque, Chauffeur, Type, Valeur, Statut */
+function alertTable(id, rows, editable, srv) {
   return table(id, [['Date', a => fmtDay(a.day), a => a.day + (a.time || '')], ['Heure', a => esc(a.time || '')], ['Shift', a => { const x = alertShiftDay(a); return x ? shiftBadge(x.s) + `<div class="small">${esc(shiftDayName(x).replace(/^(Jour|Nuit) du /, ''))}</div>` : ''; }, a => { const x = alertShiftDay(a); return x ? x.day + x.s : ''; }],
     ['Plaque', a => plate(a.plate), a => a.plate], ['Chauffeur', a => esc(a.driver_name || '')],
     ['Type', a => esc(a.type)], ['Gravité', a => badge(a.severity, GRAV_CLS[a.severity]), a => ({ Critique: 0, Haute: 1, Moyenne: 2, Info: 3 }[a.severity])],
@@ -612,7 +622,7 @@ function alertTable(id, rows, editable) {
     ['Statut', a => editable ? `<select data-al="${esc(a.id)}" class="alst">${['À traiter', 'En cours', 'Traité', 'Faux positif'].map(s => `<option ${s === a.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(a.status), a => a.status],
     ['Commentaire', a => editable ? `<input data-alc="${esc(a.id)}" class="alc" value="${esc(a.comment || '')}" placeholder="…">` : esc(a.comment || '')],
     // fiche de l'alerte : vitesse, limite et positions lues dans Geotab autour de l'heure de l'alerte (site/direct.js)
-    ['Fiche', a => { if (!a.time || !a.vehicle_key) return ''; (S.alIdx = S.alIdx || {})[a.id] = a; return `<button type="button" class="small ghost" data-ad="${esc(a.id)}">Détail</button>`; }]], rows, { empty: 'Aucune alerte' });
+    ['Fiche', a => { if (!a.time || !a.vehicle_key) return ''; (S.alIdx = S.alIdx || {})[a.id] = a; return `<button type="button" class="small ghost" data-ad="${esc(a.id)}">Détail</button>`; }]], rows, srv ? { empty: 'Aucune alerte', server: srv, sortable: [0, 1, 3, 4, 5, 7, 9] } : { empty: 'Aucune alerte' });
 }
 /** Les alertes du moteur v6 contiennent un lien Google Maps : affiché comme lien OpenStreetMap */
 function linkify(t) { return esc(t).replace(/https:\/\/maps\.google\.com\/\?q=(-?[0-9.]+),(-?[0-9.]+)/g, (m, la, lo) => `<a target="_blank" rel="noopener" href="${osmUrl(la, lo)}">carte</a>`); }
@@ -644,11 +654,11 @@ async function pageJour() {
       ['Pire dépassement', r => r.worst_over === null ? '' : '+' + f0(r.worst_over), r => r.worst_over, 'n'], ['Événements', r => r.n_events, null, 'n'],
       ['Score', r => f1(r.score), r => r.score, 'n'], ['Niveau', r => r.driver_code === HORS ? '' : badge(levelOf(r.score, P), LEVEL_CLS[levelOf(r.score, P)]), r => r.score],
       ['Pleins', r => r.n_fills, null, 'n'], ['Siphonages', r => r.n_siphon ? `<b class="red">${r.n_siphon}</b>` : '0', r => r.n_siphon, 'n']],
-      sub), { unit: 'journées', empty: 'Aucune journée de travail ce jour-là' })}
+      sub, { page: true }), { unit: 'journées', empty: 'Aucune journée de travail ce jour-là' })}
     <h2>Arrêts moteur allumé ≥ ${P.idleLongMin} min</h2>
     ${table('tidl', [['Début', r => fmtDT(r.start_at), r => r.start_at], ['Fin', r => fmtDT(r.end_at)], ['Durée arrêt', r => fH(r.stop_min / 60), r => r.stop_min, 'n'],
       ['Moteur tournant', r => r.engine_check === 'Régime moteur' ? fH(r.engine_min / 60) : 'non vérifiable', r => r.engine_min, 'n'], ['Plaque', r => plate(r.plate), r => r.plate],
-      ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name || '')], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']], idl, { empty: 'Aucun arrêt prolongé' })}
+      ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name || '')], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']], idl, { empty: 'Aucun arrêt prolongé', page: true })}
     <h2>Alertes de la journée, par shift</h2>${alertSections('tjal', al, false)}`;
     $('#jday').onchange = e => { location.hash = '#/jour?jour=' + e.target.value; };
     $('#jprev').onclick = () => { location.hash = '#/jour?jour=' + addDays(day, -1); };
@@ -701,7 +711,7 @@ async function pageChauffeurs() {
       ['dont prolongé', d => fH(d.a.idleLong), d => d.a.idleLong, 'n'], ['Carburant (L)', d => nmv(fuelVal(d.a)), d => d.a.fuel, 'n'], ['L/100 km', d => nmv(l100Val(d.a)), d => d.a.l100 || 0, 'n'],
       ['Vmax', d => f0(d.a.vmax), d => d.a.vmax, 'n'], ['Pire dépassement', d => d.a.worst === null ? '' : '+' + f0(d.a.worst), d => d.a.worst || 0, 'n']]
       .concat(ruleIds.map(id => [esc((S.rules[id] || {}).name || id) + ` <span class="small">×${(S.rules[id] || {}).weight || ''}</span>`, d => d.rules[id] || 0, d => d.rules[id] || 0, 'n']))
-      .concat([['Pleins', d => d.a.fills, null, 'n'], ['Siphonages suspects', d => d.a.siph, null, 'n'], ['Véhicules', d => esc(Object.keys(d.a.plates).join(', '))]]), sub))}`;
+      .concat([['Pleins', d => d.a.fills, null, 'n'], ['Siphonages suspects', d => d.a.siph, null, 'n'], ['Véhicules', d => esc(Object.keys(d.a.plates).join(', '))]]), sub, { page: true }))}`;
     $('#rkpdf').onclick = () => { try { pdf(); } catch (e) { alert('PDF impossible : ' + e.message); } };
   };
   window.__rerender = render; render();
@@ -712,26 +722,41 @@ async function pageAlertes() {
   const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const qs = new URLSearchParams(location.hash.split('?')[1] || ''), p = period();
   const from = qs.get('jour') || p.from, to = qs.get('jour') || p.to;
-  const ok = inAgency(), rows = await alertShifts((await all('alerts', '*', q => q.gte('day', from).lte('day', to), ['day', false])).filter(r => ok(r.vehicle_key)));
+  const ok = inAgency(), keys = agFilter() || mineOn() ? S.vehList.filter(v => ok(v.key)).map(v => v.key) : null, kset = keys && new Set(keys);
   const f = Object.assign({}, lsJSON('fal')); if (qs.get('plaque')) f.plate = qs.get('plaque');
-  const types = [...new Set(rows.map(r => r.type))].sort();
-  if (rid !== ROUTING) return;
+  // une page d'alertes lue à la fois (une alerte par véhicule, règle et événement : des milliers par mois) ; types proposés et
+  // total de la période comptés dans la base (alert_counts), sans lire toutes les alertes
+  const [ac, pc] = await Promise.all([rpcAll('alert_counts', { p_from: from, p_to: to }, ['vehicle_key', 'type', 'severity', 'status']), all('plate_changes', 'old_plate,new_plate').catch(() => [])]);
+  const mine = ac.filter(x => !kset || kset.has(x.vehicle_key)), nAll = mine.reduce((s, x) => s + x.n, 0), types = [...new Set(mine.map(x => x.type))].sort();
+  const cm = buildCanonMap(S.vehList, pc);
+  const pk = () => f.plate && normPlate(f.plate) ? cm[normPlate(f.plate)] || normPlate(f.plate) : '';   // plaque saisie -> véhicule (toutes ses plaques)
+  const SORT = { 0: [['day'], ['time', false]], 1: [['time', false]], 3: [['plate']], 4: [['driver_name']], 5: [['type']], 7: [['value']], 9: [['status']] };
+  let rows = [], c = pgCalc(0, 1, PG_DEF);
+  const load = async () => {
+    const k = pk(), o = pgSortOrder('talall', SORT, [['day', false], ['time', false, false]]);
+    const build = q => { q = q.gte('day', from).lte('day', to); if (keys) q = q.in('vehicle_key', keys.concat(['-']));
+      if (f.sev) q = q.eq('severity', f.sev); if (f.st) q = q.eq('status', f.st); if (f.type) q = q.eq('type', f.type); if (k) q = q.eq('vehicle_key', k); return q; };
+    const r = await pgLoad('talall', JSON.stringify([from, to, keys, f.sev, f.st, f.type, k, o.sig]), pgQuery('alerts', '*', build, o.order));
+    const sh = await alertShifts(r.rows);   // shift de chaque alerte de la page (contrat en cours à son heure)
+    if (rid !== ROUTING) return;
+    rows = sh; c = r.c; render();
+  };
   const render = () => {
-    const list = rows.filter(r => (!f.sev || r.severity === f.sev) && (!f.st || r.status === f.st) && (!f.type || r.type === f.type) && (!f.plate || normPlate(r.plate) === normPlate(f.plate)));
-    $('#page').innerHTML = `<div class="head"><h1>Alertes</h1><div class="sub">${list.length} alertes sur ${rows.length}${qs.get('jour') ? ' le ' + esc(fmtDay(qs.get('jour'))) : ''}. ${canEdit() ? 'Statut et commentaire enregistrés automatiquement.' : ''}</div></div>
+    $('#page').innerHTML = `<div class="head"><h1>Alertes</h1><div class="sub">${c.total} alertes sur ${nAll}${qs.get('jour') ? ' le ' + esc(fmtDay(qs.get('jour'))) : ''}. ${canEdit() ? 'Statut et commentaire enregistrés automatiquement.' : ''}</div></div>
     ${qs.get('jour') ? '' : periodBar(go)}
     <div class="bar"><label>Gravité <select id="fsev"><option value="">Toutes</option>${['Critique', 'Haute', 'Moyenne', 'Info'].map(x => `<option ${f.sev === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
       <label>Statut <select id="fst"><option value="">Tous</option>${['À traiter', 'En cours', 'Traité', 'Faux positif'].map(x => `<option ${f.st === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
       <label>Type <select id="ftype"><option value="">Tous</option>${types.map(x => `<option ${f.type === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
       <label>Plaque <input id="fplate" value="${esc(f.plate || '')}" size="10"></label></div>
-    ${alertTable('talall', list, canEdit())}`;
-    const set = (k, v) => { f[k] = v; const s = Object.assign({}, f); delete s.plate; lsSet('fal', s); render(); };
+    ${alertTable('talall', rows, canEdit(), c)}`;
+    const set = (k, v) => { f[k] = v; const s = Object.assign({}, f); delete s.plate; lsSet('fal', s); load().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }); };
     $('#fsev').onchange = e => set('sev', e.target.value); $('#fst').onchange = e => set('st', e.target.value); $('#ftype').onchange = e => set('type', e.target.value);
     $('#fplate').onchange = e => set('plate', e.target.value);
     document.querySelectorAll('.alst').forEach(s => { s.onchange = () => saveAlert(s.dataset.al, { status: s.value }, rows); });
     document.querySelectorAll('.alc').forEach(s => { s.onchange = () => saveAlert(s.dataset.alc, { comment: s.value }, rows); });
   };
-  window.__rerender = render; render();
+  PG.cb.talall = load; window.__rerender = load;   // page, tri : relecture de la page dans la base
+  await load();
 }
 async function saveAlert(id, patch, rows) {
   const { error } = await sb.from('alerts').update(patch).eq('id', id);
@@ -779,7 +804,7 @@ async function pageContrats() {
     <h2>Contrats des 40 derniers jours <input id="csearch" placeholder="Rechercher (nom, plaque, n°…)" value="${esc(search)}"></h2>
     ${table('tctr', [['N° contrat', c => esc(c.num)], ['Chauffeur', c => `<b>${esc(c.name)}</b>`, c => c.name], ['Code', c => esc(c.client_code)], ['Plaque', c => plate(c.plate), c => c.plate],
       ['Véhicule', c => S.veh[c.vehicle_key] ? plate(S.veh[c.vehicle_key].plate) : `<span class="badge high">inconnu</span>`, c => c.vehicle_key], ['Début', c => fmtDTY(c.start_at), c => c.start_at],
-      ['Fin', finTxt, c => c.end_at || (c._next ? 'y' : 'z')], ['Statut', c => esc(c.status || '')], ['Téléphone', c => esc(c.phone || '')]], list.slice(0, 500))}`;
+      ['Fin', finTxt, c => c.end_at || (c._next ? 'y' : 'z')], ['Statut', c => esc(c.status || '')], ['Téléphone', c => esc(c.phone || '')]], list, { page: true, sig: s, empty: s ? 'Aucun contrat trouvé' : 'Aucun contrat' })}`;
     const fi = $('#cfile'); if (fi) fi.onchange = () => importFile(fi.files[0]);
     const cs = $('#csearch'); cs.oninput = () => { search = cs.value; const pos = cs.selectionStart; render(); const n = $('#csearch'); n.focus(); n.setSelectionRange(pos, pos); };
   };
@@ -977,7 +1002,7 @@ async function pageFiches() {
       ['Origine', d => d.source === 'manuel' ? '<span class="badge info">ajouté</span>' : 'contrats', d => d.source], ['Statut', d => badge(d.status, d.status === 'NOUVEAU' ? 'info' : ''), d => d.status],
       ['Contrats', d => d.n_contracts || 0, d => d.n_contracts || 0, 'n'], ['Dernier contrat', d => fmtDTY(d.last_contract), d => d.last_contract || ''],
       ['Note', d => canEdit() ? `<input class="ded" data-c="note" data-k="${esc(d.code)}" value="${esc(d.note || '')}" size="16">` : esc(d.note || '')],
-      ['', d => canEdit() && d.source === 'manuel' && !d.n_contracts ? `<button class="ghost small" data-ddel="${esc(d.code)}">Supprimer</button>` : '']], sub), { none: 'Sans contrat', empty: 'Aucun chauffeur' })}`;
+      ['', d => canEdit() && d.source === 'manuel' && !d.n_contracts ? `<button class="ghost small" data-ddel="${esc(d.code)}">Supprimer</button>` : '']], sub, { page: true, sig: q }), { none: 'Sans contrat', empty: 'Aucun chauffeur' })}`;
     document.querySelectorAll('.ded').forEach(i => { i.onchange = async () => {
       const c = i.dataset.c, val = c === 'agency_id' ? (i.value ? +i.value : null) : (i.value.trim() || null);
       const { error } = await sb.from('drivers').update({ [c]: val }).eq('code', i.dataset.k);
@@ -1223,8 +1248,7 @@ async function pageAgences() {
 // ---------- RÉGLAGES (admin) ----------
 async function pageReglages() {
   const my = ROUTING;
-  const [params, rules, users, logs, jobs, recs, scheds, types, usage] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
-    sb.from('logs').select('*').order('id', { ascending: false }).limit(150), sb.from('jobs').select('*').order('id', { ascending: false }).limit(30),
+  const [params, rules, users, recs, scheds, types, usage] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
     all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), all('alerts', 'type', q => q.gte('day', addDays(today(), -60))), usageLoad(true)]);
   if (my !== ROUTING) return;   // autre page demandée pendant le chargement : ne pas l'écraser
   const alTypes = [...new Set(types.map(x => x.type))].sort();
@@ -1263,9 +1287,9 @@ async function pageReglages() {
     <h2>Règles Geotab (poids dans le score de danger)</h2>
     ${table('trul', [['Règle', r => esc(rptRuleFr(r.name)) + (rptRuleFr(r.name) !== r.name ? ` <span class="small">(Geotab : ${esc(r.name)})</span>` : '')], ['Catégorie', r => esc(r.category || '')], ['Poids', r => `<input class="red_" data-k="${esc(r.id)}" value="${esc(r.weight)}" size="4">`, r => r.weight], ['Note', r => esc(r.note || ''), null, 'wide']], rules)}
     <h2>Demandes au collecteur</h2>
-    ${table('tjob', [['Demande', j => esc(j.kind) + (j.arg ? ' (' + esc(j.arg) + ')' : '')], ['Le', j => fmtDTY(j.created_at)], ['Terminée', j => j.done_at ? fmtDTY(j.done_at) : '<span class="badge warn">en attente</span>'], ['Résultat', j => esc(j.result || ''), null, 'wide']], jobs.data || [])}
+    <div id="tjobbox"><div class="loading">Chargement…</div></div>
     <h2>Journal technique</h2>
-    ${table('tlog', [['Le', l => fmtDTY(l.at)], ['Action', l => esc(l.action)], ['Détail', l => esc(l.detail), null, 'wide'], ['Durée (s)', l => l.dur_s == null ? '' : f1(l.dur_s), null, 'n']], logs.data || [])}`;
+    <div id="tlogbox"><div class="loading">Chargement…</div></div>`;
   document.querySelectorAll('[data-upg]').forEach(b => { b.onclick = () => {
     const u = users.find(x => x.user_id === b.dataset.upg), cur = Array.isArray(u.pages) ? u.pages : null;
     $('#upgbox').innerHTML = `<div class="panel"><b>Volets visibles par ${esc(u.email)}</b> <span class="small">(${ROLE_TXT[u.role]})</span>
@@ -1292,6 +1316,11 @@ async function pageReglages() {
   $('#rsgo').onclick = async () => { await job('resync', $('#rsfrom').value + '|' + $('#rsto').value).then(() => done('Retéléchargement demandé.'), fail); };
   $('#vhgo').onclick = async () => { await job('import_vehicles').then(() => done('Mise à jour des véhicules demandée.'), fail); };
   const reload = () => pageReglages().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message), 'err'); });
+  // demandes au collecteur et journal technique (30 jours conservés, plusieurs lignes par passage de 5 min) : une page lue à la fois
+  pgBox('tjobbox', 'tjob', 'jobs', [['Demande', j => esc(j.kind) + (j.arg ? ' (' + esc(j.arg) + ')' : '')], ['Le', j => fmtDTY(j.created_at)], ['Terminée', j => j.done_at ? fmtDTY(j.done_at) : '<span class="badge warn">en attente</span>'], ['Résultat', j => esc(j.result || ''), null, 'wide']],
+    { order: [['id', false]], sort: { 0: [['kind']], 1: [['created_at']], 2: [['done_at']] }, empty: 'Aucune demande' });
+  pgBox('tlogbox', 'tlog', 'logs', [['Le', l => fmtDTY(l.at)], ['Action', l => esc(l.action)], ['Détail', l => esc(l.detail), null, 'wide'], ['Durée (s)', l => l.dur_s == null ? '' : f1(l.dur_s), null, 'n']],
+    { order: [['id', false]], sort: { 0: [['at']], 1: [['action']], 3: [['dur_s']] }, empty: 'Journal vide' });
   bindSpeedSettings(params);
   bindExtSettings(params);
   $('#radd').onclick = async () => {

@@ -105,9 +105,20 @@ test('arrêts moteur tournant : chaque arrêt de la base affiché, litres non me
     await page.waitForFunction(() => !document.querySelector('#page .loading'), null, { timeout: 15000 });
     const n = +env.psql("select count(*) from engine_stops where day between '2026-09-07' and '2026-10-06'");
     assert.ok(n > 0, 'aucun arrêt calculé');
-    assert.strictEqual(await page.locator('#tstops tbody tr').count(), n);
     const nm = +env.psql("select count(*) from engine_stops where day between '2026-09-07' and '2026-10-06' and liters is null");
-    assert.strictEqual(await page.locator('#tstops tbody tr td:nth-child(8) .nm').count(), nm, 'litres non mesurés');
+    // détail par pages de 50 : toutes les pages parcourues
+    const bar = '.pager[data-pg="tstops"]';
+    if (await page.locator(bar).count()) assert.strictEqual(+await page.getAttribute(bar, 'data-total'), n);
+    let seen = 0, seenNm = 0;
+    for (;;) {
+      seen += await page.locator('#tstops tbody tr').count(); seenNm += await page.locator('#tstops tbody tr td:nth-child(8) .nm').count();
+      const next = page.locator(bar + ' [data-k="next"]');
+      if (!await next.count() || await next.isDisabled()) break;
+      const was = await page.innerText(bar + ' .pgi'); await next.click();
+      await page.waitForFunction(([b, x]) => document.querySelector(b + ' .pgi').innerText !== x, [bar, was]);
+    }
+    assert.strictEqual(seen, n);
+    assert.strictEqual(seenNm, nm, 'litres non mesurés');
     assert.match(await page.innerText('.cards'), new RegExp(`${n - nm} / ${n}`));
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
@@ -368,7 +379,8 @@ test('shift des alertes : contrat en cours à l\'heure de l\'alerte, sinon crén
     const sec = await page.$$eval('#page h3.shift', hs => hs.filter(h => h.nextElementSibling && /TESTSHIFT/.test(h.nextElementSibling.innerText))
       .map(h => h.innerText.replace(/\s+/g, ' ').trim() + ' = ' + (h.nextElementSibling.innerText.match(/TESTSHIFT-A\d/g) || []).sort().join(',')));
     assert.deepStrictEqual(sec, ['Shift nuit du 05/10 → 06/10 (19:00 → 07:00) · 1 alerte = TESTSHIFT-A3', 'Shift jour du 05/10 (07:00 → 19:00) · 2 alertes = TESTSHIFT-A1,TESTSHIFT-A2']);
-    // page Alertes : colonne Shift (06:45 dans un contrat de jour = Jour ; 02:30 = nuit de la veille)
+    // page Alertes : colonne Shift (06:45 dans un contrat de jour = Jour ; 02:30 = nuit de la veille) ; pages de 200 : les 3 alertes sur la même page
+    await page.evaluate(() => localStorage.setItem('pgsize', JSON.stringify({ talall: 200 })));
     await page.goto('http://localhost:8080/#/alertes?jour=2026-10-05');
     await page.waitForFunction(() => /TESTSHIFT-A4/.test(document.querySelector('#page').innerText), null, { timeout: 15000 });
     const rows = await page.$$eval('#talall tbody tr', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')).filter(t => /TESTSHIFT/.test(t)));
@@ -378,6 +390,49 @@ test('shift des alertes : contrat en cours à l\'heure de l\'alerte, sinon crén
     assert.match(row('TESTSHIFT-A4'), /02:30 Nuit 04\/10 → 05\/10 /);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); env.psql("delete from alerts where id like 'TSH|%'; delete from contracts where num = 'SHJ1'"); }
+});
+
+test('alertes par pages lues dans la base : 50 par page, toutes les alertes une seule fois, filtre et tri sur toutes, page 1 au changement', async () => {
+  // 120 alertes synthétiques le 02/10/2026 sur un véhicule de test, en plus de celles calculées par le collecteur
+  const hm = n => String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0');
+  env.psql('insert into alerts (id, day, time, plate, vehicle_key, driver_name, type, severity, detail, value, status) values ' +
+    Array.from({ length: 120 }, (_, n) => `('PGT|${n}', '2026-10-02', '${hm(n)}', 'PG-1', 'PGTEST', 'Chauffeur Pages', 'Test pagination', 'Info', 'PAGE-${n}', '', 'À traiter')`).join(', '));
+  const n0 = +env.psql("select count(*) from alerts where day = '2026-10-02'"), pages = Math.ceil(n0 / 50);
+  const { br, page, errors } = await openBrowser();
+  await page.clock.setFixedTime(new Date('2026-10-06T09:18:00Z'));
+  try {
+    await login(page, '#/reglages');
+    await page.evaluate(() => { localStorage.removeItem('fal'); localStorage.removeItem('pgsize'); sessionStorage.removeItem('pg'); });
+    await page.goto('http://localhost:8080/#/alertes?jour=2026-10-02');
+    const bar = '.pager[data-pg="talall"]';
+    await page.waitForSelector(bar);
+    assert.strictEqual(+await page.getAttribute(bar, 'data-total'), n0, 'total compté dans la base');
+    assert.match(await page.innerText('#page .sub'), new RegExp('^' + n0 + ' alertes sur ' + n0));
+    assert.match(await page.innerText(bar), new RegExp('Page 1 / ' + pages + '[\\s\\S]*Lignes 1 à 50 sur ' + n0));
+    assert.strictEqual(await page.locator('#talall tbody tr').count(), 50, 'une page seulement dans la page web');
+    // toutes les pages : chaque alerte de test une seule fois
+    const seen = [];
+    for (let p = 1; ; p++) {
+      await page.waitForFunction(x => (document.querySelector('.pager[data-pg="talall"] .pgi') || {}).innerText === 'Page ' + x + ' / ' + document.querySelector('.pager[data-pg="talall"]').innerText.match(/\/ (\d+)/)[1], p);
+      seen.push(...await page.$$eval('#talall [data-ad^="PGT|"]', bs => bs.map(b => b.dataset.ad)));
+      const next = page.locator(bar + ' [data-k="next"]');
+      if (await next.isDisabled()) break;
+      await next.click();
+    }
+    assert.strictEqual(seen.length, 120); assert.strictEqual(new Set(seen).size, 120);
+    // filtre (dans la base) : page 1, total des alertes filtrées
+    await page.selectOption('#ftype', 'Test pagination');
+    await page.waitForFunction(() => /^120 alertes sur/.test(document.querySelector('#page .sub').innerText));
+    assert.match(await page.innerText(bar), /Page 1 \/ 3/);
+    // 200 par page : les 120 sur une page ; tri par heure fait par la base sur toutes les alertes filtrées
+    await page.selectOption(bar + ' select', '200');
+    await page.waitForFunction(() => document.querySelectorAll('#talall tbody tr').length === 120);
+    await page.click('#talall th:has-text("Heure")');
+    await page.waitForFunction(() => /01:59/.test((document.querySelector('#talall tbody tr') || {}).innerText || ''));
+    assert.match(await page.innerText('#talall tbody tr:last-child'), /00:00/);
+    await page.screenshot({ path: path.join(env.OUT, 'site_alertes_pages.png') });
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); env.psql("delete from alerts where id like 'PGT|%'"); }
 });
 
 test('résultat de fin de shift : contrats du shift, totaux du journal, PDF général et PDF par chauffeur', async () => {
