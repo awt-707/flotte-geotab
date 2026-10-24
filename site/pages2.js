@@ -17,7 +17,7 @@ function priceOf(v) { const diesel = /GO|GAS ?OIL|GASOIL|DIESEL|GAZOIL/.test(Str
 async function dataRows(table, cols, from, to, opt) {
   opt = opt || {};
   const ok = inAgency(), dcol = opt.dayCol || 'day';
-  const rows = await all(table, cols, q => { q = q.gte(dcol, from).lte(dcol, to); if (opt.key) q = q.eq('vehicle_key', opt.key); if (opt.code) q = q.eq('driver_code', opt.code); return q; });
+  const rows = await allC(table, cols, q => { q = q.gte(dcol, from).lte(dcol, to); if (opt.key) q = q.eq('vehicle_key', opt.key); if (opt.code) q = q.eq('driver_code', opt.code); return q; });
   return rows.filter(r => ok(r.vehicle_key));
 }
 /** Petit graphique en barres (SVG) : items [{label, value, color, text}] */
