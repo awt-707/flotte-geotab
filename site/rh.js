@@ -3,14 +3,21 @@
 // maladie, avances et primes (saisies RH + Caisse), avenants, état mensuel ; pointage du staff (date de naissance à
 // chaque ouverture de Ludy, pauses, fin de journée). Calculs purs dans rh_calc.js. Chargé avant app.js.
 
-const RH_TABS = [['bord', 'Tableau de bord'], ['salaries', 'Salariés'], ['presences', 'Présences'], ['pointage', 'Pointage du staff'], ['absences', 'Absences et congés'],
-  ['avances', 'Avances et primes'], ['avenants', 'Avenants'], ['essai', 'Périodes d\'essai'], ['mois', 'État mensuel'], ['travail', 'Contrats de travail']];
+const RH_TABS = [['bord', 'Tableau de bord'], ['alertes', 'Alertes RH'], ['salaries', 'Salariés'], ['dossiers', 'Dossiers salariés'], ['presences', 'Présences'], ['pointage', 'Pointage du staff'],
+  ['absences', 'Absences et congés'], ['avances', 'Avances et primes'], ['avenants', 'Avenants'], ['essai', 'Périodes d\'essai'], ['mois', 'État mensuel'], ['rapport', 'Comptes rendus'], ['travail', 'Contrats de travail']];
 const RH_ADMIN_TABS = { pointage: 1 };
 const RH_ABS = ['conge', 'maladie', 'absence'], RH_MONEY = ['avance', 'remboursement', 'prime'];
 const RH_STATUS = { conge: ['Demandé', 'Validé', 'Refusé'], avance: ['À rembourser', 'Remboursée'], prime: ['À payer', 'Payée'] };
-const RH = { emp: [], ev: [], employers: [], drivers: [], profiles: [], err: '' };
+const RH = { emp: [], ev: [], employers: [], drivers: [], profiles: [], wc: [], docs: [], alerts: [], v2: true, err: '' };
+// administrateur ou compte « Ressources humaines » : toutes les ressources humaines (staff, salaires, pointage, sociétés) ; gestionnaire : chauffeurs de ses agences
+const rhFull = () => isAdmin() || isRH();
+const rhCan = () => canEdit() || isRH();
+const RH_CONTRACT_TYPES = ['CDI', 'CDD', 'ANAPEC', 'Stage', 'Autre'];
+// catégorie : durée de la période d'essai d'un CDI (article 14) : cadres 3 mois, employés 1,5 mois, ouvriers 15 jours
+const RH_CATS = [['cadre', 'Cadre ou assimilé', 3], ['employe', 'Employé', 1.5], ['ouvrier', 'Ouvrier', 0.5]];
+const RH_LV = { Critique: 'err', Haute: 'warn', Moyenne: '' };
 
-const rhTabsFor = () => RH_TABS.filter(x => !RH_ADMIN_TABS[x[0]] || isAdmin());
+const rhTabsFor = () => RH_TABS.filter(x => !RH_ADMIN_TABS[x[0]] || rhFull());
 const rhHref = (t, extra) => t === 'travail' ? '#/travail' : '#/rh?t=' + t + (extra ? '&' + extra : '');
 const rhMoney = v => v == null || v === '' ? '' : f0(Math.round(+v)) + ' DH';
 const rhH = h => h == null ? '' : rhMin(h * 60);
@@ -24,14 +31,27 @@ async function rhLoad() {
   const [emp, ev, employers, drivers] = await Promise.all([all('hr_employees', '*', null, ['name']), all('hr_events', '*', null, ['day_from', false]),
     all('employers', 'id,name,data,active', null, ['name']).catch(() => []), all('drivers', 'code,name,phone,agency_id', null, ['name']).catch(() => [])]);
   RH.emp = emp; RH.ev = ev; RH.employers = employers; RH.drivers = drivers.filter(d => d.code && d.code !== HORS);
-  RH.profiles = isAdmin() ? await all('profiles', 'user_id,email,role', null, ['email']).catch(() => []) : [];
+  RH.profiles = rhFull() ? await all('profiles', 'user_id,email,role', null, ['email']).catch(() => []) : [];
+  // suivi des contrats (signature, légalisation) et dossiers : migration 20261111000000_rh_acces.sql
+  const [wc, docs] = await Promise.all([all('work_contracts', '*', null, ['created_at', false]).catch(() => []), all('hr_documents', '*', null, ['created_at', false]).catch(() => null)]);
+  RH.wc = wc; RH.docs = docs || []; RH.v2 = !!docs;
+  rhAlertsCalc();
+}
+/** Alertes RH (rh_calc.js) et pastille du dossier Ressources humaines dans le menu */
+function rhAlertsCalc() {
+  RH.alerts = rhAlerts({ emps: RH.emp, events: RH.ev, contracts: RH.wc, docs: RH.docs, today: today(), P: S.P || {} });
+  S.rhAlertN = RH.alerts.filter(a => a.level !== 'Moyenne').length; rhBadgePaint();
+}
+function rhBadgePaint() {
+  const el = $('#nbrh'); if (!el) return;
+  const n = S.rhAlertN || 0; el.textContent = n || ''; el.hidden = !n; el.title = n + ' alertes RH critiques ou hautes';
 }
 
 /** Dossier « Ressources humaines » */
 async function pageRH() {
   const my = ROUTING, q = qs(), tabs = rhTabsFor(), t = q.get('t') === 'fiche' ? 'fiche' : tabs.some(x => x[0] === q.get('t')) ? q.get('t') : 'bord';
   const head = `<div class="head"><h1>Ressources humaines</h1><div class="sub">Salariés, présences (chauffeurs : contrats Ludy ; staff : pointage sur Ludy), heures supplémentaires, absences, congés, arrêts maladie, avances, primes, avenants et périodes d'essai.</div></div>`;
-  if (!canEdit()) { $('#page').innerHTML = head + msg('Ressources humaines réservées aux gestionnaires et à l\'administrateur.', 'warn'); return; }
+  if (!rhCan()) { $('#page').innerHTML = head + msg('Ressources humaines réservées aux gestionnaires, aux ressources humaines et à l\'administrateur.', 'warn'); return; }
   const bar = `<div class="tabs">${tabs.map(x => `<a href="${rhHref(x[0])}" class="${t === x[0] || (t === 'fiche' && x[0] === 'salaries') ? 'on' : ''}">${x[1]}</a>`).join('')}</div>`;
   $('#page').innerHTML = head + bar + '<div class="loading">Chargement…</div>';
   try { await rhLoad(); } catch (e) {
@@ -41,8 +61,10 @@ async function pageRH() {
   }
   if (my !== ROUTING) return;
   const box = '<div id="rhbody"></div>';
-  $('#page').innerHTML = head + bar + (isAdmin() ? '' : msg('Gestionnaire : chauffeurs des agences auxquelles vous êtes rattaché. Le staff est géré par l\'administrateur.', '')) + box;
-  const V = { bord: rhBoard, salaries: rhList, fiche: rhFiche, presences: rhPresence, pointage: rhClockBoard, absences: rhAbsences, avances: rhAdvances, avenants: rhAvenants, essai: rhTrials, mois: rhMonthly };
+  $('#page').innerHTML = head + bar + (rhFull() ? '' : msg('Gestionnaire : chauffeurs des agences auxquelles vous êtes rattaché. Le staff est géré par l\'administrateur et les ressources humaines.', ''))
+    + (RH.v2 ? '' : msg('Dossiers des salariés, suivi de la légalisation des contrats et rôle Ressources humaines pas encore installés : exécuter <b>supabase/migrations/20261111000000_rh_acces.sql</b> dans Supabase &gt; SQL Editor.', 'warn')) + box;
+  const V = { bord: rhBoard, alertes: rhAlertsView, salaries: rhList, fiche: rhFiche, dossiers: rhFiles, presences: rhPresence, pointage: rhClockBoard, absences: rhAbsences, avances: rhAdvances, avenants: rhAvenants,
+    essai: rhTrials, mois: rhMonthly, rapport: rhReportView };
   try { await V[t](my, q); } catch (e) { if (my === ROUTING) $('#rhbody').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
 }
 
@@ -55,7 +77,7 @@ async function rhBoard(my) {
   const inc = act.filter(e => !e.hired_on || e.salary == null || !e.employer_id || (e.pointage && !e.birth_date));
   const coded = new Set(RH.emp.map(e => e.driver_code).filter(Boolean)), noFile = RH.drivers.filter(d => !coded.has(d.code) && (!agFilter() || String(d.agency_id) === agFilter()));
   let live = '';
-  if (isAdmin()) {
+  if (rhFull()) {
     const staff = act.filter(e => e.kind === 'staff' && e.pointage);
     if (staff.length) {
       const ck = await all('hr_clock', 'employee_id,kind,at', x => x.gte('at', new Date(Date.now() - 18 * HOUR).toISOString()).in('employee_id', staff.map(e => e.id)), ['at']).catch(() => []);
@@ -65,7 +87,13 @@ async function rhBoard(my) {
     }
   }
   const card = (l, v, h) => `<div class="card"><div class="cv">${v}</div><div class="cl">${l}</div>${h ? `<div class="small">${h}</div>` : ''}</div>`;
-  $('#rhbody').innerHTML = `<div class="cards">${card('Salariés actifs', act.length, act.filter(e => e.kind === 'chauffeur').length + ' chauffeurs · ' + act.filter(e => e.kind === 'staff').length + ' staff')}
+  const al = RH.alerts.filter(a => ok(a.emp)), nl = l => al.filter(a => a.level === l).length;
+  const lg = { aucun: 0, genere: 0, signe: 0, legalise: 0 }; act.forEach(e => { lg[rhLegal(rhContractOf(e, RH.wc)).step]++; });
+  $('#rhbody').innerHTML = `${al.length ? `<div class="panel"><h2>À traiter pour rester en règle <a class="small" href="${rhHref('alertes')}">toutes les alertes (${al.length})</a></h2>
+      <div class="small">${nl('Critique') ? `<span class="err">${nl('Critique')} critique${nl('Critique') > 1 ? 's' : ''}</span> · ` : ''}${nl('Haute')} haute${nl('Haute') > 1 ? 's' : ''} · ${nl('Moyenne')} moyenne${nl('Moyenne') > 1 ? 's' : ''}</div>
+      ${rhAlertTable(al.slice(0, 8), 'rhbal')}</div>` : msg('Aucune alerte RH : périodes d\'essai, contrats, légalisation, CNSS et dossiers en règle.', 'ok')}
+    <div class="cards">${card('Salariés actifs', act.length, act.filter(e => e.kind === 'chauffeur').length + ' chauffeurs · ' + act.filter(e => e.kind === 'staff').length + ' staff')}
+      ${card('Contrats légalisés', lg.legalise + ' / ' + act.length, lg.signe + ' signé' + (lg.signe > 1 ? 's' : '') + ' à légaliser · ' + lg.genere + ' à signer · ' + lg.aucun + ' sans contrat')}
       ${card('Périodes d\'essai à décider', trials.length, 'fin dans ' + num(P.rhAlertDays, 7) + ' jours au plus')}${card('Absents aujourd\'hui', cur.length, 'congé validé, arrêt maladie, absence')}${card('Congés à valider', pend.length)}</div>
     ${noFile.length ? msg(noFile.length + ' chauffeur' + (noFile.length > 1 ? 's' : '') + ' de Ludy sans fiche RH : <a href="' + rhHref('salaries') + '">les créer depuis la liste des salariés</a>.', 'warn') : ''}
     ${trials.length ? `<div class="panel"><h2>Périodes d'essai à décider</h2>${table('rhtr', [['Salarié', x => rhLink(x[0])], ['Entrée', x => esc(fmtDay(x[0].hired_on))], ['État', x => esc(x[1].state)], ['Fin', x => esc(fmtDay(x[1].end))], ['Jours restants', x => String(x[1].daysLeft), null, 'num']], trials)}</div>` : ''}
@@ -95,13 +123,13 @@ function rhList() {
   $('#rhnew').onclick = () => rhEmpForm(null, $('#rhform'));
   if ($('#rhdrv')) $('#rhdrv').onclick = async () => {
     if (!confirm('Créer ' + noFile.length + ' fiche(s) chauffeur à partir des chauffeurs de Ludy (nom, téléphone, agence) ? La date d\'entrée, le salaire et la société seront à compléter.')) return;
-    const rows = noFile.filter(d => isAdmin() || S.agencies.some(a => a.id === d.agency_id)).map(d => ({ kind: 'chauffeur', name: d.name, driver_code: d.code, phone: d.phone || null, agency_id: d.agency_id || null, position: 'Chauffeur' }));
+    const rows = noFile.filter(d => rhFull() || S.agencies.some(a => a.id === d.agency_id)).map(d => ({ kind: 'chauffeur', name: d.name, driver_code: d.code, phone: d.phone || null, agency_id: d.agency_id || null, position: 'Chauffeur' }));
     for (let i = 0; i < rows.length; i += 200) { const r = await sb.from('hr_employees').insert(rows.slice(i, i + 200)); if (r.error) { alert('Erreur : ' + r.error.message); break; } }
     route();
   };
 }
 const RH_EMP_FIELDS = [['name', 'Nom et prénom', 24], ['position', 'Poste', 16], ['cin', 'N° CIN', 11], ['birth_date', 'Date de naissance', 11, 'date'], ['phone', 'Téléphone', 13], ['email', 'E-mail', 22],
-  ['hired_on', 'Date d\'entrée', 11, 'date'], ['salary', 'Salaire net d\'embauche (DH)', 9, 'num'], ['weekly_hours', 'Durée hebdomadaire (h)', 5, 'num'], ['leave_per_month', 'Congés acquis par mois (j)', 5, 'num'],
+  ['cnss_no', 'N° CNSS', 12, '', 1], ['hired_on', 'Date d\'entrée', 11, 'date'], ['contract_end', 'Fin du contrat (CDD, ANAPEC…)', 11, 'date', 1], ['salary', 'Salaire net d\'embauche (DH)', 9, 'num'], ['weekly_hours', 'Durée hebdomadaire (h)', 5, 'num'], ['leave_per_month', 'Congés acquis par mois (j)', 5, 'num'],
   ['trial_months', 'Période d\'essai (mois)', 5, 'num'], ['note', 'Note', 40]];
 /** Formulaire de la fiche (création / modification) */
 function rhEmpForm(e, box) {
@@ -109,17 +137,21 @@ function rhEmpForm(e, box) {
   const dv = (k, t) => t === 'date' ? fmtDay(v[k]) : v[k] == null ? '' : v[k];
   const usedUsers = new Set(RH.emp.filter(x => x.user_id && (!e || x.id !== e.id)).map(x => x.user_id));
   box.innerHTML = `<div class="panel"><h2>${e ? 'Modifier la fiche' : 'Nouveau salarié'}</h2>
-    <div class="mfrow"><label>Type <select id="rhe_kind" ${isAdmin() ? '' : 'disabled'}><option value="chauffeur" ${v.kind === 'chauffeur' ? 'selected' : ''}>Chauffeur (présence = contrats Ludy)</option>${isAdmin() ? `<option value="staff" ${v.kind === 'staff' ? 'selected' : ''}>Staff (présence = pointage sur Ludy)</option>` : ''}</select></label>
+    <div class="mfrow"><label>Type <select id="rhe_kind" ${rhFull() ? '' : 'disabled'}><option value="chauffeur" ${v.kind === 'chauffeur' ? 'selected' : ''}>Chauffeur (présence = contrats Ludy)</option>${rhFull() ? `<option value="staff" ${v.kind === 'staff' ? 'selected' : ''}>Staff (présence = pointage sur Ludy)</option>` : ''}</select></label>
       <label>Société <select id="rhe_employer"><option value="">—</option>${RH.employers.map(x => `<option value="${x.id}" ${String(x.id) === String(v.employer_id) ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
-      <label>Agence <select id="rhe_agency">${agOptions(v.agency_id, isAdmin() ? '— aucune —' : '— choisir —')}</select></label>
+      <label>Agence <select id="rhe_agency">${agOptions(v.agency_id, rhFull() ? '— aucune —' : '— choisir —')}</select></label>
       <label id="rhe_drvl">Chauffeur de Ludy <select id="rhe_driver"><option value="">—</option>${RH.drivers.map(d => `<option value="${esc(d.code)}" ${d.code === v.driver_code ? 'selected' : ''}>${esc(d.name)} (${esc(d.code)})</option>`).join('')}</select></label></div>
-    <div class="mfrow">${RH_EMP_FIELDS.map(f => `<label>${f[1]} <input data-rhe="${f[0]}" data-t="${f[3] || ''}" value="${esc(dv(f[0], f[3]))}" size="${f[2]}"${f[3] === 'date' ? ' placeholder="JJ/MM/AAAA" inputmode="numeric"' : f[3] === 'num' ? ' inputmode="decimal"' : ''}></label>`).join('')}
+    ${RH.v2 ? `<div class="mfrow"><label>Type de contrat <select id="rhe_ctype">${RH_CONTRACT_TYPES.map(x => `<option ${x === (v.contract_type || 'CDI') ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+      <label>Catégorie <select id="rhe_cat"><option value="">—</option>${RH_CATS.map(c => `<option value="${c[0]}" ${c[0] === v.category ? 'selected' : ''}>${c[1]}</option>`).join('')}</select></label>
+      <span class="small">Période d'essai d'un CDI (article 14) : cadres 3 mois, employés 1,5 mois, ouvriers 15 jours ; renouvelable une fois.</span></div>` : ''}
+    <div class="mfrow">${RH_EMP_FIELDS.filter(f => RH.v2 || !f[4]).map(f => `<label>${f[1]} <input data-rhe="${f[0]}" data-t="${f[3] || ''}" value="${esc(dv(f[0], f[3]))}" size="${f[2]}"${f[3] === 'date' ? ' placeholder="JJ/MM/AAAA" inputmode="numeric"' : f[3] === 'num' ? ' inputmode="decimal"' : ''}></label>`).join('')}
       <label class="chk"><input type="checkbox" id="rhe_renew" ${v.trial_renewable !== false ? 'checked' : ''}> Période d'essai renouvelable une fois</label></div>
-    ${isAdmin() ? `<div class="mfrow" id="rhe_staff"><label>Compte Ludy du salarié <select id="rhe_user"><option value="">—</option>${RH.profiles.filter(p => !usedUsers.has(p.user_id)).map(p => `<option value="${p.user_id}" ${p.user_id === v.user_id ? 'selected' : ''}>${esc(p.email)}</option>`).join('')}</select></label>
+    ${rhFull() ? `<div class="mfrow" id="rhe_staff"><label>Compte Ludy du salarié <select id="rhe_user"><option value="">—</option>${RH.profiles.filter(p => !usedUsers.has(p.user_id)).map(p => `<option value="${p.user_id}" ${p.user_id === v.user_id ? 'selected' : ''}>${esc(p.email)}</option>`).join('')}</select></label>
       <label class="chk"><input type="checkbox" id="rhe_point" ${v.pointage ? 'checked' : ''}> Pointage obligatoire : date de naissance à chaque ouverture de Ludy, pauses, fin de journée</label></div>` : ''}
     <div class="mfgo"><button id="rhesave">Enregistrer</button> <button class="ghost" id="rhecancel">Annuler</button> <span id="rheres"></span></div></div>`;
   const kindSync = () => { const k = $('#rhe_kind').value; $('#rhe_drvl').hidden = k !== 'chauffeur'; if ($('#rhe_staff')) $('#rhe_staff').hidden = k !== 'staff'; };
   $('#rhe_kind').onchange = kindSync; kindSync();
+  if ($('#rhe_cat')) $('#rhe_cat').onchange = () => { const c = RH_CATS.find(x => x[0] === $('#rhe_cat').value); if (c) $('[data-rhe="trial_months"]').value = c[2]; };
   $('#rhe_driver').onchange = () => { const d = RH.drivers.find(x => x.code === $('#rhe_driver').value); if (!d) return;
     const n = $('[data-rhe="name"]'); if (!n.value.trim()) n.value = d.name; const p = $('[data-rhe="phone"]'); if (!p.value.trim() && d.phone) p.value = d.phone;
     if (d.agency_id && $(`#rhe_agency option[value="${d.agency_id}"]`)) $('#rhe_agency').value = String(d.agency_id); };
@@ -135,9 +167,10 @@ function rhEmpForm(e, box) {
     });
     ['weekly_hours', 'leave_per_month', 'trial_months'].forEach(k => { if (row[k] == null) row[k] = k === 'weekly_hours' ? 44 : k === 'leave_per_month' ? 1.5 : 0; });
     row.driver_code = row.kind === 'chauffeur' ? ($('#rhe_driver').value || null) : null;
-    if (isAdmin()) { row.user_id = row.kind === 'staff' ? ($('#rhe_user').value || null) : null; row.pointage = row.kind === 'staff' && $('#rhe_point').checked; }
+    if (RH.v2) { row.contract_type = $('#rhe_ctype').value; row.category = $('#rhe_cat').value || null; if (row.contract_type === 'CDI') row.contract_end = null; }
+    if (rhFull()) { row.user_id = row.kind === 'staff' ? ($('#rhe_user').value || null) : null; row.pointage = row.kind === 'staff' && $('#rhe_point').checked; }
     if (!row.name) bad.push('Nom et prénom');
-    if (!isAdmin() && !row.agency_id) bad.push('Agence');
+    if (!rhFull() && !row.agency_id) bad.push('Agence');
     if (row.pointage && !row.birth_date) bad.push('Date de naissance (obligatoire pour le pointage)');
     if (row.pointage && !row.user_id) bad.push('Compte Ludy (obligatoire pour le pointage)');
     if (bad.length) { out.innerHTML = '<span class="err">À corriger : ' + esc(bad.join(', ')) + '.</span>'; return; }
@@ -152,8 +185,8 @@ async function rhFiche(my, q) {
   const e = rhEmp(q.get('id'));
   if (!e) { $('#rhbody').innerHTML = msg('Salarié introuvable (ou hors de vos agences).', 'err'); return; }
   const d0 = today(), ev = RH.ev.filter(x => x.employee_id === e.id), tr = rhTrial(e, d0, num((S.P || {}).rhAlertDays, 7)), lv = rhLeave(e, ev, d0), sal = rhSalaryAt(e, ev, d0);
-  const wc = await all('work_contracts', 'id,created_at,effective_on,pdf_path,name,cin,driver_code,employee_id,data', x => x.or('employee_id.eq.' + e.id + (e.driver_code ? ',driver_code.eq.' + e.driver_code : '') + (e.cin ? ',cin.eq.' + e.cin : '')), ['created_at', false]).catch(() => []);
-  if (my !== ROUTING) return;
+  const wc = RH.wc.filter(c => c.employee_id === e.id || (!c.employee_id && ((e.driver_code && c.driver_code === e.driver_code) || (e.cin && c.cin === e.cin))));
+  const docs = RH.docs.filter(x => x.employee_id === e.id), al = RH.alerts.filter(a => a.emp.id === e.id), sn = rhSeniority(e.hired_on, d0);
   const emp = (RH.employers.find(x => x.id === e.employer_id) || {}).name || '';
   const kv = (k, v) => `<div class="kv"><span class="small">${k}</span><b>${v || '—'}</b></div>`;
   $('#rhbody').innerHTML = `<div class="bar"><a href="${rhHref('salaries')}">← Salariés</a></div>
@@ -161,16 +194,19 @@ async function rhFiche(my, q) {
       <div class="panel"><h2>${esc(e.name)} ${e.left_on ? '<span class="small">(sorti le ' + esc(fmtDay(e.left_on)) + ')</span>' : ''}</h2>
         <div class="kvs">${kv('Type', e.kind === 'staff' ? 'Staff (pointage)' : 'Chauffeur (contrats Ludy)')}${kv('Poste', esc(e.position || ''))}${kv('Société', esc(emp))}${kv('Agence', esc(S.agName[e.agency_id] || ''))}
           ${kv('Date d\'entrée', esc(fmtDay(e.hired_on)))}${kv('Salaire actuel', rhMoney(sal))}${kv('Durée hebdomadaire', esc(f1(e.weekly_hours)) + ' h')}${kv('CIN', esc(e.cin || ''))}
-          ${kv('Date de naissance', esc(fmtDay(e.birth_date)))}${kv('Téléphone', esc(e.phone || ''))}${kv('Code chauffeur', esc(e.driver_code || ''))}${e.kind === 'staff' ? kv('Pointage', e.pointage ? 'Obligatoire' : 'Non') : ''}</div>
+          ${kv('Date de naissance', esc(fmtDay(e.birth_date)))}${kv('Téléphone', esc(e.phone || ''))}${kv('Code chauffeur', esc(e.driver_code || ''))}${e.kind === 'staff' ? kv('Pointage', e.pointage ? 'Obligatoire' : 'Non') : ''}
+          ${RH.v2 ? kv('N° CNSS', e.cnss_no ? esc(e.cnss_no) : '<span class="warn">à renseigner</span>') + kv('Contrat', esc(e.contract_type || 'CDI') + (e.contract_end ? ' jusqu\'au ' + esc(fmtDay(e.contract_end)) : '')) + kv('Catégorie', esc((RH_CATS.find(c => c[0] === e.category) || ['', ''])[1])) : ''}
+          ${sn ? kv('Ancienneté', sn.years + ' an' + (sn.years > 1 ? 's' : '') + ' · prime ' + sn.pct + ' %' + (sn.next ? '<br><span class="small">' + sn.next.pct + ' % le ' + esc(fmtDay(sn.next.on)) + '</span>' : '')) : ''}</div>
         ${e.note ? `<div class="small">${esc(e.note)}</div>` : ''}
         <div class="mfgo"><button class="ghost small" id="rhfed">Modifier la fiche</button><button class="ghost small" id="rhfctr">Nouveau contrat de travail</button>${e.left_on ? `<button class="ghost small" id="rhfback">Réintégrer</button>` : `<button class="ghost small" id="rhfleft">Sortie du salarié</button>`}</div>
         <div id="rhfform"></div></div>
+      ${al.length ? `<div class="panel"><h2>Alertes (${al.length})</h2>${rhAlertTable(al, 'rhfal', true)}</div>` : ''}
       <div class="panel"><h2>Période d'essai</h2>${rhTrialBox(e, tr)}</div>
       <div class="panel"><h2>Congés payés</h2>${lv ? `<div class="kvs">${kv('Mois de service', lv.months)}${kv('Acquis', f1(lv.acquired) + ' j')}${kv('Pris (validés)', f1(lv.taken) + ' j')}${kv('Solde', f1(lv.balance) + ' j')}</div>
         <div class="small">${esc(f1(e.leave_per_month))} jour(s) par mois de service (article 231 du Code du travail) ; ${lv.open ? 'droit ouvert (6 mois de service atteints).' : 'droit ouvert après 6 mois de service continu.'}</div>` : '<div class="small">Date d\'entrée à renseigner.</div>'}</div>
-      <div class="panel"><h2>Contrats de travail (${wc.length})</h2>${table('rhwc', [['Créé le', c => esc(fmtDTY(c.created_at))], ['Date d\'effet', c => esc(fmtDay(c.effective_on))], ['Société', c => esc((c.data && c.data.company && c.data.company.name) || '')],
-        ['', c => c.pdf_path ? `<button class="ghost small" data-rhwc="${c.id}">PDF</button>` : '']], wc, { empty: 'Aucun contrat généré dans Ludy' })}</div>
+      <div class="panel" id="rhwc"><h2>Contrats de travail (${wc.length})</h2>${rhWcBox(e, wc)}</div>
     </div><div>
+      ${RH.v2 ? `<div class="panel" id="rhdoc"><h2>Dossier du salarié (${docs.length})</h2>${rhDocsBox(e, docs)}</div>` : ''}
       <div class="panel"><h2>Événements</h2><div id="rhfev"></div></div>
       <div class="panel"><h2>Présence de ${rhMonthTxt(rhMonthNow())}</h2><div id="rhfpres"><div class="loading">Calcul…</div></div></div>
     </div></div>`;
@@ -186,8 +222,10 @@ async function rhFiche(my, q) {
     const r = await sb.from('hr_employees').update({ left_on: d, left_reason: why, pointage: false }).eq('id', e.id); if (r.error) alert(r.error.message); else route();
   };
   if ($('#rhfback')) $('#rhfback').onclick = async () => { const r = await sb.from('hr_employees').update({ left_on: null, left_reason: null }).eq('id', e.id); if (r.error) alert(r.error.message); else route(); };
-  document.querySelectorAll('[data-rhwc]').forEach(b => b.onclick = async () => { try { const u = await ctrLink(wc.find(c => String(c.id) === b.dataset.rhwc).pdf_path); if (!openOut(u)) window.open(u, '_blank', 'noopener'); } catch (x) { alert('PDF inaccessible : ' + x.message); } });
+  rhWcBind(e, wc);
+  if (RH.v2) rhDocsBind(e, docs);
   rhTrialBind(e);
+  if (/^(wc|doc)$/.test(q.get('go') || '') && $('#rh' + q.get('go'))) $('#rh' + q.get('go')).scrollIntoView({ block: 'start' });
   rhEventsBox($('#rhfev'), ev, [e]);
   const m = rhMonthRange(rhMonthNow()), pr = await rhPresenceData([e], m.from, m.to);
   if (my !== ROUTING) return;
@@ -330,7 +368,7 @@ async function rhPresenceData(emps, from, to) {
       Object.assign(r, s, { gaps: rhPlanGaps(plan.filter(p => p.driver_code === e.driver_code && p.day >= start && p.day <= lim && p.day < today()), s.days, [...decl]), declared: [...decl].sort() });
     });
   }
-  if (staff.length && isAdmin()) {
+  if (staff.length && rhFull()) {
     const a = localToDate(...from.split('-').map(Number), 0, 0).getTime() - 12 * HOUR, b = localToDate(...addDays(to, 1).split('-').map(Number), 0, 0).getTime() + 12 * HOUR;
     const [ck, ses] = await Promise.all([all('hr_clock', 'employee_id,kind,at', x => x.gte('at', new Date(a).toISOString()).lt('at', new Date(b).toISOString()).in('employee_id', staff.map(e => e.id)), ['at']).catch(() => []),
       all('user_sessions', 'user_id,started_at,last_seen', x => x.gte('last_seen', new Date(a).toISOString()).lt('started_at', new Date(b).toISOString()).in('user_id', staff.map(e => e.user_id).filter(Boolean)), ['started_at']).catch(() => [])]);
@@ -348,7 +386,7 @@ async function rhPresenceData(emps, from, to) {
 /** Détail d'un salarié : shifts (chauffeur) ou journées pointées (staff) */
 function rhDetail(r) {
   if (r.e.kind === 'staff') {
-    if (!isAdmin()) return '';
+    if (!rhFull()) return '';
     return table('rhsd' + r.e.id, [['Jour', d => esc(fmtDay(d.day)), d => d.day], ['Arrivée', d => d.in ? esc(localHM(d.in)) : ''], ['Départ', d => d.out ? esc(localHM(d.out)) + (d.outAuto ? ' <span class="warn">non pointé</span>' : d.ongoing ? ' <span class="small">en cours</span>' : '') : ''],
       ['Pauses', d => d.nPauses + (d.pauseMin ? ' · ' + rhMin(d.pauseMin) : ''), null, 'num'], ['Travaillé', d => rhMin(d.workMin), null, 'num'], ['Connecté à Ludy', d => d.conn ? esc(localHM(d.conn.first) + ' → ' + localHM(d.conn.last)) + ' · ' + rhMin(d.conn.min) : ''],
       ['Contrôle', d => d.fails ? '<span class="warn">' + d.fails + ' date(s) de naissance erronée(s)</span>' : '']], r.staffDays, { empty: 'Aucun pointage' });
@@ -383,7 +421,7 @@ async function rhPresence(my, q) {
 
 // ---------- Pointage du staff (administrateur) ----------
 async function rhClockBoard(my, q) {
-  if (!isAdmin()) { $('#rhbody').innerHTML = msg('Réservé à l\'administrateur.', 'warn'); return; }
+  if (!rhFull()) { $('#rhbody').innerHTML = msg('Réservé à l\'administrateur.', 'warn'); return; }
   const staff = RH.emp.filter(e => e.kind === 'staff' && !e.left_on);
   const ck = staff.length ? await all('hr_clock', 'id,employee_id,kind,at,client,note,created_by', x => x.gte('at', new Date(Date.now() - 40 * 86400000).toISOString()).in('employee_id', staff.map(e => e.id)), ['at', false]).catch(() => []) : [];
   if (my !== ROUTING) return;
@@ -478,6 +516,213 @@ async function rhMonthly(my, q) {
         footer: 'Ludy · Ressources humaines — présence des chauffeurs d\'après les contrats Ludy, du staff d\'après le pointage sur Ludy.',
         summary: [['Salariés', String(rows.length)], ['Jours de présence', f0(rows.reduce((s, x) => s + x.r.nDays, 0))], ['Heures supplémentaires', rhH(rows.reduce((s, x) => s + (x.r.over || 0), 0))], ['Avances', rhMoney(rows.reduce((s, x) => s + x.avance, 0))]],
         tables: [{ title: 'Salariés', empty: 'Aucun', head: aoa[0], num: cols.map((c, i) => c[2] ? i : -1).filter(i => i >= 0), rows: aoa.slice(1) }], fileName: 'Etat-RH-' + m }));
+    } catch (e) { alert(e.message || e); }
+  };
+}
+
+// ---------- Alertes RH (rester en règle) ----------
+function rhAlertTable(list, id, one) {
+  return table(id, [['Gravité', a => `<span class="${RH_LV[a.level]}"><b>${esc(a.level)}</b></span>`, a => RH_LEVELS.indexOf(a.level)], ['Type', a => esc(a.type)],
+    ...(one ? [] : [['Salarié', a => rhLink(a.emp), a => a.emp.name]]), ['Détail', a => esc(a.text)], ['Échéance', a => esc(fmtDay(a.due)), a => a.due || '9999']], list, { empty: 'Aucune alerte' });
+}
+function rhAlertsView() {
+  const q = qs(), lv = q.get('lv') || '', ty = q.get('ty') || '', ok = rhAgOk();
+  const base = RH.alerts.filter(a => ok(a.emp)), list = base.filter(a => (!lv || a.level === lv) && (!ty || a.type === ty)), types = [...new Set(base.map(a => a.type))].sort();
+  const sel = (k, v, opts) => `<select data-rhaf="${k}">${opts.map(o => `<option value="${esc(o[0])}" ${o[0] === v ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
+  $('#rhbody').innerHTML = `<div class="bar">${sel('lv', lv, [['', 'Toutes les gravités']].concat(RH_LEVELS.map(l => [l, l + ' (' + base.filter(a => a.level === l).length + ')'])))}
+      ${sel('ty', ty, [['', 'Tous les types']].concat(types.map(t => [t, t])))}<button class="ghost small" id="rhapdf">PDF</button></div>
+    <div class="small">Contrôles faits chaque jour : fin de période d'essai (${esc(num((S.P || {}).rhAlertDays, 7))} jours avant), contrat de travail absent, à faire signer ou à légaliser, copie légalisée non rangée,
+      fin de CDD, N° CNSS, pièces obligatoires du dossier et dates d'expiration (permis, CIN…), arrêt maladie sans certificat médical (à fournir sous 48 h, article 271), absences non justifiées sur 12 mois
+      (plus de 4 jours : faute grave possible, article 39), congés à valider, prime d'ancienneté (article 350), fiche incomplète. Alertes critiques et hautes envoyées aussi par e-mail aux comptes Ressources humaines
+      (à défaut aux administrateurs) quand elles sont nouvelles, et chaque lundi. Délais et pièces obligatoires : Réglages (lignes « RH : »).</div>
+    ${rhAlertTable(list, 'rhal')}`;
+  document.querySelectorAll('[data-rhaf]').forEach(s => s.onchange = () => { const p = qs(); p.set(s.dataset.rhaf, s.value); p.set('t', 'alertes'); location.hash = '#/rh?' + p.toString(); });
+  $('#rhapdf').onclick = () => {
+    try {
+      reportPdf(rptSimple({ kind: 'rh', title: 'Alertes des ressources humaines', period: 'au ' + fmtDay(today()), from: today(), to: today(), agency: agFilter() ? S.agName[agFilter()] : 'Toutes les agences',
+        summary: RH_LEVELS.map(l => [l, String(list.filter(a => a.level === l).length)]),
+        tables: [{ title: 'Alertes', empty: 'Aucune alerte', head: ['Gravité', 'Type', 'Salarié', 'Détail', 'Échéance'], num: [], rows: list.map(a => [a.level, a.type, a.emp.name, a.text, fmtDay(a.due)]) }], fileName: 'Alertes-RH-' + today() }));
+    } catch (e) { alert(e.message || e); }
+  };
+}
+
+// ---------- Fichiers : stockage privé ----------
+async function rhUpload(bucket, folder, file) {
+  const ext = (file.name.match(/\.(pdf|png|jpe?g|webp|heic|docx?)$/i) || ['', 'bin'])[1].toLowerCase(), pth = folder + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now()) + '.' + ext;
+  const up = await sb.storage.from(bucket).upload(pth, file, { contentType: file.type || 'application/octet-stream', upsert: false });
+  if (up.error) throw new Error(up.error.message);
+  return pth;
+}
+async function rhOpen(bucket, path) {
+  const r = await sb.storage.from(bucket).createSignedUrl(path, 600);
+  if (r.error) { alert('Fichier inaccessible : ' + r.error.message); return; }
+  if (!openOut(r.data.signedUrl)) window.open(r.data.signedUrl, '_blank', 'noopener');
+}
+
+// ---------- Contrats de travail d'un salarié : signature, légalisation ----------
+function rhWcBox(e, wc) {
+  const co = c => (c.data && c.data.company && c.data.company.name) || ((RH.employers.find(x => x.id === c.employer_id) || {}).name || '');
+  return table('rhwct', [['Date d\'effet', c => esc(fmtDay(c.effective_on)), c => c.effective_on || ''], ['Origine', c => c.external ? 'Signé hors Ludy' : 'Généré le ' + esc(fmtDay(String(c.created_at).slice(0, 10)))],
+    ['Suivi', c => (c.ended_on ? '<span class="small">Clos le ' + esc(fmtDay(c.ended_on)) + '</span>' : (l => `<span class="${l.step === 'legalise' && c.legal_path ? 'ok' : 'warn'}">${esc(l.txt)}</span>`)(rhLegal(c)))
+      + '<br><span class="small">' + [co(c), c.signed_on && 'signé le ' + fmtDay(c.signed_on), c.legalized_on && 'légalisé le ' + fmtDay(c.legalized_on) + (c.legal_place ? ' (' + c.legal_place + ')' : '')].filter(Boolean).map(esc).join(' · ') + '</span>'],
+    ['', c => `<span class="mfha rhwcact">${c.pdf_path ? `<button class="ghost small" data-rhwcpdf="${c.id}">PDF</button>` : ''}${c.legal_path ? `<button class="ghost small" data-rhwccp="${c.id}">Copie signée</button>` : ''}`
+      + `${RH.v2 && !c.ended_on ? `<button class="ghost small" data-rhwcup="${c.id}">Signé / légalisé…</button>` : ''}${!c.employee_id ? `<button class="ghost small" data-rhwcln="${c.id}">Rattacher</button>` : ''}`
+      + `${RH.v2 && !c.ended_on ? `<button class="ghost small" data-rhwcend="${c.id}">Clore</button>` : ''}</span>`]], wc, { empty: 'Aucun contrat enregistré' })
+    + `<div class="small">Suivi : contrat généré → signé par les deux parties → signatures légalisées (bureau de légalisation de la commune ou de l'arrondissement) → copie légalisée rangée ici. Contrat remplacé ou terminé : « Clore ».</div>
+    ${RH.v2 ? '<div class="mfgo"><button class="ghost small" id="rhwcext">Enregistrer un contrat déjà signé (hors Ludy)</button></div>' : ''}<div id="rhwcform"></div>`;
+}
+function rhWcBind(e, wc) {
+  const byId = id => wc.find(c => String(c.id) === String(id));
+  document.querySelectorAll('[data-rhwcpdf]').forEach(b => b.onclick = () => rhOpen('contrats', byId(b.dataset.rhwcpdf).pdf_path));
+  document.querySelectorAll('[data-rhwccp]').forEach(b => b.onclick = () => rhOpen('contrats', byId(b.dataset.rhwccp).legal_path));
+  document.querySelectorAll('[data-rhwcup]').forEach(b => b.onclick = () => rhWcForm(e, byId(b.dataset.rhwcup)));
+  document.querySelectorAll('[data-rhwcln]').forEach(b => b.onclick = async () => { const r = await sb.from('work_contracts').update({ employee_id: e.id }).eq('id', b.dataset.rhwcln); if (r.error) alert(r.error.message); else route(); });
+  document.querySelectorAll('[data-rhwcend]').forEach(b => b.onclick = async () => {
+    const d = ctrParseDate(prompt('Contrat clos (remplacé par un nouveau contrat, ou terminé) le (JJ/MM/AAAA) :', fmtDay(today())) || ''); if (!d) return;
+    const r = await sb.from('work_contracts').update({ ended_on: d }).eq('id', b.dataset.rhwcend); if (r.error) alert(r.error.message); else route();
+  });
+  if ($('#rhwcext')) $('#rhwcext').onclick = () => rhWcForm(e, null);
+}
+/** Formulaire : contrat existant (c) = dates de signature et de légalisation, copie ; c null = contrat signé hors Ludy à enregistrer */
+function rhWcForm(e, c) {
+  const box = $('#rhwcform'), v = c || { effective_on: e.hired_on, employer_id: e.employer_id };
+  const dt = (id, l, val) => `<label>${l} <input id="${id}" placeholder="JJ/MM/AAAA" size="11" inputmode="numeric" value="${esc(fmtDay(val))}"></label>`;
+  box.innerHTML = `<div class="panel"><h2>${c ? 'Signature et légalisation' : 'Contrat déjà signé'}</h2><div class="mfrow">
+    ${c ? '' : dt('rhw_eff', 'Date d\'effet', v.effective_on) + `<label>Société <select id="rhw_emp"><option value="">—</option>${RH.employers.map(x => `<option value="${x.id}" ${String(x.id) === String(v.employer_id) ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>`}
+    ${dt('rhw_sig', 'Signé le', v.signed_on)}${dt('rhw_leg', 'Légalisé le', v.legalized_on)}<label>Lieu de légalisation <input id="rhw_place" size="22" value="${esc(v.legal_place || '')}" placeholder="Ex. arrondissement Agdal"></label>
+    <label>Copie signée / légalisée (PDF ou photo) <input type="file" id="rhw_file" accept="image/*,application/pdf"></label></div>
+    <div class="mfgo"><button id="rhwsave">Enregistrer</button> <button class="ghost" id="rhwcancel">Annuler</button> <span id="rhwres" class="small"></span></div></div>`;
+  $('#rhwcancel').onclick = () => { box.innerHTML = ''; };
+  $('#rhwsave').onclick = async () => {
+    const out = $('#rhwres'), g = id => ctrParseDate($(id).value), sig = g('#rhw_sig'), leg = g('#rhw_leg'), eff = c ? null : g('#rhw_eff'), bad = [];
+    if (sig === null) bad.push('date de signature'); if (leg === null) bad.push('date de légalisation'); if (!c && !eff) bad.push('date d\'effet');
+    if (leg && !sig) bad.push('date de signature (avant la légalisation)'); if (leg && sig && leg < sig) bad.push('légalisation avant la signature');
+    const fl = $('#rhw_file').files[0]; if (!c && !fl) bad.push('copie du contrat signé');
+    if (bad.length) { out.innerHTML = '<span class="err">À corriger : ' + esc(bad.join(', ')) + '.</span>'; return; }
+    out.textContent = 'Enregistrement…';
+    const row = { signed_on: sig || null, legalized_on: leg || null, legal_place: $('#rhw_place').value.trim() || null };
+    try { if (fl) row.legal_path = await rhUpload('contrats', String((c ? c.agency_id : e.agency_id) || 0), fl); } catch (x) { out.innerHTML = '<span class="err">Copie non envoyée : ' + esc(x.message) + '</span>'; return; }
+    const r = c ? await sb.from('work_contracts').update(row).eq('id', c.id)
+      : await sb.from('work_contracts').insert(Object.assign(row, { employee_id: e.id, external: true, effective_on: eff, employer_id: +$('#rhw_emp').value || null, agency_id: e.agency_id || null, driver_code: e.driver_code || null, name: e.name, cin: e.cin || null, data: {} }));
+    if (r.error) { out.innerHTML = '<span class="err">Erreur : ' + esc(r.error.message) + '</span>'; return; }
+    route();
+  };
+}
+
+// ---------- Dossier du salarié (pièces) ----------
+function rhDocsBox(e, docs) {
+  const d0 = today(), need = rhDocsRequired(e.kind, S.P || {}), miss = need.filter(k => !docs.some(x => x.category === k));
+  const exp = d => { if (!d.expires_on) return ''; const n = Math.round((Date.parse(d.expires_on) - Date.parse(d0)) / 864e5); return `<span class="${n < 0 ? 'err' : n <= num((S.P || {}).rhDocDays, 30) ? 'warn' : ''}">${esc(fmtDay(d.expires_on))}${n < 0 ? ' (expiré)' : ''}</span>`; };
+  return (miss.length ? msg('Pièces manquantes : ' + esc(miss.map(k => RH_DOCS[k]).join(', ')) + '.', 'warn') : '')
+    + table('rhdocs', [['Pièce', d => esc(RH_DOCS[d.category] || d.category) + (d.label ? '<br><span class="small">' + esc(d.label) + '</span>' : ''), d => RH_DOCS[d.category] || ''], ['Délivrée le', d => esc(fmtDay(d.issued_on))],
+      ['Expire le', d => exp(d), d => d.expires_on || '9999'], ['Ajoutée le', d => esc(fmtDTY(d.created_at)), d => d.created_at],
+      ['', d => `<span class="mfha"><button class="ghost small" data-rhdo="${d.id}">Ouvrir</button>${rhFull() ? `<button class="ghost small" data-rhdx="${d.id}">Supprimer</button>` : ''}</span>`]], docs, { empty: 'Aucune pièce dans le dossier' })
+    + `<details class="rhadd"><summary>+ Ajouter une pièce</summary><div class="mfrow">
+      <label>Pièce <select id="rhd_cat">${Object.keys(RH_DOCS).map(k => `<option value="${k}" ${k === miss[0] ? 'selected' : ''}>${esc(RH_DOCS[k])}${need.includes(k) ? ' *' : ''}</option>`).join('')}</select></label>
+      <label>Précision <input id="rhd_label" size="20" placeholder="Ex. catégorie B, recto-verso"></label>
+      <label>Délivrée le <input id="rhd_iss" placeholder="JJ/MM/AAAA" size="11" inputmode="numeric"></label><label>Expire le <input id="rhd_exp" placeholder="JJ/MM/AAAA" size="11" inputmode="numeric"></label>
+      <label>Fichier (PDF ou photo) <input type="file" id="rhd_file" accept="image/*,application/pdf"></label></div>
+      <div class="mfgo"><button id="rhdsave">Ajouter au dossier</button> <span id="rhdres" class="small"></span></div><div class="small">* pièce obligatoire (Réglages : RH : pièces obligatoires).</div></details>`;
+}
+function rhDocsBind(e, docs) {
+  const byId = id => docs.find(d => String(d.id) === String(id));
+  document.querySelectorAll('[data-rhdo]').forEach(b => b.onclick = () => rhOpen('rh', byId(b.dataset.rhdo).path));
+  document.querySelectorAll('[data-rhdx]').forEach(b => b.onclick = async () => {
+    const d = byId(b.dataset.rhdx); if (!confirm('Supprimer « ' + (RH_DOCS[d.category] || d.category) + ' » du dossier de ' + e.name + ' ?')) return;
+    const r = await sb.from('hr_documents').delete().eq('id', d.id); if (r.error) { alert(r.error.message); return; }
+    await sb.storage.from('rh').remove([d.path]).catch(() => { }); route();
+  });
+  const sv = $('#rhdsave'); if (!sv) return;
+  sv.onclick = async () => {
+    const out = $('#rhdres'), fl = $('#rhd_file').files[0], iss = ctrParseDate($('#rhd_iss').value), ex = ctrParseDate($('#rhd_exp').value), bad = [];
+    if (!fl) bad.push('fichier'); if (iss === null) bad.push('date de délivrance'); if (ex === null) bad.push('date d\'expiration');
+    if (bad.length) { out.innerHTML = '<span class="err">À corriger : ' + esc(bad.join(', ')) + '.</span>'; return; }
+    out.textContent = 'Envoi…';
+    let path; try { path = await rhUpload('rh', e.id + '/docs', fl); } catch (x) { out.innerHTML = '<span class="err">Fichier non envoyé : ' + esc(x.message) + '</span>'; return; }
+    const r = await sb.from('hr_documents').insert({ employee_id: e.id, category: $('#rhd_cat').value, label: $('#rhd_label').value.trim() || null, path, issued_on: iss || null, expires_on: ex || null });
+    if (r.error) { out.innerHTML = '<span class="err">Erreur : ' + esc(r.error.message) + '</span>'; return; }
+    location.hash = rhHref('fiche', 'id=' + e.id + '&go=doc'); route();
+  };
+}
+/** Onglet Dossiers salariés : complétude des dossiers, contrats, CNSS */
+function rhFiles() {
+  const q = qs(), only = q.get('inc') === '1', ok = rhAgOk(), d0 = today(), P = S.P || {};
+  const rows = RH.emp.filter(e => ok(e) && !e.left_on).map(e => {
+    const docs = RH.docs.filter(x => x.employee_id === e.id), need = rhDocsRequired(e.kind, P), miss = need.filter(k => !docs.some(x => x.category === k));
+    const exp = docs.filter(x => x.expires_on).sort((a, b) => a.expires_on < b.expires_on ? -1 : 1)[0], lg = rhLegal(rhContractOf(e, RH.wc));
+    return { e, docs, need, miss, exp, lg, bad: miss.length || lg.step !== 'legalise' || !e.cnss_no || (exp && exp.expires_on < d0) };
+  }).filter(r => !only || r.bad);
+  $('#rhbody').innerHTML = `<div class="bar"><label class="chk"><input type="checkbox" id="rhfinc" ${only ? 'checked' : ''}> Seulement les dossiers à compléter</label></div>
+    <div class="small">Dossier de chaque salarié : contrat de travail (signé, légalisé, copie rangée), N° CNSS, pièces obligatoires (chauffeur : ${esc(rhDocsRequired('chauffeur', P).map(k => RH_DOCS[k]).join(', '))} ; staff : ${esc(rhDocsRequired('staff', P).map(k => RH_DOCS[k]).join(', '))}) et pièces qui expirent. Fichiers dans le stockage privé de Ludy, ouverts par lien temporaire.</div>
+    ${table('rhfiles', [['Salarié', r => `<a href="${rhHref('fiche', 'id=' + r.e.id + '&go=doc')}">${esc(r.e.name)}</a>`, r => r.e.name], ['Type', r => r.e.kind === 'staff' ? 'Staff' : 'Chauffeur'],
+      ['Contrat de travail', r => `<span class="${r.lg.step === 'legalise' ? 'ok' : 'warn'}">${esc(r.lg.txt)}</span>`, r => ['aucun', 'genere', 'signe', 'legalise'].indexOf(r.lg.step)], ['N° CNSS', r => r.e.cnss_no ? esc(r.e.cnss_no) : '<span class="warn">à renseigner</span>'],
+      ['Pièces', r => (r.need.length - r.miss.length) + ' / ' + r.need.length + (r.docs.length > r.need.length - r.miss.length ? ' (+' + (r.docs.length - r.need.length + r.miss.length) + ')' : ''), r => r.miss.length, 'num'],
+      ['Manquantes', r => r.miss.length ? '<span class="warn">' + esc(r.miss.map(k => RH_DOCS[k]).join(', ')) + '</span>' : ''],
+      ['Prochaine expiration', r => r.exp ? `<span class="${r.exp.expires_on < d0 ? 'err' : ''}">${esc(RH_DOCS[r.exp.category] + ' · ' + fmtDay(r.exp.expires_on))}</span>` : '', r => r.exp ? r.exp.expires_on : '9999']], rows, { empty: 'Aucun dossier à compléter', page: true })}`;
+  $('#rhfinc').onchange = ev => { const p = qs(); p.set('t', 'dossiers'); p.set('inc', ev.target.checked ? '1' : '0'); location.hash = '#/rh?' + p.toString(); };
+  window.__rerender = rhFiles;
+}
+
+// ---------- Comptes rendus (semaine / mois) ----------
+function rhPeriod(kind, d) {
+  if (kind === 'semaine') { const f = mondayOf(d || today()); return { from: f, to: addDays(f, 6), txt: 'semaine du ' + fmtDay(f) + ' au ' + fmtDay(addDays(f, 6)), prev: addDays(f, -7), next: addDays(f, 7) }; }
+  const m = (d || today()).slice(0, 7), R = rhMonthRange(m);
+  return { from: R.from, to: R.to, txt: rhMonthTxt(m), prev: rhAddMonths(R.from, -1), next: rhAddMonths(R.from, 1) };
+}
+async function rhReportView(my, q) {
+  const kind = q.get('p') === 'semaine' ? 'semaine' : 'mois', d = /^\d{4}-\d{2}-\d{2}$/.test(q.get('d') || '') ? q.get('d') : today(), C = rhPeriod(kind, d), Pv = rhPeriod(kind, C.prev), ok = rhAgOk();
+  const go = (k, dd) => { const p = qs(); p.set('t', 'rapport'); p.set('p', k); p.set('d', dd); location.hash = '#/rh?' + p.toString(); };
+  const bar = x => `<div class="bar"><select id="rhrp"><option value="semaine" ${kind === 'semaine' ? 'selected' : ''}>Semaine</option><option value="mois" ${kind === 'mois' ? 'selected' : ''}>Mois</option></select>
+    <button class="ghost small" id="rhrprev">←</button><b>${esc(C.txt)}</b><button class="ghost small" id="rhrnext">→</button>${x || ''}</div>`;
+  const bindBar = () => { $('#rhrp').onchange = ev => go(ev.target.value, C.from); $('#rhrprev').onclick = () => go(kind, C.prev); $('#rhrnext').onclick = () => go(kind, C.next); };
+  $('#rhbody').innerHTML = bar() + '<div class="loading">Calcul du compte rendu…</div>'; bindBar();
+  const emps = RH.emp.filter(e => ok(e)), inP = (e, P) => (!e.hired_on || e.hired_on <= P.to) && (!e.left_on || e.left_on >= P.from);
+  const cashOf = async P => { const codes = emps.filter(e => inP(e, P)).map(e => e.driver_code).filter(Boolean);
+    return codes.length ? all('cash_moves', 'kind,amount,day,driver_code', x => x.gte('day', P.from).lte('day', P.to).in('kind', ['avance', 'remboursement', 'bonus']).in('driver_code', codes).is('cancelled_at', null), ['day']).catch(() => []) : []; };
+  const [pc, pp, cc, cp] = await Promise.all([rhPresenceData(emps.filter(e => inP(e, C)), C.from, C.to), rhPresenceData(emps.filter(e => inP(e, Pv)), Pv.from, Pv.to), cashOf(C), cashOf(Pv)]);
+  if (my !== ROUTING) return;
+  const R = rhReport({ emps, events: RH.ev, contracts: RH.wc, today: today(), cur: { from: C.from, to: C.to, pres: pc, cash: cc }, prev: { from: Pv.from, to: Pv.to, pres: pp, cash: cp } }), c = R.cur, p = R.prev;
+  const al = RH.alerts.filter(a => ok(a.emp)), evo = (a, b) => b ? (a >= b ? '+' : '') + f1((a - b) / b * 100) + ' %' : '', pct = v => v == null ? 'non mesuré' : f1(v) + ' %';
+  const sumBy = key => { const m = {}; c.rows.forEach(r => { const k = key(r.e) || '—'; const t = m[k] = m[k] || { k, n: 0, base: 0, hs: 0, prime: 0, total: 0 }; t.n++; t.base += r.base || 0; t.hs += r.hsAmt; t.prime += r.prime; t.total += r.total || 0; }); return Object.values(m).sort((a, b) => b.total - a.total); };
+  const coName = id => (RH.employers.find(x => x.id === id) || {}).name;
+  const T = {
+    mv: { title: 'Entrées et sorties', head: ['Salarié', 'Type', 'Mouvement', 'Date', 'Motif'], num: [], empty: 'Aucune entrée ni sortie',
+      rows: c.entries.map(e => [e.name, e.kind === 'staff' ? 'Staff' : 'Chauffeur', 'Entrée', fmtDay(e.hired_on), e.position || '']).concat(c.exits.map(e => [e.name, e.kind === 'staff' ? 'Staff' : 'Chauffeur', 'Sortie', fmtDay(e.left_on), e.left_reason || ''])) },
+    co: { title: 'Masse salariale par société', head: ['Société', 'Salariés', 'Salaires de base', 'Heures sup.', 'Primes', 'Total'], num: [1, 2, 3, 4, 5], empty: 'Aucun salaire',
+      rows: sumBy(e => coName(e.employer_id)).map(t => [t.k, String(t.n), f0(t.base), f0(t.hs), f0(t.prime), f0(t.total)]) },
+    ag: { title: 'Masse salariale par agence', head: ['Agence', 'Salariés', 'Salaires de base', 'Heures sup.', 'Primes', 'Total'], num: [1, 2, 3, 4, 5], empty: 'Aucun salaire',
+      rows: sumBy(e => S.agName[e.agency_id]).map(t => [t.k, String(t.n), f0(t.base), f0(t.hs), f0(t.prime), f0(t.total)]) },
+    tr: { title: 'Périodes d\'essai', head: ['Salarié', 'Entrée', 'Fin', 'État'], num: [], empty: 'Aucune période d\'essai terminée ou décidée sur la période',
+      rows: c.trials.map(x => [x[0].name, fmtDay(x[0].hired_on), fmtDay(x[1].end), x[1].state]) },
+    det: { title: 'Détail par salarié', head: ['Salarié', 'Type', 'Jours de présence', 'Heures', 'Heures sup.', 'Congés (j)', 'Maladie (j)', 'Absences justifiées (j)', 'Absences non justifiées (j)', 'Salaire de base', 'Montant HS', 'Primes', 'Total', 'Avances'],
+      num: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], empty: 'Aucun salarié',
+      rows: c.rows.map(r => [r.e.name, r.e.kind === 'staff' ? 'Staff' : 'Chauffeur', String(r.nDays), rhH(r.hours), r.over ? rhH(r.over) : '', r.conge ? String(r.conge) : '', r.maladie ? String(r.maladie) : '', r.absJ ? String(r.absJ) : '',
+        r.absNJ ? String(r.absNJ) : '', r.base == null ? 'non renseigné' : f0(r.base), r.hsAmt ? f0(r.hsAmt) : '', r.prime ? f0(r.prime) : '', r.total == null ? '' : f0(r.total), r.avance ? f0(r.avance) : '']) },
+    al: { title: 'Alertes critiques et hautes en cours', head: ['Gravité', 'Type', 'Salarié', 'Détail'], num: [], empty: 'Aucune', rows: al.filter(a => a.level !== 'Moyenne').map(a => [a.level, a.type, a.emp.name, a.text]) }
+  };
+  const summary = [['Effectif fin de période', c.end + (p ? ' (' + (c.end - p.end >= 0 ? '+' : '') + (c.end - p.end) + ')' : '')], ['Entrées / sorties', c.entries.length + ' / ' + c.exits.length + ' · rotation ' + f1(c.turnover) + ' %'],
+    ['Masse salariale', rhMoney(c.total) + (p && p.total ? ' (' + evo(c.total, p.total) + ')' : '')], ['Taux d\'absentéisme', pct(c.absRate)], ['Jours de présence', f0(c.nDays)], ['Heures supplémentaires', rhH(c.over)],
+    ['Congés pris', f1(c.conge) + ' j'], ['Contrats légalisés', R.legal.legalise + ' / ' + (R.legal.aucun + R.legal.genere + R.legal.signe + R.legal.legalise)]];
+  const tbl = (t, id) => `<div class="panel"><h2>${esc(t.title)}</h2>${t.rows.length ? table(id, t.head.map((h, i) => [h, r => esc(r[i]), null, t.num.includes(i) ? 'num' : '']), t.rows) : '<div class="empty">' + esc(t.empty) + '</div>'}</div>`;
+  const card = (l, v, h) => `<div class="card"><div class="cv">${v}</div><div class="cl">${l}</div>${h ? `<div class="small">${h}</div>` : ''}</div>`;
+  $('#rhbody').innerHTML = bar('<button class="ghost small" id="rhrxl">Excel</button><button class="ghost small" id="rhrpdf">PDF</button>') + `
+    <div class="small">Compte rendu de la ${kind === 'semaine' ? 'semaine' : 'période'} comparé à la ${kind === 'semaine' ? 'semaine' : 'période'} précédente (${esc(Pv.txt)}). Présence : chauffeurs d'après les contrats Ludy, staff d'après le pointage. Masse salariale = salaires de base du contrat (avenants compris) au prorata des jours en poste de chaque mois + heures supplémentaires (article 201) + primes (RH et Caisse) ; cotisations CNSS / AMO et impôt non compris (calculés sur la paie). Absentéisme = jours d'arrêt maladie et d'absence / jours ouvrables (lundi → samedi) en poste.</div>
+    <div class="cards">${card('Effectif', c.end, (p ? (c.end - p.end >= 0 ? '+' : '') + (c.end - p.end) + ' vs précédente · ' : '') + c.start + ' au début')}${card('Entrées / sorties', c.entries.length + ' / ' + c.exits.length, 'rotation ' + f1(c.turnover) + ' %')}
+      ${card('Masse salariale', rhMoney(c.total), p ? 'précédente ' + rhMoney(p.total) + (p.total ? ' · ' + evo(c.total, p.total) : '') : '')}${card('Absentéisme', pct(c.absRate), f1(c.maladie) + ' j maladie · ' + f1(c.absJ + c.absNJ) + ' j d\'absence' + (p ? ' · précédente ' + pct(p.absRate) : ''))}
+      ${card('Congés pris', f1(c.conge) + ' j', p ? 'précédente ' + f1(p.conge) + ' j' : '')}${card('Heures sup.', rhH(c.over), rhMoney(c.hsAmt))}${card('Contrats légalisés', R.legal.legalise, R.legal.signe + ' à légaliser · ' + R.legal.genere + ' à signer · ' + R.legal.aucun + ' sans contrat')}${card('Alertes RH', al.filter(a => a.level !== 'Moyenne').length, 'critiques et hautes')}</div>
+    ${c.missingPay.length ? msg('Salaire non renseigné (exclu de la masse salariale) : ' + esc(c.missingPay.map(e => e.name).join(', ')) + '.', 'warn') : ''}
+    <div class="panel"><h2>Masse salariale</h2><div class="kvs"><div class="kv"><span class="small">Salaires de base</span><b>${rhMoney(c.base)}</b></div><div class="kv"><span class="small">Heures supplémentaires</span><b>${rhMoney(c.hsAmt)}</b></div>
+      <div class="kv"><span class="small">Primes</span><b>${rhMoney(c.prime)}</b></div><div class="kv"><span class="small">Total</span><b>${rhMoney(c.total)}</b></div><div class="kv"><span class="small">Période précédente</span><b>${p ? rhMoney(p.total) : ''}</b></div>
+      <div class="kv"><span class="small">Avances versées / remboursées</span><b>${rhMoney(c.avance)} / ${rhMoney(c.remb)}</b></div></div></div>
+    ${tbl(T.mv, 'rhrmv')}${tbl(T.co, 'rhrco')}${S.agencies.length > 1 ? tbl(T.ag, 'rhrag') : ''}${tbl(T.tr, 'rhrtr')}${tbl(T.al, 'rhral')}${tbl(T.det, 'rhrdet')}`;
+  bindBar();
+  const tables = [T.mv, T.co].concat(S.agencies.length > 1 ? [T.ag] : [], [T.tr, T.al, T.det]), name = 'Compte-rendu-RH-' + (kind === 'semaine' ? 'semaine-' + C.from : C.from.slice(0, 7));
+  $('#rhrxl').onclick = () => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Indicateur', 'Valeur']].concat(summary)), 'Résumé');
+    tables.forEach(t => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([t.head].concat(t.rows)), t.title.slice(0, 31).replace(/[\\/?*[\]:']/g, ' '))); XLSX.writeFile(wb, name + '.xlsx'); };
+  $('#rhrpdf').onclick = () => {
+    try {
+      reportPdf(rptSimple({ kind: 'rh', title: 'Compte rendu des ressources humaines', period: C.txt, from: C.from, to: C.to, agency: agFilter() ? S.agName[agFilter()] : 'Toutes les agences', summary, tables, fileName: name,
+        footer: 'Ludy · Ressources humaines — présence des chauffeurs d\'après les contrats Ludy, du staff d\'après le pointage ; masse salariale hors cotisations et impôt.' }));
     } catch (e) { alert(e.message || e); }
   };
 }

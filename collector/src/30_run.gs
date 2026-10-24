@@ -334,7 +334,7 @@ function dailyStep_(t0) {
   let st = JSON.parse(props.getProperty('DAILY') || 'null');
   if (!st || st.day !== today) {
     if (h < 2 && st) return '';                                        // la nuit, après 2 h
-    st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size', 'manifests'] };
+    st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size', 'manifests', 'rh'] };
     const month = today.slice(0, 7);
     if (props.getProperty('ARCH_MONTH') !== month) st.steps.push('arch:trips', 'arch:idles', 'arch:engine_stops', 'arch:events', 'arch:fuel', 'arch:levels',
       'arch:vehicle_days', 'arch:journal', 'arch:alerts', 'arch:done');
@@ -350,6 +350,7 @@ function dailyStep_(t0) {
       else if (s === 'prune') { dbRpc_('purge_before', { p_table: 'logs', p_before: addDays_(today, -30) }); dbRpc_('purge_before', { p_table: 'jobs', p_before: addDays_(today, -30) }); }
       else if (s === 'size') { const z = dbRpc_('db_size'); if (z && z.total_mb > 400) out.push('Base : ' + z.total_mb + ' Mo sur 500 Mo gratuits, réduire « Données détaillées conservées »'); props.setProperty('DB_MB', String(z ? z.total_mb : '')); }
       else if (s === 'manifests') { const m = pruneManifests_(); if (m) out.push(m); }
+      else if (s === 'rh') { const m = rhDigest_(); if (m) out.push(m); }
       else if (s === 'arch:done') props.setProperty('ARCH_MONTH', today.slice(0, 7));
       else if (s.indexOf('arch:') === 0) { const m = archiveTable_(s.slice(5)); if (m) out.push(m); }
     } catch (e) { out.push(s + ' : ' + e.message); }
@@ -391,7 +392,7 @@ function backup_() {
   const o = { at: new Date().toISOString(), version: COLLECTOR_V };
   [['vehicles', 'key'], ['plate_changes', 'id'], ['drivers', 'code'], ['contracts', 'num'], ['rules', 'id'], ['params', 'key'], ['profiles', 'user_id'],
     ['parc', 'plate'], ['agencies', 'id'], ['user_agencies', 'user_id,agency_id'], ['alert_recipients', 'id'], ['report_schedules', 'id'],
-    ['fuel_card_tx', 'id'], ['manager_shifts', 'agency_id,user_id,day,shift'], ['manifest_config', 'id'], ['manifests', 'id'], ['cash_moves', 'id'], ['uber_drivers', 'uuid'], ['employers', 'id'], ['work_contracts', 'id'], ['hr_employees', 'id'], ['hr_events', 'id'], ['hr_clock', 'id']].forEach(t => {
+    ['fuel_card_tx', 'id'], ['manager_shifts', 'agency_id,user_id,day,shift'], ['manifest_config', 'id'], ['manifests', 'id'], ['cash_moves', 'id'], ['uber_drivers', 'uuid'], ['employers', 'id'], ['work_contracts', 'id'], ['hr_employees', 'id'], ['hr_events', 'id'], ['hr_clock', 'id'], ['hr_documents', 'id']].forEach(t => {
     // tables ajoutées par les migrations récentes : absentes tant que la migration n'est pas exécutée (sauvegarde du reste quand même)
     try { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); } catch (e) { if (t[0] in { fuel_card_tx: 1, manager_shifts: 1, manifest_config: 1, manifests: 1, cash_moves: 1, uber_drivers: 1, employers: 1, work_contracts: 1, hr_employees: 1, hr_events: 1, hr_clock: 1 }) o[t[0]] = 'absente : ' + e.message; else throw e; }
   });

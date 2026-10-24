@@ -45,12 +45,12 @@ async function ctrLink(path) {
 async function pageContratsTravail() {
   const my = ROUTING;
   const head = `<div class="head"><h1>Contrats de travail</h1><div class="sub">Contrat à durée indéterminée de chauffeur, français / arabe, repris du modèle : choisir la société, saisir le salarié, générer le PDF à signer. Plusieurs sociétés possibles (nom, dirigeant, siège…). La fiche du salarié est créée ou complétée dans les Ressources humaines.</div></div>`
-    + (typeof rhTabsFor === 'function' && canEdit() ? `<div class="tabs">${rhTabsFor().map(x => `<a href="${rhHref(x[0])}" class="${x[0] === 'travail' ? 'on' : ''}">${x[1]}</a>`).join('')}</div>` : '');
-  if (!canEdit()) { $('#page').innerHTML = head + msg('Contrats de travail réservés aux gestionnaires et à l\'administrateur.', 'warn'); return; }
+    + (typeof rhTabsFor === 'function' && rhCan() ? `<div class="tabs">${rhTabsFor().map(x => `<a href="${rhHref(x[0])}" class="${x[0] === 'travail' ? 'on' : ''}">${x[1]}</a>`).join('')}</div>` : '');
+  if (!rhCan()) { $('#page').innerHTML = head + msg('Contrats de travail réservés aux gestionnaires, aux ressources humaines et à l\'administrateur.', 'warn'); return; }
   $('#page').innerHTML = head + '<div class="loading">Chargement…</div>';
   let err = '';
   try {
-    const [emp, hist, drv] = await Promise.all([all('employers', 'id,name,data,active', null, ['name']), all('work_contracts', 'id,created_at,employer_id,agency_id,driver_code,name,cin,effective_on,data,pdf_path', null, ['created_at', false]),
+    const [emp, hist, drv] = await Promise.all([all('employers', 'id,name,data,active', null, ['name']), all('work_contracts', '*', null, ['created_at', false]),
       all('drivers', 'code,name,phone,agency_id', null, ['name']).catch(() => [])]);
     CT.emp = emp; CT.hist = hist; CT.drivers = drv;
   } catch (e) { err = e.message || String(e); }
@@ -63,11 +63,11 @@ async function pageContratsTravail() {
     if (o.date) Object.assign(o, { ph: 'JJ/MM/AAAA' }), size = 11;
     return `<label>${label} <input id="ct_${k}" data-ct="${k}" value="${esc(val == null ? '' : val)}"${size ? ` size="${size}"` : ''}${o.type ? ` type="${o.type}"` : ''}${o.date ? ' data-ctd="1" inputmode="numeric" maxlength="10" autocomplete="off"' : ''}${o.ar ? ' dir="rtl"' : ''}${o.ph ? ` placeholder="${esc(o.ph)}"` : ''}${o.list ? ` list="${o.list}" autocomplete="off"` : ''}></label>`; };
   $('#page').innerHTML = head + `
-    ${!CT.emp.length ? msg(isAdmin() ? 'Aucune société : l\'ajouter avec « Nouvelle société » (nom, siège, RC, dirigeant…).' : 'Aucune société enregistrée : l\'administrateur doit l\'ajouter (Contrats de travail &gt; Nouvelle société).', 'warn') : ''}
+    ${!CT.emp.length ? msg(rhFull() ? 'Aucune société : l\'ajouter avec « Nouvelle société » (nom, siège, RC, dirigeant…).' : 'Aucune société enregistrée : l\'administrateur doit l\'ajouter (Contrats de travail &gt; Nouvelle société).', 'warn') : ''}
     <div class="grid2 mfgrid"><div>
       <div class="panel"><h2>Société employeuse</h2>
         <div class="mfrow"><label>Société <select id="ctemp"><option value="">Choisir…</option>${act.map(x => `<option value="${x.id}" ${String(x.id) === String(st.employer_id) ? 'selected' : ''}>${esc(x.name)}${x.active ? '' : ' (désactivée)'}</option>`).join('')}</select></label>
-          ${isAdmin() ? '<button type="button" class="ghost small" id="ctcoed">Modifier</button><button type="button" class="ghost small" id="ctconew">Nouvelle société</button>' : ''}</div>
+          ${rhFull() ? '<button type="button" class="ghost small" id="ctcoed">Modifier</button><button type="button" class="ghost small" id="ctconew">Nouvelle société</button>' : ''}</div>
         <div id="ctcoinfo" class="small"></div><div id="ctcobox"></div></div>
       <div class="panel"><h2>Salarié</h2>
         <div class="mfrow"><label>Chauffeur de Ludy (option) <input id="ctdrv" list="ctdrvl" value="${esc(st.drvName || '')}" placeholder="Remplit nom, téléphone, agence" size="26" autocomplete="off"></label>
@@ -78,7 +78,7 @@ async function pageContratsTravail() {
         <div class="mfrow">${inp('nat_fr', 'Nationalité', 12)}${inp('nat_ar', 'Nationalité en arabe', 12, { ar: 1, ph: '' })}${inp('cin', 'N° CIN', 12, { ph: 'Ex. AB123456' })}</div>
         <div class="mfrow">${inp('adresse', 'Adresse', 36)}${inp('adresse_ar', 'Adresse en arabe (option)', 36, { ar: 1 })}</div>
         <div class="mfrow">${inp('tel', 'Téléphone (pour WhatsApp, pas dans le contrat)', 15, { ph: '06…' })}
-          <label>Agence <select id="ct_agency" data-ct="agency">${agOptions(st.agency, isAdmin() ? '— aucune —' : '— choisir —')}</select></label></div>
+          <label>Agence <select id="ct_agency" data-ct="agency">${agOptions(st.agency, rhFull() ? '— aucune —' : '— choisir —')}</select></label></div>
         <div class="small">Sans traduction arabe, le nom, le lieu et l'adresse sont repris en lettres latines dans la colonne arabe.</div></div>
       <div class="panel"><h2>Contrat</h2>
         <div class="mfrow">${inp('effet', 'Date d\'effet', 0, { date: 1 })}${inp('sal', 'Salaire net mensuel (dirhams)', 0, { type: 'number' })}${inp('date_sig', 'Date de signature (vide : à écrire à la main)', 0, { date: 1 })}</div>
@@ -117,10 +117,10 @@ function ctrHints() {
   $('#ct_sal_fr').placeholder = v.sal_fr || ''; $('#ct_sal_ar').placeholder = v.sal_ar ? v.sal_ar + ' (' + v.sal + ') ' + v.dh_ar : '';
   $('#ct_nat_ar').placeholder = v.nat_ar || 'à saisir';
   const c = ctrCo(), miss = c ? ctrMissing(c, st) : ['Société'];
-  if (!isAdmin() && !st.agency) miss.push('Agence');
+  if (!rhFull() && !st.agency) miss.push('Agence');
   st.badDates.forEach(l => miss.push(l + ' invalide (JJ/MM/AAAA)'));
   const co = miss.filter(x => /^Société : /.test(x)).map(x => x.slice(10)), rest = miss.filter(x => !/^Société : /.test(x));
-  $('#ctmiss').textContent = !miss.length ? 'Prêt.' : [co.length ? 'Fiche de la société à compléter (' + (isAdmin() ? 'bouton Modifier' : 'administrateur') + ') : ' + co.join(', ') + '.' : '',
+  $('#ctmiss').textContent = !miss.length ? 'Prêt.' : [co.length ? 'Fiche de la société à compléter (' + (rhFull() ? 'bouton Modifier' : 'administrateur') + ') : ' + co.join(', ') + '.' : '',
     rest.length ? 'À compléter : ' + rest.join(', ') + '.' : ''].filter(Boolean).join(' ');
   return miss;
 }
@@ -241,7 +241,8 @@ function ctrHistory() {
   const coName = h => (h.data && h.data.company && h.data.company.name) || ((CT.emp.find(x => x.id === h.employer_id) || {}).name || '');
   box.innerHTML = table('cth', [['Créé le', h => esc(fmtDTY(h.created_at)), h => h.created_at], ['Salarié', h => esc(h.name || '')], ['CIN', h => esc(h.cin || '')], ['Société', h => esc(coName(h))],
     ['Effet', h => esc(ctrDate(h.effective_on)), h => h.effective_on || ''], ['Agence', h => esc(S.agName[h.agency_id] || '')],
-    ['', h => `<span class="mfha">${h.pdf_path ? `<button class="ghost small" data-ctpdf="${h.id}">PDF</button><button class="ghost small" data-ctwa="${h.id}">WhatsApp</button>` : ''}<button class="ghost small" data-ctre="${h.id}">Reprendre</button>${isAdmin() ? `<button class="ghost small" data-ctdel="${h.id}">Supprimer</button>` : ''}</span>`]],
+    ['Signature / légalisation', h => { const l = rhLegal(h); return (l.step === 'legalise' ? '<span class="ok">' : '<span class="warn">') + esc(h.ended_on ? 'Clos' : l.txt) + '</span>' + (h.employee_id ? ` <a class="small" href="${rhHref('fiche', 'id=' + h.employee_id + '&go=wc')}">suivi</a>` : ''); }],
+    ['', h => `<span class="mfha">${h.pdf_path ? `<button class="ghost small" data-ctpdf="${h.id}">PDF</button><button class="ghost small" data-ctwa="${h.id}">WhatsApp</button>` : ''}<button class="ghost small" data-ctre="${h.id}">Reprendre</button>${rhFull() ? `<button class="ghost small" data-ctdel="${h.id}">Supprimer</button>` : ''}</span>`]],
     CT.hist, { empty: 'Aucun contrat généré', page: true });
   window.__rerender = ctrHistory;
   const byId = id => CT.hist.find(h => String(h.id) === String(id));

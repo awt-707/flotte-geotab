@@ -156,7 +156,7 @@ test('page Ressources humaines : fiche, congé posé dans le planning, présence
     await page.waitForFunction(() => /Période d'essai/.test(document.body.innerText) && !document.querySelector('#rheres'));
     assert.strictEqual(env.psql(`select hired_on || '|' || salary || '|' || birth_date from hr_employees where id = ${id}`), '2026-09-01|3200.00|1990-01-31');
     // congé validé : posé dans le planning des chauffeurs
-    await page.click('.rhadd summary');
+    await page.click('#rhfev .rhadd summary');
     await page.selectOption('#rhv_kind', 'conge'); await page.fill('#rhv_from', '20/' + m.slice(5, 7) + '/' + m.slice(0, 4)); await page.fill('#rhv_to', '22/' + m.slice(5, 7) + '/' + m.slice(0, 4));
     await page.dispatchEvent('#rhv_to', 'input');
     await page.click('#rhvsave');

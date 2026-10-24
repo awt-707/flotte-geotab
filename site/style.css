@@ -461,6 +461,7 @@ input[data-ctd].bad { border-color: #c0392b; }
 .kvs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 16px; margin: 6px 0 10px; }
 .kv { display: flex; flex-direction: column; gap: 2px; }
 span.ok { color: var(--ok); } span.warn { color: var(--warn); } span.err { color: var(--crit); }
+.rhwcact { display: flex; flex-wrap: wrap; gap: 4px; }
 .rhadd summary { cursor: pointer; font-weight: 600; margin: 10px 0 4px; }
 .rhfoot { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px; border: 1px solid rgba(255,255,255,.15); border-radius: 6px; }
 .rhfoot span.ok { color: #3ecf8e; } .rhfoot a { color: var(--side-ink); }

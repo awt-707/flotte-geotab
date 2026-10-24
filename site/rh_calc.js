@@ -48,13 +48,25 @@ function rhTrial(e, today, alertDays) {
   return { state, end1, end2, end, daysLeft, open, alert: open && daysLeft >= 0 && daysLeft <= (alertDays == null ? 7 : +alertDays) };
 }
 
-/** Congés payés (article 231 : 1,5 jour par mois de service, droit ouvert après 6 mois) : acquis, pris (validés), solde */
+/**
+ * Congés payés : 1,5 jour par mois de service (article 231), droit ouvert après 6 mois ; majoration d'ancienneté :
+ * +1,5 jour par an par période entière de 5 ans de service, 30 jours par an au plus. Acquis, pris (validés), solde.
+ */
 function rhLeave(e, events, today) {
   if (!e || !e.hired_on) return null;
   const end = e.left_on && e.left_on < today ? e.left_on : today, months = rhMonths(e.hired_on, end);
-  const per = e.leave_per_month == null ? 1.5 : +e.leave_per_month, acquired = Math.round(months * per * 100) / 100;
+  const per = e.leave_per_month == null ? 1.5 : +e.leave_per_month;
+  let acc = 0; for (let i = 0; i < months; i++) acc += Math.min(30 / 12, per + 1.5 * Math.floor(Math.floor(i / 12) / 5) / 12);
+  const acquired = Math.round(acc * 100) / 100;
   const taken = (events || []).filter(x => x.kind === 'conge' && !x.cancelled_at && x.status === 'Validé').reduce((s, x) => s + (+x.days || 0), 0);
   return { months, acquired, taken, balance: Math.round((acquired - taken) * 100) / 100, open: months >= 6 };
+}
+/** Prime d'ancienneté (article 350) : 5 % après 2 ans, 10 % après 5, 15 % après 12, 20 % après 20, 25 % après 25 ; taux actuel et prochain palier */
+const RH_SENIORITY = [[2, 5], [5, 10], [12, 15], [20, 20], [25, 25]];
+function rhSeniority(hired, day) {
+  if (!hired || !day || day < hired) return null;
+  const years = Math.floor(rhMonths(hired, day) / 12), cur = RH_SENIORITY.filter(x => x[0] <= years).pop(), nx = RH_SENIORITY.find(x => x[0] > years);
+  return { years, pct: cur ? cur[1] : 0, next: nx ? { pct: nx[1], on: rhAddMonths(hired, nx[0] * 12) } : null };
 }
 /** Salaire à une date : dernier avenant en vigueur, sinon salaire d'embauche */
 function rhSalaryAt(e, events, day) {
@@ -201,5 +213,134 @@ function rhClockState(clock, now) {
 }
 function rhMin(m) { if (m == null || isNaN(m)) return ''; m = Math.round(m); return Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0'); }
 
-if (typeof module === 'object' && module.exports) module.exports = { RH_KINDS, rhAddDays, rhMonday, rhAddMonths, rhMonths, rhMonthRange, rhWorkingDays, rhTrial, rhLeave, rhSalaryAt, rhNight,
+// ---------- Alertes (rester en règle) et compte rendu ----------
+const RH_DOCS = { contrat: 'Contrat signé', avenant: 'Avenant signé', cin: 'CIN', permis: 'Permis de conduire', carte_pro: 'Carte professionnelle', casier: 'Casier judiciaire (fiche anthropométrique)',
+  cnss: 'Attestation CNSS', rib: 'RIB', diplome: 'Diplôme', medical: 'Certificat médical', photo: 'Photo', attestation: 'Attestation', autre: 'Autre' };
+const RH_LEVELS = ['Critique', 'Haute', 'Moyenne'];
+/** Pièces obligatoires du dossier (réglages rhDocsChauffeur / rhDocsStaff) */
+function rhDocsRequired(kind, P) {
+  const k = kind === 'staff' ? 'rhDocsStaff' : 'rhDocsChauffeur', v = P && P[k] != null ? P[k] : kind === 'staff' ? 'cin,rib' : 'cin,permis,casier,rib';
+  return String(v).split(/[,;\s]+/).map(x => x.trim()).filter(x => RH_DOCS[x]);
+}
+const rhDaysBetween = (a, b) => Math.round((rhD(b) - rhD(a)) / RH_DAY_MS);
+/** Contrat de travail suivi d'un salarié : le plus récent non clos (date d'effet, sinon création) */
+function rhContractOf(e, contracts) {
+  return (contracts || []).filter(c => c.employee_id === e.id && !c.ended_on).sort((a, b) => ((a.effective_on || '') + a.created_at) < ((b.effective_on || '') + b.created_at) ? 1 : -1)[0] || null;
+}
+/** État du contrat : à signer / signé, à légaliser / légalisé */
+function rhLegal(c) {
+  if (!c) return { step: 'aucun', txt: 'Aucun contrat' };
+  if (c.legalized_on) return { step: 'legalise', txt: 'Légalisé' + (c.legal_path ? '' : ' (copie à ranger)') };
+  if (c.signed_on) return { step: 'signe', txt: 'Signé, à légaliser' };
+  return { step: 'genere', txt: 'À faire signer' };
+}
+/**
+ * Alertes RH d'après les règles du Code du travail et le dossier du salarié. ctx : { emps, events, contracts, docs, today, P }.
+ * Renvoie [{ level: Critique | Haute | Moyenne, type, emp, text, due }] triées par gravité puis échéance.
+ */
+function rhAlerts(ctx) {
+  const P = ctx.P || {}, d0 = ctx.today, out = [], n = (k, d) => (P[k] == null || P[k] === '' || isNaN(+P[k]) ? d : +P[k]);
+  const add = (level, type, emp, text, due) => out.push({ level, type, emp, text, due: due || '' });
+  const req = k => rhDocsRequired(k, P);
+  (ctx.emps || []).filter(e => !e.left_on || e.left_on >= d0).forEach(e => {
+    const ev = (ctx.events || []).filter(x => x.employee_id === e.id && !x.cancelled_at), docs = (ctx.docs || []).filter(x => x.employee_id === e.id);
+    // période d'essai
+    const t = rhTrial(e, d0, n('rhAlertDays', 7));
+    if (t.alert) add(t.daysLeft <= 2 ? 'Critique' : 'Haute', 'Période d\'essai', e, 'Fin de la période d\'essai ' + (t.state === 'en cours' ? '' : '(' + t.state + ') ') + 'le ' + rhFr(t.end) + (t.daysLeft ? ' (dans ' + t.daysLeft + ' j)' : ' (aujourd\'hui)') + ' : confirmer, renouveler ou rompre', t.end);
+    // contrat de travail : signature, légalisation
+    const c = rhContractOf(e, ctx.contracts), lg = rhLegal(c);
+    if (!c) add('Haute', 'Contrat de travail', e, 'Aucun contrat de travail enregistré (générer le contrat ou enregistrer le contrat signé)');
+    else if (lg.step === 'genere') { const age = rhDaysBetween(String(c.created_at).slice(0, 10), d0); if (age > n('rhSignDays', 7)) add('Moyenne', 'Contrat de travail', e, 'Contrat généré le ' + rhFr(String(c.created_at).slice(0, 10)) + ', pas encore signé'); }
+    else if (lg.step === 'signe') { const age = rhDaysBetween(c.signed_on, d0); add(age > n('rhLegalDays', 7) ? 'Haute' : 'Moyenne', 'Légalisation', e, 'Contrat signé le ' + rhFr(c.signed_on) + ', pas encore légalisé' + (age > 0 ? ' (' + age + ' j)' : ''), c.signed_on); }
+    else if (!c.legal_path) add('Moyenne', 'Légalisation', e, 'Contrat légalisé le ' + rhFr(c.legalized_on) + ' : copie légalisée à ranger dans le dossier');
+    // contrat à durée déterminée
+    if (e.contract_type && e.contract_type !== 'CDI') {
+      if (!e.contract_end) add('Moyenne', 'Fin de contrat', e, e.contract_type + ' sans date de fin renseignée');
+      else { const dl = rhDaysBetween(d0, e.contract_end);
+        if (dl < 0) add('Critique', 'Fin de contrat', e, e.contract_type + ' terminé le ' + rhFr(e.contract_end) + ' : salarié toujours en poste, à régulariser (renouvellement, nouveau contrat ou sortie)', e.contract_end);
+        else if (dl <= n('rhContractEndDays', 30)) add('Haute', 'Fin de contrat', e, e.contract_type + ' se termine le ' + rhFr(e.contract_end) + ' (dans ' + dl + ' j) : renouveler ou préparer la sortie', e.contract_end); }
+    }
+    // CNSS
+    if (!e.cnss_no) add('Haute', 'CNSS', e, 'N° CNSS non renseigné : immatriculation du salarié à la CNSS à vérifier');
+    // pièces du dossier : manquantes, expirées, qui expirent
+    const miss = req(e.kind).filter(k => !docs.some(x => x.category === k));
+    if (miss.length) add('Moyenne', 'Dossier', e, 'Pièces manquantes : ' + miss.map(k => RH_DOCS[k]).join(', '));
+    Object.keys(RH_DOCS).forEach(k => {
+      const ex = docs.filter(x => x.category === k && x.expires_on).map(x => x.expires_on).sort().pop(); if (!ex) return;
+      const dl = rhDaysBetween(d0, ex), vital = ['permis', 'carte_pro', 'cin'].includes(k);
+      if (dl < 0) add(vital ? 'Critique' : 'Haute', 'Dossier', e, RH_DOCS[k] + ' expiré depuis le ' + rhFr(ex), ex);
+      else if (dl <= n('rhDocDays', 30)) add(vital ? 'Haute' : 'Moyenne', 'Dossier', e, RH_DOCS[k] + ' expire le ' + rhFr(ex) + ' (dans ' + dl + ' j)', ex);
+    });
+    // arrêt maladie sans certificat (à fournir dans les 48 h, article 271)
+    ev.filter(x => x.kind === 'maladie' && !x.doc_path && rhDaysBetween(x.day_from, d0) <= 60 && x.day_from <= d0)
+      .forEach(x => add('Haute', 'Arrêt maladie', e, 'Arrêt maladie du ' + rhFr(x.day_from) + ' sans certificat médical', x.day_from));
+    // absences non justifiées sur 12 mois (au-delà de 4 jours : faute grave possible, article 39)
+    const y0 = rhAddDays(d0, -365), nj = ev.filter(x => x.kind === 'absence' && !x.justified && x.day_from > y0 && x.day_from <= d0)
+      .reduce((s, x) => s + (x.days != null ? +x.days : rhDaysBetween(x.day_from, x.day_to || x.day_from) + 1), 0);
+    if (nj > 4) add('Haute', 'Absences', e, nj + ' jours d\'absence non justifiée sur 12 mois (plus de 4 jours : faute grave possible, article 39)');
+    else if (nj >= 3) add('Moyenne', 'Absences', e, nj + ' jours d\'absence non justifiée sur 12 mois (faute grave possible au-delà de 4 jours, article 39)');
+    // congés demandés à valider
+    ev.filter(x => x.kind === 'conge' && x.status === 'Demandé').forEach(x => add('Moyenne', 'Congés', e, 'Congé demandé du ' + rhFr(x.day_from) + ' au ' + rhFr(x.day_to || x.day_from) + ' : à valider ou refuser', x.day_from));
+    // prime d'ancienneté : nouveau palier dans les 30 jours
+    const sn = rhSeniority(e.hired_on, d0);
+    if (sn && sn.next && rhDaysBetween(d0, sn.next.on) <= 30) add('Moyenne', 'Ancienneté', e, 'Prime d\'ancienneté de ' + sn.next.pct + ' % à partir du ' + rhFr(sn.next.on) + ' (article 350)', sn.next.on);
+    // fiche
+    if (e.pointage && !e.birth_date) add('Haute', 'Fiche', e, 'Date de naissance absente : pointage impossible');
+    const inc = [!e.hired_on && 'date d\'entrée', e.salary == null && 'salaire', !e.employer_id && 'société', !e.cin && 'N° CIN'].filter(Boolean);
+    if (inc.length) add('Moyenne', 'Fiche', e, 'Fiche incomplète : ' + inc.join(', '));
+  });
+  return out.sort((a, b) => RH_LEVELS.indexOf(a.level) - RH_LEVELS.indexOf(b.level) || (a.due || '9') .localeCompare(b.due || '9') || a.emp.name.localeCompare(b.emp.name));
+}
+function rhFr(day) { return day ? String(day).slice(8, 10) + '/' + String(day).slice(5, 7) + '/' + String(day).slice(0, 4) : ''; }
+/** Salaire de base d'une période : salaire de chaque mois au prorata des jours (calendaires) en poste dans la période */
+function rhBasePay(e, events, from, to) {
+  let tot = 0, any = false;
+  for (let m = from.slice(0, 7) + '-01'; m <= to; m = rhAddMonths(m, 1)) {
+    const R = rhMonthRange(m.slice(0, 7)), a = [R.from, from, e.hired_on || R.from].sort().pop(), b = [R.to, to, e.left_on || R.to].sort()[0];
+    if (b < a) continue;
+    const sal = rhSalaryAt(e, events, b); if (sal == null) continue;
+    any = true; tot += sal * (rhDaysBetween(a, b) + 1) / (rhDaysBetween(R.from, R.to) + 1);
+  }
+  return any ? Math.round(tot * 100) / 100 : null;
+}
+/**
+ * Compte rendu d'une période (semaine ou mois) et comparaison à la précédente.
+ * ctx : { emps, events, contracts, cur: { from, to, pres, cash }, prev: { from, to, pres, cash }, today }
+ * pres : lignes de présence ({ e, nDays, hours, overDay, overNight, gaps }) ; cash : [{ driver_code, kind, amount }] (avance, remboursement, bonus)
+ */
+function rhReport(ctx) {
+  const per = q => {
+    const inP = e => (!e.hired_on || e.hired_on <= q.to) && (!e.left_on || e.left_on >= q.from);
+    const act = d => (ctx.emps || []).filter(e => (!e.hired_on || e.hired_on <= d) && (!e.left_on || e.left_on > d));
+    const rows = (ctx.emps || []).filter(inP).map(e => {
+      const ev = (ctx.events || []).filter(x => x.employee_id === e.id && !x.cancelled_at), pr = (q.pres || []).find(r => r.e.id === e.id) || { nDays: 0, hours: 0, overDay: 0, overNight: 0, gaps: [] };
+      const sum = k => ev.filter(x => x.kind === k && x.day_from >= q.from && x.day_from <= q.to).reduce((s, x) => s + (+x.amount || 0), 0);
+      const cs = k => (q.cash || []).filter(c => e.driver_code && c.driver_code === e.driver_code && c.kind === k).reduce((s, c) => s + (+c.amount || 0), 0);
+      const base = rhBasePay(e, ev, q.from, q.to), sal = rhSalaryAt(e, ev, q.to), hs = rhOvertimePay(sal, e.weekly_hours, pr.overDay || 0, pr.overNight || 0);
+      const days = k => rhEventDays(ev, [k], q.from, q.to).length;
+      const s0 = [q.from, e.hired_on || q.from].sort().pop(), s1 = [q.to, e.left_on || q.to].sort()[0], theo = s1 >= s0 ? rhWorkingDays(s0, s1) : 0;
+      const hsAmt = hs && (pr.overDay || pr.overNight) ? hs.amount : 0, prime = sum('prime') + cs('bonus');
+      return { e, base, hsAmt, prime, avance: sum('avance') + cs('avance'), remb: sum('remboursement') + cs('remboursement'), total: base == null ? null : Math.round((base + hsAmt + prime) * 100) / 100,
+        nDays: pr.nDays || 0, hours: pr.hours || 0, over: (pr.overDay || 0) + (pr.overNight || 0), conge: days('conge'), maladie: days('maladie'),
+        absJ: rhEventDays(ev.filter(x => x.kind === 'absence' && x.justified), ['absence'], q.from, q.to).length,
+        absNJ: rhEventDays(ev.filter(x => x.kind === 'absence' && !x.justified), ['absence'], q.from, q.to).length + (pr.gaps || []).length, theo };
+    });
+    const tot = k => Math.round(rows.reduce((s, r) => s + (+r[k] || 0), 0) * 100) / 100;
+    const start = act(rhAddDays(q.from, -1)).length, end = act(q.to).length;
+    const entries = (ctx.emps || []).filter(e => e.hired_on && e.hired_on >= q.from && e.hired_on <= q.to), exits = (ctx.emps || []).filter(e => e.left_on && e.left_on >= q.from && e.left_on <= q.to);
+    const absDays = tot('maladie') + tot('absJ') + tot('absNJ'), theo = tot('theo');
+    return { from: q.from, to: q.to, rows, start, end, entries, exits, turnover: start + end ? Math.round(exits.length / ((start + end) / 2) * 1000) / 10 : 0,
+      base: tot('base'), hsAmt: tot('hsAmt'), prime: tot('prime'), avance: tot('avance'), remb: tot('remb'), total: tot('total'), missingPay: rows.filter(r => r.base == null).map(r => r.e),
+      nDays: tot('nDays'), hours: tot('hours'), over: tot('over'), conge: tot('conge'), maladie: tot('maladie'), absJ: tot('absJ'), absNJ: tot('absNJ'), theo,
+      absRate: theo ? Math.round(absDays / theo * 1000) / 10 : null,
+      trials: (ctx.emps || []).map(e => [e, rhTrial(e, q.to)]).filter(x => x[1].state !== '—' && x[1].end >= q.from && x[1].end <= q.to || (x[0].trial_decided_on && x[0].trial_decided_on >= q.from && x[0].trial_decided_on <= q.to)) };
+  };
+  const cur = per(ctx.cur), prev = ctx.prev ? per(ctx.prev) : null;
+  const evo = (a, b) => b ? Math.round((a - b) / b * 1000) / 10 : null;
+  const legal = { aucun: 0, genere: 0, signe: 0, legalise: 0 };
+  (ctx.emps || []).filter(e => !e.left_on || e.left_on > cur.to).forEach(e => { legal[rhLegal(rhContractOf(e, ctx.contracts)).step]++; });
+  return { cur, prev, legal, evoTotal: prev ? evo(cur.total, prev.total) : null, evoEnd: prev ? cur.end - prev.end : null };
+}
+
+if (typeof module === 'object' && module.exports) module.exports = { RH_KINDS, RH_DOCS, RH_LEVELS, rhDocsRequired, rhSeniority, rhAlerts, rhContractOf, rhLegal, rhBasePay, rhReport, rhFr, rhAddDays, rhMonday, rhAddMonths, rhMonths, rhMonthRange, rhWorkingDays, rhTrial, rhLeave, rhSalaryAt, rhNight,
   rhDriverWork, rhDriverSum, rhOvertimePay, rhPlanGaps, rhEventDays, rhStaffDays, rhStaffOver, rhClockState, rhMin };
