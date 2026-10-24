@@ -136,7 +136,11 @@ test('page Ressources humaines : fiche, congé posé dans le planning, présence
   try {
     await login(page, '#/rh?t=salaries');
     await page.waitForSelector('#rhdrv');
-    assert.strictEqual(await page.locator('.side nav a.navsub').count() >= 9, true, 'dossier Ressources humaines dans le menu');
+    assert.strictEqual(await page.locator('.side nav .navsubs[data-grp="rh"] a.navsub').count() >= 9, true, 'dossier Ressources humaines dans le menu');
+    // menu allégé : conduite et consommation dans un seul dossier, refermé hors de ses pages
+    assert.deepStrictEqual(await page.$$eval('.side nav .navsubs[data-grp="cc"] a', a => a.map(x => x.textContent)), ['Classement', 'Comportement chauffeur', 'Fin de shift', 'Conduite', 'Carburant', 'Consommation', 'Ralenti', 'Arrêts moteur']);
+    assert.strictEqual(await page.$eval('.side nav .navsubs[data-grp="cc"]', d => d.classList.contains('closed')), true);
+    assert.strictEqual(await page.$eval('.side nav a[href="#/rh?t=salaries"]', a => a.classList.contains('on')), true);
     page.once('dialog', d => d.accept());
     await page.click('#rhdrv');
     await page.waitForFunction(() => document.querySelectorAll('#rhemp tbody tr').length === 2);
@@ -159,6 +163,9 @@ test('page Ressources humaines : fiche, congé posé dans le planning, présence
     await page.waitForFunction(() => /Congé/.test((document.querySelector('#rhfev table') || {}).innerText || ''));
     assert.strictEqual(env.psql("select status || '|' || days || '|' || (plan_absence_id is not null) from hr_events"), 'Validé|' + env.psql(`select count(*) from generate_series('${m}-20'::date, '${m}-22'::date, '1 day') g where extract(isodow from g) <> 7`) + '.00|true');
     assert.strictEqual(env.psql("select driver_code || '|' || day_from || '|' || day_to || '|' || reason from driver_absences"), `C9|${m}-20|${m}-22|RH : Congé`);
+    await page.click('.side nav a.navgrp[data-grp="cc"]');
+    await page.waitForFunction(() => location.hash === '#/chauffeurs' && !document.querySelector('.side nav .navsubs[data-grp="cc"]').classList.contains('closed') && document.querySelector('.side nav .navsubs[data-grp="rh"]').classList.contains('closed'));
+    assert.deepStrictEqual(await page.$$eval('.side nav a[aria-current]', a => a.map(x => x.getAttribute('href'))), ['#/chauffeurs']);
     // présences du mois : 2 contrats = 2 jours, 24 h 30
     await page.goto('http://localhost:8080/#/rh?t=presences');
     await page.waitForSelector('#rhpres');

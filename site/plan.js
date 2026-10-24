@@ -336,8 +336,9 @@ async function plTabLog() {
   try { rows = await all('plan_log', '*', q => (PL.ag ? q.eq('agency_id', PL.ag.id) : q).gte('at', dayBounds(addDays(today(), -60)).start.toISOString()), ['at', false]); } catch (e) { plBody(msg(esc(e.message), 'err')); return; }
   if (!PL.users) { PL.users = {}; try { (await all('profiles', 'user_id,email')).forEach(u => { PL.users[u.user_id] = u.email; }); } catch (e) { } }
   if (my !== ROUTING) return;
-  plBody('<div class="small">Qui a modifié le planning, déclaré une absence, publié ou verrouillé une semaine (60 derniers jours).</div>' +
-    table('tpllog', [['Le', l => fmtDTY(l.at), l => l.at], ['Par', l => esc(PL.users[l.by] || '')], ['Action', l => esc(l.action)], ['Détail', l => esc(l.detail || '')]], rows, { empty: 'Aucune modification' }));
+  const draw = () => plBody('<div class="small">Qui a modifié le planning, déclaré une absence, publié ou verrouillé une semaine (60 derniers jours).</div>' +
+    table('tpllog', [['Le', l => fmtDTY(l.at), l => l.at], ['Par', l => esc(PL.users[l.by] || '')], ['Action', l => esc(l.action)], ['Détail', l => esc(l.detail || '')]], rows, { empty: 'Aucune modification', page: true }));
+  draw(); window.__repage = draw;   // page ou tri : historique déjà lu redessiné
 }
 
 /** Départ d'un chauffeur : remplaçant (chauffeur existant ou nouveau), date ; le remplaçant reprend ses réglages et ses shifts planifiés */

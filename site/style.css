@@ -117,6 +117,14 @@ td.n, th.n { text-align: right; white-space: nowrap; font-family: var(--fc); fon
 th.n { font-size: 13px; }
 td.wide { min-width: 300px; max-width: 70ch; }
 td input { width: 100%; min-width: 90px; }
+th.ns { cursor: default; } th.ns:hover { color: var(--mute); }
+/* Pages d'un tableau long (pager.js) : sous le tableau */
+.pager { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 8px 0 16px; font-size: 13px; color: var(--mute); }
+.pager .pgi { color: var(--ink); white-space: nowrap; font-family: var(--fc); font-size: 14px; }
+.pager .pgn { white-space: nowrap; }
+.pager .pgs { display: flex; align-items: center; gap: 6px; margin-left: auto; white-space: nowrap; }
+.pager select { min-height: 30px; padding: 3px 6px; font-size: 13px; }
+@media (max-width: 900px) { .pager .pgx { display: none; } .pager .pgs { margin-left: 0; } }
 
 /* ---------- Plaque d'immatriculation ---------- */
 .plate { display: inline-flex; align-items: center; font: 600 14px/1 var(--fc); letter-spacing: .04em; color: var(--plate-ink); background: var(--plate-bg);
@@ -143,6 +151,8 @@ td input { width: 100%; min-width: 90px; }
 .leaflet-popup-content { font: 14px/1.4 var(--f); }
 
 .loading { padding: 48px; text-align: center; color: var(--mute); }
+/* page affichée depuis la dernière lecture gardée, relecture en cours (site/cache.js) */
+body.cachestale #page::before { content: 'Actualisation…'; position: fixed; top: 10px; right: 16px; z-index: 1500; background: var(--panel); color: var(--mute); border: 1px solid var(--line); border-radius: 12px; padding: 3px 10px; font-size: 12px; }
 
 /* ---------- Connexion ---------- */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; background: var(--side);
@@ -457,3 +467,9 @@ span.ok { color: var(--ok); } span.warn { color: var(--warn); } span.err { color
 .side nav a.navsub { padding: 5px 10px 5px 26px; font-size: 13px; font-weight: 400; }
 /* bouton principal petit : texte lisible sur le fond de couleur (.small donnait le gris des textes secondaires) */
 button.small:not(.ghost) { color: var(--acc-ink); }
+/* Dossiers du menu (Conduite et consommation, Ressources humaines) */
+.side nav .navsubs { display: contents; }
+.side nav .navsubs.closed { display: none; }
+.side nav a.navgrp::after { content: '▸'; margin-left: auto; opacity: .55; font-size: 11px; }
+.side nav a.navgrp.open { color: var(--side-hi); }
+.side nav a.navgrp.open::after { content: '▾'; }

@@ -1,6 +1,6 @@
 // Ludy (supervision de flotte, données Geotab) — site web (lecture de la base Supabase alimentée par le collecteur Apps Script)
 const CFG = window.FLOTTE_CONFIG || {};
-const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true }, global: { fetch: cacheFetch(() => CACHE) } });   // écriture = lectures gardées oubliées (site/cache.js)
 const S = { session: null, profile: null, P: null, veh: null, vehList: [], rules: null, drv: null, timers: [], channel: null, agencies: [], agName: {}, alertCh: null };
 const $ = sel => document.querySelector(sel);
 const ROLE_TXT = { admin: 'Administrateur', manager: 'Gestionnaire', viewer: 'Lecture seule', pending: 'En attente' };
@@ -42,6 +42,34 @@ async function rpcAll(fn, args, keys) {
     out.push(...(data || [])); if (!data || data.length < 1000) return out;
   }
 }
+// ---------- Lectures gardées (site/cache.js) : pages de consultation seulement (tableau de bord, classement, carburant) ----------
+// Page déjà vue : affichée aussitôt avec la dernière lecture (10 min au plus), relue en arrière-plan après 1 min et redessinée si la
+// base a changé et que la page est toujours affichée (ROUTING) ; relecture impossible : signalé en haut de la page. Ailleurs (saisies,
+// En direct) : lecture directe de la base, comme avant.
+function cacheOn() { const p = pageOf(); return p === 'tableau' || p === 'chauffeurs' || (p === 'carburant' && !/[?&]t=carte/.test(location.hash)); }
+const CREAD = { my: 0, n: 0, changed: false, err: null, at: 0 };
+function cacheRead(key, load) {
+  const my = ROUTING;
+  return CACHE.get(key, load, {
+    stale: at => { if (CREAD.my !== my || !CREAD.n) Object.assign(CREAD, { my, n: 0, changed: false, err: null, at }); CREAD.n++; CREAD.at = Math.min(CREAD.at, at); document.body.classList.add('cachestale'); },
+    done: (changed, err) => {
+      if (CREAD.my !== my) return;
+      CREAD.n--; CREAD.changed = CREAD.changed || changed; CREAD.err = CREAD.err || err;
+      if (CREAD.n > 0) return;
+      document.body.classList.remove('cachestale');
+      const e = CREAD.err, ch = CREAD.changed; CREAD.changed = false; CREAD.err = null;
+      if (my !== ROUTING) return;
+      if (e) { const pg = $('#page'); if (pg && !$('#cacheerr')) pg.insertAdjacentHTML('afterbegin', `<div id="cacheerr">${msg('Affiché : lecture de ' + localHM(CREAD.at) + '. Relecture impossible (' + esc(e.message || e) + ') : rechargez la page.', 'warn')}</div>`); return; }
+      if (ch && PAGES[pageOf()]) PAGES[pageOf()]().catch(x => { if (my === ROUTING) $('#page').innerHTML = msg('Erreur : ' + esc(x.message || x), 'err'); });
+    } }).then(r => r.v);
+}
+/** all() gardée sur les pages de consultation : clé = requête complète (table, colonnes, filtres, ordre) ; ailleurs all() */
+function allC(table, cols, build, order) {
+  if (!cacheOn()) return all(table, cols, build, order);
+  let q = sb.from(table).select(cols || '*'); if (build) q = build(q); if (order) q = q.order(order[0], { ascending: order[1] !== false });
+  return cacheRead('t|' + q.url.toString(), () => all(table, cols, build, order));
+}
+function rpcAllC(fn, args, keys) { return cacheOn() ? cacheRead('f|' + fn + '|' + JSON.stringify(args || {}) + '|' + (keys || []).join(), () => rpcAll(fn, args, keys)) : rpcAll(fn, args, keys); }
 async function job(kind, arg) {
   const { data, error } = await sb.from('jobs').insert({ kind, arg: arg || null }).select('id').single();
   if (error) throw new Error(error.message); return data.id;
@@ -138,11 +166,12 @@ function usageHtml(u, P) {
     return `<div class="ub"><div class="ul"><b>${esc(r[0])}</b><span>${f0(r[1])}${r[3] ? ' ' + r[3] : ''} / ${f0(r[2])}${r[3] ? ' ' + r[3] : ''} (${f0(pct)} %)</span></div>
       <div class="ubar"><span class="${cls}" style="width:${pct.toFixed(1)}%"></span></div><div class="small">${esc(r[4])}</div></div>`; }).join('')}</div>`;
 }
-/** Bandeau en bas du menu (administrateur) quand une limite approche */
+/** Bandeau en bas du menu (administrateur) quand une limite approche ; menu gardé d'une page à l'autre : retiré ou mis à jour sur place */
 async function usageWarn() {
-  const u = await usageLoad(); const a = usageAlerts(u, S.P || {}), f = $('.side .foot');
-  if (!a.length || !f || $('#usewarn')) return;
-  f.insertAdjacentHTML('afterbegin', `<a id="usewarn" class="dlapp" href="#/reglages">Limite de l'hébergement bientôt atteinte : ${esc(a.map(r => r[0].toLowerCase()).join(', '))}</a>`);
+  const u = await usageLoad(); const a = usageAlerts(u, S.P || {}), f = $('.side .foot'), w = $('#usewarn');
+  if (!a.length || !f) { if (w) w.remove(); return; }
+  const t = 'Limite de l\'hébergement bientôt atteinte : ' + a.map(r => r[0].toLowerCase()).join(', ');
+  if (w) w.textContent = t; else f.insertAdjacentHTML('afterbegin', `<a id="usewarn" class="dlapp" href="#/reglages">${esc(t)}</a>`);
 }
 function appUber() { const u = window.LUDY_APP && window.LUDY_APP.uber; return /^https:\/\/([a-z0-9-]+\.)*uber\.com\//.test(u || '') ? u : ''; }
 function appIpc() { return !!(window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke); }
@@ -274,30 +303,73 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
   ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
-function shell() {
-  const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct';
-  $('#app').innerHTML = `<div class="layout">
+// Dossiers du menu (demande d'Ahmed : menu allégé) : un titre, puis ses volets, montrés quand la page affichée en fait partie.
+// Ressources humaines : onglets de la page #/rh. Dossier réduit à un seul volet visible : lien simple.
+const NAV_GROUPS = { cc: { label: 'Conduite et consommation', pages: ['chauffeurs', 'comportement', 'conduite', 'finshift', 'carburant', 'conso', 'ralenti', 'arrets'] } };
+const navGroupOf = k => Object.keys(NAV_GROUPS).find(g => NAV_GROUPS[g].pages.includes(k));
+function navHtml() {
+  const vis = NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (!/^(caisse|rh)$/.test(n[0]) || canEdit()) && canSee(n[0])), done = {};
+  const grp = (g, label, href, subs) => `<a href="${href}" class="navgrp" data-grp="${g}">${label}</a><div class="navsubs closed" data-grp="${g}">${subs.map(x => `<a href="${x[0]}" class="navsub">${x[1]}</a>`).join('')}</div>`;
+  return vis.map(n => {
+    const g = navGroupOf(n[0]);
+    if (g) {
+      if (done[g]) return '';
+      done[g] = 1; const its = vis.filter(x => navGroupOf(x[0]) === g);
+      if (its.length > 1) return grp(g, NAV_GROUPS[g].label, '#/' + its[0][0], its.map(x => ['#/' + x[0], x[1]]));
+    }
+    if (n[0] === 'rh') return grp('rh', n[1], '#/rh', rhTabsFor().map(x => [rhHref(x[0]), x[1]]));
+    return `<a href="#/${n[0]}">${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
+      (n[0] !== 'direct' ? '' : appMode() === 'link' ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` :
+        navSites().filter(x => canSee('x-' + x.id)).map(x => `<a href="#/x-${x.id}" class="navext" data-ext="${x.id}">${esc(x.name)}</a>`).join(''));
+  }).join('');
+}
+/** Volet en surbrillance, dossier de la page ouvert (les autres refermés) */
+function navMark(page) {
+  let t = new URLSearchParams(location.hash.split('?')[1] || '').get('t') || 'bord'; if (t === 'fiche') t = 'salaries';
+  document.querySelectorAll('.side nav a').forEach(a => {
+    const h = a.getAttribute('href') || '', on = !a.classList.contains('navgrp') && (/^#\/rh\?t=/.test(h) ? page === 'rh' && h === '#/rh?t=' + t : h === '#/' + page);
+    a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  document.querySelectorAll('.side nav .navsubs').forEach(d => {
+    const g = d.dataset.grp, open = g === 'rh' ? /^(rh|travail)$/.test(page) : !!NAV_GROUPS[g] && NAV_GROUPS[g].pages.includes(page);
+    d.classList.toggle('closed', !open); const hd = d.previousElementSibling; if (hd) hd.classList.toggle('open', open);
+  });
+}
+/** Menu et bas du menu (sans surbrillance : sert aussi de clé du menu, navMark marque le volet) */
+function shellHtml() {
+  return `<div class="layout">
   <aside class="side">
     ${BRAND}
-    <nav aria-label="Pages">${NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (!/^(caisse|rh)$/.test(n[0]) || canEdit()) && canSee(n[0])).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
-      (n[0] === 'rh' && /^(rh|travail)$/.test(page) ? rhTabsFor().map(x => { const on = x[0] === 'travail' ? page === 'travail' : page === 'rh' && (new URLSearchParams(location.hash.split('?')[1] || '').get('t') || 'bord') === x[0]; return `<a href="${rhHref(x[0])}" class="navsub${on ? ' on' : ''}">${x[1]}</a>`; }).join('') : '') +
-      (n[0] !== 'direct' ? '' : appMode() === 'link' ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` :
-        navSites().filter(x => canSee('x-' + x.id)).map(x => `<a href="#/x-${x.id}" class="navext${page === 'x-' + x.id ? ' on' : ''}" data-ext="${x.id}"${page === 'x-' + x.id ? ' aria-current="page"' : ''}>${esc(x.name)}</a>`).join(''))).join('')}</nav>
+    <nav aria-label="Pages">${navHtml()}</nav>
     <div class="foot">${rhFoot()}${mineFoot()}${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
       ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span>${isAdmin() ? '<a id="onl" class="onl" href="#/connexions" hidden title="Qui est connecté en ce moment"></a>' : ''}${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
   <main id="page"><div class="loading">Chargement…</div></main></div>`;
-  $('#logout').onclick = async () => {
-    // pointage : fin de journée proposée avant la déconnexion
-    if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && confirm('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).catch(() => { });
-    await sessEnd(); await sb.auth.signOut(); location.hash = '';
-  };
-  rhFootBind();
-  $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
-  const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
-  const mo = $('#mineon'); if (mo) mo.onchange = () => { try { localStorage.setItem('mesveh', mo.checked ? '1' : '0'); } catch (e) { } route(); };
-  const nb = $('#notifon'); if (nb) nb.onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } nb.remove(); };
-  health(); openAlerts(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
+}
+// Menu reconstruit seulement s'il change (utilisateur, rôle, volets visibles, agences, « Mes véhicules », thème, notifications) ;
+// sinon d'une page à l'autre : volet en surbrillance et contenu seulement (pastilles, collecte, défilement du menu gardés tels quels)
+let SHELL_KEY = '';
+function shell() {
+  const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct', key = shellHtml();
+  if (key === SHELL_KEY && $('#app > .layout') && $('#page')) {
+    const ag = $('#agsel'), mo = $('#mineon'); if (ag) ag.value = agFilter(); if (mo) mo.checked = mineOn();   // stockage bloqué : réglage réellement appliqué
+    $('#page').innerHTML = '<div class="loading">Chargement…</div>';
+  } else {
+    SHELL_KEY = key; $('#app').innerHTML = shellHtml();
+    $('#logout').onclick = async () => {
+      // pointage : fin de journée proposée avant la déconnexion
+      if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && confirm('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).catch(() => { });
+      await sessEnd(); await sb.auth.signOut(); location.hash = '';
+    };
+    rhFootBind();
+    $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
+    const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
+    const mo = $('#mineon'); if (mo) mo.onchange = () => { try { localStorage.setItem('mesveh', mo.checked ? '1' : '0'); } catch (e) { } route(); };
+    const nb = $('#notifon'); if (nb) nb.onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } nb.remove(); };
+  }
+  navMark(page);
+  // derniers états connus redessinés tout de suite (menu neuf), relus ensuite en arrière-plan
+  sessBadgePaint(); healthPaint(); nbalPaint(); health(); openAlerts(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
   const on = $('.side nav a.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   return page;
 }
@@ -310,14 +382,22 @@ function plate(p, others) {
   const temp = /WW$|^W\d|W18/i.test(String(p).replace(/[\s-]/g, ''));
   return `<span class="plate${temp ? ' temp' : ''}">${esc(p)}</span>${others ? `<span class="alias">aussi ${esc(others)}</span>` : ''}`;
 }
-/** Nombre d'alertes critiques encore à traiter (pastille du menu) */
+/** Nombre d'alertes critiques encore à traiter (pastille du menu) ; dernier compte gardé (S.nbal) pour cet utilisateur et ce filtre */
+function nbalKey() { return (S.session ? S.session.user.id : '') + '|' + agFilter() + '|' + (mineOn() ? [...S.mine].sort().join() : ''); }
+function nbalPaint() {
+  const el = $('#nbal'); if (!el) return;
+  const n = S.nbal && S.nbal.k === nbalKey() ? S.nbal.n : 0;
+  el.textContent = n || ''; el.hidden = !n; el.title = n + ' alertes critiques à traiter';
+}
 async function openAlerts() {
+  const k = nbalKey();
   try {
     // agence choisie ou « Mes véhicules » : seulement ces véhicules (les droits de la base limitent déjà aux agences de l'utilisateur)
     let q = sb.from('alerts').select('id', { count: 'exact', head: true }).eq('severity', 'Critique').eq('status', 'À traiter');
     if (agFilter() || mineOn()) { const ok = inAgency(); q = q.in('vehicle_key', S.vehList.filter(v => ok(v.key)).map(v => v.key).concat(['-'])); }
-    const { count } = await q;
-    const el = $('#nbal'); if (el) { el.textContent = count || ''; el.hidden = !count; el.title = (count || 0) + ' alertes critiques à traiter'; }
+    const { count, error } = await q;
+    if (error || nbalKey() !== k) return;   // erreur passagère : dernier compte gardé ; autre utilisateur / agence entre-temps : ignoré
+    S.nbal = { k, n: count || 0 }; nbalPaint();
   } catch (e) { }
 }
 /** Nouvelle alerte reçue en temps réel (Supabase Realtime) : bandeau dans le site, notification du navigateur si la page est en arrière-plan */
@@ -339,22 +419,31 @@ function onNewAlert(a) {
 window.__onNewAlert = onNewAlert;
 function watchAlerts() {
   if (S.alertCh) return;
-  S.alertCh = sb.channel('alertes').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alerts' }, p => onNewAlert(p.new)).subscribe();
+  S.alertCh = sb.channel('alertes').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alerts' }, p => onNewAlert(p.new))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts' }, () => CACHE.touch()).on('postgres_changes', { event: '*', schema: 'public', table: 'live_status' }, () => CACHE.touch()).subscribe();   // alerte, passage du collecteur : pages gardées relues
 }
 function msg(text, kind) { return `<div class="msg ${kind || ''}">${text}</div>`; }
 function badge(t, cls) { return t ? `<span class="badge ${cls || ''}">${esc(t)}</span>` : ''; }
 const LEVEL_CLS = { 'Faible': 'ok', 'Modéré': 'warn', 'Élevé': 'high', 'Dangereux': 'crit' };
 const GRAV_CLS = { 'Critique': 'crit', 'Haute': 'high', 'Moyenne': 'warn', 'Info': 'info' };
 const STATE_CLS = { 'En route': 'ok', 'Arrêté, contact mis': 'warn', 'Garé': '', 'Boîtier hors ligne': 'crit', 'Pas de réponse Geotab': 'crit', 'Non relié à Geotab': 'info' };
-/** Tableau triable : cols = [[titre, fonction(ligne) -> html, valeur de tri (facultatif), classe]] */
+/**
+ * Tableau triable : cols = [[titre, fonction(ligne) -> html, valeur de tri (facultatif), classe]]
+ * Pages (pager.js) : opt.page = true : toutes les lignes triées et totalisées, seule la page dessinée (opt.sig = filtres / recherche,
+ * changés = page 1) ; opt.server = page lue dans la base (pgLoad) : rows = lignes de la page, tri par la base (opt.sortable = colonnes triables).
+ */
 function table(id, cols, rows, opt) {
   opt = opt || {};
-  if (!rows.length) return `<div class="empty">${opt.empty || 'Aucune donnée sur la période'}</div>`;
+  const srv = opt.server;
+  if (!rows.length && !(srv && srv.total)) return `<div class="empty">${opt.empty || 'Aucune donnée sur la période'}</div>`;
   const st = (window.__sort || {})[id] || {};
-  let list = rows.slice();
-  if (st.c !== undefined && cols[st.c]) { const f = cols[st.c][2] || cols[st.c][1]; list.sort((a, b) => { const x = f(a), y = f(b); return (x > y ? 1 : x < y ? -1 : 0) * (st.d ? -1 : 1); }); }
-  return `<div class="tw"><table id="${id}"><thead><tr>${cols.map((c, i) => `<th data-t="${id}" data-c="${i}" class="${c[3] || ''}">${c[0]}${st.c === i ? (st.d ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
-    <tbody>${list.map(r => `<tr>${cols.map(c => `<td class="${c[3] || ''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody>${opt.total ? tableTotal(cols, rows, opt.total) : ''}</table></div>`;
+  let list = rows.slice(), pg = '';
+  if (!srv && st.c !== undefined && cols[st.c]) { const f = cols[st.c][2] || cols[st.c][1]; list.sort((a, b) => { const x = f(a), y = f(b); return (x > y ? 1 : x < y ? -1 : 0) * (st.d ? -1 : 1); }); }
+  if (srv) pg = pgBar(id, srv);
+  else if (opt.page) { const s = pgGet(id, pgSigOf(st, opt.sig)), c = pgCalc(list.length, s.page, s.size); list = pgSlice(list, c); pg = pgBar(id, c); }
+  const can = i => !srv || (opt.sortable || []).indexOf(i) >= 0;   // tri par la base : seulement les colonnes prévues
+  return `<div class="tw"><table id="${id}"><thead><tr>${cols.map((c, i) => `<th${can(i) ? ` data-t="${id}" data-c="${i}"` : ''} class="${c[3] || ''}${can(i) ? '' : ' ns'}">${c[0]}${st.c === i && can(i) ? (st.d ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
+    <tbody>${list.map(r => `<tr>${cols.map(c => `<td class="${c[3] || ''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody>${opt.total ? tableTotal(cols, rows, opt.total) : ''}</table></div>${pg}`;
 }
 /**
  * Ligne « Total » d'un tableau : somme des colonnes chiffrées (classe n, valeur de tri numérique) des lignes affichées.
@@ -373,7 +462,8 @@ document.addEventListener('click', e => {
   const th = e.target.closest('th[data-t]'); if (!th) return;
   const id = th.dataset.t, c = +th.dataset.c; window.__sort = window.__sort || {};
   const cur = window.__sort[id] || {}; window.__sort[id] = { c, d: cur.c === c ? !cur.d : true };
-  if (window.__rerender) window.__rerender();
+  // tableau lu par la base : sa relecture (page 1, nouvel ordre) ; sinon redessin léger de la page (__repage) ou complet
+  const fn = PG.cb[id] || window.__repage || window.__rerender; if (fn) fn();
 });
 function cards(items) { return `<div class="cards">${items.map(i => `<div class="card ${i[2] || ''}"><div class="cv">${i[1]}</div><div class="cl">${i[0]}</div></div>`).join('')}</div>`; }
 /** Sélecteur de période (comme le tableau de bord du Sheet) */
@@ -404,13 +494,19 @@ function periodBar(onchange) {
     <label>du <input type="date" id="pfrom" value="${p.from}"></label><label>au <input type="date" id="pto" value="${p.to}"></label>
     <span class="hint">Journées de travail (horaires des contrats)</span></div>`;
 }
+/** Dernière collecte Geotab (bas du menu) : dernière lecture gardée (S.health) et redessinée tout de suite, relue à chaque page et chaque minute */
+function healthPaint() {
+  const el = $('#health'), h = S.health; if (!el || !h || !S.session || h.uid !== S.session.user.id) return;
+  const m = h.t ? Math.round((Date.now() - h.t) / MIN) : null;
+  el.className = 'health ' + (m === null ? 'crit' : m <= 2 * (S.P ? S.P.liveMin : 5) + 2 ? 'ok' : m <= 30 ? 'warn' : 'crit');
+  el.title = 'Dernière collecte Geotab'; el.textContent = m === null ? 'Collecte : jamais' : 'Collecte : il y a ' + (m < 1 ? 'moins d\'1 min' : m < 120 ? m + ' min' : Math.round(m / 60) + ' h');
+}
 async function health() {
+  const uid = S.session && S.session.user.id;
   try {
-    const { data } = await sb.from('live_status').select('updated_at').order('updated_at', { ascending: false }).limit(1);
-    const t = data && data[0] ? new Date(data[0].updated_at).getTime() : 0, m = t ? Math.round((Date.now() - t) / MIN) : null;
-    const el = $('#health'); if (!el) return;
-    el.className = 'health ' + (m === null ? 'crit' : m <= 2 * (S.P ? S.P.liveMin : 5) + 2 ? 'ok' : m <= 30 ? 'warn' : 'crit');
-    el.title = 'Dernière collecte Geotab'; el.textContent = m === null ? 'Collecte : jamais' : 'Collecte : il y a ' + (m < 1 ? 'moins d\'1 min' : m < 120 ? m + ' min' : Math.round(m / 60) + ' h');
+    const { data, error } = await sb.from('live_status').select('updated_at').order('updated_at', { ascending: false }).limit(1);
+    if (error || !S.session || S.session.user.id !== uid) return;   // erreur passagère : dernière lecture gardée ; autre utilisateur entre-temps
+    S.health = { uid, t: data && data[0] ? new Date(data[0].updated_at).getTime() : 0 }; healthPaint();
   } catch (e) { }
 }
 
@@ -421,10 +517,10 @@ async function pageTableau() {
   const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const p = period(), P = S.P, ok = inAgency();
   let [jrn, ac, tne, top] = await Promise.all([
-    all('journal', '*', q => q.gte('day', p.from).lte('day', p.to)),
-    rpcAll('alert_counts', { p_from: p.from, p_to: p.to }, ['vehicle_key', 'type', 'severity', 'status']),
-    all('fuel', 'vehicle_key', q => q.eq('type', 'TRAJET_NON_ENREGISTRE').gte('day', p.from).lte('day', p.to)),
-    all('alerts', '*', q => q.in('severity', ['Critique', 'Haute']).gte('day', p.from).lte('day', p.to))]);
+    allC('journal', '*', q => q.gte('day', p.from).lte('day', p.to)),
+    rpcAllC('alert_counts', { p_from: p.from, p_to: p.to }, ['vehicle_key', 'type', 'severity', 'status']),
+    allC('fuel', 'vehicle_key', q => q.eq('type', 'TRAJET_NON_ENREGISTRE').gte('day', p.from).lte('day', p.to)),
+    allC('alerts', '*', q => q.in('severity', ['Critique', 'Haute']).gte('day', p.from).lte('day', p.to))]);
   // filtre agence AVANT de garder les 25 plus récentes
   jrn = jrn.filter(r => ok(r.vehicle_key)); ac = ac.filter(x => ok(x.vehicle_key)); tne = { count: tne.filter(r => ok(r.vehicle_key)).length };
   top = { data: await alertShifts(top.filter(a => ok(a.vehicle_key)).sort((x, y) => (String(y.day) + (y.time || '')).localeCompare(String(x.day) + (x.time || ''))).slice(0, 25)) };
@@ -456,7 +552,7 @@ async function pageTableau() {
       ['Coût carburant (MAD)', x => x.a.costN ? f0(x.a.cost) : '', x => x.a.cost, 'n'], ['Pleins', x => x.a.fills, null, 'n'], ['Vmax', x => f0(x.a.vmax), x => x.a.vmax, 'n'],
       ['Pire dépassement', x => x.a.worst === null ? '' : '+' + f0(x.a.worst), x => x.a.worst || 0, 'n'], ['Événements', x => x.a.evts, null, 'n'],
       ['Score /100 km', x => f1(scoreOf(x.a, P)), x => scoreOf(x.a, P), 'n'], ['Siphonages suspects', x => x.a.siph ? `<b class="red">${x.a.siph}</b>` : '0', x => x.a.siph, 'n'],
-      ['Km hors contrat', x => x.a.kmHors ? `<b class="red">${f1(x.a.kmHors)}</b>` : '0', x => x.a.kmHors, 'n'], ['Alertes', x => x.al, null, 'n']], vrows)}
+      ['Km hors contrat', x => x.a.kmHors ? `<b class="red">${f1(x.a.kmHors)}</b>` : '0', x => x.a.kmHors, 'n'], ['Alertes', x => x.al, null, 'n']], vrows, { page: true })}
     <h2>Chauffeurs les plus dangereux, par shift <a class="more" href="#/chauffeurs">Voir le classement complet</a></h2>
     ${shiftSections(drows, d => d.sh, (sub, sfx) => table('tdrv' + sfx, [['Rang', (d) => sub.indexOf(d) + 1, null, 'n'], ['Chauffeur', d => `<b>${dlink(d.code, d.nom)}</b>`, d => d.nom], ['Code', d => esc(d.code)],
       ['Niveau', d => badge(d.level, LEVEL_CLS[d.level]), d => d.score], ['Score /100 km', d => f1(d.score), d => d.score, 'n'], ['Événements', d => d.a.evts, null, 'n'],
@@ -499,7 +595,7 @@ async function withSuccessors(list) {
   const lim = new Date(Date.now() - (num(S.P && S.P.retentionDays, 62) + 45) * DAY).toISOString(), first = open.map(c => c.start_at).sort()[0], from = first < lim ? lim : first;   // même fenêtre que le collecteur (contractIndex_)
   const keys = [...new Set(open.map(c => c.vehicle_key))], have = new Set(list.map(c => c.num)), out = list.slice();
   for (let i = 0; i < keys.length; i += 100) {
-    (await all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.in('vehicle_key', keys.slice(i, i + 100)).gt('start_at', from)
+    (await allC('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => q.in('vehicle_key', keys.slice(i, i + 100)).gt('start_at', from)
       .lte('start_at', new Date(Date.now() + HOUR).toISOString()))).forEach(c => { if (!have.has(c.num)) { have.add(c.num); out.push(c); } });
   }
   return out;
@@ -520,12 +616,12 @@ async function alertShifts(rows) {
   try {
     const add = c => { if (byNum[c.num]) return; byNum[c.num] = c; (byVeh[c.vehicle_key] = byVeh[c.vehicle_key] || []).push(c); };
     for (let i = 0; i < veh.length && days.length; i += 100) {
-      (await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('vehicle_key', veh.slice(i, i + 100))
+      (await allC('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('vehicle_key', veh.slice(i, i + 100))
         .lte('start_at', dayBounds(addDays(days[days.length - 1], 1)).end.toISOString()).or('end_at.is.null,end_at.gte.' + dayBounds(addDays(days[0], -1)).start.toISOString()))).forEach(add);
     }
     (await withSuccessors(Object.values(byNum))).forEach(add);   // contrat jamais clôturé : son remplaçant, même terminé avant la période
     const miss = nums.filter(n => !byNum[n]);
-    for (let i = 0; i < miss.length; i += 150) (await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('num', miss.slice(i, i + 150)))).forEach(add);
+    for (let i = 0; i < miss.length; i += 150) (await allC('contracts', 'num,client_code,vehicle_key,start_at,end_at', q => q.in('num', miss.slice(i, i + 150)))).forEach(add);
   } catch (e) { /* contrats illisibles : créneau horaire seul */ }
   Object.values(byVeh).forEach(l => ctrEffEnds(l));   // contrat jamais clôturé : fin au début du suivant
   rows.forEach(a => {
@@ -552,7 +648,8 @@ function alertSections(id, rows, editable) {
     const title = x ? 'Shift ' + shiftDayName(x).replace(/^J/, 'j').replace(/^N/, 'n') + ' (' + shiftName(x.s, S.P).replace(/^.*\(/, '') : 'Sans heure';
     return `<h3 class="shift ${x ? 'sh-' + x.s.toLowerCase() : ''}">${esc(title)} <span class="small">· ${n} alerte${n > 1 ? 's' : ''}</span></h3>` + alertTable(id + (i ? '_' + i : ''), groups[k], editable); }).join('');
 }
-function alertTable(id, rows, editable) {
+/** Tableau d'alertes ; srv = page lue dans la base (pgLoad) : tri par la base sur Date, Heure, Plaque, Chauffeur, Type, Valeur, Statut */
+function alertTable(id, rows, editable, srv) {
   return table(id, [['Date', a => fmtDay(a.day), a => a.day + (a.time || '')], ['Heure', a => esc(a.time || '')], ['Shift', a => { const x = alertShiftDay(a); return x ? shiftBadge(x.s) + `<div class="small">${esc(shiftDayName(x).replace(/^(Jour|Nuit) du /, ''))}</div>` : ''; }, a => { const x = alertShiftDay(a); return x ? x.day + x.s : ''; }],
     ['Plaque', a => plate(a.plate), a => a.plate], ['Chauffeur', a => esc(a.driver_name || '')],
     ['Type', a => esc(a.type)], ['Gravité', a => badge(a.severity, GRAV_CLS[a.severity]), a => ({ Critique: 0, Haute: 1, Moyenne: 2, Info: 3 }[a.severity])],
@@ -560,7 +657,7 @@ function alertTable(id, rows, editable) {
     ['Statut', a => editable ? `<select data-al="${esc(a.id)}" class="alst">${['À traiter', 'En cours', 'Traité', 'Faux positif'].map(s => `<option ${s === a.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(a.status), a => a.status],
     ['Commentaire', a => editable ? `<input data-alc="${esc(a.id)}" class="alc" value="${esc(a.comment || '')}" placeholder="…">` : esc(a.comment || '')],
     // fiche de l'alerte : vitesse, limite et positions lues dans Geotab autour de l'heure de l'alerte (site/direct.js)
-    ['Fiche', a => { if (!a.time || !a.vehicle_key) return ''; (S.alIdx = S.alIdx || {})[a.id] = a; return `<button type="button" class="small ghost" data-ad="${esc(a.id)}">Détail</button>`; }]], rows, { empty: 'Aucune alerte' });
+    ['Fiche', a => { if (!a.time || !a.vehicle_key) return ''; (S.alIdx = S.alIdx || {})[a.id] = a; return `<button type="button" class="small ghost" data-ad="${esc(a.id)}">Détail</button>`; }]], rows, srv ? { empty: 'Aucune alerte', server: srv, sortable: [0, 1, 3, 4, 5, 7, 9] } : { empty: 'Aucune alerte' });
 }
 /** Les alertes du moteur v6 contiennent un lien Google Maps : affiché comme lien OpenStreetMap */
 function linkify(t) { return esc(t).replace(/https:\/\/maps\.google\.com\/\?q=(-?[0-9.]+),(-?[0-9.]+)/g, (m, la, lo) => `<a target="_blank" rel="noopener" href="${osmUrl(la, lo)}">carte</a>`); }
@@ -592,11 +689,11 @@ async function pageJour() {
       ['Pire dépassement', r => r.worst_over === null ? '' : '+' + f0(r.worst_over), r => r.worst_over, 'n'], ['Événements', r => r.n_events, null, 'n'],
       ['Score', r => f1(r.score), r => r.score, 'n'], ['Niveau', r => r.driver_code === HORS ? '' : badge(levelOf(r.score, P), LEVEL_CLS[levelOf(r.score, P)]), r => r.score],
       ['Pleins', r => r.n_fills, null, 'n'], ['Siphonages', r => r.n_siphon ? `<b class="red">${r.n_siphon}</b>` : '0', r => r.n_siphon, 'n']],
-      sub), { unit: 'journées', empty: 'Aucune journée de travail ce jour-là' })}
+      sub, { page: true }), { unit: 'journées', empty: 'Aucune journée de travail ce jour-là' })}
     <h2>Arrêts moteur allumé ≥ ${P.idleLongMin} min</h2>
     ${table('tidl', [['Début', r => fmtDT(r.start_at), r => r.start_at], ['Fin', r => fmtDT(r.end_at)], ['Durée arrêt', r => fH(r.stop_min / 60), r => r.stop_min, 'n'],
       ['Moteur tournant', r => r.engine_check === 'Régime moteur' ? fH(r.engine_min / 60) : 'non vérifiable', r => r.engine_min, 'n'], ['Plaque', r => plate(r.plate), r => r.plate],
-      ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name || '')], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']], idl, { empty: 'Aucun arrêt prolongé' })}
+      ['Chauffeur', r => esc(S.drv[r.driver_code] || r.driver_name || '')], ['Lieu', r => mapLink(r.lat, r.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(r.lat, r.lon)}">carte</a>` : '']], idl, { empty: 'Aucun arrêt prolongé', page: true })}
     <h2>Alertes de la journée, par shift</h2>${alertSections('tjal', al, false)}`;
     $('#jday').onchange = e => { location.hash = '#/jour?jour=' + e.target.value; };
     $('#jprev').onclick = () => { location.hash = '#/jour?jour=' + addDays(day, -1); };
@@ -610,7 +707,7 @@ async function pageChauffeurs() {
   const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const p = period(), P = S.P;
   const ok = inAgency();
-  const [jrn0, rc] = await Promise.all([all('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAll('driver_rule_counts', { p_from: p.from, p_to: p.to }, ['driver_code', 'rule_id', 'vehicle_key', 'contract_num'])]);
+  const [jrn0, rc] = await Promise.all([allC('journal', '*', q => q.gte('day', p.from).lte('day', p.to).neq('driver_code', HORS)), rpcAllC('driver_rule_counts', { p_from: p.from, p_to: p.to }, ['driver_code', 'rule_id', 'vehicle_key', 'contract_num'])]);
   // un chauffeur par shift : ses journées de jour et de nuit sont classées séparément
   const jrn = jrn0.filter(r => ok(r.vehicle_key)), agg = aggJournal(jrn, r => shiftOf(r.contract_start, P) + '|' + r.driver_code, P), used = {}, byD = {};
   const ctrSh = {}; jrn.forEach(r => { if (r.contract_num) ctrSh[r.contract_num] = shiftOf(r.contract_start, P); });
@@ -649,7 +746,7 @@ async function pageChauffeurs() {
       ['dont prolongé', d => fH(d.a.idleLong), d => d.a.idleLong, 'n'], ['Carburant (L)', d => nmv(fuelVal(d.a)), d => d.a.fuel, 'n'], ['L/100 km', d => nmv(l100Val(d.a)), d => d.a.l100 || 0, 'n'],
       ['Vmax', d => f0(d.a.vmax), d => d.a.vmax, 'n'], ['Pire dépassement', d => d.a.worst === null ? '' : '+' + f0(d.a.worst), d => d.a.worst || 0, 'n']]
       .concat(ruleIds.map(id => [esc((S.rules[id] || {}).name || id) + ` <span class="small">×${(S.rules[id] || {}).weight || ''}</span>`, d => d.rules[id] || 0, d => d.rules[id] || 0, 'n']))
-      .concat([['Pleins', d => d.a.fills, null, 'n'], ['Siphonages suspects', d => d.a.siph, null, 'n'], ['Véhicules', d => esc(Object.keys(d.a.plates).join(', '))]]), sub))}`;
+      .concat([['Pleins', d => d.a.fills, null, 'n'], ['Siphonages suspects', d => d.a.siph, null, 'n'], ['Véhicules', d => esc(Object.keys(d.a.plates).join(', '))]]), sub, { page: true }))}`;
     $('#rkpdf').onclick = () => { try { pdf(); } catch (e) { alert('PDF impossible : ' + e.message); } };
   };
   window.__rerender = render; render();
@@ -660,26 +757,41 @@ async function pageAlertes() {
   const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   const qs = new URLSearchParams(location.hash.split('?')[1] || ''), p = period();
   const from = qs.get('jour') || p.from, to = qs.get('jour') || p.to;
-  const ok = inAgency(), rows = await alertShifts((await all('alerts', '*', q => q.gte('day', from).lte('day', to), ['day', false])).filter(r => ok(r.vehicle_key)));
+  const ok = inAgency(), keys = agFilter() || mineOn() ? S.vehList.filter(v => ok(v.key)).map(v => v.key) : null, kset = keys && new Set(keys);
   const f = Object.assign({}, lsJSON('fal')); if (qs.get('plaque')) f.plate = qs.get('plaque');
-  const types = [...new Set(rows.map(r => r.type))].sort();
-  if (rid !== ROUTING) return;
+  // une page d'alertes lue à la fois (une alerte par véhicule, règle et événement : des milliers par mois) ; types proposés et
+  // total de la période comptés dans la base (alert_counts), sans lire toutes les alertes
+  const [ac, pc] = await Promise.all([rpcAll('alert_counts', { p_from: from, p_to: to }, ['vehicle_key', 'type', 'severity', 'status']), all('plate_changes', 'old_plate,new_plate').catch(() => [])]);
+  const mine = ac.filter(x => !kset || kset.has(x.vehicle_key)), nAll = mine.reduce((s, x) => s + x.n, 0), types = [...new Set(mine.map(x => x.type))].sort();
+  const cm = buildCanonMap(S.vehList, pc);
+  const pk = () => f.plate && normPlate(f.plate) ? cm[normPlate(f.plate)] || normPlate(f.plate) : '';   // plaque saisie -> véhicule (toutes ses plaques)
+  const SORT = { 0: [['day'], ['time', false]], 1: [['time', false]], 3: [['plate']], 4: [['driver_name']], 5: [['type']], 7: [['value']], 9: [['status']] };
+  let rows = [], c = pgCalc(0, 1, PG_DEF);
+  const load = async () => {
+    const k = pk(), o = pgSortOrder('talall', SORT, [['day', false], ['time', false, false]]);
+    const build = q => { q = q.gte('day', from).lte('day', to); if (keys) q = q.in('vehicle_key', keys.concat(['-']));
+      if (f.sev) q = q.eq('severity', f.sev); if (f.st) q = q.eq('status', f.st); if (f.type) q = q.eq('type', f.type); if (k) q = q.eq('vehicle_key', k); return q; };
+    const r = await pgLoad('talall', JSON.stringify([from, to, keys, f.sev, f.st, f.type, k, o.sig]), pgQuery('alerts', '*', build, o.order));
+    const sh = await alertShifts(r.rows);   // shift de chaque alerte de la page (contrat en cours à son heure)
+    if (rid !== ROUTING) return;
+    rows = sh; c = r.c; render();
+  };
   const render = () => {
-    const list = rows.filter(r => (!f.sev || r.severity === f.sev) && (!f.st || r.status === f.st) && (!f.type || r.type === f.type) && (!f.plate || normPlate(r.plate) === normPlate(f.plate)));
-    $('#page').innerHTML = `<div class="head"><h1>Alertes</h1><div class="sub">${list.length} alertes sur ${rows.length}${qs.get('jour') ? ' le ' + esc(fmtDay(qs.get('jour'))) : ''}. ${canEdit() ? 'Statut et commentaire enregistrés automatiquement.' : ''}</div></div>
+    $('#page').innerHTML = `<div class="head"><h1>Alertes</h1><div class="sub">${c.total} alertes sur ${nAll}${qs.get('jour') ? ' le ' + esc(fmtDay(qs.get('jour'))) : ''}. ${canEdit() ? 'Statut et commentaire enregistrés automatiquement.' : ''}</div></div>
     ${qs.get('jour') ? '' : periodBar(go)}
     <div class="bar"><label>Gravité <select id="fsev"><option value="">Toutes</option>${['Critique', 'Haute', 'Moyenne', 'Info'].map(x => `<option ${f.sev === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
       <label>Statut <select id="fst"><option value="">Tous</option>${['À traiter', 'En cours', 'Traité', 'Faux positif'].map(x => `<option ${f.st === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
       <label>Type <select id="ftype"><option value="">Tous</option>${types.map(x => `<option ${f.type === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
       <label>Plaque <input id="fplate" value="${esc(f.plate || '')}" size="10"></label></div>
-    ${alertTable('talall', list, canEdit())}`;
-    const set = (k, v) => { f[k] = v; const s = Object.assign({}, f); delete s.plate; lsSet('fal', s); render(); };
+    ${alertTable('talall', rows, canEdit(), c)}`;
+    const set = (k, v) => { f[k] = v; const s = Object.assign({}, f); delete s.plate; lsSet('fal', s); load().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }); };
     $('#fsev').onchange = e => set('sev', e.target.value); $('#fst').onchange = e => set('st', e.target.value); $('#ftype').onchange = e => set('type', e.target.value);
     $('#fplate').onchange = e => set('plate', e.target.value);
     document.querySelectorAll('.alst').forEach(s => { s.onchange = () => saveAlert(s.dataset.al, { status: s.value }, rows); });
     document.querySelectorAll('.alc').forEach(s => { s.onchange = () => saveAlert(s.dataset.alc, { comment: s.value }, rows); });
   };
-  window.__rerender = render; render();
+  PG.cb.talall = load; window.__rerender = load;   // page, tri : relecture de la page dans la base
+  await load();
 }
 async function saveAlert(id, patch, rows) {
   const { error } = await sb.from('alerts').update(patch).eq('id', id);
@@ -727,7 +839,7 @@ async function pageContrats() {
     <h2>Contrats des 40 derniers jours <input id="csearch" placeholder="Rechercher (nom, plaque, n°…)" value="${esc(search)}"></h2>
     ${table('tctr', [['N° contrat', c => esc(c.num)], ['Chauffeur', c => `<b>${esc(c.name)}</b>`, c => c.name], ['Code', c => esc(c.client_code)], ['Plaque', c => plate(c.plate), c => c.plate],
       ['Véhicule', c => S.veh[c.vehicle_key] ? plate(S.veh[c.vehicle_key].plate) : `<span class="badge high">inconnu</span>`, c => c.vehicle_key], ['Début', c => fmtDTY(c.start_at), c => c.start_at],
-      ['Fin', finTxt, c => c.end_at || (c._next ? 'y' : 'z')], ['Statut', c => esc(c.status || '')], ['Téléphone', c => esc(c.phone || '')]], list.slice(0, 500))}`;
+      ['Fin', finTxt, c => c.end_at || (c._next ? 'y' : 'z')], ['Statut', c => esc(c.status || '')], ['Téléphone', c => esc(c.phone || '')]], list, { page: true, sig: s, empty: s ? 'Aucun contrat trouvé' : 'Aucun contrat' })}`;
     const fi = $('#cfile'); if (fi) fi.onchange = () => importFile(fi.files[0]);
     const cs = $('#csearch'); cs.oninput = () => { search = cs.value; const pos = cs.selectionStart; render(); const n = $('#csearch'); n.focus(); n.setSelectionRange(pos, pos); };
   };
@@ -925,7 +1037,7 @@ async function pageFiches() {
       ['Origine', d => d.source === 'manuel' ? '<span class="badge info">ajouté</span>' : 'contrats', d => d.source], ['Statut', d => badge(d.status, d.status === 'NOUVEAU' ? 'info' : ''), d => d.status],
       ['Contrats', d => d.n_contracts || 0, d => d.n_contracts || 0, 'n'], ['Dernier contrat', d => fmtDTY(d.last_contract), d => d.last_contract || ''],
       ['Note', d => canEdit() ? `<input class="ded" data-c="note" data-k="${esc(d.code)}" value="${esc(d.note || '')}" size="16">` : esc(d.note || '')],
-      ['', d => canEdit() && d.source === 'manuel' && !d.n_contracts ? `<button class="ghost small" data-ddel="${esc(d.code)}">Supprimer</button>` : '']], sub), { none: 'Sans contrat', empty: 'Aucun chauffeur' })}`;
+      ['', d => canEdit() && d.source === 'manuel' && !d.n_contracts ? `<button class="ghost small" data-ddel="${esc(d.code)}">Supprimer</button>` : '']], sub, { page: true, sig: q }), { none: 'Sans contrat', empty: 'Aucun chauffeur' })}`;
     document.querySelectorAll('.ded').forEach(i => { i.onchange = async () => {
       const c = i.dataset.c, val = c === 'agency_id' ? (i.value ? +i.value : null) : (i.value.trim() || null);
       const { error } = await sb.from('drivers').update({ [c]: val }).eq('code', i.dataset.k);
@@ -1171,8 +1283,7 @@ async function pageAgences() {
 // ---------- RÉGLAGES (admin) ----------
 async function pageReglages() {
   const my = ROUTING;
-  const [params, rules, users, logs, jobs, recs, scheds, types, usage] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
-    sb.from('logs').select('*').order('id', { ascending: false }).limit(150), sb.from('jobs').select('*').order('id', { ascending: false }).limit(30),
+  const [params, rules, users, recs, scheds, types, usage] = await Promise.all([all('params', '*', null, ['sort']), all('rules', '*', null, ['weight', false]), all('profiles', '*', null, ['created_at']),
     all('alert_recipients', '*', null, ['id']), all('report_schedules', '*', null, ['id']), all('alerts', 'type', q => q.gte('day', addDays(today(), -60))), usageLoad(true)]);
   if (my !== ROUTING) return;   // autre page demandée pendant le chargement : ne pas l'écraser
   const alTypes = [...new Set(types.map(x => x.type))].sort();
@@ -1211,9 +1322,9 @@ async function pageReglages() {
     <h2>Règles Geotab (poids dans le score de danger)</h2>
     ${table('trul', [['Règle', r => esc(rptRuleFr(r.name)) + (rptRuleFr(r.name) !== r.name ? ` <span class="small">(Geotab : ${esc(r.name)})</span>` : '')], ['Catégorie', r => esc(r.category || '')], ['Poids', r => `<input class="red_" data-k="${esc(r.id)}" value="${esc(r.weight)}" size="4">`, r => r.weight], ['Note', r => esc(r.note || ''), null, 'wide']], rules)}
     <h2>Demandes au collecteur</h2>
-    ${table('tjob', [['Demande', j => esc(j.kind) + (j.arg ? ' (' + esc(j.arg) + ')' : '')], ['Le', j => fmtDTY(j.created_at)], ['Terminée', j => j.done_at ? fmtDTY(j.done_at) : '<span class="badge warn">en attente</span>'], ['Résultat', j => esc(j.result || ''), null, 'wide']], jobs.data || [])}
+    <div id="tjobbox"><div class="loading">Chargement…</div></div>
     <h2>Journal technique</h2>
-    ${table('tlog', [['Le', l => fmtDTY(l.at)], ['Action', l => esc(l.action)], ['Détail', l => esc(l.detail), null, 'wide'], ['Durée (s)', l => l.dur_s == null ? '' : f1(l.dur_s), null, 'n']], logs.data || [])}`;
+    <div id="tlogbox"><div class="loading">Chargement…</div></div>`;
   document.querySelectorAll('[data-upg]').forEach(b => { b.onclick = () => {
     const u = users.find(x => x.user_id === b.dataset.upg), cur = Array.isArray(u.pages) ? u.pages : null;
     $('#upgbox').innerHTML = `<div class="panel"><b>Volets visibles par ${esc(u.email)}</b> <span class="small">(${ROLE_TXT[u.role]})</span>
@@ -1240,6 +1351,11 @@ async function pageReglages() {
   $('#rsgo').onclick = async () => { await job('resync', $('#rsfrom').value + '|' + $('#rsto').value).then(() => done('Retéléchargement demandé.'), fail); };
   $('#vhgo').onclick = async () => { await job('import_vehicles').then(() => done('Mise à jour des véhicules demandée.'), fail); };
   const reload = () => pageReglages().catch(e => { $('#page').innerHTML = msg('Erreur : ' + esc(e.message), 'err'); });
+  // demandes au collecteur et journal technique (30 jours conservés, plusieurs lignes par passage de 5 min) : une page lue à la fois
+  pgBox('tjobbox', 'tjob', 'jobs', [['Demande', j => esc(j.kind) + (j.arg ? ' (' + esc(j.arg) + ')' : '')], ['Le', j => fmtDTY(j.created_at)], ['Terminée', j => j.done_at ? fmtDTY(j.done_at) : '<span class="badge warn">en attente</span>'], ['Résultat', j => esc(j.result || ''), null, 'wide']],
+    { order: [['id', false]], sort: { 0: [['kind']], 1: [['created_at']], 2: [['done_at']] }, empty: 'Aucune demande' });
+  pgBox('tlogbox', 'tlog', 'logs', [['Le', l => fmtDTY(l.at)], ['Action', l => esc(l.action)], ['Détail', l => esc(l.detail), null, 'wide'], ['Durée (s)', l => l.dur_s == null ? '' : f1(l.dur_s), null, 'n']],
+    { order: [['id', false]], sort: { 0: [['at']], 1: [['action']], 3: [['dur_s']] }, empty: 'Journal vide' });
   bindSpeedSettings(params);
   bindExtSettings(params);
   $('#radd').onclick = async () => {
@@ -1334,14 +1450,16 @@ async function route() {
 }
 window.addEventListener('hashchange', route);
 sb.auth.onAuthStateChange(async (ev, session) => {
+  cacheUser(session);   // autre utilisateur ou déconnexion : lectures gardées oubliées (site/cache.js)
   if (ev === 'PASSWORD_RECOVERY') {
     const p = prompt('Nouveau mot de passe (6 caractères minimum) :');
     if (p) { const { error } = await sb.auth.updateUser({ password: p }); alert(error ? error.message : 'Mot de passe changé.'); }
   }
   const changed = (S.session && S.session.user.id) !== (session && session.user.id);
   if (changed) {   // autre utilisateur : rien de ce qui a été lu pour le précédent n'est gardé (droits par agence, planning)
-    SESS.id = sessNewId(); SESS.off = false;   // connexions : nouvelle session pour le nouvel utilisateur
+    sessReset();   // connexions : nouvelle session, pastille des connectés oubliée (jamais montrée à un autre compte)
     S.profile = null; S.P = null; S.rhMe = undefined; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
+    S.health = null; S.nbal = null; SHELL_KEY = '';   // bas du menu : collecte et pastille Alertes oubliées, menu reconstruit
     Object.assign(LIVE, { rows: [], pos: {}, at: 0, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {}, drv: {}, drvAt: 0, sel: '' });
   }
   S.session = session; if (changed) route();
