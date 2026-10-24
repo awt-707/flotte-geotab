@@ -391,9 +391,9 @@ function backup_() {
   const o = { at: new Date().toISOString(), version: COLLECTOR_V };
   [['vehicles', 'key'], ['plate_changes', 'id'], ['drivers', 'code'], ['contracts', 'num'], ['rules', 'id'], ['params', 'key'], ['profiles', 'user_id'],
     ['parc', 'plate'], ['agencies', 'id'], ['user_agencies', 'user_id,agency_id'], ['alert_recipients', 'id'], ['report_schedules', 'id'],
-    ['fuel_card_tx', 'id'], ['manager_shifts', 'agency_id,user_id,day,shift'], ['manifest_config', 'id'], ['manifests', 'id'], ['cash_moves', 'id'], ['uber_drivers', 'uuid'], ['employers', 'id'], ['work_contracts', 'id']].forEach(t => {
+    ['fuel_card_tx', 'id'], ['manager_shifts', 'agency_id,user_id,day,shift'], ['manifest_config', 'id'], ['manifests', 'id'], ['cash_moves', 'id'], ['uber_drivers', 'uuid'], ['employers', 'id'], ['work_contracts', 'id'], ['hr_employees', 'id'], ['hr_events', 'id'], ['hr_clock', 'id']].forEach(t => {
     // tables ajoutées par les migrations récentes : absentes tant que la migration n'est pas exécutée (sauvegarde du reste quand même)
-    try { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); } catch (e) { if (t[0] in { fuel_card_tx: 1, manager_shifts: 1, manifest_config: 1, manifests: 1, cash_moves: 1, uber_drivers: 1, employers: 1, work_contracts: 1 }) o[t[0]] = 'absente : ' + e.message; else throw e; }
+    try { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); } catch (e) { if (t[0] in { fuel_card_tx: 1, manager_shifts: 1, manifest_config: 1, manifests: 1, cash_moves: 1, uber_drivers: 1, employers: 1, work_contracts: 1, hr_employees: 1, hr_events: 1, hr_clock: 1 }) o[t[0]] = 'absente : ' + e.message; else throw e; }
   });
   o.alerts = dbSelect_('alerts', 'select=id,status,comment&or=' + enc_('(status.neq.À traiter,comment.neq.)'), 'id');
   o.fuel_status = dbSelect_('fuel', 'select=id,status&status=not.in.' + enc_('("À vérifier","Info")'), 'id');

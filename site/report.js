@@ -579,7 +579,7 @@ function rptFuelCard(o) {
   return { rows: out, orphans: orphans, fit: fit };
 }
 /** Rapport fait de tableaux déjà prêts (pages Conduite, Classement) : { title, period, agency, summary, tables } */
-function rptSimple(o) { return { kind: o.kind || 'tableau', title: o.title, period: o.period, from: o.from, to: o.to, agency: o.agency || 'Toutes les agences', generatedAt: o.generatedAt || new Date(), summary: o.summary || [], tables: o.tables || [], fileName: o.fileName }; }
+function rptSimple(o) { return { kind: o.kind || 'tableau', title: o.title, period: o.period, from: o.from, to: o.to, agency: o.agency || 'Toutes les agences', generatedAt: o.generatedAt || new Date(), summary: o.summary || [], tables: o.tables || [], fileName: o.fileName, footer: o.footer }; }
 
 /** Tableaux du rapport (colonnes + lignes de texte), utilisés pour le HTML et pour le PDF du site */
 function rptTables(rep) {
@@ -603,7 +603,7 @@ function rptTables(rep) {
 }
 
 /** Corps HTML du rapport (affiché sur le site, converti en PDF par le collecteur) */
-var RPT_KIND = { caisse: 'Caisse', planning: 'Planning chauffeurs', conso: 'Rapport de consommation', chauffeur: 'Comportement chauffeur', conduite: 'Conduite des chauffeurs', classement: 'Classement des chauffeurs', finshift: 'Résultat de fin de shift', finshift_chauffeur: 'Fin de shift · chauffeur', carte: 'Anomalies carburant' };
+var RPT_KIND = { rh: 'Ressources humaines', caisse: 'Caisse', planning: 'Planning chauffeurs', conso: 'Rapport de consommation', chauffeur: 'Comportement chauffeur', conduite: 'Conduite des chauffeurs', classement: 'Classement des chauffeurs', finshift: 'Résultat de fin de shift', finshift_chauffeur: 'Fin de shift · chauffeur', carte: 'Anomalies carburant' };
 var RPT_LEVEL = { 'Dangereux': 'crit', 'Critique': 'crit', 'Élevé': 'high', 'Haute': 'high', 'Modéré': 'warn', 'Moyenne': 'warn', 'Faible': 'ok' };
 /** Rapport en HTML (page Rapports du site, PDF du collecteur) : en-tête, résumé en cartes (4 par ligne), une section par tableau */
 function rptHtml(rep) {

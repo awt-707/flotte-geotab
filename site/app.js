@@ -262,31 +262,37 @@ async function pageApplication() {
 
 // ---------- Volets visibles par utilisateur (Réglages > Utilisateurs) : profiles.pages = liste des volets, vide = tous ----------
 // Le menu ne montre que les volets choisis ; les données restent limitées par agence dans la base.
-const ALWAYS_PAGES = { vehicule: 1, chauffeur: 1, application: 1 };   // fiches ouvertes depuis les autres volets, page de téléchargement
+const ALWAYS_PAGES = { vehicule: 1, chauffeur: 1, application: 1, moi: 1 };   // fiches ouvertes depuis les autres volets, page de téléchargement
 function allPages() { return NAV.filter(n => !ADMIN_PAGES[n[0]]).map(n => [n[0], n[1]]).concat(extSites().map(x => ['x-' + x.id, x.name + ' (application)'])); }
 function canSee(page) {
   if (isAdmin() || ALWAYS_PAGES[page] || !S.profile || !Array.isArray(S.profile.pages)) return true;
-  return S.profile.pages.includes(page);
+  return S.profile.pages.includes(page === 'travail' ? 'rh' : page);   // contrats de travail : dans le dossier Ressources humaines
 }
 function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k] && canSee(k)); return p || 'application'; }
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
-  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['caisse', 'Caisse'], ['travail', 'Contrats de travail'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
 function shell() {
   const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct';
   $('#app').innerHTML = `<div class="layout">
   <aside class="side">
     ${BRAND}
-    <nav aria-label="Pages">${NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (!/^(caisse|travail)$/.test(n[0]) || canEdit()) && canSee(n[0])).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
+    <nav aria-label="Pages">${NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (!/^(caisse|rh)$/.test(n[0]) || canEdit()) && canSee(n[0])).map(n => `<a href="#/${n[0]}" class="${n[0] === page ? 'on' : ''}"${n[0] === page ? ' aria-current="page"' : ''}>${n[1]}${n[0] === 'alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` +
+      (n[0] === 'rh' && /^(rh|travail)$/.test(page) ? rhTabsFor().map(x => { const on = x[0] === 'travail' ? page === 'travail' : page === 'rh' && (new URLSearchParams(location.hash.split('?')[1] || '').get('t') || 'bord') === x[0]; return `<a href="${rhHref(x[0])}" class="navsub${on ? ' on' : ''}">${x[1]}</a>`; }).join('') : '') +
       (n[0] !== 'direct' ? '' : appMode() === 'link' ? `<a href="${esc(appUber())}" id="navuber">Uber Fleet</a>` :
         navSites().filter(x => canSee('x-' + x.id)).map(x => `<a href="#/x-${x.id}" class="navext${page === 'x-' + x.id ? ' on' : ''}" data-ext="${x.id}"${page === 'x-' + x.id ? ' aria-current="page"' : ''}>${esc(x.name)}</a>`).join(''))).join('')}</nav>
-    <div class="foot">${mineFoot()}${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
+    <div class="foot">${rhFoot()}${mineFoot()}${S.agencies.length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined)}</select></label>` : ''}
       ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}<span id="health" class="health">Collecte…</span>${isAdmin() ? '<a id="onl" class="onl" href="#/connexions" hidden title="Qui est connecté en ce moment"></a>' : ''}${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">Application Mac / Windows</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
   <main id="page"><div class="loading">Chargement…</div></main></div>`;
-  $('#logout').onclick = async () => { await sessEnd(); await sb.auth.signOut(); location.hash = ''; };
+  $('#logout').onclick = async () => {
+    // pointage : fin de journée proposée avant la déconnexion
+    if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && confirm('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).catch(() => { });
+    await sessEnd(); await sb.auth.signOut(); location.hash = '';
+  };
+  rhFootBind();
   $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
   const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
   const mo = $('#mineon'); if (mo) mo.onchange = () => { try { localStorage.setItem('mesveh', mo.checked ? '1' : '0'); } catch (e) { } route(); };
@@ -1042,7 +1048,7 @@ function reportPdf(rep) {
     if (i > 1) { try { doc.addImage(RPT_LOGO, 'PNG', M, 7.5, 22, 5.4); } catch (e) { }
       font('normal', 8, C.mute); doc.text(doc.splitTextToSize(cl(rep.title), 150)[0] + '  ·  ' + sub, W - M, 11.5, { align: 'right' }); doc.line(M, 15.5, W - M, 15.5); }
     doc.line(M, H - 11, W - M, H - 11);
-    font('normal', 7, C.mute); doc.text('Ludy · Supervision de flotte — données mesurées par Geotab uniquement ; « ' + RPT_NM + ' » quand Geotab ne fournit pas la valeur.', M, H - 7);
+    font('normal', 7, C.mute); doc.text(cl(rep.footer || 'Ludy · Supervision de flotte — données mesurées par Geotab uniquement ; « ' + RPT_NM + ' » quand Geotab ne fournit pas la valeur.'), M, H - 7);
     doc.text('Page ' + i + ' / ' + n, W - M, H - 7, { align: 'right' });
   }
   if (rep.asBlob) return { blob: doc.output('blob'), name: rptFileName(rep) + '.pdf' };   // partage (WhatsApp) au lieu du téléchargement
@@ -1281,7 +1287,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, caisse: pageCaisse, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
@@ -1299,6 +1305,7 @@ async function route() {
   }
   if (S.profile.role === 'pending') { pendingView(); return; }
   try { await loadRef(); } catch (e) { $('#app').innerHTML = msg('Base inaccessible : ' + esc(e.message), 'err'); return; }
+  if (!(await rhGate(my))) return;   // pointage : date de naissance à l'ouverture de Ludy, pause en cours
   await mineLoad();   // planning : véhicules confiés pour le shift en cours
   if (my !== ROUTING) return;   // autre page demandée pendant le chargement
   if (!canSee(pageOf())) { location.replace('#/' + firstAllowed()); return; }   // volet non autorisé à cet utilisateur
@@ -1314,7 +1321,7 @@ async function route() {
   // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)
   S.timers.push(setInterval(async () => {
     const was = S.mine ? [...S.mine].sort().join() : '', k = S.mineKey; await mineLoad();
-    if (my === ROUTING && S.mineKey !== k && (S.mine ? [...S.mine].sort().join() : '') !== was && !/^(manifeste|courses|travail|reglages|planning|x-)/.test(pageOf())) route();
+    if (my === ROUTING && S.mineKey !== k && (S.mine ? [...S.mine].sort().join() : '') !== was && !/^(manifeste|courses|travail|rh|reglages|planning|x-)/.test(pageOf())) route();
   }, 60000));
   if (page === 'direct') {
     LIVE.retryAt = 0; LIVE.primed = false; liveTick(my);
@@ -1334,7 +1341,7 @@ sb.auth.onAuthStateChange(async (ev, session) => {
   const changed = (S.session && S.session.user.id) !== (session && session.user.id);
   if (changed) {   // autre utilisateur : rien de ce qui a été lu pour le précédent n'est gardé (droits par agence, planning)
     SESS.id = sessNewId(); SESS.off = false;   // connexions : nouvelle session pour le nouvel utilisateur
-    S.profile = null; S.P = null; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
+    S.profile = null; S.P = null; S.rhMe = undefined; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
     Object.assign(LIVE, { rows: [], pos: {}, at: 0, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {}, drv: {}, drvAt: 0, sel: '' });
   }
   S.session = session; if (changed) route();
