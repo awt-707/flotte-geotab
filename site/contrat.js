@@ -57,8 +57,10 @@ async function pageContratsTravail() {
   if (err) { $('#page').innerHTML = head + msg('Contrats de travail pas encore installés dans la base : exécuter <b>supabase/migrations/20261109000000_contrats_travail.sql</b> dans Supabase &gt; SQL Editor. (' + esc(err) + ')', 'err'); return; }
   const st = CT.draft || (CT.draft = { civ: 'M', nat_fr: 'Marocaine', employer_id: (CT.emp.find(x => x.active) || {}).id || '', agency: S.agencies.length === 1 ? S.agencies[0].id : '' });
   const act = CT.emp.filter(x => x.active || String(x.id) === String(st.employer_id));
-  const inp = (k, label, size, o) => { o = o || {};
-    return `<label>${label} <input id="ct_${k}" data-ct="${k}" value="${esc(st[k] == null ? '' : st[k])}"${size ? ` size="${size}"` : ''}${o.type ? ` type="${o.type}"` : ''}${o.ar ? ' dir="rtl"' : ''}${o.ph ? ` placeholder="${esc(o.ph)}"` : ''}${o.list ? ` list="${o.list}" autocomplete="off"` : ''}></label>`; };
+  // dates : saisie au clavier JJ/MM/AAAA (le calendrier du navigateur ne permet pas toujours de changer l'année ni de taper les chiffres)
+  const inp = (k, label, size, o) => { o = o || {}; const val = o.date ? ctrDate(st[k]) : st[k];
+    if (o.date) Object.assign(o, { ph: 'JJ/MM/AAAA' }), size = 11;
+    return `<label>${label} <input id="ct_${k}" data-ct="${k}" value="${esc(val == null ? '' : val)}"${size ? ` size="${size}"` : ''}${o.type ? ` type="${o.type}"` : ''}${o.date ? ' data-ctd="1" inputmode="numeric" maxlength="10" autocomplete="off"' : ''}${o.ar ? ' dir="rtl"' : ''}${o.ph ? ` placeholder="${esc(o.ph)}"` : ''}${o.list ? ` list="${o.list}" autocomplete="off"` : ''}></label>`; };
   $('#page').innerHTML = head + `
     ${!CT.emp.length ? msg(isAdmin() ? 'Aucune société : l\'ajouter avec « Nouvelle société » (nom, siège, RC, dirigeant…).' : 'Aucune société enregistrée : l\'administrateur doit l\'ajouter (Contrats de travail &gt; Nouvelle société).', 'warn') : ''}
     <div class="grid2 mfgrid"><div>
@@ -71,14 +73,14 @@ async function pageContratsTravail() {
           <datalist id="ctdrvl">${CT.drivers.filter(d => d.code !== HORS && d.name).map(d => `<option value="${esc(d.name)}"></option>`).join('')}</datalist></div>
         <div class="mfrow"><label>Civilité <select id="ct_civ" data-ct="civ"><option value="M" ${st.civ !== 'Mme' ? 'selected' : ''}>M.</option><option value="Mme" ${st.civ === 'Mme' ? 'selected' : ''}>Mme</option></select></label>
           ${inp('nom', 'Nom et prénom', 24, { ph: 'Ex. Ali BENNANI' })}${inp('nom_ar', 'Nom et prénom en arabe (option)', 22, { ar: 1 })}</div>
-        <div class="mfrow">${inp('naiss', 'Date de naissance', 0, { type: 'date' })}${inp('lieu', 'Lieu de naissance', 18)}${inp('lieu_ar', 'Lieu de naissance en arabe (option)', 18, { ar: 1 })}</div>
+        <div class="mfrow">${inp('naiss', 'Date de naissance', 0, { date: 1 })}${inp('lieu', 'Lieu de naissance', 18)}${inp('lieu_ar', 'Lieu de naissance en arabe (option)', 18, { ar: 1 })}</div>
         <div class="mfrow">${inp('nat_fr', 'Nationalité', 12)}${inp('nat_ar', 'Nationalité en arabe', 12, { ar: 1, ph: '' })}${inp('cin', 'N° CIN', 12, { ph: 'Ex. AB123456' })}</div>
         <div class="mfrow">${inp('adresse', 'Adresse', 36)}${inp('adresse_ar', 'Adresse en arabe (option)', 36, { ar: 1 })}</div>
         <div class="mfrow">${inp('tel', 'Téléphone (pour WhatsApp, pas dans le contrat)', 15, { ph: '06…' })}
           <label>Agence <select id="ct_agency" data-ct="agency">${agOptions(st.agency, isAdmin() ? '— aucune —' : '— choisir —')}</select></label></div>
         <div class="small">Sans traduction arabe, le nom, le lieu et l'adresse sont repris en lettres latines dans la colonne arabe.</div></div>
       <div class="panel"><h2>Contrat</h2>
-        <div class="mfrow">${inp('effet', 'Date d\'effet', 0, { type: 'date' })}${inp('sal', 'Salaire net mensuel (dirhams)', 0, { type: 'number' })}${inp('date_sig', 'Date de signature (vide : à écrire à la main)', 0, { type: 'date' })}</div>
+        <div class="mfrow">${inp('effet', 'Date d\'effet', 0, { date: 1 })}${inp('sal', 'Salaire net mensuel (dirhams)', 0, { type: 'number' })}${inp('date_sig', 'Date de signature (vide : à écrire à la main)', 0, { date: 1 })}</div>
         <div class="mfrow">${inp('sal_fr', 'Salaire en lettres (français)', 34)}${inp('sal_ar', 'Salaire en lettres (arabe)', 30, { ar: 1 })}</div>
         <div class="small">Montant en lettres proposé automatiquement (gris) : à corriger si besoin en le tapant.</div>
         <div class="mfgo"><button id="ctgen">Générer le contrat PDF</button> <span id="ctmiss" class="small"></span></div></div>
@@ -98,7 +100,13 @@ function ctrCoInfo() {
 }
 function ctrRead() {
   const st = CT.draft;
-  document.querySelectorAll('[data-ct]').forEach(i => { st[i.dataset.ct] = i.value.trim(); });
+  st.badDates = [];
+  document.querySelectorAll('[data-ct]').forEach(i => {
+    if (!i.dataset.ctd) { st[i.dataset.ct] = i.value.trim(); return; }
+    const d = ctrParseDate(i.value);
+    st[i.dataset.ct] = d || ''; i.classList.toggle('bad', d === null);
+    if (d === null) st.badDates.push(i.closest('label').firstChild.textContent.trim());
+  });
   st.employer_id = $('#ctemp').value; st.drvName = $('#ctdrv').value.trim();
   return st;
 }
@@ -109,6 +117,7 @@ function ctrHints() {
   $('#ct_nat_ar').placeholder = v.nat_ar || 'à saisir';
   const c = ctrCo(), miss = c ? ctrMissing(c, st) : ['Société'];
   if (!isAdmin() && !st.agency) miss.push('Agence');
+  st.badDates.forEach(l => miss.push(l + ' invalide (JJ/MM/AAAA)'));
   const co = miss.filter(x => /^Société : /.test(x)).map(x => x.slice(10)), rest = miss.filter(x => !/^Société : /.test(x));
   $('#ctmiss').textContent = !miss.length ? 'Prêt.' : [co.length ? 'Fiche de la société à compléter (' + (isAdmin() ? 'bouton Modifier' : 'administrateur') + ') : ' + co.join(', ') + '.' : '',
     rest.length ? 'À compléter : ' + rest.join(', ') + '.' : ''].filter(Boolean).join(' ');
@@ -116,7 +125,14 @@ function ctrHints() {
 }
 function ctrBind() {
   document.querySelectorAll('[data-ct]').forEach(i => { i.oninput = ctrHints; i.onchange = ctrHints; });
-  $('#ct_effet').addEventListener('change', () => { if (!CT.draft.date_sig && !$('#ct_date_sig').value) { $('#ct_date_sig').value = $('#ct_effet').value; ctrHints(); } });
+  // dates : « / » ajoutés en tapant les chiffres (31011990 -> 31/01/1990)
+  document.querySelectorAll('[data-ctd]').forEach(i => i.addEventListener('input', e => {
+    if (e.inputType && /^delete/.test(e.inputType)) return;
+    const dg = i.value.replace(/\D/g, '').slice(0, 8);
+    if (/^\d+$/.test(i.value.replace(/\//g, '')) && i.selectionStart === i.value.length) i.value = dg.slice(0, 2) + (dg.length > 2 ? '/' + dg.slice(2, 4) : '') + (dg.length > 4 ? '/' + dg.slice(4) : '');
+    ctrHints();
+  }));
+  $('#ct_effet').addEventListener('change', () => { if (!$('#ct_date_sig').value && ctrParseDate($('#ct_effet').value)) { $('#ct_date_sig').value = $('#ct_effet').value; ctrHints(); } });
   $('#ctemp').onchange = () => { ctrRead(); ctrCoInfo(); ctrHints(); };
   $('#ctdrv').onchange = () => {
     const n = $('#ctdrv').value.trim().toLowerCase(), d = CT.drivers.find(x => String(x.name || '').toLowerCase() === n);

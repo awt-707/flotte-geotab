@@ -286,6 +286,18 @@ function ctrArWords(n) {
 function ctrAmount(n) { return String(Math.floor(Math.abs(+n || 0))).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
 /** 2026-08-31 -> 31/08/2026 */
 function ctrDate(s) { const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + '/' + m[2] + '/' + m[1] : String(s || ''); }
+/** Date saisie au clavier (31/01/1990, 31-01-1990, 31011990 ou 1990-01-31) -> 1990-01-31 ; '' si vide, null si invalide */
+function ctrParseDate(v) {
+  v = String(v == null ? '' : v).trim();
+  if (!v) return '';
+  let m = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/), y, mo, d;
+  if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+  else if ((m = v.match(/^(\d{1,2})[\/.\- ](\d{1,2})[\/.\- ](\d{4})$/) || v.match(/^(\d{2})(\d{2})(\d{4})$/))) { d = +m[1]; mo = +m[2]; y = +m[3]; }
+  else return null;
+  const t = new Date(Date.UTC(y, mo - 1, d));
+  if (y < 1900 || y > 2100 || t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== d) return null;
+  return y + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
 const ctrBi = v => v ? (/^[\u0600-\u06FF]/.test(v) ? 'ب' + v : 'بـ ' + v) : '';
 const ctrClean = v => String(v == null ? '' : v).replace(/[<>{}]/g, '').replace(/\s+/g, ' ').trim();
 
@@ -360,4 +372,4 @@ function ctrBlocks(c, e) {
   return rows;
 }
 
-if (typeof module === 'object' && module.exports) module.exports = { CTR_ROWS, ctrFrWords, ctrArWords, ctrAmount, ctrDate, ctrFields, ctrMissing, ctrBlocks };
+if (typeof module === 'object' && module.exports) module.exports = { CTR_ROWS, ctrParseDate, ctrFrWords, ctrArWords, ctrAmount, ctrDate, ctrFields, ctrMissing, ctrBlocks };
