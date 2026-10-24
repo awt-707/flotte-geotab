@@ -44,7 +44,8 @@ async function ctrLink(path) {
 
 async function pageContratsTravail() {
   const my = ROUTING;
-  const head = `<div class="head"><h1>Contrats de travail</h1><div class="sub">Contrat à durée indéterminée de chauffeur, français / arabe, repris du modèle : choisir la société, saisir le salarié, générer le PDF à signer. Plusieurs sociétés possibles (nom, dirigeant, siège…).</div></div>`;
+  const head = `<div class="head"><h1>Contrats de travail</h1><div class="sub">Contrat à durée indéterminée de chauffeur, français / arabe, repris du modèle : choisir la société, saisir le salarié, générer le PDF à signer. Plusieurs sociétés possibles (nom, dirigeant, siège…). La fiche du salarié est créée ou complétée dans les Ressources humaines.</div></div>`
+    + (typeof rhTabsFor === 'function' && canEdit() ? `<div class="tabs">${rhTabsFor().map(x => `<a href="${rhHref(x[0])}" class="${x[0] === 'travail' ? 'on' : ''}">${x[1]}</a>`).join('')}</div>` : '');
   if (!canEdit()) { $('#page').innerHTML = head + msg('Contrats de travail réservés aux gestionnaires et à l\'administrateur.', 'warn'); return; }
   $('#page').innerHTML = head + '<div class="loading">Chargement…</div>';
   let err = '';
@@ -197,13 +198,34 @@ async function ctrMake(c, st) {
   const row = { employer_id: emp ? emp.id : null, agency_id: ag, driver_code: e.driver_code || null, name: e.nom, cin: String(e.cin || '').toUpperCase(),
     effective_on: e.effet || null, pdf_path: path, data: { emp: e, company: c, file_name: name } };
   const ins = await sb.from('work_contracts').insert(row).select('id,created_at').single();
-  return { c, e, blob, name, link, path, upErr, saveErr: ins.error ? ins.error.message : '', row: ins.error ? null : Object.assign({}, row, ins.data) };
+  const empId = ins.error ? '' : await ctrLinkEmployee(e, emp ? emp.id : null, ins.data.id, ag);
+  return { c, e, blob, name, link, path, upErr, empId, saveErr: ins.error ? ins.error.message : '', row: ins.error ? null : Object.assign({}, row, ins.data, { employee_id: empId || null }) };
+}
+/** Fiche RH du chauffeur créée (ou complétée : seulement les champs vides) à la génération du contrat ; contrat rattaché à la fiche */
+async function ctrLinkEmployee(e, employerId, wcId, ag) {
+  try {
+    let cur = null;
+    if (e.employee_id) cur = (await sb.from('hr_employees').select('*').eq('id', e.employee_id).maybeSingle()).data;
+    if (!cur && e.driver_code) cur = (await sb.from('hr_employees').select('*').eq('driver_code', e.driver_code).maybeSingle()).data;
+    if (!cur && e.cin) { const r = await sb.from('hr_employees').select('*').ilike('cin', String(e.cin).trim()).limit(1); cur = r.data && r.data[0]; }
+    const fill = { name: e.nom, cin: String(e.cin || '').trim().toUpperCase() || null, birth_date: e.naiss || null, phone: e.tel || null, employer_id: employerId, agency_id: ag,
+      driver_code: e.driver_code || null, position: 'Chauffeur', hired_on: e.effet || null, salary: +e.sal || null };
+    let r;
+    if (cur) {
+      const up = { work_contract_id: wcId };
+      Object.keys(fill).forEach(k => { if (fill[k] != null && (cur[k] == null || cur[k] === '') && (k !== 'driver_code' || cur.kind === 'chauffeur')) up[k] = fill[k]; });
+      r = await sb.from('hr_employees').update(up).eq('id', cur.id).select('id').single();
+    } else r = await sb.from('hr_employees').insert(Object.assign({ kind: 'chauffeur', work_contract_id: wcId }, fill)).select('id').single();
+    if (r.error) return '';
+    await sb.from('work_contracts').update({ employee_id: r.data.id }).eq('id', wcId);
+    return r.data.id;
+  } catch (x) { return ''; }   // ressources humaines pas encore installées : le contrat reste valable
 }
 function ctrDone(m) {
   const box = $('#ctdone'); if (!box) return;
   const txt = ctrText(m.c, m.e, m.link), wa = typeof manifWa === 'function' ? manifWa(m.e.tel) : '';
   const canFile = (() => { try { return !!(navigator.canShare && navigator.canShare({ files: [new File([m.blob], m.name, { type: 'application/pdf' })] })); } catch (e) { return false; } })();
-  box.innerHTML = `<div class="panel mfok"><h2>Contrat prêt</h2><div class="small">${esc(m.name)} · à imprimer en deux exemplaires et à signer</div>
+  box.innerHTML = `<div class="panel mfok"><h2>Contrat prêt</h2><div class="small">${esc(m.name)} · à imprimer en deux exemplaires et à signer${m.empId ? ` · <a href="#/rh?t=fiche&id=${m.empId}">fiche du salarié (Ressources humaines)</a>` : ''}</div>
     ${m.saveErr ? msg('Contrat non enregistré dans l\'historique : ' + esc(m.saveErr), 'warn') : ''}
     ${m.link ? '' : msg('PDF non mis en ligne (' + esc(m.upErr || 'stockage indisponible') + ') : le message part sans lien, joignez le PDF téléchargé.', 'warn')}
     <div class="adact mfact"><button class="small" id="ctdl">Télécharger le PDF</button><button class="ghost small" id="ctopen">Ouvrir</button>

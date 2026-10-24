@@ -457,3 +457,19 @@ tfoot tr.ttot td { border-top: 2px solid var(--line); font-weight: 600; backgrou
 .ctco h3 { margin: 8px 0 4px; }
 input[dir="rtl"] { text-align: right; }
 input[data-ctd].bad { border-color: #c0392b; }
+/* Ressources humaines */
+.kvs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 16px; margin: 6px 0 10px; }
+.kv { display: flex; flex-direction: column; gap: 2px; }
+span.ok { color: var(--ok); } span.warn { color: var(--warn); } span.err { color: var(--crit); }
+.rhadd summary { cursor: pointer; font-weight: 600; margin: 10px 0 4px; }
+.rhfoot { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px; border: 1px solid rgba(255,255,255,.15); border-radius: 6px; }
+.rhfoot span.ok { color: #3ecf8e; } .rhfoot a { color: var(--side-ink); }
+.side nav a.navsub { padding: 5px 10px 5px 26px; font-size: 13px; font-weight: 400; }
+/* bouton principal petit : texte lisible sur le fond de couleur (.small donnait le gris des textes secondaires) */
+button.small:not(.ghost) { color: var(--acc-ink); }
+/* Dossiers du menu (Conduite et consommation, Ressources humaines) */
+.side nav .navsubs { display: contents; }
+.side nav .navsubs.closed { display: none; }
+.side nav a.navgrp::after { content: '▸'; margin-left: auto; opacity: .55; font-size: 11px; }
+.side nav a.navgrp.open { color: var(--side-hi); }
+.side nav a.navgrp.open::after { content: '▾'; }
