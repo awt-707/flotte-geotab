@@ -36,6 +36,11 @@ function cshDay(v) {
 /** Montant signé pour le solde d'une caisse : entrée +, sortie −, virement (hors caisse) 0 ; mouvement annulé 0 */
 function cshSigned(m) { if (m.cancelled_at) return 0; const a = cshN(m.amount); return m.flow === 'in' ? a : m.flow === 'out' ? -a : 0; }
 function cshLive(m) { return !m.cancelled_at; }
+/**
+ * Dépense payée par le chauffeur avec les espèces Uber : source « Chauffeur / Uber », « Chauffeur » ou non renseignée (règle du classeur) ;
+ * payée par une caisse (« Caisse - Dépenses », « Caisse RH », « Cash Nico ») ou la banque : pas prise sur les espèces Uber.
+ */
+function cshUberPaid(m) { const s = cshNorm(m.source); return !s || !/caisse|banque|nico/.test(s); }
 /** Solde de chaque caisse et total en espèces */
 function cshBalances(moves) {
   const b = {}; CASH_CAISSES.forEach(c => { b[c[0]] = 0; });
@@ -72,9 +77,9 @@ function cshLinks(o) {
 
 /**
  * Rapprochement des espèces Uber par chauffeur sur une période (onglet « Dashboard - Rappro Uber » du classeur) :
- * espèces Uber − dépenses « Course Uber » justifiées OK = théorique à remettre ; écart = théorique − encaissé net ;
+ * espèces Uber − dépenses « Course Uber » justifiées OK payées avec les espèces Uber (cshUberPaid) = théorique à remettre ; écart = théorique − encaissé net ;
  * écart > 0 : à retenir sur la paie (manquant) ; < 0 : à ajouter (excédent).
- * Compte Uber rattaché à aucun chauffeur Ludy (cshLinks) : ligne « Compte Uber non relié », sans effet sur la paie.
+ * Compte Uber rattaché à aucun chauffeur Ludy (cshLinks), ou chauffeur sans compte Uber rattaché : « Compte Uber non relié », sans effet sur la paie.
  * o : { payments, moves, from, to, uuid2code, drivers, udrv, dayOfPayment(p) → aaaa-mm-jj (jour du shift), names: clé → nom }
  */
 function cshRappro(o) {
@@ -90,12 +95,14 @@ function cshRappro(o) {
     if (!inP(m.day)) return;
     const k = cshMoveKey(m, o.uuid2code); if (!k) return;
     if (m.caisse === 'uber' && m.kind === 'encaissement') { const r = get(k, m.driver_name); r.net = cshR(r.net + cshN(m.amount)); }
-    if (m.kind === 'depense' && m.ride_type === 'Course Uber' && m.justif === 'OK') { const r = get(k, m.driver_name); r.frais = cshR(r.frais + cshN(m.amount)); }
+    if (m.kind === 'depense' && m.ride_type === 'Course Uber' && m.justif === 'OK' && cshUberPaid(m)) { const r = get(k, m.driver_name); r.frais = cshR(r.frais + cshN(m.amount)); }
   });
+  const linked = new Set(Object.values(o.uuid2code));
   return Object.values(by).map(r => {
     if (o.names && o.names[r.key]) r.name = o.names[r.key];
     r.theo = cshR(r.uber - r.frais); r.ecart = cshR(r.theo - r.net);
-    r.unlinked = r.key.indexOf('U:') === 0;
+    // espèces Uber d'un compte sans chauffeur Ludy, ou chauffeur sans compte Uber rattaché (rien à comparer) : pas d'effet sur la paie
+    r.unlinked = r.key.indexOf('U:') === 0 || (!r.uber && !linked.has(r.key));
     r.statut = r.uber === 0 && r.net === 0 ? 'Sans activité' : r.unlinked ? 'Compte Uber non relié' : r.theo > 0 && r.net === 0 ? 'Non remis' : Math.abs(r.ecart) < 0.01 ? 'Cadré' : r.ecart > 0 ? 'Manquant' : 'Excédent';
     r.effet = r.unlinked ? 'Aucun (relier le compte Uber)' : r.ecart > 0.004 ? 'Retenir ' + Math.round(r.ecart) + ' MAD' : r.ecart < -0.004 ? 'Ajouter ' + Math.round(-r.ecart) + ' MAD' : 'Aucun';
     r.taux = r.theo ? r.net / r.theo : 0;
@@ -106,8 +113,9 @@ function cshRappro(o) {
 /**
  * Effet sur la paie par chauffeur sur une période (onglet « Base Cash Consolidée » du classeur) :
  * - écart d'espèces Uber (rapprochement) : retenue (manquant) ou ajout (excédent) ; compte Uber non relié : rien ;
- * - dépense d'un chauffeur sans justificatif OK (KO, en attente ou vide) : retenue ; sauf « Course Uber » d'un chauffeur qui a des
- *   espèces Uber au rapprochement : non déduite du théorique, déjà dans le manquant (pas retenue deux fois, écart au classeur) ;
+ * - dépense d'un chauffeur sans justificatif OK (KO, en attente ou vide) : retenue ; sauf « Course Uber » payée avec les espèces Uber
+ *   (cshUberPaid) d'un chauffeur qui a des espèces Uber au rapprochement : non déduite du théorique, déjà dans le manquant
+ *   (pas retenue deux fois ; le classeur la retenait deux fois) ;
  * - avance sur salaire : déjà versée, à déclarer et à retenir ; remboursement d'avance en espèces : ajout ;
  * - course privée : prime à déclarer ; reste à payer (prime − déjà gardée par le chauffeur) : ajout (ou retenue si négatif) ;
  * - bonus : à déclarer ; « A payer » : ajout.
@@ -121,7 +129,7 @@ function cshPayroll(o) {
     if (!(m.day >= o.from && m.day <= o.to)) return;
     const k = cshMoveKey(m, u2c); if (!k || k.indexOf('N:') === 0 && !m.driver_name) return;
     const a = cshN(m.amount);
-    if (m.kind === 'depense' && m.ride_type === 'Course Uber' && inRap.has(k)) return;
+    if (m.kind === 'depense' && m.ride_type === 'Course Uber' && cshUberPaid(m) && inRap.has(k)) return;
     if (m.kind === 'depense' && a > 0 && m.justif !== 'OK' && m.justif !== 'N.A') { const r = get(k, m.driver_name); r.depKo = cshR(r.depKo + a); r.nDepKo++; }
     else if (m.kind === 'avance') { const r = get(k, m.driver_name); r.avances = cshR(r.avances + a); }
     else if (m.kind === 'remboursement') { const r = get(k, m.driver_name); r.rembours = cshR(r.rembours + a); }
@@ -355,4 +363,4 @@ function cshParseHistory(sheets, ctx) {
 }
 
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
-  cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshParseHistory };
+  cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory };
