@@ -53,6 +53,17 @@ test('autre utilisateur : jamais la lecture du précédent, même commencée ava
   const lb2 = loader({ v: ['données de B'] }); assert.deepStrictEqual((await o.c.get('j', lb2)).v, ['données de B']); assert.strictEqual(lb2.n, 1);
 });
 
+test('marqué à relire (alerte, passage du collecteur reçus en temps réel) : rendu aussitôt puis relu ; chaque appel a sa propre copie', async () => {
+  const o = mk(), src = { v: [{ id: 1, st: 'À traiter' }] }, l = loader(src);
+  await o.c.get('k', l); o.t += 5000; o.c.touch(); let ch = null;
+  const r = await o.c.get('k', l, { done: c => { ch = c; } });
+  assert.strictEqual(r.stale, true, 'moins d\'1 min mais marquée : relue'); await tick(); assert.strictEqual(l.n, 2); assert.strictEqual(ch, false);
+  assert.strictEqual((await o.c.get('k', l)).stale, false, 'relue : plus marquée');
+  // une page modifie ses lignes (statut, champs calculés) : la lecture gardée et les autres pages ne changent pas
+  const a = (await o.c.get('k', l)).v; a[0].st = 'Traité'; a[0]._sh = 'Jour';
+  assert.deepStrictEqual((await o.c.get('k', l)).v, [{ id: 1, st: 'À traiter' }]);
+});
+
 test('taille bornée : les clés les moins récemment utilisées partent', async () => {
   const c = cacheNew({ size: 3 }), l = loader({ v: 1 });
   for (const k of ['a', 'b', 'c']) await c.get(k, l);
