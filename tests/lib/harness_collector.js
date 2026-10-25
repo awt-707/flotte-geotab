@@ -23,7 +23,7 @@ class Sheet {
   constructor(n) { this.name = n; this.data = []; this.maxR = 1000; this.maxC = 26; this.charts = []; }
   _get(r, c) { return (this.data[r - 1] && this.data[r - 1][c - 1] !== undefined) ? this.data[r - 1][c - 1] : ''; }
   _set(r, c, v) { if (r > this.maxR) throw new Error(this.name + ' row ' + r + ' > ' + this.maxR); if (c > this.maxC) throw new Error(this.name + ' col ' + c + ' > ' + this.maxC); while (this.data.length < r) this.data.push([]); const row = this.data[r - 1]; while (row.length < c) row.push(''); row[c - 1] = v; }
-  getName() { return this.name; } getParent() { return this.book; }
+  getName() { return this.name; } getParent() { return this.book; } setName(n) { this.name = n; return this; } clearContents() { this.data = []; return this; } setFrozenRows(n) { this.frozen = n; return this; }
   // classeur en français : une formule est lue avec « ; » (setValues comme setFormulas), virgules = erreur d'analyse (#ERROR!) comme Google
   _parse(x) { return typeof x === 'string' && x[0] === '=' && this.book && this.book.locale === 'fr_FR' && /,/.test(x.replace(/"[^"]*"|'[^']*'/g, '')) ? '#ERROR!' : x; }
   getRange(a, b, c, d) { if (typeof a === 'string') return new Range(this, ...a1(a)); return new Range(this, a, b, c || 1, d || 1); }
@@ -104,20 +104,30 @@ function storageFetch(url, opt) {
   const out = execFileSync('curl', args, { input: opt.payload || '', maxBuffer: 1 << 30 }), code = +out.slice(-3).toString(), bytes = out.slice(0, -3);
   const blob = { bytes, name: '', type: '', setName(n) { this.name = n; return this; }, setContentType(t) { this.type = t; return this; }, getBytes() { return this.bytes; } };
   return { getResponseCode: () => code, getContentText: () => bytes.toString(), getBlob: () => blob };
-} const books = {}; const props = {}, triggers = [], folders = [], cache = {};
+} const books = {}; const props = {}, triggers = [], folders = [], cache = {}, driveFiles = {};
+function newFolder(n, id) {
+  const files = [];
+  const f = { name: n, id: id || 'FOLDER' + folders.length, files, getId() { return this.id; },
+    createFile: (a, c) => { const x = { id: 'FILE' + Object.keys(driveFiles).length, name: a.name || a, content: c !== undefined ? c : a.bytes, trashed: false, getId() { return this.id; }, getName() { return this.name; }, setTrashed(v) { this.trashed = v; }, getUrl: () => 'https://drive/' + (a.name || a) };
+      files.push(x); driveFiles[x.id] = x; return x; },
+    getFiles: () => { const l = files.filter(x => !x.trashed); let k = 0; return { hasNext: () => k < l.length, next: () => l[k++] }; } };
+  folders.push(f); return f;
+}
 const ctx = vm.createContext({ console, Utilities, Date: FakeDate, Math, JSON,
-  SpreadsheetApp: { getActive: () => main, openById: id => (id && books[id]) || parc, create: n => { const b = new SS(); b.name = n; b.id = 'ARCH' + Object.keys(books).length; b.getId = () => b.id; b.getUrl = () => 'https://archive/' + b.id; books[b.id] = b; return b; }, getUi: () => { throw new Error('no ui'); }, newConditionalFormatRule: () => chain(), newDataValidation: () => chain(), DataValidationCriteria: { VALUE_IN_LIST: 'VALUE_IN_LIST', VALUE_IN_RANGE: 'VALUE_IN_RANGE', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE' }, InterpolationType: { PERCENTILE: 'P' }, BorderStyle: { SOLID: 1, SOLID_THICK: 2 } },
+  SpreadsheetApp: { getActive: () => main, openById: id => (id && books[id]) || parc, create: n => { const b = new SS(); b.name = n; b.id = 'ARCH' + Object.keys(books).length; b.getId = () => b.id; b.getUrl = () => 'https://archive/' + b.id; books[b.id] = b; driveFiles[b.id] = { id: b.id, name: n, book: b, getId: () => b.id, moveTo(f) { this.folder = f; f.files.push(this); return this; } }; return b; }, getUi: () => { throw new Error('no ui'); }, newConditionalFormatRule: () => chain(), newDataValidation: () => chain(), DataValidationCriteria: { VALUE_IN_LIST: 'VALUE_IN_LIST', VALUE_IN_RANGE: 'VALUE_IN_RANGE', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE' }, InterpolationType: { PERCENTILE: 'P' }, BorderStyle: { SOLID: 1, SOLID_THICK: 2 } },
   PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => { props[k] = String(v); }, deleteProperty: k => { delete props[k]; }, getProperties: () => Object.assign({}, props), setProperties: o => { Object.keys(o).forEach(k => { props[k] = String(o[k]); }); } }) },
   LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() { } }) },
   ScriptApp: { getScriptId: () => 'SCRIPT_ID', getOAuthToken: () => 'tok', getProjectTriggers: () => triggers.slice(), deleteTrigger: t => { triggers.splice(triggers.indexOf(t), 1); }, newTrigger: fn => chain({ create: () => { const t = { getHandlerFunction: () => fn }; triggers.push(t); return t; } }) },
   MailApp: { sendEmail: o => mails.push(o) },
   GmailApp: { getAliases: () => GMAIL.aliases, sendEmail: (to, subject, body, o) => mails.push(Object.assign({ to, subject, body, gmail: true }, o)) }, HtmlService: { createHtmlOutput: () => chain() }, Charts: { ChartType: { LINE: 'L', COLUMN: 'C', BAR: 'B' } },
   DriveApp: { getFoldersByName: n => { const f = folders.filter(x => x.name === n); return { hasNext: () => f.length > 0, next: () => f[0] }; },
-    createFolder: n => { const files = []; const f = { name: n, files, createFile: (a, c) => { const x = { name: a.name || a, content: c, trashed: false, getName() { return this.name; }, setTrashed(v) { this.trashed = v; }, getUrl: () => 'https://drive/' + (a.name || a) }; files.push(x); return x; },
-      getFiles: () => { const l = files.filter(x => !x.trashed); let k = 0; return { hasNext: () => k < l.length, next: () => l[k++] }; } }; folders.push(f); return f; } },
+    createFolder: n => newFolder(n),
+    // dossier par identifiant (copie RH dans le Drive) : identifiant inconnu = erreur, comme Google
+    getFolderById: id => { const f = folders.find(x => x.id === id); if (!f) throw new Error('No item with the given ID could be found. ' + id); return f; },
+    getFileById: id => { const x = driveFiles[id]; if (!x) throw new Error('No item with the given ID could be found. ' + id); return x; } },
   CacheService: { getScriptCache: () => ({ get: k => k in cache ? cache[k] : null, put: (k, v) => { cache[k] = v; } }) },
   // comme Google : adresse de plus de 2 Ko refusée
   UrlFetchApp: { fetch: (url, opt) => { if (url.length > 2048) throw new Error('Limite dépassée : Longueur d\'URL URLFetch.'); if (url.indexOf('script.googleapis.com') >= 0) { scriptApi.push({ url, opt }); return scriptApiReply(url, opt); } if (url.indexOf('/storage/v1/') >= 0) return storageFetch(url, opt); if (url.indexOf('/apiv1') < 0) return dbFetch(url, opt); stats.calls++; global.__NOW = NOW0; const req = JSON.parse(opt.payload); const res = require('./geotab_fake.js').handle(req.method, req.params); const txt = JSON.stringify(res); stats.bytes += txt.length; return { getContentText: () => txt, getResponseCode: () => 200 }; }, fetchAll: reqs => { stats.batches++; return reqs.map(r => ctx.UrlFetchApp.fetch(r.url, r)); } }
 });
 vm.runInContext(fs.readFileSync(process.env.CODE, 'utf8'), ctx, { filename: 'Collecteur.gs' });
-module.exports = { DV, scriptApi, setScriptApiReply: f => { scriptApiReply = f; }, folders, triggers, books, stats, ctx, main, toasts, mails, GMAIL, props, pdfs, setNow, run: c => vm.runInContext(c, ctx) };
+module.exports = { DV, newFolder, driveFiles, scriptApi, setScriptApiReply: f => { scriptApiReply = f; }, folders, triggers, books, stats, ctx, main, toasts, mails, GMAIL, props, pdfs, setNow, run: c => vm.runInContext(c, ctx) };

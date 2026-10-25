@@ -228,6 +228,74 @@ function rhClockState(clock, now) {
 }
 function rhMin(m) { if (m == null || isNaN(m)) return ''; m = Math.round(m); return Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0'); }
 
+// ---------- Présences et état mensuel : calcul partagé site / collecteur (copie dans le Drive) ----------
+/** Fin effective des contrats d'un véhicule (lib.js ctrEffEnds) : contrat jamais clôturé = jusqu'au début du suivant */
+function rhEffEnds(list, now) {
+  const l = list.slice().sort((a, b) => Date.parse(a.start_at) - Date.parse(b.start_at)), lim = (now || Date.now()) + RH_H;
+  l.forEach((c, i) => { const nx = l[i + 1], ns = nx ? Date.parse(nx.start_at) : Infinity;
+    c._next = !c.end_at && ns < lim ? nx.num : ''; c._end = c.end_at ? Date.parse(c.end_at) : c._next ? ns : null; });
+  return l;
+}
+/** Shift d'un contrat (lib.js shiftOfCtr) : heure de début avancée de shiftAdvance h ; une nuit appartient au jour où elle commence. off(ms) = décalage local en minutes */
+function rhShiftOfCtr(start, P, off) {
+  if (!start) return null;
+  P = P || {}; const n = (k, d) => (P[k] == null || P[k] === '' || isNaN(+P[k]) ? d : +P[k]);
+  const adv = n('shiftAdvance', 2), dH = n('shiftDay', 7), nH = n('shiftNight', 19), ms = Date.parse(start), loc = t => new Date(t + (off ? off(t) : 0) * 60000);
+  const a = loc(ms), h = ((a.getUTCHours() + a.getUTCMinutes() / 60 + adv) % 24 + 24) % 24, s = (dH < nH ? h >= dH && h < nH : h >= dH || h < nH) ? 'Jour' : 'Nuit';
+  const b = loc(ms + adv * RH_H), day = b.toISOString().slice(0, 10);
+  return { s, day: s === 'Nuit' && b.getUTCHours() < dH ? rhAddDays(day, -1) : day };
+}
+/**
+ * Présence de salariés sur [from, to] (jours) d'après des lignes déjà lues. o = { emps, from, to, today, now, P, contracts (semaines entières),
+ * plan, pabs (absences du planning), events (RH), clock, sessions, shiftOfCtr(start), dayOf(ms), off(ms), staff (false = pas de pointage lu) }.
+ * Chauffeurs : contrats (un contrat = un shift), heures sup. par semaine ; staff : pointage, heures sup. par semaine portées par ses derniers jours.
+ */
+function rhPresenceCalc(o) {
+  const P = o.P || {}, from = o.from, to = o.to, n = (k, d) => (P[k] == null || P[k] === '' || isNaN(+P[k]) ? d : +P[k]);
+  const emps = o.emps || [], drv = emps.filter(e => e.kind === 'chauffeur' && e.driver_code), staff = o.staff === false ? [] : emps.filter(e => e.kind === 'staff');
+  const out = new Map(emps.map(e => [e.id, { e, nDays: 0, days: [], hours: 0, night: 0, over: 0, overDay: 0, overNight: 0, gaps: [], flagged: [], items: [], staffDays: [], declared: [] }]));
+  const evDays = e => rhEventDays((o.events || []).filter(x => x.employee_id === e.id), ['conge', 'maladie', 'absence'], from, to);
+  if (drv.length) {
+    const wFrom = rhMonday(from), wTo = rhAddDays(rhMonday(to), 6), byV = {}, codes = new Set(drv.map(e => e.driver_code)), items = [];
+    (o.contracts || []).forEach(c => { (byV[c.vehicle_key] = byV[c.vehicle_key] || []).push(Object.assign({}, c)); });
+    Object.values(byV).forEach(l => rhEffEnds(l, o.now).forEach(c => {
+      if (!codes.has(c.client_code) || !c.start_at) return;
+      const sh = o.shiftOfCtr(c.start_at); if (!sh || sh.day < wFrom || sh.day > wTo) return;
+      items.push({ code: c.client_code, num: c.num, vehicle: c.vehicle_key, start: Date.parse(c.start_at), end: c._end || null, day: sh.day, shift: sh.s });
+    }));
+    const wh = {}; drv.forEach(e => { wh[e.driver_code] = +e.weekly_hours || 44; });
+    const work = rhDriverWork(items, { maxH: n('rhMaxShiftH', 16), weekH: wh, off: o.off });
+    drv.forEach(e => {
+      const r = out.get(e.id), sm = rhDriverSum(work[e.driver_code], from, to), decl = new Set(evDays(e));
+      (o.pabs || []).filter(a => a.driver_code === e.driver_code).forEach(a => { for (let d = a.day_from > from ? a.day_from : from; d <= (a.day_to < to ? a.day_to : to); d = rhAddDays(d, 1)) decl.add(d); });
+      const lim = e.left_on && e.left_on < to ? e.left_on : to, start = e.hired_on && e.hired_on > from ? e.hired_on : from;
+      Object.assign(r, sm, { gaps: rhPlanGaps((o.plan || []).filter(p => p.driver_code === e.driver_code && p.day >= start && p.day <= lim && p.day < o.today), sm.days, [...decl]), declared: [...decl].sort() });
+    });
+  }
+  staff.forEach(e => {
+    const r = out.get(e.id), all7 = rhStaffDays((o.clock || []).filter(c => c.employee_id === e.id).map(c => ({ kind: c.kind, at: Date.parse(c.at) })),
+      (o.sessions || []).filter(x => x.user_id === e.user_id).map(x => ({ started_at: Date.parse(x.started_at), last_seen: Date.parse(x.last_seen) })), { dayOf: o.dayOf, now: o.now });
+    const ovd = rhStaffOverDays(all7, e.weekly_hours), days = all7.filter(d => d.day >= from && d.day <= to), wk = days.filter(d => d.workMin > 0);
+    Object.assign(r, { staffDays: days, nDays: wk.length, days: wk.map(d => d.day), hours: Math.round(wk.reduce((s, d) => s + d.workMin, 0) / 6) / 10,
+      over: Math.round(Object.keys(ovd).filter(d => d >= from && d <= to).reduce((s, d) => s + ovd[d], 0) * 100) / 100, declared: evDays(e) });
+    r.overDay = r.over; r.flagged = days.filter(d => d.outAuto || d.fails).map(d => ({ day: d.day, flag: [d.outAuto && 'départ non pointé', d.fails && d.fails + ' date(s) de naissance erronée(s)'].filter(Boolean).join(', ') }));
+  });
+  return [...out.values()];
+}
+/** État mensuel (éléments variables de paie) : une ligne par salarié ; cash = mouvements de caisse avance / remboursement / bonus du mois */
+function rhMonthlyRows(pres, events, cash, R) {
+  return (pres || []).map(r => {
+    const e = r.e, ev = (events || []).filter(x => x.employee_id === e.id && !x.cancelled_at), sal = rhSalaryAt(e, ev, R.to);
+    const sum = k => ev.filter(x => x.kind === k && x.day_from >= R.from && x.day_from <= R.to).reduce((s, x) => s + (+x.amount || 0), 0);
+    const cs = k => (cash || []).filter(c => e.driver_code && c.driver_code === e.driver_code && c.kind === k).reduce((s, c) => s + (+c.amount || 0), 0);
+    // jours ouvrables (dimanches non comptés), comme le décompte des congés
+    const days = k => rhWorkOnly(rhEventDays(ev, [k], R.from, R.to)).length, pay = rhOvertimePay(sal, e.weekly_hours, r.overDay, r.overNight || 0);
+    return { e, sal, r, conge: days('conge'), maladie: days('maladie'), absJ: rhWorkOnly(rhEventDays(ev.filter(x => x.kind === 'absence' && x.justified), ['absence'], R.from, R.to)).length,
+      absNJ: rhWorkOnly(rhEventDays(ev.filter(x => x.kind === 'absence' && !x.justified), ['absence'], R.from, R.to)).length + (r.gaps || []).length,
+      avance: sum('avance') + cs('avance'), remb: sum('remboursement') + cs('remboursement'), prime: sum('prime') + cs('bonus'), pay };
+  });
+}
+
 // ---------- Alertes (rester en règle) et compte rendu ----------
 const RH_DOCS = { contrat: 'Contrat signé', avenant: 'Avenant signé', cin: 'CIN', permis: 'Permis de conduire', carte_pro: 'Carte professionnelle', casier: 'Casier judiciaire (fiche anthropométrique)',
   cnss: 'Attestation CNSS', rib: 'RIB', diplome: 'Diplôme', medical: 'Certificat médical', photo: 'Photo', attestation: 'Attestation', autre: 'Autre' };
@@ -390,5 +458,5 @@ function rhReport(ctx) {
   return { cur, prev, legal, evoTotal: prev ? evo(cur.total, prev.total) : null, evoEnd: prev ? cur.end - prev.end : null };
 }
 
-if (typeof module === 'object' && module.exports) module.exports = { rhStaffOverDays, rhWorkOnly, RH_KINDS, RH_DOCS, RH_LEVELS, rhDocsRequired, rhClockMissing, rhSeniority, rhAlerts, rhContractOf, rhLegal, rhBasePay, rhReport, rhFr, rhAddDays, rhMonday, rhAddMonths, rhMonths, rhMonthRange, rhWorkingDays, rhTrial, rhLeave, rhSalaryAt, rhNight,
+if (typeof module === 'object' && module.exports) module.exports = { rhEffEnds, rhShiftOfCtr, rhPresenceCalc, rhMonthlyRows, rhStaffOverDays, rhWorkOnly, RH_KINDS, RH_DOCS, RH_LEVELS, rhDocsRequired, rhClockMissing, rhSeniority, rhAlerts, rhContractOf, rhLegal, rhBasePay, rhReport, rhFr, rhAddDays, rhMonday, rhAddMonths, rhMonths, rhMonthRange, rhWorkingDays, rhTrial, rhLeave, rhSalaryAt, rhNight,
   rhDriverWork, rhDriverSum, rhOvertimePay, rhPlanGaps, rhEventDays, rhStaffDays, rhStaffOver, rhClockState, rhMin };

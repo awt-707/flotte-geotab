@@ -4,8 +4,8 @@
 // chaque ouverture de Ludy, pauses, fin de journée). Calculs purs dans rh_calc.js. Chargé avant app.js.
 
 const RH_TABS = [['bord', 'Tableau de bord'], ['alertes', 'Alertes RH'], ['salaries', 'Salariés'], ['dossiers', 'Dossiers salariés'], ['presences', 'Présences'], ['pointage', 'Pointage du staff'],
-  ['absences', 'Absences et congés'], ['avances', 'Avances et primes'], ['avenants', 'Avenants'], ['essai', 'Périodes d\'essai'], ['mois', 'État mensuel'], ['rapport', 'Comptes rendus'], ['travail', 'Contrats de travail']];
-const RH_ADMIN_TABS = { pointage: 1 };
+  ['absences', 'Absences et congés'], ['avances', 'Avances et primes'], ['avenants', 'Avenants'], ['essai', 'Périodes d\'essai'], ['mois', 'État mensuel'], ['rapport', 'Comptes rendus'], ['drive', 'Google Drive'], ['travail', 'Contrats de travail']];
+const RH_ADMIN_TABS = { pointage: 1, drive: 1 };
 const RH_ABS = ['conge', 'maladie', 'absence'], RH_MONEY = ['avance', 'remboursement', 'prime'];
 const RH_STATUS = { conge: ['Demandé', 'Validé', 'Refusé'], avance: ['À rembourser', 'Remboursée'], prime: ['À payer', 'Payée'] };
 const RH = { emp: [], ev: [], employers: [], drivers: [], profiles: [], wc: [], docs: [], alerts: [], v2: true, err: '' };
@@ -73,10 +73,49 @@ async function pageRH() {
   $('#page').innerHTML = head + bar + (rhFull() ? '' : msg('Gestionnaire : chauffeurs des agences auxquelles vous êtes rattaché. Le staff est géré par l\'administrateur et les ressources humaines.', ''))
     + (RH.v2 ? '' : msg('Dossiers des salariés, suivi de la légalisation des contrats et rôle Ressources humaines pas encore installés : exécuter <b>supabase/migrations/20261111000000_rh_acces.sql</b> dans Supabase &gt; SQL Editor.', 'warn')) + box;
   const V = { bord: rhBoard, alertes: rhAlertsView, salaries: rhList, fiche: rhFiche, dossiers: rhFiles, presences: rhPresence, pointage: rhClockBoard, absences: rhAbsences, avances: rhAdvances, avenants: rhAvenants,
-    essai: rhTrials, mois: rhMonthly, rapport: rhReportView };
+    essai: rhTrials, mois: rhMonthly, rapport: rhReportView, drive: rhDriveView };
   try { await V[t](my, q); } catch (e) { if (my === ROUTING) $('#rhbody').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
   // tri des colonnes : onglet redessiné avec les données déjà lues (les onglets qui ne le prévoient pas eux-mêmes)
   if (my === ROUTING && !window.__rerender) window.__rerender = () => { const m2 = ROUTING; Promise.resolve(V[t](m2, qs())).catch(() => { }); };
+}
+
+// ---------- Google Drive ----------
+const RH_DRIVE = [['contracts', 'Contrats', 'contrats générés, copies signées / légalisées, avenants signés'], ['payroll', 'Paie', 'état mensuel'], ['clock', 'Pointage et absences', 'pointage du staff, absences et congés, présence des chauffeurs']];
+const rhDriveId = v => (String(v || '').match(/[-\w]{20,}/) || [''])[0];
+/** Dossiers Google Drive où le collecteur copie les contrats, la paie et le pointage (par agence, sinon dossiers par défaut) */
+async function rhDriveView(my) {
+  let ags, wc = [];
+  try { ags = await all('agencies', 'id,name,rh_drive', null, ['name']); } catch (e) {
+    if (my === ROUTING) $('#rhbody').innerHTML = msg('Copie dans Google Drive pas encore installée : exécuter <b>supabase/migrations/20261114000000_rh_drive.sql</b> dans Supabase &gt; SQL Editor.', 'warn');
+    return;
+  }
+  wc = await all('work_contracts', 'id,pdf_path,legal_path,drive_pdf_id,drive_legal_id', null, ['id']).catch(() => []);
+  if (my !== ROUTING) return;
+  const P = S.P || {}, def = { contracts: P.rhDriveContracts, payroll: P.rhDrivePayroll, clock: P.rhDriveClock };
+  const nTodo = wc.filter(c => (c.pdf_path && !c.drive_pdf_id) || (c.legal_path && !c.drive_legal_id)).length, nDone = wc.filter(c => c.drive_pdf_id || c.drive_legal_id).length;
+  const open = id => id ? ` <a class="small" href="https://drive.google.com/drive/folders/${esc(id)}" target="_blank" rel="noopener">ouvrir</a>` : '';
+  const row = (ag, d, name) => `<tr><td>${esc(name)}</td>${RH_DRIVE.map(k => `<td><input class="rhdrv" data-ag="${ag == null ? '' : ag}" data-k="${k[0]}" value="${esc(rhDriveId(d[k[0]]))}" placeholder="${ag == null ? 'lien du dossier' : 'dossier par défaut'}" style="min-width:16em">${open(rhDriveId(d[k[0]]))}</td>`).join('')}
+    <td><button class="small" data-rhdrvsave="${ag == null ? '' : ag}">Enregistrer</button></td></tr>`;
+  $('#rhbody').innerHTML = `<div class="panel"><h2>Copie dans Google Drive</h2>
+    <div class="small">Le collecteur (compte Google du collecteur) copie dans ces dossiers :<br>
+      · <b>Contrats</b> : chaque contrat généré, chaque copie signée / légalisée et chaque avenant signé, une fois, au passage suivant (5 min) ;<br>
+      · <b>Paie</b> : l'état mensuel (éléments variables de paie), un classeur par mois et par agence, mis à jour chaque jour ;<br>
+      · <b>Pointage et absences</b> : pointage du staff, absences et congés, présence des chauffeurs, un classeur par mois et par agence, mis à jour chaque jour.<br>
+      Le mois précédent est encore mis à jour jusqu'au 5. Coller le lien du dossier (ou son identifiant). Le compte du collecteur doit pouvoir modifier le dossier.</div>
+    <div class="tblwrap"><table class="tbl"><thead><tr><th>Agence</th>${RH_DRIVE.map(k => `<th title="${esc(k[2])}">${k[1]}</th>`).join('')}<th></th></tr></thead><tbody>
+      ${row(null, def, 'Par défaut (agence sans dossier, salarié sans agence)')}${ags.map(a => row(a.id, a.rh_drive || {}, a.name)).join('')}</tbody></table></div>
+    <div class="small">Contrats copiés : ${nDone} · en attente de copie : ${nTodo}</div>
+    ${isAdmin() ? '<p><button class="ghost small" id="rhdrvnow">Copier maintenant</button> <span id="rhdrvout" class="small"></span></p>' : ''}</div>`;
+  document.querySelectorAll('[data-rhdrvsave]').forEach(b => b.onclick = async () => {
+    const ag = b.dataset.rhdrvsave, d = {};
+    document.querySelectorAll('.rhdrv').forEach(i => { if (i.dataset.ag === ag) d[i.dataset.k] = rhDriveId(i.value); });
+    const { error } = await sb.rpc('rh_drive_set', { p_agency: ag === '' ? null : +ag, p_data: d });
+    if (error) { alert(error.message); return; }
+    if (ag === '') { S.P = Object.assign({}, S.P, { rhDriveContracts: d.contracts || '', rhDrivePayroll: d.payroll || '', rhDriveClock: d.clock || '' }); }
+    b.textContent = 'Enregistré ✓'; setTimeout(() => { if (my === ROUTING) rhDriveView(my); }, 800);
+  });
+  const now = $('#rhdrvnow');
+  if (now) now.onclick = async () => { try { await job('rh_drive'); $('#rhdrvout').textContent = 'Demande envoyée : copie au prochain passage du collecteur (5 min au plus).'; } catch (e) { $('#rhdrvout').textContent = 'Erreur : ' + e.message; } };
 }
 
 // ---------- Tableau de bord ----------
@@ -362,50 +401,19 @@ async function rhPlanSync(x) {
 // ---------- Présences ----------
 /** Données de présence de salariés sur [from, to] : chauffeurs (contrats), staff (pointage) */
 async function rhPresenceData(emps, from, to) {
-  const P = S.P || {}, drv = emps.filter(e => e.kind === 'chauffeur' && e.driver_code), staff = emps.filter(e => e.kind === 'staff');
-  const out = new Map(emps.map(e => [e.id, { e, nDays: 0, days: [], hours: 0, night: 0, over: 0, overDay: 0, overNight: 0, gaps: [], flagged: [], items: [], staffDays: [], declared: [] }]));
-  const evDays = e => rhEventDays(RH.ev.filter(x => x.employee_id === e.id), RH_ABS, from, to);
-  if (drv.length) {
+  // lectures, puis calcul partagé avec le collecteur (rh_calc.js rhPresenceCalc : même résultat sur le site et dans le Drive)
+  const P = S.P || {}, drv = emps.filter(e => e.kind === 'chauffeur' && e.driver_code), staff = rhFull() ? emps.filter(e => e.kind === 'staff') : [];
+  const codes = [...new Set(drv.map(e => e.driver_code))], o = { emps, from, to, today: today(), now: Date.now(), P, events: RH.ev, staff: rhFull(),
+    shiftOfCtr: st => shiftOfCtr(st, P), dayOf: t => localDay(t), off: rhOffset, contracts: [], plan: [], pabs: [], clock: [], sessions: [] };
+  const wFrom = mondayOf(from), wTo = addDays(mondayOf(to), 6), z = d => localToDate(...d.split('-').map(Number), 0, 0).getTime();
+  await Promise.all([
     // semaines entières (heures supplémentaires par semaine), + 2 jours pour la fin des contrats jamais clôturés
-    const wFrom = mondayOf(from), wTo = addDays(mondayOf(to), 6), t0 = localToDate(...wFrom.split('-').map(Number), 0, 0).getTime() - 12 * HOUR, t1 = localToDate(...addDays(wTo, 2).split('-').map(Number), 0, 0).getTime();
-    const ctr = await all('contracts', 'num,client_code,vehicle_key,start_at,end_at', x => x.gte('start_at', new Date(t0).toISOString()).lt('start_at', new Date(t1).toISOString()), ['start_at']);
-    const byV = {}; ctr.forEach(c => { (byV[c.vehicle_key] = byV[c.vehicle_key] || []).push(c); });
-    const codes = new Set(drv.map(e => e.driver_code)), items = [];
-    Object.values(byV).forEach(l => ctrEffEnds(l).forEach(c => {
-      if (!codes.has(c.client_code) || !c.start_at) return;
-      const sh = shiftOfCtr(c.start_at, P);
-      if (sh.day < wFrom || sh.day > wTo) return;
-      items.push({ code: c.client_code, num: c.num, vehicle: c.vehicle_key, start: Date.parse(c.start_at), end: c._end || null, day: sh.day, shift: sh.s });
-    }));
-    const wh = {}; drv.forEach(e => { wh[e.driver_code] = +e.weekly_hours || 44; });
-    const work = rhDriverWork(items, { maxH: num(P.rhMaxShiftH, 16), weekH: wh, off: rhOffset });
-    const [plan, pabs] = await Promise.all([all('driver_plan', 'day,shift,driver_code', x => x.gte('day', from).lte('day', to).in('driver_code', [...codes]), ['day']).catch(() => []),
-      all('driver_absences', 'driver_code,day_from,day_to', x => x.lte('day_from', to).gte('day_to', from).in('driver_code', [...codes]), ['day_from']).catch(() => [])]);
-    drv.forEach(e => {
-      const r = out.get(e.id), s = rhDriverSum(work[e.driver_code], from, to);
-      const decl = new Set(evDays(e));
-      pabs.filter(a => a.driver_code === e.driver_code).forEach(a => { for (let d = a.day_from > from ? a.day_from : from; d <= (a.day_to < to ? a.day_to : to); d = addDays(d, 1)) decl.add(d); });
-      const lim = e.left_on && e.left_on < to ? e.left_on : to, start = e.hired_on && e.hired_on > from ? e.hired_on : from;
-      Object.assign(r, s, { gaps: rhPlanGaps(plan.filter(p => p.driver_code === e.driver_code && p.day >= start && p.day <= lim && p.day < today()), s.days, [...decl]), declared: [...decl].sort() });
-    });
-  }
-  if (staff.length && rhFull()) {
-    // semaines entières : heures sup. d'une semaine à cheval sur deux mois comptées (portées par ses derniers jours travaillés)
-    const wF = mondayOf(from), wT = addDays(mondayOf(to), 6);
-    const a = localToDate(...wF.split('-').map(Number), 0, 0).getTime() - 12 * HOUR, b = localToDate(...addDays(wT, 1).split('-').map(Number), 0, 0).getTime() + 12 * HOUR;
-    const [ck, ses] = await Promise.all([all('hr_clock', 'employee_id,kind,at', x => x.gte('at', new Date(a).toISOString()).lt('at', new Date(b).toISOString()).in('employee_id', staff.map(e => e.id)), ['at']).catch(() => []),
-      all('user_sessions', 'user_id,started_at,last_seen', x => x.gte('last_seen', new Date(a).toISOString()).lt('started_at', new Date(b).toISOString()).in('user_id', staff.map(e => e.user_id).filter(Boolean)), ['started_at']).catch(() => [])]);
-    staff.forEach(e => {
-      const r = out.get(e.id), all7 = rhStaffDays(ck.filter(c => c.employee_id === e.id).map(c => ({ kind: c.kind, at: Date.parse(c.at) })),
-        ses.filter(s => s.user_id === e.user_id).map(s => ({ started_at: Date.parse(s.started_at), last_seen: Date.parse(s.last_seen) })), { dayOf: t => localDay(t) });
-      const ovd = rhStaffOverDays(all7, e.weekly_hours), wk = all7.filter(d => d.day >= from && d.day <= to && d.workMin > 0);
-      const days = all7.filter(d => d.day >= from && d.day <= to);
-      Object.assign(r, { staffDays: days, nDays: wk.length, days: wk.map(d => d.day), hours: Math.round(wk.reduce((s, d) => s + d.workMin, 0) / 6) / 10,
-        over: Math.round(Object.keys(ovd).filter(d => d >= from && d <= to).reduce((s, d) => s + ovd[d], 0) * 100) / 100, declared: evDays(e) });
-      r.overDay = r.over; r.flagged = days.filter(d => d.outAuto || d.fails).map(d => ({ day: d.day, flag: [d.outAuto && 'départ non pointé', d.fails && d.fails + ' date(s) de naissance erronée(s)'].filter(Boolean).join(', ') }));
-    });
-  }
-  return [...out.values()];
+    codes.length && all('contracts', 'num,client_code,vehicle_key,start_at,end_at', x => x.gte('start_at', new Date(z(wFrom) - 12 * HOUR).toISOString()).lt('start_at', new Date(z(addDays(wTo, 2))).toISOString()), ['start_at']).then(r => { o.contracts = r; }),
+    codes.length && all('driver_plan', 'day,shift,driver_code', x => x.gte('day', from).lte('day', to).in('driver_code', codes), ['day']).then(r => { o.plan = r; }, () => { }),
+    codes.length && all('driver_absences', 'driver_code,day_from,day_to', x => x.lte('day_from', to).gte('day_to', from).in('driver_code', codes), ['day_from']).then(r => { o.pabs = r; }, () => { }),
+    staff.length && all('hr_clock', 'employee_id,kind,at', x => x.gte('at', new Date(z(wFrom) - 12 * HOUR).toISOString()).lt('at', new Date(z(addDays(wTo, 1)) + 12 * HOUR).toISOString()).in('employee_id', staff.map(e => e.id)), ['at']).then(r => { o.clock = r; }, () => { }),
+    staff.length && all('user_sessions', 'user_id,started_at,last_seen', x => x.gte('last_seen', new Date(z(wFrom) - 12 * HOUR).toISOString()).lt('started_at', new Date(z(addDays(wTo, 1)) + 12 * HOUR).toISOString()).in('user_id', staff.map(e => e.user_id).filter(Boolean)), ['started_at']).then(r => { o.sessions = r; }, () => { })]);
+  return rhPresenceCalc(o);
 }
 /** Détail d'un salarié : shifts (chauffeur) ou journées pointées (staff) */
 function rhDetail(r) {
@@ -520,14 +528,7 @@ async function rhMonthly(my, q) {
   const pres = await rhPresenceData(emps, R.from, R.to), codes = emps.map(e => e.driver_code).filter(Boolean);
   const cash = codes.length ? await all('cash_moves', 'kind,amount,day,driver_code', x => x.gte('day', R.from).lte('day', R.to).in('kind', ['avance', 'remboursement', 'bonus']).in('driver_code', codes).is('cancelled_at', null), ['day']).catch(() => []) : [];
   if (my !== ROUTING) return;
-  const rows = pres.map(r => {
-    const e = r.e, ev = RH.ev.filter(x => x.employee_id === e.id && !x.cancelled_at), sal = rhSalaryAt(e, ev, R.to), sum = k => ev.filter(x => x.kind === k && x.day_from >= R.from && x.day_from <= R.to).reduce((s, x) => s + (+x.amount || 0), 0);
-    const cs = k => cash.filter(c => c.driver_code === e.driver_code && c.kind === k).reduce((s, c) => s + (+c.amount || 0), 0);
-    // jours ouvrables (dimanches non comptés), comme le décompte des congés
-    const days = k => rhWorkOnly(rhEventDays(ev, [k], R.from, R.to)).length, pay = rhOvertimePay(sal, e.weekly_hours, r.overDay, r.overNight || 0);
-    return { e, sal, r, conge: days('conge'), maladie: days('maladie'), absJ: rhWorkOnly(rhEventDays(ev.filter(x => x.kind === 'absence' && x.justified), ['absence'], R.from, R.to)).length,
-      absNJ: rhWorkOnly(rhEventDays(ev.filter(x => x.kind === 'absence' && !x.justified), ['absence'], R.from, R.to)).length + r.gaps.length, avance: sum('avance') + cs('avance'), remb: sum('remboursement') + cs('remboursement'), prime: sum('prime') + cs('bonus'), pay };
-  });
+  const rows = rhMonthlyRows(pres, RH.ev, cash, R);
   const cols = [['Salarié', x => x.e.name], ['Type', x => x.e.kind === 'staff' ? 'Staff' : 'Chauffeur'], ['Salaire de base', x => x.sal == null ? '' : f0(x.sal), 'num'], ['Jours de présence', x => String(x.r.nDays), 'num'],
     ['Heures', x => rhH(x.r.hours), 'num'], ['HS jour (+25 %)', x => x.r.overDay ? rhH(x.r.overDay) : '', 'num'], ['HS nuit (+50 %)', x => x.r.overNight ? rhH(x.r.overNight) : '', 'num'],
     ['Montant HS', x => x.pay && (x.r.overDay || x.r.overNight) ? f0(x.pay.amount) : '', 'num'], ['Congés (j)', x => x.conge ? String(x.conge) : '', 'num'], ['Maladie (j)', x => x.maladie ? String(x.maladie) : '', 'num'],

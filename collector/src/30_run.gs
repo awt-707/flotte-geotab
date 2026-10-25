@@ -235,6 +235,8 @@ function collect() {
     try { const m = notifyAlerts_(); if (m) msg.push(m); } catch (e) { msg.push('Alertes par e-mail : ' + e.message); }
     // Staff : arrivée non pointée signalée par e-mail (une fois par salarié et par jour)
     try { const m = rhClockStep_(); if (m) msg.push(m); } catch (e) { msg.push('Pointage : ' + e.message); }
+    // RH : contrats générés, copies signées / légalisées et avenants signés copiés dans le Drive (une fois chacun)
+    if (Date.now() - t0 < 200000) { try { const m = rhDriveFilesStep_(t0); if (m) msg.push(m); } catch (e) { msg.push('Drive RH : ' + e.message); } }
     // Finalisation des journées terminées (une seule fois par véhicule-jour)
     if (Date.now() - t0 < 180000) {
       let n = 0; try { n = queueDays_(dueFinal_(P)); } catch (e) { msg.push('File de finalisation : ' + e.message); n = 1; }   // la file en place est traitée quand même
@@ -272,9 +274,9 @@ function processJobs_(t0) {
     sbReq_('patch', 'jobs?id=in.(' + ids.join(',') + ')', n > 2 ? { done_at: new Date().toISOString(), result: 'Abandonnée : traitement trop long (2 essais). Réessayer sur une période plus courte.' } : { result: 'Essai ' + n + ' en cours' }, { Prefer: 'return=minimal' });
     return n <= 2; };
   jobs.forEach(j => { (by[j.kind] = by[j.kind] || []).push(j); });
-  const order = ['apply_plates', 'import_vehicles', 'after_inject', 'resync', 'recompute', 'sync_now', 'send_report', 'driver_report', 'manifest_mail', 'quote_mail'];
+  const order = ['apply_plates', 'import_vehicles', 'after_inject', 'resync', 'recompute', 'sync_now', 'send_report', 'driver_report', 'manifest_mail', 'quote_mail', 'rh_drive'];
   // demandes longues (relecture Geotab, recalcul) : lancées seulement s'il reste assez de temps dans le passage (6 min d'Apps Script)
-  const heavy = { apply_plates: 1, after_inject: 1, resync: 1, recompute: 1, sync_now: 1 };
+  const heavy = { apply_plates: 1, after_inject: 1, resync: 1, recompute: 1, sync_now: 1, rh_drive: 1 };
   const injDay = args => args.map(a => toDayStr_(a)).filter(Boolean).sort()[0] || addDays_(localDay_(new Date()), -1);
   Object.keys(by).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)).forEach(kind => {
     if (Date.now() - t0 > (heavy[kind] ? 150000 : 210000)) return;   // la suite au prochain passage
@@ -303,6 +305,7 @@ function processJobs_(t0) {
       else if (kind === 'recompute') res = jobRecompute_(args.map(a => toDayStr_(a)).filter(Boolean).sort()[0]);
       else if (kind === 'resync') res = jobResync_(args, t0);
       else if (kind === 'send_report') res = jobSendReport_(args);
+      else if (kind === 'rh_drive') res = [rhDriveFilesStep_(t0), rhDriveSheetsStep_()].filter(Boolean).join(' | ') || 'Drive RH : rien à copier (dossiers non réglés ?)';
       else res = 'Demande inconnue : ' + kind;
     } catch (e) { res = 'Erreur : ' + e.message; }
     const ids = list.map(j => j.id);
@@ -371,7 +374,7 @@ function dailyStep_(t0) {
   let st = JSON.parse(props.getProperty('DAILY') || 'null');
   if (!st || st.day !== today) {
     if (h < 2 && st) return '';                                        // la nuit, après 2 h
-    st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size', 'manifests', 'rh'] };
+    st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size', 'manifests', 'rh', 'rhdrive'] };
     const month = today.slice(0, 7);
     if (props.getProperty('ARCH_MONTH') !== month) st.steps.push('arch:trips', 'arch:idles', 'arch:engine_stops', 'arch:events', 'arch:fuel', 'arch:levels',
       'arch:vehicle_days', 'arch:journal', 'arch:alerts', 'arch:done');
@@ -388,6 +391,7 @@ function dailyStep_(t0) {
       else if (s === 'size') { const z = dbRpc_('db_size'); if (z && z.total_mb > 400) out.push('Base : ' + z.total_mb + ' Mo sur 500 Mo gratuits, réduire « Données détaillées conservées »'); props.setProperty('DB_MB', String(z ? z.total_mb : '')); }
       else if (s === 'manifests') { const m = pruneManifests_(); if (m) out.push(m); }
       else if (s === 'rh') { const m = rhDigest_(); if (m) out.push(m); }
+      else if (s === 'rhdrive') { const m = rhDriveSheetsStep_(); if (m) out.push(m); }
       else if (s === 'arch:done') props.setProperty('ARCH_MONTH', today.slice(0, 7));
       else if (s.indexOf('arch:') === 0) { const m = archiveTable_(s.slice(5)); if (m) out.push(m); }
     } catch (e) { out.push(s + ' : ' + e.message); }
