@@ -20,7 +20,9 @@ function plPlate(k) { const v = S.veh[k]; return v ? (v.plate || k) + (v.model ?
 function plName(c) { const d = PL.drivers.find(x => x.code === c); return d ? d.name || c : (S.drv && S.drv[c]) || c; }
 function plCtx() {
   const names = {}, plates = {}, phones = {}, off = {};
-  PL.drivers.forEach(d => { names[d.code] = d.name || d.code; phones[d.code] = d.phone || ''; off[d.code] = d.off || []; });
+  // repos répartis à la génération pour les chauffeurs sans leurs 2 jours réglés (même calcul que planWeek)
+  const auto = planAutoOff(PL.drivers.filter(d => d.active !== false).map(d => Object.assign({}, d)));
+  PL.drivers.forEach(d => { names[d.code] = d.name || d.code; phones[d.code] = d.phone || ''; off[d.code] = auto[d.code] || d.off || []; });
   S.vehList.forEach(v => { plates[v.key] = v.plate || v.key; });
   return { monday: PL.monday, cells: PL.cells, names, plates, phones, off, absent: PL.absent, P: S.P, agency: PL.ag ? PL.ag.name : '' };
 }

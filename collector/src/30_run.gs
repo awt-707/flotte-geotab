@@ -48,11 +48,13 @@ function updateDerived_(fromDay) {
   const keepFrom = addDays_(localDay_(new Date()), -Math.max(7, P.retentionDays || 62));
   const cut = [addDays_(fromDay, -3), keepFrom].sort()[1], c0 = dayBounds_(cut).start.getTime(), lim = addDays_(fromDay, -31), longs = {};
   // contrat long encore en cours à « cut » : sa ligne de journal (datée du début du contrat) est recalculée en entier,
-  // données relues depuis son début (31 jours au plus) ; sinon elle resterait figée à ses premiers jours
+  // données relues depuis son début ; sinon elle resterait figée à ses premiers jours.
+  // Commencé plus de 31 jours avant (ou jamais clôturé) : ligne et alertes gardées telles quelles (un total sur une partie du contrat serait faux)
   let dataFrom = addDays_(fromDay, -4);
   Object.keys(cidx).forEach(k => cidx[k].forEach(c => {
     if (c.start >= c0 || c.end < c0) return;
-    longs[c.num] = 1; const d = addDays_(localDay_(new Date(c.start)), -1); if (d < dataFrom) dataFrom = d < lim ? lim : d;
+    const d = addDays_(localDay_(new Date(c.start)), -1); if (d < lim) return;
+    longs[c.num] = 1; if (d < dataFrom) dataFrom = d;
   }));
   const T = readData_(S.TRIP, dataFrom), E = readData_(S.EVT, dataFrom), F = readData_(S.FUEL, dataFrom), Il = readData_(S.IDL, dataFrom);
   const IJ = idx_(H.JRN);
@@ -139,9 +141,9 @@ function writeLive_(status) {
 }
 
 // ---------- Après import de contrats (depuis le site) ----------
-function afterInject_(fromDay) {
+function afterInject_(fromDay, runT0) {
   const t0 = Date.now(), msg = [];
-  try { const live = liveCatchUp_(90000); if (live) { writeLive_(live.status); if (live.n) msg.push(live.n + ' trajets récents ajoutés'); } }
+  try { const live = liveCatchUp_(jobBudget_(runT0, 90000, 150000)); if (live) { writeLive_(live.status); if (live.n) msg.push(live.n + ' trajets récents ajoutés'); } }
   catch (e) { msg.push('temps réel : ' + e.message); }
   // journées passées des contrats jamais téléchargées (dans la période conservée) : file de finalisation
   try {
@@ -173,6 +175,27 @@ function queueDays_(items) {
     else if (props.getProperty('SYNC_QUEUE_MORE_' + i)) props.deleteProperty('SYNC_QUEUE_MORE_' + i); else break;
   }
   return q.length;
+}
+/**
+ * Finalisation (file SYNC_QUEUE) avec attente en cas de panne Geotab. Le moteur v6 vide la file au 3e échec de suite (SYNC_FAILS) :
+ * demandes de retéléchargement, rattrapage du fuseau et journées des contrats importés seraient perdues (dueFinal_ ne remet que
+ * les journées jamais finalisées). Ici SYNC_FAILS est remis à 0 avant chaque essai (la file n'est jamais vidée) et les échecs
+ * de suite sont comptés dans SYNC_DOWN : à partir du 3e, nouvel essai dans 15 min, puis 30, 60 au plus.
+ */
+function syncStep_(t0) {
+  const props = PropertiesService.getScriptProperties(), wait = +(props.getProperty('SYNC_WAIT') || 0);
+  if (wait > Date.now()) return { done: 0, left: 0, warn: [] };
+  props.setProperty('SYNC_FAILS', '0');
+  const r = syncQueueStep_(t0, MAX_RUN_MS - 60000), down = +(props.getProperty('SYNC_DOWN') || 0);
+  if (+(props.getProperty('SYNC_FAILS') || 0) > 0) {
+    const n = down + 1; props.setProperty('SYNC_DOWN', String(n));
+    if (n >= 3) {
+      const min = Math.min(60, 15 * Math.pow(2, n - 3)), left = JSON.parse(props.getProperty('SYNC_QUEUE') || '[]').length + queueMore_(props).length;
+      props.setProperty('SYNC_WAIT', String(Date.now() + min * MIN));
+      log_('Synchro', n + ' échecs de suite, ' + left + ' véhicule-jours gardés en attente, nouvel essai dans ' + min + ' min. Vérifiez la connexion Geotab. ' + r.warn.join(' ; '), t0);
+    }
+  } else if (down) { props.deleteProperty('SYNC_DOWN'); props.deleteProperty('SYNC_WAIT'); }
+  return r;
 }
 
 // ============================================================================
@@ -212,11 +235,13 @@ function collect() {
     try { const m = notifyAlerts_(); if (m) msg.push(m); } catch (e) { msg.push('Alertes par e-mail : ' + e.message); }
     // Staff : arrivée non pointée signalée par e-mail (une fois par salarié et par jour)
     try { const m = rhClockStep_(); if (m) msg.push(m); } catch (e) { msg.push('Pointage : ' + e.message); }
+    // RH : contrats générés, copies signées / légalisées et avenants signés copiés dans le Drive (une fois chacun)
+    if (Date.now() - t0 < 200000) { try { const m = rhDriveFilesStep_(t0); if (m) msg.push(m); } catch (e) { msg.push('Drive RH : ' + e.message); } }
     // Finalisation des journées terminées (une seule fois par véhicule-jour)
     if (Date.now() - t0 < 180000) {
       let n = 0; try { n = queueDays_(dueFinal_(P)); } catch (e) { msg.push('File de finalisation : ' + e.message); n = 1; }   // la file en place est traitée quand même
       if (n) {
-        const r = syncQueueStep_(t0, MAX_RUN_MS - 60000);
+        const r = syncStep_(t0);
         if (r.done) msg.push(r.done + ' véhicule-jours finalisés' + (r.left ? ', ' + r.left + ' restants' : ''));
         if (r.warn.length) msg.push(r.warn.join(' ; '));
       }
@@ -249,9 +274,12 @@ function processJobs_(t0) {
     sbReq_('patch', 'jobs?id=in.(' + ids.join(',') + ')', n > 2 ? { done_at: new Date().toISOString(), result: 'Abandonnée : traitement trop long (2 essais). Réessayer sur une période plus courte.' } : { result: 'Essai ' + n + ' en cours' }, { Prefer: 'return=minimal' });
     return n <= 2; };
   jobs.forEach(j => { (by[j.kind] = by[j.kind] || []).push(j); });
-  const order = ['apply_plates', 'import_vehicles', 'after_inject', 'resync', 'recompute', 'sync_now', 'send_report', 'driver_report', 'manifest_mail', 'quote_mail'];
+  const order = ['apply_plates', 'import_vehicles', 'after_inject', 'resync', 'recompute', 'sync_now', 'send_report', 'driver_report', 'manifest_mail', 'quote_mail', 'rh_drive'];
+  // demandes longues (relecture Geotab, recalcul) : lancées seulement s'il reste assez de temps dans le passage (6 min d'Apps Script)
+  const heavy = { apply_plates: 1, after_inject: 1, resync: 1, recompute: 1, sync_now: 1, rh_drive: 1 };
+  const injDay = args => args.map(a => toDayStr_(a)).filter(Boolean).sort()[0] || addDays_(localDay_(new Date()), -1);
   Object.keys(by).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)).forEach(kind => {
-    if (Date.now() - t0 > 210000) return;   // la suite au prochain passage
+    if (Date.now() - t0 > (heavy[kind] ? 150000 : 210000)) return;   // la suite au prochain passage
     if (kind === 'driver_report' || kind === 'manifest_mail' || kind === 'quote_mail') {   // une réponse par demande (chaque utilisateur voit le résultat de la sienne)
       by[kind].forEach(j => {
         if (Date.now() - t0 > 240000) return;
@@ -263,16 +291,21 @@ function processJobs_(t0) {
       return;
     }
     const list = by[kind], args = list.map(j => j.arg).filter(Boolean);
-    if (!start(list)) { out.push(kind + ' : abandonnée'); return; }
+    if (!start(list)) {
+      // contrats importés : le recalcul n'est pas perdu (journal et alertes refaits par le passage suivant)
+      if (kind === 'after_inject') markDirty_(addDays_(injDay(args), -1));
+      out.push(kind + ' : abandonnée'); return;
+    }
     let res;
     try {
-      if (kind === 'after_inject') res = jobAfterInject_(args.map(a => toDayStr_(a)).filter(Boolean).sort()[0] || addDays_(localDay_(new Date()), -1));
+      if (kind === 'after_inject') res = jobAfterInject_(injDay(args), t0);
       else if (kind === 'apply_plates') res = jobPlates_();
       else if (kind === 'import_vehicles') res = importVehicles(true) + ' véhicules';
-      else if (kind === 'sync_now') res = jobSyncNow_();
+      else if (kind === 'sync_now') res = jobSyncNow_(t0);
       else if (kind === 'recompute') res = jobRecompute_(args.map(a => toDayStr_(a)).filter(Boolean).sort()[0]);
-      else if (kind === 'resync') res = jobResync_(args);
+      else if (kind === 'resync') res = jobResync_(args, t0);
       else if (kind === 'send_report') res = jobSendReport_(args);
+      else if (kind === 'rh_drive') res = [rhDriveFilesStep_(t0), rhDriveSheetsStep_()].filter(Boolean).join(' | ') || 'Drive RH : rien à copier (dossiers non réglés ?)';
       else res = 'Demande inconnue : ' + kind;
     } catch (e) { res = 'Erreur : ' + e.message; }
     const ids = list.map(j => j.id);
@@ -282,10 +315,10 @@ function processJobs_(t0) {
   });
   return out.join(' | ');
 }
-function jobAfterInject_(fromDay) {
+function jobAfterInject_(fromDay, t0) {
   const dr = refreshDrivers_();
   if (canonContracts_()) rekeyAll_();
-  let m = afterInject_(fromDay);
+  let m = afterInject_(fromDay, t0);
   if (dr.newDrivers.length) m += ' | nouveaux chauffeurs : ' + dr.newDrivers.join(', ');
   return m;
 }
@@ -298,8 +331,13 @@ function jobPlates_() {
   clearDirty_(from);
   return 'plaques appliquées, ' + r.jrn + ' journées de travail recalculées';
 }
-function jobSyncNow_() {
-  const live = liveCatchUp_(MAX_RUN_MS - 150000);
+/**
+ * Temps donné à la relecture Geotab d'une demande : compté depuis le début du passage (t0, la demande peut commencer
+ * plusieurs minutes après), « reserve » gardée pour la suite (recalcul…), « cap » au plus, 15 s au moins
+ */
+function jobBudget_(t0, cap, reserve) { return Math.max(15000, Math.min(cap, MAX_RUN_MS - reserve - (t0 ? Date.now() - t0 : 0))); }
+function jobSyncNow_(t0) {
+  const live = liveCatchUp_(jobBudget_(t0, MAX_RUN_MS - 150000, 120000));
   writeLive_(live.status);
   updateDerived_(localDay_(Date.now() - DAY));
   clearDirty_(localDay_(Date.now() - DAY));
@@ -312,7 +350,7 @@ function jobRecompute_(fromDay) {
   return r.jrn + ' journées de travail, ' + r.alerts + ' alertes';
 }
 /** Retéléchargement de journées : arg = « aaaa-mm-jj » ou « aaaa-mm-jj|aaaa-mm-jj » (période), éventuellement « |PLAQUE » */
-function jobResync_(args) {
+function jobResync_(args, t0) {
   const veh = vehicles_(), list = Object.values(veh).filter(v => v.active && v.geoId), items = [];
   let live = 0;
   args.forEach(a => {
@@ -324,7 +362,7 @@ function jobResync_(args) {
     }
   });
   if (items.length) queueDays_(items);
-  if (live) { const l = liveCatchUp_(90000); writeLive_(l.status); markDirty_(localDay_(Date.now() - DAY)); }
+  if (live) { const l = liveCatchUp_(jobBudget_(t0, 90000, 60000)); writeLive_(l.status); markDirty_(localDay_(Date.now() - DAY)); }
   return items.length + ' véhicule-jours à retélécharger' + (live ? ', journées récentes mises à jour en temps réel' : '');
 }
 
@@ -336,7 +374,7 @@ function dailyStep_(t0) {
   let st = JSON.parse(props.getProperty('DAILY') || 'null');
   if (!st || st.day !== today) {
     if (h < 2 && st) return '';                                        // la nuit, après 2 h
-    st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size', 'manifests', 'rh'] };
+    st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size', 'manifests', 'rh', 'rhdrive'] };
     const month = today.slice(0, 7);
     if (props.getProperty('ARCH_MONTH') !== month) st.steps.push('arch:trips', 'arch:idles', 'arch:engine_stops', 'arch:events', 'arch:fuel', 'arch:levels',
       'arch:vehicle_days', 'arch:journal', 'arch:alerts', 'arch:done');
@@ -353,6 +391,7 @@ function dailyStep_(t0) {
       else if (s === 'size') { const z = dbRpc_('db_size'); if (z && z.total_mb > 400) out.push('Base : ' + z.total_mb + ' Mo sur 500 Mo gratuits, réduire « Données détaillées conservées »'); props.setProperty('DB_MB', String(z ? z.total_mb : '')); }
       else if (s === 'manifests') { const m = pruneManifests_(); if (m) out.push(m); }
       else if (s === 'rh') { const m = rhDigest_(); if (m) out.push(m); }
+      else if (s === 'rhdrive') { const m = rhDriveSheetsStep_(); if (m) out.push(m); }
       else if (s === 'arch:done') props.setProperty('ARCH_MONTH', today.slice(0, 7));
       else if (s.indexOf('arch:') === 0) { const m = archiveTable_(s.slice(5)); if (m) out.push(m); }
     } catch (e) { out.push(s + ' : ' + e.message); }
@@ -392,12 +431,15 @@ function driveFolder_(name) {
 /** Sauvegarde quotidienne dans Drive de ce qui est saisi à la main (contrats, plaques, chauffeurs, réglages, statuts d'alertes) */
 function backup_() {
   const o = { at: new Date().toISOString(), version: COLLECTOR_V };
-  [['vehicles', 'key'], ['plate_changes', 'id'], ['drivers', 'code'], ['contracts', 'num'], ['rules', 'id'], ['params', 'key'], ['profiles', 'user_id'],
-    ['parc', 'plate'], ['agencies', 'id'], ['user_agencies', 'user_id,agency_id'], ['alert_recipients', 'id'], ['report_schedules', 'id'],
-    ['fuel_card_tx', 'id'], ['manager_shifts', 'agency_id,user_id,day,shift'], ['manifest_config', 'id'], ['manifests', 'id'], ['cash_moves', 'id'], ['uber_drivers', 'uuid'], ['employers', 'id'], ['work_contracts', 'id'], ['hr_employees', 'id'], ['hr_events', 'id'], ['hr_clock', 'id'], ['hr_documents', 'id']].forEach(t => {
-    // tables ajoutées par les migrations récentes : absentes tant que la migration n'est pas exécutée (sauvegarde du reste quand même)
-    try { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); } catch (e) { if (t[0] in { fuel_card_tx: 1, manager_shifts: 1, manifest_config: 1, manifests: 1, cash_moves: 1, uber_drivers: 1, employers: 1, work_contracts: 1, hr_employees: 1, hr_events: 1, hr_clock: 1 }) o[t[0]] = 'absente : ' + e.message; else throw e; }
-  });
+  const base = [['vehicles', 'key'], ['plate_changes', 'id'], ['drivers', 'code'], ['contracts', 'num'], ['rules', 'id'], ['params', 'key'], ['profiles', 'user_id'],
+    ['parc', 'plate'], ['agencies', 'id'], ['user_agencies', 'user_id,agency_id'], ['alert_recipients', 'id'], ['report_schedules', 'id']];
+  // tables ajoutées par les migrations récentes : absentes tant que la migration n'est pas exécutée (sauvegarde du reste quand même)
+  const later = [['fuel_card_tx', 'id'], ['manager_shifts', 'agency_id,user_id,day,shift'], ['manifest_config', 'id'], ['manifests', 'id'],
+    ['missions', 'id'], ['pricing_grid', 'id'], ['cash_moves', 'id'], ['cash_log', 'id'], ['uber_drivers', 'uuid'], ['uber_payments', 'tx'],
+    ['driver_roster', 'driver_code'], ['driver_plan', 'id'], ['driver_absences', 'id'], ['plan_weeks', 'agency_id,week'],
+    ['employers', 'id'], ['work_contracts', 'id'], ['hr_employees', 'id'], ['hr_events', 'id'], ['hr_clock', 'id'], ['hr_documents', 'id']];
+  base.forEach(t => { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); });
+  later.forEach(t => { try { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); } catch (e) { o[t[0]] = 'absente : ' + e.message; } });
   o.alerts = dbSelect_('alerts', 'select=id,status,comment&or=' + enc_('(status.neq.À traiter,comment.neq.)'), 'id');
   o.fuel_status = dbSelect_('fuel', 'select=id,status&status=not.in.' + enc_('("À vérifier","Info")'), 'id');
   const f = driveFolder_('Flotte Geotab - Sauvegardes'), name = 'sauvegarde_' + localDay_(new Date()) + '.json';

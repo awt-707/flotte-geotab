@@ -141,7 +141,7 @@ function ctrBind() {
     if (!$('#ct_nom').value.trim()) $('#ct_nom').value = d.name;
     if (!$('#ct_tel').value.trim() && d.phone) $('#ct_tel').value = d.phone;
     if (d.agency_id && $(`#ct_agency option[value="${d.agency_id}"]`)) $('#ct_agency').value = String(d.agency_id);
-    CT.draft.driver_code = d.code; ctrHints();
+    CT.draft.driver_code = d.code; CT.draft._linkName = $('#ct_nom').value.trim() || d.name; ctrHints();
   };
   if ($('#ctcoed')) $('#ctcoed').onclick = () => { const e = CT.emp.find(x => String(x.id) === $('#ctemp').value); if (!e) { alert('Choisir la société à modifier.'); return; } ctrCoEditor(e); };
   if ($('#ctconew')) $('#ctconew').onclick = () => ctrCoEditor(null);
@@ -174,6 +174,9 @@ function ctrCoEditor(e) {
 // ---------- Génération ----------
 async function ctrGenerate() {
   const miss = ctrHints(), st = Object.assign({}, CT.draft), c = ctrCo(), btn = $('#ctgen');
+  // chauffeur / fiche RH choisis pour un autre nom (nouveau salarié saisi ensuite) : contrat non rattaché à eux
+  const nk = x => String(x || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if ((st.driver_code || st.employee_id) && nk(st._linkName) !== nk(st.nom)) { delete st.driver_code; delete st.employee_id; delete CT.draft.driver_code; delete CT.draft.employee_id; }
   if (miss.length) { alert('À compléter : ' + miss.join(', ') + '.'); return; }
   btn.disabled = true; btn.textContent = 'Création du PDF…';
   try {

@@ -37,9 +37,8 @@ test('alertes RH : période d\'essai, contrat, légalisation, CDD, CNSS, dossier
   assert.deepStrictEqual(of(2), ['Haute · Contrat de travail · Aucun contrat de travail enregistré (générer le contrat ou enregistrer le contrat signé)', 'Haute · CNSS · N° CNSS non renseigné : immatriculation du salarié à la CNSS à vérifier'], 'contrat clos : plus suivi');
   assert.deepStrictEqual(of(3), ['Haute · Légalisation · Contrat signé le 05/10/2026, pas encore légalisé (19 j)']);
   assert.deepStrictEqual(of(4), ['Haute · Fin de contrat · CDD se termine le 10/11/2026 (dans 17 j) : renouveler ou préparer la sortie'], 'contrat généré il y a 4 jours : pas encore d\'alerte de signature');
-  assert.deepStrictEqual(of(5), ['Critique · Dossier · CIN expiré depuis le 01/10/2026', 'Haute · Arrêt maladie · Arrêt maladie du 20/10/2026 sans certificat médical',
-    'Haute · Dossier · Permis de conduire expire le 05/11/2026 (dans 12 j)', 'Haute · Absences · 5 jours d\'absence non justifiée sur 12 mois (plus de 4 jours : faute grave possible, article 39)',
-    'Moyenne · Ancienneté · Prime d\'ancienneté de 5 % à partir du 10/11/2026 (article 350)']);
+  assert.deepStrictEqual(of(5), ['Critique · Dossier · CIN expiré depuis le 01/10/2026', 'Haute · Dossier · Permis de conduire expire le 05/11/2026 (dans 12 j)', 'Haute · Absences · 5 jours d\'absence non justifiée sur 12 mois (plus de 4 jours : faute grave possible, article 39)',
+    'Moyenne · Arrêt maladie · Arrêt maladie du 20/10/2026 (3 j) sans certificat médical rangé', 'Moyenne · Ancienneté · Prime d\'ancienneté de 5 % à partir du 10/11/2026 (article 350)']);
   assert.deepStrictEqual(of(6), [], 'salarié sorti : plus d\'alerte');
   assert.strictEqual(al[0].level, 'Critique', 'alertes triées par gravité');
   // fin de CDD dépassée, pièce manquante, pointage sans date de naissance
@@ -144,7 +143,7 @@ test('site : compte Ressources humaines limité au dossier RH, alertes, dossier,
     await page.setInputFiles('#rhw_file', { name: 'contrat.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 test\n%%EOF') });
     await page.click('#rhwsave');
     await page.waitForFunction(() => /Légalisé/.test((document.querySelector('#rhwc') || {}).innerText || '') && !document.querySelector('#rhwcform input'));
-    assert.strictEqual(env.psql("select legal_place || '|' || (legal_path like '1/%')::text from work_contracts"), 'Agdal|true');
+    assert.strictEqual(env.psql("select legal_place || '|' || (legal_path like '0/%')::text from work_contracts"), 'Agdal|true', 'staff : copie dans le dossier 0 (administrateur et RH)');
     await page.click('#rhdoc summary'); await page.selectOption('#rhd_cat', 'cin'); await page.fill('#rhd_exp', '01/01/2031');
     await page.setInputFiles('#rhd_file', { name: 'cin.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 cin\n%%EOF') });
     await page.click('#rhdsave');

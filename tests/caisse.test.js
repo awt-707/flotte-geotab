@@ -12,7 +12,7 @@ test('rapprochement Uber : même résultat que le classeur (théorique, écart, 
   const moves = [{ caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 723, day: '2026-10-20', driver_code: 'A' },
     { caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 250, day: '2026-10-20', driver_code: 'B' },
     { caisse: 'depenses', kind: 'depense', flow: 'out', amount: 50, day: '2026-10-20', driver_code: 'B', ride_type: 'Course Uber', justif: 'OK', label: 'Péage' },
-    { caisse: 'depenses', kind: 'depense', flow: 'out', amount: 40, day: '2026-10-20', driver_code: 'B', ride_type: 'Course Uber', justif: 'KO', label: 'Parking' },
+    { caisse: 'depenses', kind: 'depense', flow: 'out', amount: 40, day: '2026-10-20', driver_code: 'B', ride_type: 'Course Uber', justif: 'KO', label: 'Parking', source: 'Caisse - Dépenses' },   // payée par la caisse : pas dans le manquant, retenue
     { caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 260, day: '2026-10-20', driver_code: 'C' },
     { caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 999, day: '2026-10-20', driver_code: 'C', cancelled_at: '2026-10-21T00:00:00Z' }];
   const r = C.cshRappro({ payments: pay, moves, from: '2026-10-20', to: '2026-10-20', uuid2code: { 'u-a': 'A', 'u-b': 'B', 'u-c': 'C' }, dayOfPayment: p => p.at.slice(0, 10), names: { A: 'Chauffeur A' } });
@@ -41,6 +41,52 @@ test('rapprochement Uber : même résultat que le classeur (théorique, écart, 
   // course privée : prime 10 %, part gardée par le chauffeur = course − remis
   assert.deepStrictEqual(C.cshCourse(800, 10, 720), { prime: 80, paid: 80, reste: 0 });
   assert.deepStrictEqual(C.cshCourse(800, 10, 800), { prime: 80, paid: 0, reste: 80 });
+});
+
+test('rapprochement : compte Uber non relié rattaché par la saisie ou par un nom unique, sinon sans effet sur la paie ; dépense Uber sans justificatif retenue une fois', () => {
+  const D = '2026-10-20', at = '2026-10-20T10:00:00Z', dop = p => p.at.slice(0, 10);
+  const pay = [{ driver_uuid: 'u-g', driver_name: 'Test Gamma', cash: 300, at }, { driver_uuid: 'u-d', driver_name: 'Solo Delta', cash: 100, at },
+    { driver_uuid: 'u-h', driver_name: 'Homonyme Eta', cash: 50, at }, { driver_uuid: 'u-k', driver_name: 'Inconnu Kappa', cash: 70, at }];
+  const drivers = [{ code: 'G', name: 'GAMMA Test' }, { code: 'D', name: 'Delta Solo' }, { code: 'H1', name: 'Eta Homonyme' }, { code: 'H2', name: 'Homonyme Eta' }];
+  const moves = [{ caisse: 'uber', kind: 'encaissement', amount: 300, day: D, driver_code: 'G' },                       // nom unique : G
+    { caisse: 'uber', kind: 'encaissement', amount: 90, day: D, driver_code: 'D', uber_uuid: 'u-d' },                     // saisie code + UUID : D
+    { caisse: 'uber', kind: 'encaissement', amount: 50, day: D, driver_code: 'H1' }];                                      // deux homonymes : non relié
+  const o = { payments: pay, moves, from: D, to: D, uuid2code: {}, drivers, dayOfPayment: dop };
+  assert.deepStrictEqual(C.cshLinks(o), { 'u-d': 'D', 'u-g': 'G' });
+  const r = C.cshRappro(o), by = k => r.find(x => x.key === k);
+  assert.deepStrictEqual([by('G').uber, by('G').net, by('G').statut], [300, 300, 'Cadré'], 'plus de « Non remis » + « Excédent » fantômes');
+  assert.deepStrictEqual([by('D').ecart, by('D').effet], [10, 'Retenir 10 MAD']);
+  assert.deepStrictEqual([by('U:u-h').statut, by('U:u-h').unlinked, by('U:u-k').statut], ['Compte Uber non relié', true, 'Compte Uber non relié']);
+  assert.match(by('U:u-k').effet, /^Aucun/);
+  const p = C.cshPayroll(o);
+  assert.deepStrictEqual([by('H1').statut, by('H1').effet], ['Compte Uber non relié', 'Aucun (relier le compte Uber)'], 'H1 sans compte Uber rattaché : pas d\'« Excédent » fantôme');
+  assert.deepStrictEqual(p.map(x => [x.key, x.manquant, x.excedent]), [['D', 10, 0]], 'comptes non reliés : ni retenue ni ajout');
+
+  // « Course Uber » sans justificatif payée avec les espèces Uber : déjà dans le manquant (non déduite du théorique), pas retenue une 2e fois ;
+  // payée par la caisse : pas dans le manquant, retenue ; payée par la caisse avec justificatif : ne réduit pas le théorique
+  const m2 = [{ caisse: 'uber', kind: 'encaissement', amount: 160, day: D, driver_code: 'A' },
+    { caisse: 'depenses', kind: 'depense', amount: 40, day: D, driver_code: 'A', ride_type: 'Course Uber', justif: 'KO', source: 'Chauffeur / Uber' },
+    { caisse: 'depenses', kind: 'depense', amount: 25, day: D, driver_code: 'A', ride_type: 'Course Uber', justif: 'KO', source: 'Caisse - Dépenses' },
+    { caisse: 'depenses', kind: 'depense', amount: 30, day: D, driver_code: 'A', ride_type: 'Course Uber', justif: 'OK', source: 'Caisse - Dépenses' },
+    { caisse: 'depenses', kind: 'depense', amount: 15, day: D, driver_code: 'B', ride_type: 'Course Uber', justif: 'KO' }];   // B : aucune espèce Uber
+  const o2 = { payments: [{ driver_uuid: 'u-a', cash: 200, at }], moves: m2, from: D, to: D, uuid2code: { 'u-a': 'A' }, dayOfPayment: dop };
+  const a = C.cshRappro(o2).find(x => x.key === 'A');
+  assert.deepStrictEqual([a.frais, a.theo, a.ecart], [0, 200, 40]);
+  const pa = C.cshPayroll(o2), A = pa.find(x => x.key === 'A'), B = pa.find(x => x.key === 'B');
+  assert.deepStrictEqual([A.manquant, A.depKo, A.nDepKo, A.impact], [40, 25, 1, -65], '40 retenus une fois (manquant), 25 payés par la caisse retenus');
+  assert.deepStrictEqual([B.depKo, B.impact], [15, -15], 'sans espèces Uber : dépense retenue');
+  assert.deepStrictEqual([C.cshUberPaid({ source: 'Chauffeur / Uber' }), C.cshUberPaid({}), C.cshUberPaid({ source: 'Banque' }), C.cshUberPaid({ source: 'Cash Nico' })], [true, true, false, false]);
+});
+
+test('chauffeur Uber ↔ Ludy : relié seulement par un candidat unique (téléphone, sinon nom), dans les deux sens', () => {
+  const ludy = [{ code: 'C1', name: 'Alpha Test', phone: '0600000001' }, { code: 'C2', name: 'Alpha Bis', phone: '0600000001' }, { code: 'C3', name: 'Essai Beta', phone: '' },
+    { code: 'C4', name: 'Beta Essai', phone: '' }, { code: 'C5', name: 'Zeta Seul', phone: '0622222222' }];
+  assert.strictEqual(C.cshMatchDriver({ phone: '+212 6 00 00 00 01', name: 'Alpha Test' }, ludy), null, 'deux chauffeurs au même téléphone : aucun');
+  assert.strictEqual(C.cshMatchDriver({ name: 'beta essai' }, ludy), null, 'deux chauffeurs au même nom : aucun');
+  assert.strictEqual(C.cshMatchDriver({ phone: '0622222222', name: 'Autre Nom' }, ludy).code, 'C5');
+  const m = C.cshMatchAll([{ uuid: 'u1', name: 'Seul Zeta' }, { uuid: 'u2', phone: '0622222222' }, { uuid: 'u3', name: 'Inconnu' }], ludy);
+  assert.deepStrictEqual(m, [], 'C5 proposé à deux comptes Uber : aucun lien');
+  assert.deepStrictEqual(C.cshMatchAll([{ uuid: 'u2', phone: '0622222222' }], ludy).map(x => [x[0].uuid, x[1].code]), [['u2', 'C5']]);
 });
 
 test('chiffre d\'affaires et évolution : par jour de shift et par semaine', () => {
@@ -126,6 +172,28 @@ test('historique du classeur : chaque onglet repris, lignes à 0 ignorées, date
   assert.deepStrictEqual(C.cshParseHistory(SHEETS, { resolve }).moves.map(m => m.import_key), h.moves.map(m => m.import_key));
 });
 
+test('historique du classeur : clé de reprise sur les colonnes saisies seulement, commission « 1% » = 1 %, onglets « … Ludy » ignorés', () => {
+  const head = ['Date d\'opération', 'Gestionnaire', 'Entrée / Sortie', 'Montant', 'Motif', 'Depart', 'Arrivé', 'Driver', 'Date de la course', 'Montant de la course', 'Commission chauffeur', 'Prime chauffeur', 'Encaissé', 'Commentaires', 'Montant pour RH', 'Montant déjà payé', 'Reste'];
+  const row = c => ['22/10/2026', 'Gest Un', 'Entrée de cash', '720', 'Encaissement chauffeur', 'Casablanca', 'Rabat', 'Test Alpha', '21/10/2026', '800', c, '8', 'OK', '', '8', '80', '-72'];
+  const h1 = C.cshParseHistory({ 'Caisse - Courses indep': [head, row('1%'), row('0,1'), row('10 %')] });
+  assert.deepStrictEqual(h1.moves.map(m => m.commission_pct), [1, 10, 10], '« 1% » = 1 % ; 0,1 sans « % » = 10 %');
+  const enc = SHEETS['Caisse - Encaissements chauffeurs'], h = C.cshParseHistory(SHEETS);
+  // formules (UUID, net, manquant) et colonnes modifiées après coup (commentaire, justificatif, statut) changées : mêmes clés
+  const edited = JSON.parse(JSON.stringify(SHEETS));
+  edited['Caisse - Encaissements chauffeurs'][3] = enc[3].map((c, j) => j === 2 ? '#N/A' : j === 10 ? '724' : j === 11 ? '189' : j === 12 ? 'vu' : c);
+  edited['Caisse - Dépenses chauffeurs'][1][10] = 'KO'; edited['Caisse - Bonus performance'][1][7] = 'Payé';
+  const h2 = C.cshParseHistory(edited);
+  assert.deepStrictEqual(h2.moves.map(m => m.import_key), h.moves.map(m => m.import_key));
+  assert.notDeepStrictEqual(h2.moves.map(m => m.legacy_key), h.moves.map(m => m.legacy_key), 'ancienne clé : ligne entière');
+  assert.ok(h.moves.every(m => /^xl2:/.test(m.import_key) && /^xl:/.test(m.legacy_key)));
+  // montant saisi changé : autre ligne
+  edited['Caisse - Avance RH'][1][4] = '350';
+  assert.notStrictEqual(C.cshParseHistory(edited).moves.find(m => m.caisse === 'rh').import_key, h.moves.find(m => m.caisse === 'rh').import_key);
+  // copie de sauvegarde écrite par le collecteur : jamais reprise
+  const withCopy = Object.assign({ 'Caisse - Encaissements chauffeurs Ludy': enc }, SHEETS), h3 = C.cshParseHistory(withCopy);
+  assert.deepStrictEqual([h3.moves.length, h3.ignored], [h.moves.length, ['Caisse - Encaissements chauffeurs Ludy']]);
+});
+
 test('base : gestionnaire limité à ses agences, ses saisies modifiables 24 h, historique de chaque changement, lecture seule exclue', () => {
   env.resetDb();
   env.psql(`insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin';
@@ -188,7 +256,7 @@ test('page Caisse : imports Uber, chauffeur relié, encaissement du shift, rappr
   const start = new Date(Date.now() - 2 * 3600000).toISOString();
   env.psql(`insert into vehicles (key, plate, model, active) values ('968199WW', 'WW968199', 'STARIA', 'OUI');
     insert into drivers (code, name, phone, status) values ('C1', 'ALPHA Test', '0600000001', 'Actif'), ('C2', 'Gamma Trois', '0611111111', 'Actif');
-    insert into contracts (num, client_code, name, plate, vehicle_key, start_at) values ('K1', 'C1', 'ALPHA Test', 'WW968199', '968199WW', '${start}');`);
+    insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at) values ('K1', 'C1', 'ALPHA Test', 'WW968199', '968199WW', '${start}', '${new Date(Date.now() - 20 * 60000).toISOString()}');`);
   const srv = await startSite(), { br, page, errors } = await openBrowser({ acceptDownloads: true });
   try {
     await login(page, '#/caisse?t=import');
@@ -196,17 +264,23 @@ test('page Caisse : imports Uber, chauffeur relié, encaissement du shift, rappr
     await page.setInputFiles('#cshfd', { name: 'driver_status.csv', mimeType: 'text/csv', buffer: Buffer.from(DRV_ROWS.map(r => r.join(',')).join('\n')) });
     await page.waitForFunction(() => /2 chauffeurs Uber[\s\S]*1 reliés/.test((document.querySelector('#cshfdr') || {}).innerText || ''));
     assert.strictEqual(env.psql("select uber_uuid from drivers where code = 'C1'"), 'aaaaaaaa-1111-2222-3333-444444444444');
-    // transactions du shift en cours (synthétiques) : espèces 100 + 80
-    const t1 = new Date(Date.now() - 3600000), t2 = new Date(Date.now() - 1800000), fmt = d => d.toISOString().replace('T', ' ').replace('Z', ' +0000 UTC');
+    // export Uber pas encore importé jusqu'à la fin du contrat : « non importé » (jamais 0)
+    await page.goto(page.url().replace(/#.*/, '') + '#/caisse?t=shift');
+    await page.waitForSelector('.cshshift');
+    assert.match(await page.innerText('.cshshift tbody'), /ALPHA Test[\s\S]*non importé/);
+    await page.goto(page.url().replace(/#.*/, '') + '#/caisse?t=import');
+    // transactions du shift en cours (synthétiques) : espèces 100 + 80 pendant le contrat, une transaction après la fin du contrat (export à jour)
+    const t1 = new Date(Date.now() - 3600000), t2 = new Date(Date.now() - 1800000), t3 = new Date(Date.now() - 300000), fmt = d => d.toISOString().replace('T', ' ').replace('Z', ' +0000 UTC');
     const rows = [UBER_HEAD, ['tx-a1', 'aaaaaaaa-1111-2222-3333-444444444444', 'Test', 'Alpha', 't1', 'x', 'Org', fmt(t1), '0', '120', '120', '', '-100', ''],
-      ['tx-a2', 'aaaaaaaa-1111-2222-3333-444444444444', 'Test', 'Alpha', 't2', 'x', 'Org', fmt(t2), '0', '90', '90', '', '-80', '']];
+      ['tx-a2', 'aaaaaaaa-1111-2222-3333-444444444444', 'Test', 'Alpha', 't2', 'x', 'Org', fmt(t2), '0', '90', '90', '', '-80', ''],
+      ['tx-a3', 'aaaaaaaa-1111-2222-3333-444444444444', 'Test', 'Alpha', 't3', 'x', 'Org', fmt(t3), '0', '0', '0', '', '0', '']];
     const csv = rows.map(r => r.map(c => /[",]/.test(c) ? '"' + c + '"' : c).join(',')).join('\n');
     await page.waitForSelector('#cshfp');
     await page.setInputFiles('#cshfp', { name: 'paiements.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
-    await page.waitForFunction(() => /2 transactions lues/.test((document.querySelector('#cshfpr') || {}).innerText || ''));
+    await page.waitForFunction(() => /3 transactions lues[\s\S]*3 ajoutées/.test((document.querySelector('#cshfpr') || {}).innerText || ''));
     await page.setInputFiles('#cshfp', { name: 'paiements.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });   // réimport : pas de doublon
-    await page.waitForFunction(() => /2 transactions lues/.test((document.querySelector('#cshfpr') || {}).innerText || ''));
-    assert.strictEqual(env.psql('select count(*) || \'|\' || sum(cash) from uber_payments'), '2|180.00');
+    await page.waitForFunction(() => /3 transactions lues[\s\S]*0 ajoutées, 3 déjà présentes/.test((document.querySelector('#cshfpr') || {}).innerText || ''));
+    assert.strictEqual(env.psql('select count(*) || \'|\' || sum(cash) from uber_payments'), '3|180.00');
 
     // encaissement du shift : espèces Uber du contrat, remis 200 − monnaie 40 = 160 → manquant 20
     await page.goto(page.url().replace(/#.*/, '') + '#/caisse?t=shift');
@@ -250,12 +324,12 @@ test('page Caisse : imports Uber, chauffeur relié, encaissement du shift, rappr
     await page.setInputFiles('#cshfh', xl);
     await page.waitForFunction(() => /Historique repris|Erreur/.test((document.querySelector('#cshfhr') || {}).innerText || ''));
     assert.match(await page.innerText('#cshfhr'), /Historique repris : 9 mouvements/);
-    const n = env.psql("select count(*) from cash_moves where import_key like 'xl:%'");
+    const n = env.psql("select count(*) from cash_moves where import_key like 'xl%'");
     await page.setInputFiles('#cshfh', xl);
     await page.waitForFunction(() => /Historique repris/.test((document.querySelector('#cshfhr') || {}).innerText || ''));
-    assert.strictEqual(env.psql("select count(*) from cash_moves where import_key like 'xl:%'"), n);
+    assert.strictEqual(env.psql("select count(*) from cash_moves where import_key like 'xl%'"), n);
     assert.strictEqual(n, '9');
-    assert.strictEqual(env.psql("select count(*) from cash_moves where import_key like 'xl:%' and driver_code = 'C1'"), '4', 'chauffeur reconnu par son UUID Uber ou son nom');
+    assert.strictEqual(env.psql("select count(*) from cash_moves where import_key like 'xl%' and driver_code = 'C1'"), '4', 'chauffeur reconnu par son UUID Uber ou son nom');
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); }
 });
@@ -320,8 +394,8 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
   assert.deepStrictEqual(enc[8].slice(4, 11), ['Dépôt en banque', 'Sortie de cash', 'Banque', '', 5000, '', '=I9-J9']);
   assert.deepStrictEqual(tab('Caisse - Dépenses chauffeurs Ludy').data[4], [serial('2026-10-20'), 'Shift 2', 'Essai Beta', '=IF(C5="","",XLOOKUP(C5,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G))',
     '', 50, 'Course Uber', 'Péage', 'Sortie de cash', 'Chauffeur / Uber', '', '']);
-  assert.deepStrictEqual(tab('Caisse - Courses indep Ludy').data[7].slice(0, 17), [serial('2026-10-22'), '', 'Entrée de cash', 720, 'Encaissement chauffeur', 'Casablanca', 'Rabat', 'Test Alpha', serial('2026-10-22'), 800, 0.1, '=J8*K8', 'Oui', '',
-    '=IF($E8="Encaissement chauffeur",L8,0)', '=IF($E8="Encaissement chauffeur",J8-D8,0)', '=IF($E8="Encaissement chauffeur",O8-P8,0)']);
+  assert.deepStrictEqual(tab('Caisse - Courses indep Ludy').data[7].slice(0, 17), [serial('2026-10-22'), '', 'Entrée de cash', 720, 'Encaissement chauffeur', 'Casablanca', 'Rabat', 'Test Alpha', serial('2026-10-22'), 800, 0.1, 80, 'Oui', '',
+    '=IF($E8="Encaissement chauffeur",L8,0)', 80, '=IF($E8="Encaissement chauffeur",O8-P8,0)'], 'prime et montant déjà payé enregistrés dans Ludy');
   assert.deepStrictEqual(tab('Caisse - Avance RH Ludy').data[4].slice(4, 10), [300, 'Sortie de cash', 'Caisse RH', 'Avance sur Salaire', '', 'OK']);
   assert.deepStrictEqual(tab('Caisse - Bonus performance Ludy').data[4].slice(4, 9), [150, 'Virement', 'Challenge Shift', 'A payer', 'Caisse']);
   assert.deepStrictEqual(tab('Export Uber - Driver Status Ludy').data[1], ['Test Alpha', 'ACTIVE', '', '+212600000001', '', '', 'aaaaaaaa-1111-2222-3333-444444444444', '']);

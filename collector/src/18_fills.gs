@@ -33,7 +33,10 @@ function liveFills_() {
   // pleins nouveaux ou modifiés seulement : le journal n'est recalculé que s'il y a du nouveau (sinon toutes les 15 min pour rien)
   const F = ['lvl_before', 'lvl_after', 'liters_gauge', 'liters_geotab', 'driver_code', 'contract_num'], sig = o => F.map(c => o[c] == null ? '' : String(+o[c] === +o[c] ? +o[c] : o[c])).join('|');
   const rows = acc.fuels.map(r => toDb_('FUEL', r, true)), old = {};
-  for (let i = 0; i < rows.length; i += 40) dbSelect_('fuel', 'select=id,' + F.join(',') + '&id=' + inList_(rows.slice(i, i + 40).map(o => o.id)), 'id').forEach(o => { old[o.id] = sig(o); });
+  // clés lues par lots tenus sous ~1,5 Ko d'URL (UrlFetch refuse au-delà de 2 Ko ; 40 clés de plein encodées en font ~2,7)
+  const lots = [[]];
+  rows.forEach(o => { const l = lots[lots.length - 1]; if (l.length && inList_(l.concat(o.id)).length > 1500) lots.push([o.id]); else l.push(o.id); });
+  lots.forEach(l => { if (l.length) dbSelect_('fuel', 'select=id,' + F.join(',') + '&id=' + inList_(l), 'id').forEach(o => { old[o.id] = sig(o); }); });
   const changed = rows.filter(o => old[o.id] !== sig(o)).length;
   putLive_('FUEL', acc.fuels);
   return changed;

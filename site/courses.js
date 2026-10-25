@@ -110,6 +110,7 @@ function crsSeatsOk(f, G) { const c = ((G && G.cats) || []).find(x => x.id === f
  * est saisi au devis : rien n'est estimé.
  */
 function crsPrice(f, G) {
+  if (f && f.kind === 'Aller-retour' && !f.roundTrip) f = Object.assign({}, f, { roundTrip: true, returnEmpty: false });   // type « Aller-retour » = retour facturé
   G = G || {}; const cat = f.cat, base = crsBase(f, G), nVeh = Math.max(1, crsN(f.nVeh) || 1), lines = [], notes = [];
   const val = (o, k) => crsN(o && o[k]);
   const add = (label, qty, unit, kind) => { const amount = Math.round(qty * unit * 100) / 100; if (amount) lines.push({ label, qty, unit, amount, kind: kind || 'base' }); return amount; };
@@ -155,6 +156,8 @@ function crsPrice(f, G) {
     // dépassements prévus dès la découverte (heure commencée, km au-delà du forfait), au tarif de la grille
     if (base !== 'special' && hDay > inc.h) add('Heures prévues au-delà de ' + inc.h + ' h / jour (' + hDay + ' h / jour, heure commencée)', Math.ceil(hDay - inc.h) * nd * nVeh, extraH, 'depassement');
     if (base !== 'special' && kmDay > inc.km) add('Km prévus au-delà de ' + inc.km + ' km / jour (' + kmDay + ' km / jour)', (kmDay - inc.km) * nd * nVeh, extraKm, 'depassement');
+    // inclus au devis = forfait + dépassements prévus déjà facturés (le contrôle Geotab ne les refacture pas)
+    if (base !== 'special') inc = { h: Math.max(inc.h, Math.ceil(hDay || 0)), km: Math.max(inc.km, kmDay || 0) };
     const nn = Math.min(nd, crsN(f.nightDays) || ((f.night || f.holiday) ? nd : 0));
     if (nn && nightPct && dayP) add('Nuit (' + (G.nightFrom || 22) + 'h–' + (G.nightTo || 6) + 'h) ou jour férié : +' + nightPct + ' % sur ' + nn + ' jour(s) (non cumulables)', nn * nVeh, dayP * nightPct / 100, 'majoration');
   } else notes.push('Choisir le type de prestation pour calculer le prix.');
@@ -168,7 +171,8 @@ function crsPrice(f, G) {
   const pro = f.pro && crsN(G.proPct) ? Math.round(gross * crsN(G.proPct)) / 100 : 0;
   if (pro) lines.push({ label: 'Remise agences, DMC et entreprises (−' + G.proPct + ' % sur facture)', qty: 1, unit: -pro, amount: -pro, kind: 'remise' });
   const total = Math.round((gross - pro) * 100) / 100, vat = crsN(G.vat), ht = vat ? Math.round(total / (1 + vat / 100) * 100) / 100 : total;
-  const depOn = base === 'interville' || base === 'jours' || base === 'special' || days > 1;
+  // acompte (grille) : courses intervilles (hors « En ville ») et mises à disposition de plusieurs jours
+  const depOn = (base === 'interville' && !/^en ville/i.test(f.dest || '')) || (['heure', 'demi', 'journee', 'jours', 'special'].includes(base) && days > 1);
   const deposit = depOn ? Math.round(total * crsN(G.depositPct)) / 100 : 0;
   return { base, lines, total, ht, vat, tva: Math.round((total - ht) * 100) / 100, deposit, depositPct: depOn ? crsN(G.depositPct) : 0, included: inc,
     extraHour: extraH, extraKm, wait15: val(G.wait15, cat), notes };
@@ -199,6 +203,8 @@ const CRS_SCRIPT = ['Quelles sont vos dates ?', 'Combien de passagers et de baga
   'Votre planning sera-t-il défini à l\'avance ou souhaitez-vous une disponibilité flexible ?'];
 const CRS_LVL_CLS = { Standard: 'ok', Intensive: 'warn', '24h / VIP': 'crit' };
 const CRS_ST_CLS = { Demande: '', 'Devis envoyé': 'warn', 'Accepté': 'warn', 'Acompte reçu': 'ok', 'Confirmée': 'ok', 'En cours': 'ok', 'Terminée': '', 'Facturée': '', 'Annulée': 'crit', 'Refusée': 'crit' };
+/** Grille d'une course déjà enregistrée : celle de sa date (gardée dans la course), sinon la grille du jour */
+function crsG() { return (CR.cur && CR.cur.data && CR.cur.data.grid) || CR.grid; }
 function crsCats() { return (CR.grid && CR.grid.cats) || []; }
 function crsCatName(id) { const c = crsCats().find(x => x.id === id); return c ? c.model + ' (' + c.label + ')' : (id || ''); }
 async function crsLoadGrid() {
@@ -266,7 +272,7 @@ function crsField(k, label, type, opt) {
 }
 function crsChecks(k, items) { const sel = CR.f[k] || []; return `<div class="crschk">${items.map(x => `<label class="chk"><input type="checkbox" data-fa="${k}" value="${esc(x)}" ${sel.includes(x) ? 'checked' : ''} ${CR.edit ? '' : 'disabled'}> ${esc(x)}</label>`).join('')}</div>`; }
 function crsForm() {
-  const f = CR.f, G = CR.grid || {}, base = crsBase(f, G), tab = base === 'aeroport' ? G.airport : base === 'interville' ? G.intercity : null;
+  const f = CR.f, G = crsG() || {}, base = crsBase(f, G), tab = base === 'aeroport' ? G.airport : base === 'interville' ? G.intercity : null;
   const vs = S.vehList.filter(v => String(v.active || 'OUI').toUpperCase() !== 'NON');
   return `
   <details class="panel" open><summary><h2>1. Client</h2></summary><div class="mfrow">
@@ -347,7 +353,7 @@ function crsTimes(f) {
   return { a, b };
 }
 function crsSide() {
-  const f = CR.f, G = CR.grid || {}, m = CR.cur || {}, p = crsPrice(f, G), lv = crsLevel(f), val = crsValidation(f, p.total, G), miss = crsMissing(f, G);
+  const f = CR.f, G = crsG() || {}, m = CR.cur || {}, p = crsPrice(f, G), lv = crsLevel(f), val = crsValidation(f, p.total, G), miss = crsMissing(f, G);
   const amp = $('#crsamp'); if (amp) amp.textContent = crsAmplitude(f) ? 'Formule selon l\'amplitude : ' + crsAmplitude(f) + (f.h24 ? ' : au minimum deux chauffeurs en rotation, temps de repos organisés, majoration de mobilisation permanente.' : '') : '';
   const vi = $('#crsvinfo'); if (vi) vi.innerHTML = crsSeatsOk(f, G) ? '' : '<span class="crit">Trop de passagers pour la catégorie choisie : ' + esc(crsCatName(f.cat)) + '.</span>';
   const validated = !!m.validated_at, needVal = val.length > 0;
@@ -405,12 +411,12 @@ async function crsEditor(id, head) {
   $('#crsform').addEventListener('input', () => { crsRead(); crsSide(); });
   // champs qui changent le formulaire lui-même (type, formule, aller-retour, catégorie, prestations) : formulaire redessiné
   $('#crsform').addEventListener('change', e => { const k = e.target.dataset.f || e.target.dataset.fa; crsRead();
-    if (['kind', 'base', 'roundTrip', 'cat', 'extras', 'clientType', 'mfType'].includes(k)) { if (k === 'clientType') CR.f.pro = CR.f.clientType !== 'Particulier'; rerenderForm(); } crsSide(); });
+    if (['kind', 'base', 'roundTrip', 'cat', 'extras', 'clientType', 'mfType'].includes(k)) { if (k === 'clientType') CR.f.pro = CR.f.clientType !== 'Particulier'; if (k === 'kind' && CR.f.kind === 'Aller-retour') { CR.f.roundTrip = true; CR.f.returnEmpty = false; } rerenderForm(); } crsSide(); });
   crsSide();
   crsGeotab();
 }
 function crsRow(f, p) {
-  const t = crsTimes(f), lv = crsLevel(f), val = crsValidation(f, p.total, CR.grid);
+  const t = crsTimes(f), lv = crsLevel(f), val = crsValidation(f, p.total, crsG());
   const v = f.vehicleKey ? S.veh[f.vehicleKey] : null;
   return { client_name: f.client || null, client_company: f.company || null, client_phone: f.phone || null, client_email: f.email || null, kind: f.kind || null, category: f.cat || null,
     vehicle_key: f.vehicleKey || null, driver_name: f.driverName || null, start_at: t.a ? t.a.toISOString() : null, end_at: t.b ? t.b.toISOString() : null,
@@ -418,10 +424,10 @@ function crsRow(f, p) {
     agency_id: v && v.agency_id ? v.agency_id : (CR.cur && CR.cur.agency_id) || (agFilter() ? +agFilter() : (S.agencies.length === 1 ? S.agencies[0].id : null)) };
 }
 async function crsSave(status) {
-  const f = crsRead(), p = crsPrice(f, CR.grid), m = CR.cur, row = crsRow(f, p), out = $('#crsres');
+  const G = crsG(), f = crsRead(), p = crsPrice(f, G), m = CR.cur, row = crsRow(f, p), out = $('#crsres');
   const hist = ((m && m.data && m.data.history) || []).slice();
   if (status) hist.push({ at: new Date().toISOString(), status, by: S.profile.email || '' });
-  row.data = Object.assign({}, m && m.data, { f, price: p, history: hist });
+  row.data = Object.assign({}, m && m.data, { f, price: p, history: hist, grid: G || null });   // grille du devis gardée : prix de sa date
   if (status) row.status = status;
   out.textContent = 'Enregistrement…';
   const r = m ? await sb.from('missions').update(row).eq('id', m.id).select('*').single() : await sb.from('missions').insert(Object.assign(row, { status: 'Demande', data: Object.assign(row.data, { history: [{ at: new Date().toISOString(), status: 'Demande', by: S.profile.email || '' }] }) })).select('*').single();
@@ -440,7 +446,7 @@ async function crsConflicts(m) {
 }
 function crsBindSide(p, val, miss) {
   const sv = $('#crssave'); if (sv) sv.onclick = () => crsSave();
-  const pdf = $('#crspdf'); if (pdf) pdf.onclick = () => { try { crsPdf(CR.cur || {}, crsRead(), p, CR.grid); } catch (e) { alert(e.message); } };
+  const pdf = $('#crspdf'); if (pdf) pdf.onclick = () => { try { crsPdf(CR.cur || {}, crsRead(), p, crsG()); } catch (e) { alert(e.message); } };
   document.querySelectorAll('[data-crst]').forEach(b => { b.onclick = async () => {
     const to = b.dataset.crst, f = crsRead(), m = CR.cur;
     if (to === 'Devis envoyé' && miss.length) { alert('À préciser avant d\'envoyer un prix : ' + miss.join(', ') + '.'); return; }
@@ -460,7 +466,10 @@ function crsBindSide(p, val, miss) {
     CR.cur = r.data; crsSide();
   };
   const msgTxt = () => crsQuoteText(p);
-  const wa = $('#crswa'); if (wa) wa.onclick = () => { const n = typeof manifWa === 'function' ? manifWa(CR.f.phone) : ''; const u = 'https://wa.me/' + n + '?text=' + encodeURIComponent(msgTxt()); if (!openOut(u)) window.open(u, '_blank', 'noopener'); };
+  const wa = $('#crswa'); if (wa) wa.onclick = () => {
+    if (miss.length) { alert('À préciser avant d\'envoyer un prix : ' + miss.join(', ') + '.'); return; }
+    if (val.length && !(CR.cur && CR.cur.validated_at)) { alert('Validation de l\'exploitation obligatoire avant d\'envoyer le prix (' + val.join(', ') + ').'); return; }
+    const n = typeof manifWa === 'function' ? manifWa(CR.f.phone) : ''; const u = 'https://wa.me/' + n + '?text=' + encodeURIComponent(msgTxt()); if (!openOut(u)) window.open(u, '_blank', 'noopener'); };
   const ml = $('#crsmail'); if (ml) ml.onclick = () => { CR.mailOpen = true; CR.mailRes = ''; CR.mailTo = CR.f.email || CR.mailTo || ''; crsMailBox(); const i = $('#crsmto'); if (i) i.focus(); };
 }
 /** Résumé du devis (WhatsApp, corps de l'e-mail) */
@@ -485,7 +494,7 @@ function crsMailBox() {
   $('#crsmgo').onclick = () => crsSendQuote();
 }
 async function crsSendQuote() {
-  const G = CR.grid || {}, say = (h, cls) => { CR.mailRes = msg(h, cls); const o = $('#crsmres'); if (o) o.innerHTML = CR.mailRes; };
+  const G = crsG() || {}, say = (h, cls) => { CR.mailRes = msg(h, cls); const o = $('#crsmres'); if (o) o.innerHTML = CR.mailRes; };
   const list = String(CR.mailTo || '').split(/[,;\s]+/).filter(Boolean);
   let f = crsRead(), p = crsPrice(f, G);
   if (!CR.cur || !CR.cur.id) { say('Enregistrer la demande avant d\'envoyer le devis.', 'err'); return; }
@@ -497,8 +506,10 @@ async function crsSendQuote() {
   const btn = $('#crsmgo'); if (btn) btn.disabled = true;
   say('Préparation du devis…');
   try {
-    if (!await crsSave()) throw new Error('fiche non enregistrée');   // devis envoyé = fiche enregistrée
+    const sv = await crsSave(); if (!sv) throw new Error('fiche non enregistrée');   // devis envoyé = fiche enregistrée
     f = CR.f; p = crsPrice(f, G);
+    // prix changé à l'enregistrement : la base a pu retirer la validation, contrôlée à nouveau sur la fiche enregistrée
+    if (sv.needs_validation && !sv.validated_at) throw new Error('validation de l\'exploitation obligatoire avant d\'envoyer ce prix (' + crsValidation(f, p.total, G).join(', ') + ')');
     const m = CR.cur, doc = crsPdf(m, f, p, G, true), blob = doc.output('blob'), name = crsPdfName(m, f);
     const path = today().slice(0, 7) + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)) + '.pdf';
     const up = await sb.storage.from('devis').upload(path, blob, { contentType: 'application/pdf', upsert: false });
@@ -524,7 +535,7 @@ function crsLocalDT(d) { const p = parts(d); return p.year + '-' + p.month + '-'
 function crsMfDraft(m, f) {
   const a = m.start_at ? new Date(m.start_at) : null, b = m.end_at ? new Date(m.end_at) : null;
   const dep = a ? crsLocalDT(a) : '', ret = b && a && crsLocalDT(b).slice(0, 10) !== dep.slice(0, 10) ? crsLocalDT(b).slice(0, 10) : '';
-  const kind = f.kind || '', base = crsBase(f, CR.grid || {});
+  const kind = f.kind || '', base = crsBase(f, crsG() || {});
   const pre = kind === 'Transfert aéroport' ? 'Transfert aéroport' : kind === 'Circuit touristique' ? 'Circuit' : base === 'interville' || base === 'aeroport' || base === 'convenu' ? 'Transfert' : 'Mise à disposition';
   const terminus = f.endAddr || f.endCity || (base === 'aeroport' ? 'Aéroport Mohammed V, Casablanca' : f.dest) || '';
   return { type: f.mfType === 'Non résident' ? 'non' : 'resident', vehicle: m.vehicle_key || '', remplacement: '', dateDep: dep, dateRet: ret,
@@ -671,7 +682,7 @@ async function crsGeotab() {
   let trips = [];
   try { trips = await all('trips', 'id,vehicle_key,start_at,end_at,km,fuel_l,driver_name', q => q.eq('vehicle_key', m.vehicle_key).gte('start_at', a.toISOString()).lt('start_at', b.toISOString()), ['start_at']); }
   catch (e) { box.innerHTML = msg('Trajets Geotab illisibles : ' + esc(e.message), 'err'); return; }
-  const p = (m.data && m.data.price) || crsPrice(CR.f, CR.grid), r = crsActual(trips, CR.f, p, t => localDay(t), t => localHM(t));
+  const p = crsPrice(CR.f, crsG()), r = crsActual(trips, CR.f, p, t => localDay(t), t => localHM(t));
   CR.actual = r;
   box.innerHTML = `<div class="panel"><h2>Contrôle réel (Geotab)</h2>
     <div class="small">Véhicule ${esc((S.veh[m.vehicle_key] || {}).plate || m.vehicle_key)} du ${fmtDTY(a)} au ${fmtDTY(b)}${b < new Date(m.end_at || 0) ? ' (mission en cours)' : ''}. Amplitude = du premier départ au dernier arrêt du véhicule (l'attente avant le premier départ n'est pas mesurée).</div>

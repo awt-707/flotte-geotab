@@ -315,7 +315,7 @@ const NAV_GROUPS = { cc: { label: 'Conduite et consommation', pages: ['chauffeur
 const navGroupOf = k => k === 'rh' || k === 'travail' ? 'rh' : Object.keys(NAV_GROUPS).find(g => NAV_GROUPS[g].pages.includes(k));
 const navCmp = (a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' });
 function navHtml() {
-  const vis = NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (n[0] === 'caisse' ? canEdit() : n[0] !== 'rh' || canEdit() || isRH()) && canSee(n[0])), done = {}, out = [];
+  const vis = NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (n[0] === 'caisse' ? canEdit() : n[0] !== 'rh' || rhCan()) && canSee(n[0])), done = {}, out = [];
   const link = (href, label, extra) => ({ label, html: `<a href="${esc(href)}"${extra || ''}>${esc(label)}${href === '#/alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` });
   const grp = (g, label, subs) => {
     subs = subs.map(x => ({ href: x[0], label: x[1] })).sort(navCmp);
@@ -387,7 +387,7 @@ function shell() {
     SHELL_KEY = key; $('#app').innerHTML = shellHtml();
     $('#logout').onclick = async () => {
       // pointage : fin de journée proposée avant la déconnexion
-      if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && confirm('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).catch(() => { });
+      if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && confirm('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).then(null, () => { });   // pas de .catch sur la requête supabase
       await sessEnd(); await sb.auth.signOut(); location.hash = '';
     };
     rhFootBind(); navBind();
@@ -907,7 +907,8 @@ async function importFile(file) {
 
 // ---------- PLAQUES ----------
 async function pagePlaques() {
-  const rows = await all('plate_changes', '*', null, ['id', false]);
+  const rid = ROUTING, rows = await all('plate_changes', '*', null, ['id', false]);
+  if (rid !== ROUTING) return;   // autre page demandée pendant la lecture
   const render = () => {
     $('#page').innerHTML = `<div class="head"><h1>Changements de plaque</h1><div class="sub">Ancienne plaque (WW / W18) et plaque définitive : l'historique reste rattaché au même véhicule et les contrats saisis avec l'une ou l'autre plaque sont reconnus.</div></div>
     ${canEdit() ? `<div class="panel row"><label>Ancienne plaque <input id="pold" placeholder="WW968199"></label><label>Plaque définitive <input id="pnew" placeholder="86121-T-1"></label>
@@ -1486,8 +1487,9 @@ sb.auth.onAuthStateChange(async (ev, session) => {
   }
   const changed = (S.session && S.session.user.id) !== (session && session.user.id);
   if (changed) {   // autre utilisateur : rien de ce qui a été lu pour le précédent n'est gardé (droits par agence, planning)
+    const tb = $('#toasts'); if (tb) tb.remove();   // bandeaux d'alerte du compte précédent
     sessReset();   // connexions : nouvelle session, pastille des connectés oubliée (jamais montrée à un autre compte)
-    S.profile = null; S.P = null; S.rhMe = undefined; S.rhAlertN = 0; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
+    S.profile = null; S.P = null; S.rhMe = undefined; S.rhMeAt = 0; S.rhAlertN = 0; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
     S.health = null; S.nbal = null; SHELL_KEY = '';   // bas du menu : collecte et pastille Alertes oubliées, menu reconstruit
     Object.assign(LIVE, { rows: [], pos: {}, at: 0, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {}, drv: {}, drvAt: 0, sel: '' });
   }
