@@ -1,4 +1,4 @@
-// Contrats de travail (CDI chauffeur, bilingue français / arabe) : texte du modèle d'Ahmed (contrat_modele.js), PDF vectoriel
+// Contrats de travail (CDI chauffeur bilingue français / arabe, ou staff en français) : texte du modèle d'Ahmed (contrat_modele.js), PDF vectoriel
 // (contrat_pdf.js) ; société employeuse au choix (plusieurs sociétés, gérées par l'administrateur), salarié saisi ou repris
 // d'un chauffeur de Ludy. PDF gardé dans le stockage privé « contrats », historique, partage WhatsApp (lien signé 7 jours).
 // Chargé avant app.js : utilise ses outils (sb, S, all, msg, esc…) au moment de l'appel.
@@ -44,7 +44,7 @@ async function ctrLink(path) {
 
 async function pageContratsTravail() {
   const my = ROUTING;
-  const head = `<div class="head"><h1>Contrats de travail</h1><div class="sub">Contrat à durée indéterminée de chauffeur, français / arabe, repris du modèle : choisir la société, saisir le salarié, générer le PDF à signer. Plusieurs sociétés possibles (nom, dirigeant, siège…). La fiche du salarié est créée ou complétée dans les Ressources humaines.</div></div>`
+  const head = `<div class="head"><h1>Contrats de travail</h1><div class="sub">Contrat à durée indéterminée repris des modèles : chauffeur (français / arabe) ou staff (chef d'agence, gestionnaire…, français) ; choisir la société, saisir le salarié, générer le PDF à signer. Plusieurs sociétés possibles (nom, dirigeant, siège…). La fiche du salarié est créée ou complétée dans les Ressources humaines.</div></div>`
     + (typeof rhTabsFor === 'function' && rhCan() ? `<div class="tabs">${rhTabsFor().map(x => `<a href="${rhHref(x[0])}" class="${x[0] === 'travail' ? 'on' : ''}">${x[1]}</a>`).join('')}</div>` : '');
   if (!rhCan()) { $('#page').innerHTML = head + msg('Contrats de travail réservés aux gestionnaires, aux ressources humaines et à l\'administrateur.', 'warn'); return; }
   $('#page').innerHTML = head + '<div class="loading">Chargement…</div>';
@@ -57,6 +57,9 @@ async function pageContratsTravail() {
   if (my !== ROUTING) return;
   if (err) { $('#page').innerHTML = head + msg('Contrats de travail pas encore installés dans la base : exécuter <b>supabase/migrations/20261109000000_contrats_travail.sql</b> dans Supabase &gt; SQL Editor. (' + esc(err) + ')', 'err'); return; }
   const st = CT.draft || (CT.draft = { civ: 'M', nat_fr: 'Marocaine', employer_id: (CT.emp.find(x => x.active) || {}).id || '', agency: S.agencies.length === 1 ? S.agencies[0].id : '' });
+  // modèle staff (chef d'agence, gestionnaire…) : administrateur et ressources humaines seulement (les gestionnaires ne voient pas le staff)
+  if (st.model !== 'staff' || !rhFull()) st.model = 'chauffeur';
+  const staff = st.model === 'staff';
   const act = CT.emp.filter(x => x.active || String(x.id) === String(st.employer_id));
   // dates : saisie au clavier JJ/MM/AAAA (le calendrier du navigateur ne permet pas toujours de changer l'année ni de taper les chiffres)
   const inp = (k, label, size, o) => { o = o || {}; const val = o.date ? ctrDate(st[k]) : st[k];
@@ -70,20 +73,24 @@ async function pageContratsTravail() {
           ${rhFull() ? '<button type="button" class="ghost small" id="ctcoed">Modifier</button><button type="button" class="ghost small" id="ctconew">Nouvelle société</button>' : ''}</div>
         <div id="ctcoinfo" class="small"></div><div id="ctcobox"></div></div>
       <div class="panel"><h2>Salarié</h2>
-        <div class="mfrow"><label>Chauffeur de Ludy (option) <input id="ctdrv" list="ctdrvl" value="${esc(st.drvName || '')}" placeholder="Remplit nom, téléphone, agence" size="26" autocomplete="off"></label>
-          <datalist id="ctdrvl">${CT.drivers.filter(d => d.code !== HORS && d.name).map(d => `<option value="${esc(d.name)}"></option>`).join('')}</datalist></div>
+        ${rhFull() ? `<div class="mfrow"><label>Modèle de contrat <select id="ctmodel">${Object.keys(CTR_MODELS).map(k => `<option value="${k}" ${k === st.model ? 'selected' : ''}>${esc(CTR_MODELS[k])}</option>`).join('')}</select></label></div>` : ''}
+        ${staff ? `<div class="mfrow">${inp('poste', 'Intitulé du poste', 22, { list: 'ctpostes', ph: 'Ex. Chef d\'agence' })}<datalist id="ctpostes">${CTR_POSTES.map(x => `<option value="${esc(x)}"></option>`).join('')}</datalist>
+          <label>Catégorie (période d'essai, article 14) <select id="ct_essai_cat" data-ct="essai_cat"><option value="">Choisir…</option>${CTR_ESSAI.map(x => `<option value="${x[0]}" ${x[0] === st.essai_cat ? 'selected' : ''}>${esc(x[2])}</option>`).join('')}</select></label>
+          ${inp('lieu_travail', 'Lieu de travail (ville)', 14, { ph: 'Ex. Casablanca' })}</div>`
+        : `<div class="mfrow"><label>Chauffeur de Ludy (option) <input id="ctdrv" list="ctdrvl" value="${esc(st.drvName || '')}" placeholder="Remplit nom, téléphone, agence" size="26" autocomplete="off"></label>
+          <datalist id="ctdrvl">${CT.drivers.filter(d => d.code !== HORS && d.name).map(d => `<option value="${esc(d.name)}"></option>`).join('')}</datalist></div>`}
         <div class="mfrow"><label>Civilité <select id="ct_civ" data-ct="civ"><option value="M" ${st.civ !== 'Mme' ? 'selected' : ''}>M.</option><option value="Mme" ${st.civ === 'Mme' ? 'selected' : ''}>Mme</option></select></label>
-          ${inp('nom', 'Nom et prénom', 24, { ph: 'Ex. Ali BENNANI' })}${inp('nom_ar', 'Nom et prénom en arabe (option)', 22, { ar: 1 })}</div>
-        <div class="mfrow">${inp('naiss', 'Date de naissance', 0, { date: 1 })}${inp('lieu', 'Lieu de naissance', 18)}${inp('lieu_ar', 'Lieu de naissance en arabe (option)', 18, { ar: 1 })}</div>
-        <div class="mfrow">${inp('nat_fr', 'Nationalité', 12)}${inp('nat_ar', 'Nationalité en arabe', 12, { ar: 1, ph: '' })}${inp('cin', 'N° CIN', 12, { ph: 'Ex. AB123456' })}</div>
-        <div class="mfrow">${inp('adresse', 'Adresse', 36)}${inp('adresse_ar', 'Adresse en arabe (option)', 36, { ar: 1 })}</div>
+          ${inp('nom', 'Nom et prénom', 24, { ph: 'Ex. Ali BENNANI' })}${staff ? '' : inp('nom_ar', 'Nom et prénom en arabe (option)', 22, { ar: 1 })}</div>
+        <div class="mfrow">${inp('naiss', 'Date de naissance', 0, { date: 1 })}${inp('lieu', 'Lieu de naissance', 18)}${staff ? '' : inp('lieu_ar', 'Lieu de naissance en arabe (option)', 18, { ar: 1 })}</div>
+        <div class="mfrow">${inp('nat_fr', 'Nationalité', 12)}${staff ? '' : inp('nat_ar', 'Nationalité en arabe', 12, { ar: 1, ph: '' })}${inp('cin', 'N° CIN', 12, { ph: 'Ex. AB123456' })}</div>
+        <div class="mfrow">${inp('adresse', 'Adresse', 36)}${staff ? '' : inp('adresse_ar', 'Adresse en arabe (option)', 36, { ar: 1 })}</div>
         <div class="mfrow">${inp('tel', 'Téléphone (pour WhatsApp, pas dans le contrat)', 15, { ph: '06…' })}
           <label>Agence <select id="ct_agency" data-ct="agency">${agOptions(st.agency, rhFull() ? '— aucune —' : '— choisir —')}</select></label></div>
-        <div class="small">Sans traduction arabe, le nom, le lieu et l'adresse sont repris en lettres latines dans la colonne arabe.</div></div>
+        <div class="small">${staff ? 'Contrat du staff en français seulement, repris du modèle (contrat d\'une assistante RH) : intitulé du poste au choix.' : 'Sans traduction arabe, le nom, le lieu et l\'adresse sont repris en lettres latines dans la colonne arabe.'}</div></div>
       <div class="panel"><h2>Contrat</h2>
         <div class="mfrow">${inp('effet', 'Date d\'effet', 0, { date: 1 })}${inp('sal', 'Salaire net mensuel (dirhams)', 0, { type: 'number' })}${inp('date_sig', 'Date de signature (vide : à écrire à la main)', 0, { date: 1 })}</div>
-        <div class="mfrow">${inp('sal_fr', 'Salaire en lettres (français)', 34)}${inp('sal_ar', 'Salaire en lettres (arabe)', 30, { ar: 1 })}</div>
-        <div class="small">Montant en lettres proposé automatiquement (gris) : à corriger si besoin en le tapant.</div>
+        ${staff ? '' : `<div class="mfrow">${inp('sal_fr', 'Salaire en lettres (français)', 34)}${inp('sal_ar', 'Salaire en lettres (arabe)', 30, { ar: 1 })}</div>
+        <div class="small">Montant en lettres proposé automatiquement (gris) : à corriger si besoin en le tapant.</div>`}
         <div class="mfgo"><button id="ctgen">Générer le contrat PDF</button> <span id="ctmiss" class="small"></span></div></div>
       <div id="ctdone"></div>
     </div><div>
@@ -108,15 +115,16 @@ function ctrRead() {
     st[i.dataset.ct] = d || ''; i.classList.toggle('bad', d === null);
     if (d === null) st.badDates.push(i.closest('label').firstChild.textContent.trim());
   });
-  st.employer_id = $('#ctemp').value; st.drvName = $('#ctdrv').value.trim();
+  st.employer_id = $('#ctemp').value; st.drvName = $('#ctdrv') ? $('#ctdrv').value.trim() : '';
+  if ($('#ctmodel')) st.model = $('#ctmodel').value;
   return st;
 }
 /** Valeurs proposées (montant en lettres, nationalité en arabe) affichées en gris dans les cases vides */
 function ctrHints() {
   const st = ctrRead(), v = ctrFields({}, Object.assign({}, st, { sal_fr: '', sal_ar: '', nat_ar: '' }));
-  $('#ct_sal_fr').placeholder = v.sal_fr || ''; $('#ct_sal_ar').placeholder = v.sal_ar ? v.sal_ar + ' (' + v.sal + ') ' + v.dh_ar : '';
-  $('#ct_nat_ar').placeholder = v.nat_ar || 'à saisir';
-  const c = ctrCo(), miss = c ? ctrMissing(c, st) : ['Société'];
+  if ($('#ct_sal_fr')) { $('#ct_sal_fr').placeholder = v.sal_fr || ''; $('#ct_sal_ar').placeholder = v.sal_ar ? v.sal_ar + ' (' + v.sal + ') ' + v.dh_ar : ''; }
+  if ($('#ct_nat_ar')) $('#ct_nat_ar').placeholder = v.nat_ar || 'à saisir';
+  const c = ctrCo(), miss = c ? ctrMissing(c, st, st.model) : ['Société'];
   if (!rhFull() && !st.agency) miss.push('Agence');
   st.badDates.forEach(l => miss.push(l + ' invalide (JJ/MM/AAAA)'));
   const co = miss.filter(x => /^Société : /.test(x)).map(x => x.slice(10)), rest = miss.filter(x => !/^Société : /.test(x));
@@ -135,7 +143,8 @@ function ctrBind() {
   }));
   $('#ct_effet').addEventListener('change', () => { if (!$('#ct_date_sig').value && ctrParseDate($('#ct_effet').value)) { $('#ct_date_sig').value = $('#ct_effet').value; ctrHints(); } });
   $('#ctemp').onchange = () => { ctrRead(); ctrCoInfo(); ctrHints(); };
-  $('#ctdrv').onchange = () => {
+  if ($('#ctmodel')) $('#ctmodel').onchange = () => { ctrRead(); CT.last = null; pageContratsTravail(); };
+  if ($('#ctdrv')) $('#ctdrv').onchange = () => {
     const n = $('#ctdrv').value.trim().toLowerCase(), d = CT.drivers.find(x => String(x.name || '').toLowerCase() === n);
     if (!d) return;
     if (!$('#ct_nom').value.trim()) $('#ct_nom').value = d.name;
@@ -188,11 +197,13 @@ async function ctrGenerate() {
 }
 async function ctrMake(c, st) {
   const L = await ctrLibs(), e = Object.assign({}, st);
-  const bytes = await ctpBuild({ title: 'Contrat de travail · ' + e.nom, rows: ctrBlocks(c, e) }, L.libs, L.fonts);
+  const staff = e.model === 'staff';
+  const bytes = await ctpBuild({ title: 'Contrat de travail · ' + e.nom, mono: staff, rows: ctrBlocks(c, e, e.model) }, L.libs, L.fonts);
   const blob = new Blob([bytes], { type: 'application/pdf' }), name = ctrFileName(e), ag = e.agency ? +e.agency : null;
   let path = null, link = null, upErr = '';
   try {
-    const pth = (ag || 0) + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)) + '.pdf';
+    // staff : dossier 0 du stockage (administrateur et ressources humaines, jamais un gestionnaire)
+    const pth = (staff ? 0 : ag || 0) + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)) + '.pdf';
     const up = await sb.storage.from('contrats').upload(pth, blob, { contentType: 'application/pdf', upsert: false });
     if (up.error) throw up.error;
     path = pth; link = await ctrLink(path);
@@ -200,7 +211,9 @@ async function ctrMake(c, st) {
   const emp = CT.emp.find(x => String(x.id) === String(st.employer_id));
   const row = { employer_id: emp ? emp.id : null, agency_id: ag, driver_code: e.driver_code || null, name: e.nom, cin: String(e.cin || '').toUpperCase(),
     effective_on: e.effet || null, pdf_path: path, data: { emp: e, company: c, file_name: name } };
+  if (staff) { row.model = 'staff'; row.driver_code = null; }
   const ins = await sb.from('work_contracts').insert(row).select('id,created_at').single();
+  if (ins.error && staff && /model/.test(ins.error.message)) ins.error.message = 'contrat du staff pas encore installé : exécuter supabase/migrations/20261115000000_contrat_staff.sql dans Supabase > SQL Editor (' + ins.error.message + ')';
   const empId = ins.error ? '' : await ctrLinkEmployee(e, emp ? emp.id : null, ins.data.id, ag);
   return { c, e, blob, name, link, path, upErr, empId, saveErr: ins.error ? ins.error.message : '', row: ins.error ? null : Object.assign({}, row, ins.data, { employee_id: empId || null }) };
 }
@@ -211,14 +224,16 @@ async function ctrLinkEmployee(e, employerId, wcId, ag) {
     if (e.employee_id) cur = (await sb.from('hr_employees').select('*').eq('id', e.employee_id).maybeSingle()).data;
     if (!cur && e.driver_code) cur = (await sb.from('hr_employees').select('*').eq('driver_code', e.driver_code).maybeSingle()).data;
     if (!cur && e.cin) { const r = await sb.from('hr_employees').select('*').ilike('cin', String(e.cin).trim()).limit(1); cur = r.data && r.data[0]; }
+    const staff = e.model === 'staff', es = CTR_ESSAI.find(x => x[0] === e.essai_cat);
     const fill = { name: e.nom, cin: String(e.cin || '').trim().toUpperCase() || null, birth_date: e.naiss || null, phone: e.tel || null, employer_id: employerId, agency_id: ag,
-      driver_code: e.driver_code || null, position: 'Chauffeur', hired_on: e.effet || null, salary: +e.sal || null };
+      driver_code: staff ? null : e.driver_code || null, position: staff ? e.poste || null : 'Chauffeur', hired_on: e.effet || null, salary: +e.sal || null };
+    if (staff && es) { fill.category = es[0]; fill.trial_months = es[3]; }
     let r;
     if (cur) {
       const up = { work_contract_id: wcId };
       Object.keys(fill).forEach(k => { if (fill[k] != null && (cur[k] == null || cur[k] === '') && (k !== 'driver_code' || cur.kind === 'chauffeur')) up[k] = fill[k]; });
       r = await sb.from('hr_employees').update(up).eq('id', cur.id).select('id').single();
-    } else r = await sb.from('hr_employees').insert(Object.assign({ kind: 'chauffeur', work_contract_id: wcId }, fill)).select('id').single();
+    } else r = await sb.from('hr_employees').insert(Object.assign({ kind: staff ? 'staff' : 'chauffeur', work_contract_id: wcId }, fill)).select('id').single();
     if (r.error) return '';
     await sb.from('work_contracts').update({ employee_id: r.data.id }).eq('id', wcId);
     return r.data.id;
@@ -242,7 +257,7 @@ function ctrDone(m) {
 function ctrHistory() {
   const box = $('#cthist'); if (!box) return;
   const coName = h => (h.data && h.data.company && h.data.company.name) || ((CT.emp.find(x => x.id === h.employer_id) || {}).name || '');
-  box.innerHTML = table('cth', [['Créé le', h => esc(fmtDTY(h.created_at)), h => h.created_at], ['Salarié', h => esc(h.name || '')], ['CIN', h => esc(h.cin || '')], ['Société', h => esc(coName(h))],
+  box.innerHTML = table('cth', [['Créé le', h => esc(fmtDTY(h.created_at)), h => h.created_at], ['Salarié', h => esc(h.name || '') + (h.model === 'staff' ? '<br><span class="small">' + esc(((h.data || {}).emp || {}).poste || 'Staff') + '</span>' : '')], ['CIN', h => esc(h.cin || '')], ['Société', h => esc(coName(h))],
     ['Effet', h => esc(ctrDate(h.effective_on)), h => h.effective_on || ''], ['Agence', h => esc(S.agName[h.agency_id] || '')],
     ['Signature / légalisation', h => { const l = rhLegal(h); return (l.step === 'legalise' ? '<span class="ok">' : '<span class="warn">') + esc(h.ended_on ? 'Clos' : l.txt) + '</span>' + (h.employee_id ? ` <a class="small" href="${rhHref('fiche', 'id=' + h.employee_id + '&go=wc')}">suivi</a>` : ''); }],
     ['', h => `<span class="mfha">${h.pdf_path ? `<button class="ghost small" data-ctpdf="${h.id}">PDF</button><button class="ghost small" data-ctwa="${h.id}">WhatsApp</button>` : ''}<button class="ghost small" data-ctre="${h.id}">Reprendre</button>${rhFull() ? `<button class="ghost small" data-ctdel="${h.id}">Supprimer</button>` : ''}</span>`]],
