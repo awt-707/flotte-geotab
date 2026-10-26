@@ -218,6 +218,122 @@ const CTR_ROWS = [
   {"k": "c", "fr": "CONVENTION DE MISE A DISPOSITION DU VEHICULE", "ar": "اتفاقية وضع السيارة رهن إشارة الأجير"},
 ];
 
+// Contrat à durée indéterminée du staff (chef d'agence, gestionnaire, assistante RH…), français seulement : modèle fourni par Ahmed
+// le 26/10/2026 (contrat d'une assistante RH), repris tel quel ; données de la salariée remplacées par des champs, intitulé du poste
+// au choix ({poste}). Écarts au modèle, corrigés : articles numérotés de 1 à 21 (le premier ne l'était pas), « un (1.55) jour et demi »
+// -> « un jour et demi (1,5) », pénalité de l'article 17 « non-sollicitation » -> « non-dénigrement », « dont elle aurait » -> {il},
+// « du Président » -> qualité du dirigeant de la société choisie, « du passeport] » (reste du modèle) retiré. sigs : signatures.
+const CTR_STAFF_ROWS = [
+  {"k": "t", "fr": "CONTRAT DE TRAVAIL A DUREE INDETERMINEE"},
+  {"k": "b", "fr": "<b>ENTRE</b>"},
+  {"k": "p", "fr": "<b>{soc},</b> {forme_fr} au capital de {capital} dirhams dont le siège est situé à {siege_fr} immatriculée au registre de commerce de {rc_ville_fr} sous le numéro {rc}, représentée par {rep_civ_fr} {rep} en qualité de {rep_qual_fr} ;"},
+  {"k": "b", "fr": "<b>D’une part,</b>"},
+  {"k": "b", "fr": "<b>ET</b>"},
+  {"k": "p", "fr": "{civ} <b>{nom}</b>, {ne} le {naiss} à <b>{lieu}</b>, de nationalité <b>{nat_fr}</b> titulaire de la CIN n° <b>{cin}</b> demeurant au <b>{adresse}</b> ;"},
+  {"k": "b", "fr": "<b>D’autre part,</b>"},
+  {"k": "p", "fr": "La Société et le Salarié étant les « <b>Parties </b>» et chacune d’elle une « <b>Partie</b> »."},
+  {"k": "p", "fr": "Les Parties ont convenu de conclure le présent contrat de travail à durée indéterminée"},
+  {"k": "h", "fr": "<b><u>ARTICLE 1 – ENTREE EN VIGUEUR – DUREE – PERIODE D’ESSAI</u></b>"},
+  {"k": "p", "fr": "Le présent Contrat entrera en vigueur à partir du <b>{effet}</b> et est conclu pour une durée indéterminée."},
+  {"k": "p", "fr": "Le Contrat est soumis à une période d’essai {essai}, à compter de la date visée ci-dessus, renouvelable une seule fois."},
+  {"k": "p", "fr": "Le Contrat est régi par les dispositions légales et réglementaires applicables au Maroc à la date du Contrat et notamment la loi 65-99 relative au code du travail."},
+  {"k": "h", "fr": "<b><u>ARTICLE 2 – ENGAGEMENT – INFORMATIONS ADMINISTRATIVES</u></b>"},
+  {"k": "p", "fr": "Le Salarié, qui se déclare libre de tout engagement, non lié par une clause de non-concurrence, est embauché par la Société, en qualité {de_poste}<b>{poste}</b>"},
+  {"k": "p", "fr": "Le présent Contrat est régi par les dispositions légales en vigueur relatives à la législation du travail ainsi que par les conditions particulières ci-après."},
+  {"k": "p", "fr": "Toute fausse déclaration du Salarié à l’embauche, sur son CV ou sur la fiche de renseignement sera considérée comme faute grave justifiant le licenciement immédiat, sans indemnité ni préavis."},
+  {"k": "p", "fr": "Toute modification des renseignements administratifs donnés par le Salarié au moment de son embauche devra être portée immédiatement à la connaissance de la Société."},
+  {"k": "h", "fr": "<b><u>ARTICLE 3 – FONCTIONS</u></b>"},
+  {"k": "p", "fr": "Le Salarié assumera les fonctions {de_poste}<b>{poste}</b>"},
+  {"k": "h", "fr": "<b><u>ARTICLE 4 – DUREE DE TRAVAIL</u></b>"},
+  {"k": "p", "fr": "Le Salarié est soumis à la durée légale du travail en vigueur en application des dispositions de la loi 65-99 relative au code du travail."},
+  {"k": "h", "fr": "<b><u>ARTICLE 5 – REMUNERATION</u></b>"},
+  {"k": "p", "fr": "Le Salarié percevra une rémunération mensuelle nette de <b>{sal_dec}</b> dirhams."},
+  {"k": "h", "fr": "<b><u>ARTICLE 6 – LIEU DE TRAVAIL</u></b>"},
+  {"k": "p", "fr": "Le Salarié sera administrativement rattaché aux locaux de la Société situés à {lieu_travail}."},
+  {"k": "p", "fr": "En raison de la nature de ses fonctions, le Salarié pourra être amené à effectuer régulièrement des déplacements, de courte ou de longue durée, tant sur le territoire marocain qu’à l’étranger. Ces déplacements pourront entraîner l’éloignement du domicile du Salarié de manière temporaire, ce qu’il accepte expressément par la signature des présentes."},
+  {"k": "p", "fr": "Les frais de déplacement seront à la charge de la Société."},
+  {"k": "h", "fr": "<b><u>ARTICLE 7 – MOBILITE GEOGRAPHIQUE</u></b>"},
+  {"k": "p", "fr": "Eu égard au caractère national et international des activités de la Société, à la nature des fonctions confiées au Salarié ainsi qu’aux nécessités liées à l’organisation, au développement et au bon fonctionnement de la Société, il est expressément convenu entre les Parties que le Salarié pourra être affecté, à titre temporaire ou permanent, dans toute région du Royaume du Maroc ou dans tout autre pays à l’étranger, selon les modalités définies ci-après (la « <b>Mobilité Géographique</b> »)."},
+  {"k": "s", "fr": "<b>7.1 Mobilité Géographique Temporaire</b>"},
+  {"k": "p", "fr": "Dans le cadre d’une Mobilité Géographique temporaire, le Salarié pourra être affecté sur un autre lieu de travail pour une durée maximale de trois (3) mois, renouvelable une (1) fois (la « <b>Mobilité Géographique Temporaire</b> »)."},
+  {"k": "p", "fr": "Les frais d’hébergement et de déménagement résultant de la Mobilité Géographique Temporaire seront à la charge de la Société."},
+  {"k": "s", "fr": "<b>7.2 Mobilité Géographique Permanente</b>"},
+  {"k": "p", "fr": "Dans le cadre d’une Mobilité Géographique d’une durée supérieure à six (6) mois (la « <b>Mobilité Géographique Permanente</b> »), le Salarié pourra être affecté de manière durable dans tout autre lieu situé au Maroc ou à l’étranger, en fonction des nécessités de l’activité et de l’organisation de la Société. La durée de chaque période d’affectation ainsi que sa date de prise d’effet, seront communiquées au Salarié avec un préavis de trente (30) jours avant la prise d’effet de cette nouvelle affectation"},
+  {"k": "p", "fr": "Les frais raisonnables directement liés au déménagement du Salarié seront pris en charge par la Société. En revanche, les frais d’hébergement ainsi que les autres frais accessoires résultant de la Mobilité Géographique Permanente demeureront à la charge du Salarié."},
+  {"k": "s", "fr": "<b>7.3 Acceptation et portée de la Mobilité Géographique</b>"},
+  {"k": "p", "fr": "Le Salarié reconnaît avoir été dûment informé de la présente clause et en accepter expressément, dès la signature du présent Contrat, le principe et les modalités."},
+  {"k": "p", "fr": "La Mobilité Géographique ainsi convenue constitue une condition déterminante de l’engagement du Salarié et de la conclusion du présent Contrat et, dès lors qu’elle est mise en œuvre dans les conditions prévues aux présentes, ne saurait, à elle seule, être considérée comme une modification du présent Contrat ou comme une modification d’un élément essentiel du contrat de travail."},
+  {"k": "h", "fr": "<b><u>ARTICLE 8 – FRAIS PROFESSIONNELS</u></b>"},
+  {"k": "p", "fr": "Le Salarié a droit au remboursement, sur justificatifs, des frais raisonnables exposés dans l’exercice de ses fonctions et conformément à la charte des voyages et déplacements en vigueur au sein de la Société, laquelle pourra être dans le temps modifiée sans que cela constitue une modification du Contrat."},
+  {"k": "h", "fr": "<b><u>ARTICLE 9 – AVANTAGES SOCIAUX</u></b>"},
+  {"k": "p", "fr": "Le Salarié sera affilié à la Caisse Nationale de Sécurité Sociale."},
+  {"k": "h", "fr": "<b><u>ARTICLE 10 – CONGES PAYES</u></b>"},
+  {"k": "p", "fr": "Le Salarié bénéficiera des congés payés conformément aux dispositions de l’article 231 de la loi 65-99 stipulant que tout salarié a droit, après six mois de services continus dans la même entreprise ou chez le même employeur, à un congé annuel équivalent à un jour et demi (1,5) de travail effectif par mois de service."},
+  {"k": "h", "fr": "<b><u>ARTICLE 11 – ABSENCE ET INDISPONIBILITE</u></b>"},
+  {"k": "p", "fr": "En cas d’indisponibilité, d’absence pour maladie ou accident, le Salarié devra en aviser ou faire informer la Société dans les 48 heures, sauf cas de force majeure. Si l’absence se prolonge de plus de quatre (4) jours, le Salarié doit informer la Société de la durée probable de son absence et fournir un certificat médical."},
+  {"k": "p", "fr": "La même formalité est requise en cas de prolongation de l’indisponibilité, de l’absence pour maladie ou accident."},
+  {"k": "h", "fr": "<b><u>ARTICLE 12 – EXCLUSIVITE</u></b>"},
+  {"k": "p", "fr": "Le Salarié s’engage à réserver l’exclusivité de son activité professionnelle à la Société. Il s’interdit donc d’exercer une activité professionnelle rémunérée ou non au profit d’une autre personne physique ou morale, de quelque sorte que ce soit, même non susceptible de concurrencer, de quelque manière que ce soit, les activités de la Société."},
+  {"k": "p", "fr": "Par ailleurs, au titre de la présente obligation d’exclusivité, le Salarié s’interdit, pendant la durée du Contrat, de, directement ou indirectement, (i) s’intéresser à une société ou entreprise, directement ou indirectement, concurrente de la Société ou de toute société ou entreprise du groupe auquel appartient la Société ou (ii) de collaborer, sous quelque forme que ce soit, avec une telle société ou entreprise."},
+  {"k": "h", "fr": "<b><u>ARTICLE 13 – NON CONCURRENCE</u></b>"},
+  {"k": "p", "fr": "Compte tenu de la nature de ses fonctions et des informations confidentielles dont le Salarié dispose, le Salarié s’interdit, pendant toute la durée d’exécution du présent Contrat ainsi que pendant une période de vingt-quatre (24) mois à compter de la date de cessation effective de celui-ci, pour quelque cause que ce soit (la « <b>Période de Non-Concurrence</b> »), sur l’ensemble du territoire du Royaume du Maroc, directement ou indirectement :"},
+  {"k": "d", "fr": "de fournir ses services, à quelque titre que ce soit, même bénévolement, à toute société exerçant une activité directement ou indirectement concurrente de celle de la Société ;"},
+  {"k": "d", "fr": "de créer, constituer, ou acquérir, directement ou indirectement, toute société exerçant une activité directement ou indirectement concurrente de celle de la Société ;"},
+  {"k": "d", "fr": "de réaliser tout investissement ou de détenir, directement ou indirectement, toute participation ou tout intérêt dans une société exerçant une activité directement ou indirectement concurrente de celle de la Société."},
+  {"k": "p", "fr": "Le Salarié reconnaît expressément que le montant du salaire et les avantages consentis prennent en compte l’octroi de la présente clause de non-concurrence par le Salarié."},
+  {"k": "p", "fr": "L’inobservation de l’engagement de non-concurrence par le Salarié entraînera, au profit de la Société, le versement d’une pénalité correspondant à douze (12) mois de salaire."},
+  {"k": "h", "fr": "<b><u>ARTICLE 14 – CONFIDENTIALITÉ</u></b>"},
+  {"k": "p", "fr": "Dans le cadre de son activité au titre du Contrat, le Salarié obtiendra des informations, des contacts, un savoir-faire, une pratique et de l'expérience dont l'utilisation par un concurrent pourrait lui donner un avantage substantiel au détriment de la Société et/ou causé un important préjudice à la Société."},
+  {"k": "p", "fr": "En conséquence, les parties reconnaissent expressément que les stipulations du présent article sont indispensables à la protection de l’ensemble des intérêts légitimes de la Société et tout particulièrement des intérêts tant techniques que commerciaux, financiers et sociaux de la Société et de la valeur de l'activité et des actifs de la Société."},
+  {"k": "p", "fr": "Le Salarié s'interdit de révéler à toute personne ou entité, pendant la durée d’exécution du Contrat, et pendant une période de cinq (5) ans à compter de la cessation effective du présent Contrat, toute information qui n’est pas dans le domaine public et qui aurait été acquise par le Salarié pendant la durée du Contrat, ou, si elle est obtenue postérieurement, toute information dont il sait qu’elle a été transmise, directement ou indirectement, par une personne ou entité tenue à une obligation de confidentialité envers la Société."},
+  {"k": "p", "fr": "Ces informations, (ci-après désignées les « <b>Informations Confidentielles</b> »), comprennent notamment, mais non exclusivement, les informations relatives aux activités, clients, fournisseurs, entreprises partenaires, contrats, savoir-faire, marques, informations financières, plans de développement, programmes informatiques, logiciels, bases de données, disques et impressions, rapports internes, dossiers de personnel, informations personnelles du {rep_qual_fr}, ou tout autre type d'information ou document, écrit ou non écrit, qui est ou a été utilisé dans l'activité de la Société ou dans le cadre de la gestion des affaires personnelles ou professionnelles du {rep_qual_fr}."},
+  {"k": "h", "fr": "<b><u>ARTICLE 15 – NON-DÉBAUCHAGE</u></b>"},
+  {"k": "p", "fr": "Compte tenu de la nature de ses fonctions et des relations professionnelles auxquelles le Salarié aura accès dans le cadre du Contrat, le Salarié s’interdit, pendant toute la durée du Contrat ainsi que pendant une durée de vingt-quatre (24) mois à compter de son départ effectif de la Société, quelle qu’en soit la cause, directement ou indirectement, pour son propre compte ou pour le compte de toute autre personne physique ou morale :"},
+  {"k": "d", "fr": "de solliciter, démarcher ou inciter tout salarié, mandataire social ou prestataire de services de la Société à mettre fin à ses fonctions, à son Contrat ou à sa collaboration avec la Société ;"},
+  {"k": "d", "fr": "de recruter, embaucher, engager ou faire collaborer, sous quelque forme que ce soit, tout salarié, mandataire social ou prestataire de services de la Société ;"},
+  {"k": "d", "fr": "de participer ou de contribuer, de quelque manière que ce soit, à toute démarche ayant l’un des objets précités."},
+  {"k": "p", "fr": "L’inobservation de l’engagement de non-débauchage par le Salarié entraînera le versement d’une pénalité correspondant à douze (12) mois de salaire par le Salarié au profit de la Société."},
+  {"k": "h", "fr": "<b><u>ARTICLE 16 – NON-SOLLICITATION</u></b>"},
+  {"k": "p", "fr": "Le Salarié s’interdit, pendant toute la durée du Contrat ainsi que pendant une durée de vingt-quatre (24) mois à compter de son départ effectif de la Société, quelle qu’en soit la cause, directement ou indirectement, pour son propre compte ou pour le compte de toute autre personne physique ou morale :"},
+  {"k": "d", "fr": "de solliciter, démarcher, détourner ou tenter de détourner tout client, partenaire, financeur ou fournisseur de la Société dont {il} aurait eu connaissance ou avec lequel {il} aurait été en relation dans le cadre de ses fonctions ;"},
+  {"k": "d", "fr": "d’inciter l’une de ces personnes ou entités à mettre fin, suspendre, réduire ou modifier défavorablement ses relations commerciales, contractuelles ou financières avec la Société ;"},
+  {"k": "d", "fr": "de fournir à un tiers des informations ou une assistance destinée à permettre ou à faciliter une telle sollicitation ou un tel détournement."},
+  {"k": "p", "fr": "L’inobservation de l’engagement de non-sollicitation par le Salarié entraînera le versement d’une pénalité égale à deux (2) fois le chiffre d’affaires réalisé par les clients détournés au profit de la Société."},
+  {"k": "h", "fr": "<b><u>ARTICLE 17 – NON-DÉNIGREMENT</u></b>"},
+  {"k": "p", "fr": "Le Salarié s’engage, pendant toute la durée du Contrat ainsi que pendant une durée de cinq (5) ans à compter de sa cessation effective, à ne pas tenir, publier, diffuser, transmettre ou relayer, directement ou indirectement, publiquement ou de manière privée, sous quelque forme et par quelque moyen que ce soit, des propos dénigrants, injurieux, diffamatoires ou susceptibles de porter atteinte à l’image, à la réputation, aux intérêts ou à la crédibilité :"},
+  {"k": "d", "fr": "de la Société ;"},
+  {"k": "d", "fr": "de ses dirigeants et mandataires sociaux ;"},
+  {"k": "d", "fr": "de ses actionnaires ;"},
+  {"k": "d", "fr": "de ses salariés."},
+  {"k": "p", "fr": "L’inobservation de l’engagement de non-dénigrement par le Salarié entraînera le versement d’une pénalité correspondant à douze (12) mois de salaire au profit de la Société."},
+  {"k": "h", "fr": "<b><u>ARTICLE 18 – RESTITUTION</u></b>"},
+  {"k": "p", "fr": "A l’issue du présent Contrat, quel que soit le motif de la rupture, le Salarié s’engage à restituer tous les équipements et matériels mis à sa disposition, notamment documents, notes correspondances ou autres, de quelque nature ou forme que ce soit (écrit, audio, vidéo, informatique ou autre) ainsi que toutes copies qu’il aura reçu ou qu’il détenait et qui appartiennent à la Société."},
+  {"k": "p", "fr": "Le Salarié s'engage et reconnaît que toute Information Confidentielle, de quelque forme que ce soit, et toute copie et extrait, sont et resteront la propriété exclusive de la Société et, à la fin du Contrat, le Salarié s’engage :"},
+  {"k": "i", "label": "(i)", "fr": "remettre à la Société les originaux et toutes les copies de toute Information Confidentielle remise au Salarié ou acquis par lui en relation avec le Contrat, ses fonctions au sein de la Société avec les services rendus à la Société dans le cadre de l’exécution du Contrat, et ;"},
+  {"k": "i", "label": "(ii)", "fr": "à rendre à la Société tous les dossiers, correspondances et/ou autres communications, quelle que soit leur forme ou leur support (écrit, audio, vidéo, informatique ou autre) reçus, détenus et/ou adressés par le Salarié pendant la durée du Contrat."},
+  {"k": "h", "fr": "<b><u>ARTICLE 19 – RUPTURE</u></b>"},
+  {"k": "p", "fr": "Chacune des Parties pourra mettre fin au Contrat, conformément à la législation en vigueur en la matière, sous réserve d’en prévenir l’autre Partie par lettre recommandée avec demande d’avis de réception ou par lettre remise en mains propres contre reçu, faisant courir le préavis applicable compte-tenu de la situation du Salarié."},
+  {"k": "h", "fr": "<b><u>ARTICLE 20 – TRAITEMENT DES DONNEES PERSONNELLES</u></b>"},
+  {"k": "p", "fr": "La Société collecte et traite les données personnelles du Salarié en vue d’assurer la gestion administrative de son dossier."},
+  {"k": "p", "fr": "Afin de permettre à la Société de répondre à ses obligations légales, ces données peuvent être transmises aux organismes de la prévoyance sociale (la CNSS, la CIMR, etc.), au service des impôts et aux compagnies d’assurance et peuvent être transférées à l’étranger aux sociétés du groupes et à ses sous-traitants."},
+  {"k": "p", "fr": "Les informations relatives au traitement des données à caractère personnel du Salarié lui seront communiquées dès qu’elles seront disponibles."},
+  {"k": "p", "fr": "Le Salarié autorise la Société à collecter et traiter ses données personnelles pour assurer la gestion des ressources humaines et transmettre ces données aux organismes de prévoyances sociales, au service des impôts et aux compagnies d’assurances."},
+  {"k": "p", "fr": "Le Salarié peut s’adresser à la direction pour exercer son droit d’accès, de rectification et d’opposition conformément aux dispositions de la loi 09-08."},
+  {"k": "h", "fr": "<b><u>ARTICLE 21 – DISPOSITIONS DIVERSES</u></b>"},
+  {"k": "p", "fr": "Le Salarié s’engage à faire connaître à la Société, pendant la durée de son Contrat, sans délai, tout changement qui interviendrait dans sa situation personnelle pouvant avoir une incidence sur le Contrat."},
+  {"k": "p", "fr": "Tout avantage non stipulé par le présent Contrat ne peut être considéré comme un avantage acquis en l’absence d’un avenant signé par les Parties."},
+  {"k": "p", "fr": "Le Contrat remplace et annule tout autre contrat ou accord, écrit ou oral, conclu entre les Parties et relatif aux conditions d’emploi du Salarié au sein de la Société. Tout avenant au Contrat sera fait par écrit et signé par les deux Parties."},
+  {"k": "g", "fr": "Fait à {ville_fr},", "before": 18},
+  {"k": "g", "fr": "le {date_sig}"},
+  {"k": "g", "fr": "En trois (3) exemplaires originaux, dont un remis à chacune des Parties qui le reconnaît."},
+  {"k": "sigs"}
+];
+// postes proposés pour le staff (champ libre : tout autre intitulé)
+const CTR_POSTES = ['Chef d\'agence', 'Gestionnaire', 'Assistante RH', 'Assistant RH', 'Responsable RH', 'Comptable', 'Agent administratif'];
+// période d'essai d'un CDI (article 14 du Code du travail) : cadres et assimilés 3 mois, employés 1,5 mois, ouvriers 15 jours
+const CTR_ESSAI = [['cadre', 'de trois (3) mois', 'Cadre ou assimilé : 3 mois', 3], ['employe', 'd’un mois et demi', 'Employé : 1,5 mois', 1.5], ['ouvrier', 'de quinze (15) jours', 'Ouvrier : 15 jours', 0.5]];
+const CTR_MODELS = { chauffeur: 'Chauffeur (français / arabe)', staff: 'Staff : chef d\'agence, gestionnaire… (français)' };
+
 const CTR_FR_U = ['zéro', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf', 'dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize'];
 const CTR_FR_T = ['', '', 'vingt', 'trente', 'quarante', 'cinquante', 'soixante'];
 /** Montant en lettres (français, orthographe traditionnelle du modèle : « trois mille deux cents ») */
@@ -322,13 +438,24 @@ function ctrFields(c, e) {
     effet: ctrDate(e.effet),
     // « ب » attaché à un mot arabe (بالدار البيضاء), « بـ » devant un mot en lettres latines (بـ Tiznit)
     bi_lieu: ctrBi(x(e.lieu_ar) || x(e.lieu)), bi_adresse: ctrBi(x(e.adresse_ar) || x(e.adresse)), sal: sal ? ctrAmount(sal) : '', sal_fr: x(e.sal_fr) || (sal ? ctrFrWords(sal) : ''),
-    sal_ar: x(e.sal_ar) || (sal ? ar.words : ''), dh_ar: sal ? ar.noun : 'درهم', date_sig: ctrDate(e.date_sig)
+    sal_ar: x(e.sal_ar) || (sal ? ar.words : ''), dh_ar: sal ? ar.noun : 'درهم', date_sig: ctrDate(e.date_sig),
+    // modèle staff : poste (« en qualité d’Assistante RH », « de Chef d'agence »), période d'essai (article 14), lieu de travail
+    poste: x(e.poste), de_poste: /^[aeiouyhâàéèêëîïôöûüœ]/i.test(x(e.poste)) ? 'd’' : 'de ', il: f ? 'elle' : 'il',
+    essai: (CTR_ESSAI.find(z => z[0] === e.essai_cat) || [])[1] || '', lieu_travail: x(e.lieu_travail), sal_dec: sal ? ctrAmount(sal) + ',00' : ''
   };
   return v;
 }
 /** Champs obligatoires manquants (libellés) : rien n'est inventé, le contrat n'est produit que complet */
-function ctrMissing(c, e) {
+function ctrMissing(c, e, model) {
   const v = ctrFields(c, e), L = [];
+  if (model === 'staff') {
+    [['soc', 'Société : nom'], ['sigle', 'Société : forme (S.A.R.L…)'], ['forme_fr', 'Société : forme juridique (français)'], ['capital', 'Société : capital'],
+      ['siege_fr', 'Société : siège (français)'], ['rc_ville_fr', 'Société : ville du registre de commerce'], ['rc', 'Société : numéro RC'], ['rep', 'Société : dirigeant'],
+      ['ville_fr', 'Société : ville de signature'], ['nom', 'Nom et prénom'], ['naiss', 'Date de naissance'], ['lieu', 'Lieu de naissance'], ['cin', 'N° CIN'],
+      ['adresse', 'Adresse'], ['poste', 'Intitulé du poste'], ['essai', 'Période d\'essai (catégorie)'], ['lieu_travail', 'Lieu de travail'], ['effet', 'Date d\'effet'],
+      ['sal', 'Salaire net']].forEach(([k, l]) => { if (!v[k]) L.push(l); });
+    return L;
+  }
   [['soc', 'Société : nom'], ['sigle', 'Société : forme (S.A.R.L…)'], ['forme_fr', 'Société : forme juridique (français)'], ['forme_ar', 'Société : forme juridique (arabe)'],
     ['capital', 'Société : capital'], ['siege_fr', 'Société : siège (français)'], ['siege_ar', 'Société : siège (arabe)'], ['rc_ville_fr', 'Société : ville du registre de commerce'],
     ['rc_ville_ar', 'Société : ville du registre de commerce (arabe)'], ['rc', 'Société : numéro RC'], ['rep', 'Société : dirigeant'],
@@ -339,10 +466,10 @@ function ctrMissing(c, e) {
 }
 
 /** Lignes du document (format de ctpBuild) */
-function ctrBlocks(c, e) {
+function ctrBlocks(c, e, model) {
   const v = ctrFields(c, e), fill = t => String(t || '').replace(/\{([a-z_]+)\}/g, (m, k) => v[k] != null ? v[k] : m);
   const rows = [];
-  CTR_ROWS.forEach(r => {
+  (model === 'staff' ? CTR_STAFF_ROWS : CTR_ROWS).forEach(r => {
     // français : espaces insécables avant ; : » et après « (jamais de guillemet seul en fin ou en début de ligne)
     const fr = fill(r.fr).replace(/« /g, '«\u00a0').replace(/ ([»;:?!])/g, '\u00a0$1'), ar = fill(r.ar), P = (t, o) => Object.assign({ t: t }, o || {});
     switch (r.k) {
@@ -365,6 +492,12 @@ function ctrBlocks(c, e) {
           ar: [P('<b>الأجير</b>', { a: 's' }), P(fill('{nom_ar}'), { a: 's', before: 0 }), P('<b>رقم البطاقة الوطنية للتعريف:</b>', { a: 's', before: 0 }), P(fill('<b>{cin}</b>'), { a: 's', before: 0 })], keep: true });
         break;
       case 'sig2': rows.push({ k: 'space', h: 58 }); break;
+      // modèle staff (une colonne) : salarié à gauche, société à droite, place pour les signatures en dessous
+      case 'sigs':
+        rows.push({ cols: [[P(fill('<b>{civ} : {nom}</b>'), { a: 's' }), P(fill('CIN n° <b>{cin}</b>'), { a: 's', before: 0 })],
+          [P(fill('<b>{soc} {sigle}</b>'), { a: 's' }), P(fill('Représentée par {rep_civ_fr} {rep}'), { a: 's', before: 0 })]], keep: true, before: 18, after: 0 });
+        rows.push({ k: 'space', h: 72 });
+        break;
       default: rows.push({ fr: P(fr), ar: P(ar) });
     }
     if (r.before != null && rows.length) rows[rows.length - 1].before = r.before;
@@ -372,4 +505,4 @@ function ctrBlocks(c, e) {
   return rows;
 }
 
-if (typeof module === 'object' && module.exports) module.exports = { CTR_ROWS, ctrParseDate, ctrFrWords, ctrArWords, ctrAmount, ctrDate, ctrFields, ctrMissing, ctrBlocks };
+if (typeof module === 'object' && module.exports) module.exports = { CTR_ROWS, CTR_STAFF_ROWS, CTR_POSTES, CTR_ESSAI, CTR_MODELS, ctrParseDate, ctrFrWords, ctrArWords, ctrAmount, ctrDate, ctrFields, ctrMissing, ctrBlocks };

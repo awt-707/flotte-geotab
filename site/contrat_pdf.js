@@ -4,7 +4,8 @@
 // Code commun au site (globaux PDFLib, fontkit, bidi_js) et aux tests (Node).
 (function (root) {
   'use strict';
-  const CTP = { W: 595.28, H: 841.89, top: 58, bottom: 64, frX: 49.35, frW: 248.1, arX: 309.6, arW: 235.1,
+  // mono : contrat en français seulement (modèle staff), une colonne pleine largeur
+  const CTP = { W: 595.28, H: 841.89, top: 58, bottom: 64, frX: 49.35, frW: 248.1, arX: 309.6, arW: 235.1, monoX: 70.87, monoW: 453.54,
     size: 12, lead: 14.4, arSize: 11, arLead: 14.4, gap: 6.6, sigGap: 34 };
   // retraits des listes (début de colonne -> puce, début de colonne -> texte), colonne française / arabe
   const CTP_LIST = { '•': [[18, 36], [2, 18]], '••': [[30, 48], [2, 18]], '-': [[18, 36], [2, 18]],
@@ -63,8 +64,15 @@
     // police d'un caractère : colonne arabe = Noto (arabe + latin) ; colonne française = Times, Noto pour l'arabe
     const fontOf = (ch, col) => col === 'ar' || AR_RE.test(ch) || !winAnsi.has(ch.codePointAt(0)) ? 'n' : 't';
     const sizeOf = col => col === 'ar' ? CTP.arSize : CTP.size;
+    // largeur sans crénage (pdf-lib mesure avec, mais showText dessine sans : mots trop serrés, « TRAVAILA »)
+    const tw = [new Map(), new Map(), new Map(), new Map()];
+    function timesWidth(i, text, size) {
+      let w = 0;
+      for (const ch of text) { let c = tw[i].get(ch); if (c == null) { c = F.t[i].widthOfTextAtSize(ch, 1000); tw[i].set(ch, c); } w += c; }
+      return w * size / 1000;
+    }
     function segWidth(sg, size) {
-      if (sg.font === 't') return F.t[sg.sty & 3].widthOfTextAtSize(sg.text, size);
+      if (sg.font === 't') return timesWidth(sg.sty & 3, sg.text, size);
       const r = shape(sg.sty & 1, sg.text, sg.rtl);
       return r.adv * size / r.upm;
     }
@@ -181,8 +189,10 @@
     }
 
     /** Une cellule (colonne) -> suite d'éléments de hauteur fixe { h, draw(page, yTop) } */
-    function cell(list, col) {
-      const items = [], X = col === 'ar' ? CTP.arX : CTP.frX, W = col === 'ar' ? CTP.arW : CTP.frW, lead = col === 'ar' ? CTP.arLead : CTP.lead;
+    const mono = !!blocks.mono;
+    function cell(list, col, box) {
+      box = box || (col === 'ar' ? [CTP.arX, CTP.arW] : mono ? [CTP.monoX, CTP.monoW] : [CTP.frX, CTP.frW]);
+      const items = [], X = box[0], W = box[1], lead = col === 'ar' ? CTP.arLead : CTP.lead;
       const ci = col === 'ar' ? 1 : 0;
       (Array.isArray(list) ? list : [list]).forEach((d, di) => {
         if (d == null) return;
@@ -235,7 +245,7 @@
       if (r.k === 'pb') { if (y > CTP.top) newPage(); return; }
       if (r.k === 'space') { y += r.h; return; }
       if (r.k === 'title') {
-        const h = 2 * CTP.lead + 6, boxes = [[CTP.frX + (CTP.frW - 166) / 2, 166, r.fr, 'fr'], [CTP.arX + (CTP.arW - 156) / 2, 156, r.ar, 'ar']];
+        const h = 2 * CTP.lead + 6, boxes = mono ? [[(CTP.W - 220) / 2, 220, r.fr, 'fr']] : [[CTP.frX + (CTP.frW - 166) / 2, 166, r.fr, 'fr'], [CTP.arX + (CTP.arW - 156) / 2, 156, r.ar, 'ar']];
         boxes.forEach(([x, w, t, col]) => {
           const P = para('<b>' + t + '</b>', col), Ls = lines(P, w - 10), top = CTP.H - y;
           page.drawRectangle({ x: x, y: top - h, width: w, height: h, borderColor: rgb(0, 0, 0), borderWidth: 0.8 });
@@ -245,9 +255,13 @@
         y += h + CTP.gap * 1.5;
         return;
       }
-      const fr = cell(r.fr, 'fr'), ar = cell(r.ar, 'ar'), h = Math.max(sum(fr), sum(ar));
+      // une colonne : texte français seul ; r.cols = deux blocs côte à côte (signatures)
+      const half = (CTP.monoW - 24) / 2;
+      const fr = r.cols ? cell(r.cols[0], 'fr', [CTP.monoX, half]) : cell(r.fr, 'fr'), ar = r.cols ? cell(r.cols[1], 'fr', [CTP.monoX + half + 24, half]) : mono ? [] : cell(r.ar, 'ar');
+      const h = Math.max(sum(fr), sum(ar));
+      if (mono && r.before) y += r.before;
       let need = h;
-      if (r.next && rows[ri + 1] && rows[ri + 1].fr) need += CTP.gap + 3 * CTP.lead;   // titre gardé avec le début du texte
+      if (r.next && rows[ri + 1] && (rows[ri + 1].fr || rows[ri + 1].cols)) need += CTP.gap + 3 * CTP.lead;   // titre gardé avec le début du texte
       if (y > CTP.top && y + need > limit && (r.keep || r.next || h <= 5 * CTP.lead)) newPage();
       place(fr, ar);
       y += r.after != null ? r.after : CTP.gap;
