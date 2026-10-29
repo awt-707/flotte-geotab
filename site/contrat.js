@@ -275,7 +275,7 @@ function ctrHistory() {
     CT.draft = Object.assign({}, e, { employer_id: CT.emp.some(x => x.id === h.employer_id) ? h.employer_id : e.employer_id }); CT.last = null; pageContratsTravail(); window.scrollTo(0, 0);
   });
   box.querySelectorAll('[data-ctdel]').forEach(b => b.onclick = async () => {
-    const h = byId(b.dataset.ctdel); if (!confirm('Supprimer le contrat de ' + (h.name || '') + ' de l\'historique ?')) return;
+    const h = byId(b.dataset.ctdel); if (!await ask('Supprimer le contrat de ' + (h.name || '') + ' de l\'historique ?')) return;
     const r = await sb.from('work_contracts').delete().eq('id', h.id);
     if (r.error) { alert(r.error.message); return; }
     if (h.pdf_path) await sb.storage.from('contrats').remove([h.pdf_path]).catch(() => { });

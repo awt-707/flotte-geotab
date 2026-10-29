@@ -483,7 +483,7 @@ function alertShare(a, m) {
   const txt = alertShareText(a, m), wa = $('#adwa'), ml = $('#admail'), cp = $('#adcopy');
   if (wa) wa.href = 'https://wa.me/?text=' + encodeURIComponent(txt);
   if (ml) ml.href = 'mailto:?subject=' + encodeURIComponent('Ludy · ' + a.type + ' · ' + (a.plate || '') + ' · ' + fmtHMS(a.at)) + '&body=' + encodeURIComponent(txt);
-  if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(txt); cp.textContent = 'Copié'; } catch (e) { prompt('Copiez le message :', txt); } };
+  if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(txt); cp.textContent = 'Copié'; } catch (e) { await askText('Copiez le message :', txt); } };
 }
 /**
  * Historique des relevés de l'événement (le relevé juste avant, ceux de l'événement, le relevé juste après) : heure, vitesse,

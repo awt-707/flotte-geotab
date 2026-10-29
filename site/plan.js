@@ -133,7 +133,7 @@ function plTabWeek() {
   $('#plf').onchange = goF; $('#pls').onchange = goF;
   document.querySelectorAll('.plgrid input[data-k]').forEach(inp => { inp.onchange = () => plEditCell(inp); });
   if ($('#plgen')) $('#plgen').onclick = () => plRun(() => plGenerate(PL.cells.filter(c => c.locked)), 'génération');
-  if ($('#plreset')) $('#plreset').onclick = () => { if (confirm('Recalculer toute la semaine ? Les cases modifiées à la main seront aussi recalculées.')) plRun(() => { PL.cells = []; return plGenerate([]); }, 'recalcul complet'); };
+  if ($('#plreset')) $('#plreset').onclick = async () => { if (await ask('Recalculer toute la semaine ? Les cases modifiées à la main seront aussi recalculées.')) plRun(() => { PL.cells = []; return plGenerate([]); }, 'recalcul complet'); };
   if ($('#plcopy')) $('#plcopy').onclick = () => plRun(async () => {
     const prev = await all('driver_plan', 'day,shift,vehicle_key,driver_code', q => (PL.ag ? q.eq('agency_id', PL.ag.id) : q).gte('day', planAddDays(PL.monday, -7)).lte('day', planAddDays(PL.monday, -1)), ['day']);
     const by = {}; PL.drivers.forEach(d => { by[d.code] = d; });
@@ -239,7 +239,7 @@ async function plTabEve() {
   $('#plecp').onclick = () => { try { navigator.clipboard.writeText(txt); $('#plecp').textContent = 'Copié'; } catch (e) { alert(e.message); } };
   $('#plewapdf').onclick = () => plSharePdf(plEvePdf(day, s, list), (s === 'Jour' ? '☀️' : '🌙') + ' Shift ' + s.toLowerCase() + ' du ' + fmtDay(day) + ' · ' + planHours(s, S.P) + (PL.ag ? ' · ' + PL.ag.name : ''), 'veille', $('#plewast'));
   document.querySelectorAll('[data-plabs]').forEach(b => { b.onclick = async () => {
-    const why = prompt('Absence de ' + plName(b.dataset.plabs) + ' le ' + fmtDay(day) + ' : motif ?', 'absent'); if (why === null) return;
+    const why = await askText('Absence de ' + plName(b.dataset.plabs) + ' le ' + fmtDay(day) + ' : motif ?', 'absent'); if (why === null) return;
     try { const r = await plAbsence(b.dataset.plabs, day, day, why); alert(r); pagePlan(); } catch (e) { alert(e.message); }
   }; });
 }
@@ -289,7 +289,7 @@ function plTabDrivers() {
       ['Remplacé par', d => esc(d.replacedBy ? plName(d.replacedBy) : '')], ['', d => PL.can ? `<button class="ghost small" data-plback="${esc(d.code)}">Réintégrer</button>` : '']], ex, { empty: 'Aucun ex-chauffeur' }));
   document.querySelectorAll('[data-plleave]').forEach(b => { b.onclick = () => plLeaveForm(b.dataset.plleave); });
   document.querySelectorAll('[data-plback]').forEach(b => { b.onclick = async () => {
-    if (!confirm('Réintégrer ' + plName(b.dataset.plback) + ' parmi les chauffeurs actifs ?')) return;
+    if (!await ask('Réintégrer ' + plName(b.dataset.plback) + ' parmi les chauffeurs actifs ?')) return;
     const r = await sb.from('driver_roster').update({ active: true, left_at: null, left_reason: null, replaced_by: null, updated_at: new Date().toISOString() }).eq('driver_code', b.dataset.plback);
     if (r.error) alert(r.error.message); else pagePlan(); }; });
   const rowOf = tr => { const off = [...tr.querySelectorAll('.proff input:checked')].map(x => +x.value);
@@ -327,7 +327,7 @@ function plTabAbs() {
     try { $('#plares').innerHTML = msg('Remplacement…'); const r = await plAbsence(d.code, f1, f2, $('#plr').value.trim()); $('#plares').innerHTML = msg(esc(r), 'ok'); setTimeout(() => pagePlan(), 2500); }
     catch (e) { $('#plares').innerHTML = msg(esc(e.message), 'err'); }
   };
-  document.querySelectorAll('[data-pldel]').forEach(b => { b.onclick = async () => { if (!confirm('Supprimer cette absence ? (le planning n\'est pas recalculé : utiliser « Générer / compléter » si besoin)')) return;
+  document.querySelectorAll('[data-pldel]').forEach(b => { b.onclick = async () => { if (!await ask('Supprimer cette absence ? (le planning n\'est pas recalculé : utiliser « Générer / compléter » si besoin)')) return;
     const r = await sb.from('driver_absences').delete().eq('id', +b.dataset.pldel); if (r.error) alert(r.error.message); else pagePlan(); }; });
 }
 
@@ -360,7 +360,7 @@ function plLeaveForm(code) {
     let nd = others.find(d => String(d.name || d.code).toLowerCase() === v.toLowerCase() || String(d.code).toLowerCase() === v.toLowerCase());
     try {
       if (!nd) {   // nouveau chauffeur (pas encore de contrat) : fiche créée à la main dans l'agence
-        if (!confirm('« ' + v + ' » n\'existe pas dans Ludy : créer ce nouveau chauffeur ?')) return;
+        if (!await ask('« ' + v + ' » n\'existe pas dans Ludy : créer ce nouveau chauffeur ?')) return;
         const c = 'M' + Date.now().toString(36).toUpperCase();
         const r = await sb.from('drivers').insert({ code: c, name: v, phone: $('#plrept').value.trim() || null, agency_id: PL.ag ? PL.ag.id : null, source: 'manuel', status: 'NOUVEAU', detected_at: new Date().toISOString() });
         if (r.error) throw new Error(r.error.message);

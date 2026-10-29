@@ -89,6 +89,14 @@ function crsValidation(f, total, G) {
   if (f.riskNote) r.push('risque signalé : ' + f.riskNote);
   return r;
 }
+/** Raisons de valider : section 17, et tout devis préparé par un gestionnaire (validé, réajusté au besoin, par l'administrateur ;
+ *  la base l'impose aussi, mission_guard). La course rapide (sans devis) n'est pas concernée. */
+function crsVal(f, total, G) {
+  const r = crsValidation(f, total, G);
+  const mgr = typeof isAdmin === 'function' && !isAdmin() && (!CR.cur || CR.cur.status === 'Demande');   // devis envoyés avant cette règle : inchangés (comme la base)
+  if (!f.quick && !r.length && (mgr || (CR.cur && CR.cur.needs_validation))) r.push('devis préparé par un gestionnaire');
+  return r;
+}
 /** Points à définir avant d'envoyer un prix de mise à disposition (section 18, règle finale) */
 function crsMissing(f, G) {
   const b = crsBase(f, G), out = [];
@@ -170,6 +178,8 @@ function crsPrice(f, G) {
   if (crsN(f.driverMeals)) add('Repas du chauffeur', 1, crsN(f.driverMeals), 'frais');
   if (crsN(f.tolls)) add('Péages et parkings (non inclus au forfait)', 1, crsN(f.tolls), 'frais');
   (f.extrasPrice || []).forEach(x => { if (crsN(x.amount)) add(x.label, 1, crsN(x.amount), 'option'); });
+  // ajustement décidé par l'administrateur à la validation (+ ou −, motif imprimé sur le devis)
+  if (crsN(f.adjust)) add('Ajustement' + (String(f.adjustWhy || '').trim() ? ' : ' + String(f.adjustWhy).trim() : ''), 1, crsN(f.adjust), 'ajustement');
   const gross = lines.reduce((s, l) => s + l.amount, 0);
   const pro = f.pro && crsN(G.proPct) ? Math.round(gross * crsN(G.proPct)) / 100 : 0;
   if (pro) lines.push({ label: 'Remise agences, DMC et entreprises (−' + G.proPct + ' % sur facture)', qty: 1, unit: -pro, amount: -pro, kind: 'remise' });
@@ -240,27 +250,48 @@ async function pageCourses() {
   if (q.get('rapide')) return crsQuick(head);
   if (q.get('id') || q.get('new')) return crsEditor(q.get('id'), head);
   if (t === 'grille') return crsGridPage(head);
-  CR.list = await all('missions', 'id,number,created_at,status,agency_id,client_name,client_company,kind,category,vehicle_key,start_at,end_at,level,needs_validation,validated_at,total_ttc,deposit', null, ['start_at', false]).catch(e => { CR.listErr = e.message; return []; });
+  CR.list = await all('missions', 'id,number,created_at,status,agency_id,client_name,client_company,kind,category,vehicle_key,start_at,end_at,level,needs_validation,validated_at,total_ttc,deposit,submitted:data->submitted', null, ['start_at', false]).catch(e => { CR.listErr = e.message; return []; });
   if (my !== ROUTING) return;
   if (t === 'planning') return crsPlanning(head);
   const fst = q.get('s') || 'actives', act = m => !['Terminée', 'Facturée', 'Annulée', 'Refusée'].includes(m.status);
-  const list = CR.list.filter(m => fst === 'toutes' ? true : fst === 'actives' ? act(m) : m.status === fst);
-  const n = s => CR.list.filter(m => m.status === s).length, toVal = CR.list.filter(m => m.needs_validation && !m.validated_at && act(m)).length;
+  // file de validation : devis envoyés à l'administrateur (gestionnaire → administrateur), devis validés à envoyer au client
+  const isVal = m => m.status === 'Demande' && m.needs_validation && !m.validated_at && !!m.submitted, isReady = m => m.status === 'Demande' && m.needs_validation && !!m.validated_at;
+  const list = CR.list.filter(m => fst === 'toutes' ? true : fst === 'actives' ? act(m) : fst === 'avalider' ? isVal(m) : fst === 'prets' ? isReady(m) : m.status === fst);
+  const n = s => CR.list.filter(m => m.status === s).length, toVal = CR.list.filter(isVal).length, ready = CR.list.filter(isReady).length;
+  const card = (label, v, cls, href) => [`<a href="${href}" class="cardlink">${label}</a>`, v, cls];
   const draw = () => {   // page ou tri de la liste : redessinée avec les courses déjà lues
   $('#page').innerHTML = head + crsTabs('') + `
-    ${cards([['À valider par l\'exploitation', f0(toVal), toVal ? 'warn' : ''], ['Demandes', f0(n('Demande'))], ['Devis envoyés', f0(n('Devis envoyé'))],
+    ${cards([card('Devis à valider par l\'administrateur', f0(toVal), toVal ? 'warn' : '', '#/courses?s=avalider'), card('Devis validés, à envoyer au client', f0(ready), ready ? 'ok' : '', '#/courses?s=prets'), ['Demandes', f0(n('Demande'))], ['Devis envoyés', f0(n('Devis envoyé'))],
       ['Acceptés / acompte reçu', f0(n('Accepté') + n('Acompte reçu'))], ['Confirmées', f0(n('Confirmée'))], ['En cours', f0(n('En cours'))]])}
     <div class="bar">${canEdit() ? '<a class="btn" href="#/courses?rapide=1">⚡ Course rapide</a> <a class="btn ghostb" href="#/courses?new=1">+ Nouvelle demande (devis)</a>' : ''}
-      <label>Statut <select id="crsf">${[['actives', 'En cours de traitement'], ['toutes', 'Toutes']].concat(CRS_STATUS.map(x => [x, x])).map(x => `<option value="${esc(x[0])}" ${x[0] === fst ? 'selected' : ''}>${esc(x[1])}</option>`).join('')}</select></label></div>
+      <label>Statut <select id="crsf">${[['actives', 'En cours de traitement'], ['avalider', 'À valider par l\'administrateur'], ['prets', 'Validés, à envoyer au client'], ['toutes', 'Toutes']].concat(CRS_STATUS.map(x => [x, x])).map(x => `<option value="${esc(x[0])}" ${x[0] === fst ? 'selected' : ''}>${esc(x[1])}</option>`).join('')}</select></label></div>
     ${table('tcrs', [['N°', m => `<a href="#/courses?id=${m.id}">${esc(m.number || '#' + m.id)}</a>`, m => m.number], ['Client', m => esc(m.client_name || '') + (m.client_company ? '<div class="small">' + esc(m.client_company) + '</div>' : '')],
       ['Prestation', m => esc(m.kind || '') + '<div class="small">' + esc(crsCatName(m.category)) + '</div>'], ['Début', m => fmtDTY(m.start_at), m => m.start_at || ''], ['Fin', m => fmtDTY(m.end_at), m => m.end_at || ''],
       ['Véhicule', m => m.vehicle_key ? plate((S.veh[m.vehicle_key] || {}).plate || m.vehicle_key) : '<span class="small">à affecter</span>'],
-      ['Niveau', m => badge(m.level, CRS_LVL_CLS[m.level])], ['Statut', m => badge(m.status, CRS_ST_CLS[m.status]) + (m.needs_validation ? (m.validated_at ? ' <span class="small ok">validé</span>' : ' <span class="small crit">à valider</span>') : '')],
+      ['Niveau', m => badge(m.level, CRS_LVL_CLS[m.level])], ['Statut', m => badge(m.status, CRS_ST_CLS[m.status]) + (m.needs_validation ? (m.validated_at ? ' <span class="small ok">validé</span>' : m.submitted ? ' <span class="small crit">envoyé pour validation</span>' : ' <span class="small warn">à envoyer pour validation</span>') : '')],
       ['Total TTC', m => m.total_ttc == null ? '' : crsMoney(m.total_ttc), m => m.total_ttc || 0, 'n']], list, { empty: CR.listErr ? 'Erreur : ' + esc(CR.listErr) : 'Aucune demande', page: true })}`;
   $('#crsf').onchange = e => { location.hash = '#/courses?s=' + encodeURIComponent(e.target.value); };
   };
   draw();
   window.__rerender = () => pageCourses(); window.__repage = draw;
+}
+
+/** Pastille du menu « Courses privées » : administrateur = devis envoyés pour validation ; gestionnaire = devis validés pas encore envoyés au client */
+function crsBadgeKey() { return (S.session ? S.session.user.id : '') + '|' + (isAdmin() ? 'a' : 'g'); }
+function crsBadgePaint() {
+  const el = $('#nbcrs'); if (!el) return;
+  const n = S.nbcrs && S.nbcrs.k === crsBadgeKey() ? S.nbcrs.n : 0;
+  el.textContent = n || ''; el.hidden = !n; el.title = isAdmin() ? n + ' devis à valider' : n + ' devis validés à envoyer au client';
+}
+async function crsBadgeLoad() {
+  const k = crsBadgeKey(); if (!S.session || !['admin', 'manager'].includes((S.profile || {}).role)) return;
+  try {
+    let q = sb.from('missions').select('id', { count: 'exact', head: true }).eq('status', 'Demande').eq('needs_validation', true);
+    q = isAdmin() ? q.is('validated_at', null).not('data->submitted', 'is', null) : q.not('validated_at', 'is', null);
+    const { count, error } = await q;
+    if (error || crsBadgeKey() !== k) return;
+    S.nbcrs = { k, n: count || 0 }; crsBadgePaint();
+  } catch (e) { }
 }
 
 // planning : véhicules × 14 jours, missions qui bloquent le véhicule (acompte reçu, confirmée, en cours)
@@ -347,7 +378,9 @@ function crsForm() {
     <div class="small">Montants hors grille (devis) : saisis ici, jamais estimés. Si l'hébergement est organisé par Luxury & Discovery, intégrer la marge de gestion.</div>
     <div class="mfrow">${crsField('secondDriver', 'Second chauffeur / relais (MAD)', 'number', { min: 0 })}${crsField('driverHotel', 'Hébergement chauffeur (MAD)', 'number', { min: 0 })}
     ${crsField('driverMeals', 'Repas chauffeur (MAD)', 'number', { min: 0 })}${crsField('tolls', 'Péages / parkings hors forfait (MAD)', 'number', { min: 0 })}
-    ${base === 'special' ? crsField('dayPrice', 'Prix journalier fixé par la direction (MAD TTC)', 'number', { min: 0 }) : ''}</div></details>
+    ${base === 'special' ? crsField('dayPrice', 'Prix journalier fixé par la direction (MAD TTC)', 'number', { min: 0 }) : ''}</div>
+    ${isAdmin() ? `<div class="mfrow">${crsField('adjust', 'Ajustement de l\'administrateur (MAD TTC, + ou −)', 'number', { step: 10 })}${crsField('adjustWhy', 'Motif de l\'ajustement (imprimé sur le devis)', 'text', { size: 30 })}</div>`
+      : crsN(f.adjust) ? `<div class="small">Ajustement de l'administrateur : <b>${crsMoney(f.adjust)}</b>${f.adjustWhy ? ' (' + esc(f.adjustWhy) + ')' : ''}</div>` : ''}</details>
   <details class="panel"><summary><h2>7. Prestations complémentaires</h2></summary>${crsChecks('extras', CRS_EXTRAS)}
     <div class="small">Chiffrées séparément lorsqu'elles génèrent un coût :</div><div class="mfrow">${(f.extras || []).map(x => `<label>${esc(x)} (MAD) <input type="number" min="0" data-fx="${esc(x)}" value="${esc(((f.extrasPrice || []).find(y => y.label === x) || {}).amount || '')}" ${CR.edit ? '' : 'disabled'}></label>`).join('')}</div></details>
   <details class="panel"><summary><h2>8. Risque et remarques</h2></summary><div class="mfrow">
@@ -377,7 +410,7 @@ function crsTimes(f) {
   return { a, b };
 }
 function crsSide() {
-  const f = CR.f, G = crsG() || {}, m = CR.cur || {}, p = crsPrice(f, G), lv = crsLevel(f), val = crsValidation(f, p.total, G), miss = crsMissing(f, G);
+  const f = CR.f, G = crsG() || {}, m = CR.cur || {}, p = crsPrice(f, G), lv = crsLevel(f), val = crsVal(f, p.total, G), miss = crsMissing(f, G);
   const amp = $('#crsamp'); if (amp) amp.textContent = crsAmplitude(f) ? 'Formule selon l\'amplitude : ' + crsAmplitude(f) + (f.h24 ? ' : au minimum deux chauffeurs en rotation, temps de repos organisés, majoration de mobilisation permanente.' : '') : '';
   const vi = $('#crsvinfo'); if (vi) vi.innerHTML = crsSeatsOk(f, G) ? '' : '<span class="crit">Trop de passagers pour la catégorie choisie : ' + esc(crsCatName(f.cat)) + '.</span>';
   const validated = !!m.validated_at, needVal = val.length > 0;
@@ -404,7 +437,7 @@ function crsSide() {
       <div id="crsmailbox"></div>
       ${CR.edit && m.id && !fin ? `<div class="mfgo">${nexts.map(x => `<button class="small" data-crst="${esc(x)}">${esc(x === 'Devis envoyé' ? 'Devis envoyé au client' : x === 'Confirmée' ? 'Confirmer (bloque le véhicule)' : x)}</button>`).join(' ')}
         <button class="small ghost" data-crst="Annulée">Annuler</button></div>` : ''}
-      ${isAdmin() && m.id && needVal && !validated && !fin ? '<div class="mfgo"><button class="small" id="crsval">Valider (exploitation)</button></div>' : ''}
+      ${crsValBox(m, needVal, validated, fin)}
       <div id="crsres" class="small"></div>
       ${(m.data && m.data.history || []).length ? `<div class="small">${m.data.history.slice(-6).reverse().map(h => esc(fmtDTY(h.at) + ' · ' + h.status + (h.by ? ' · ' + h.by : ''))).join('<br>')}</div>` : ''}</div>
     <details class="panel"><summary><h2>Script d'appel (8 questions)</h2></summary><ol class="small">${CRS_SCRIPT.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
@@ -438,16 +471,20 @@ async function crsEditor(id, head) {
   let origin = crsOrigin(crsG());
   $('#crsform').addEventListener('change', e => { const k = e.target.dataset.f || e.target.dataset.fa; crsRead();
     if (k === 'gridId') { const o = crsOrigin(crsG()); if (!CR.f.startCity || CR.f.startCity === origin) CR.f.startCity = o; origin = o; }   // ville de prise en charge suivie
-    if (['gridId', 'kind', 'base', 'roundTrip', 'cat', 'extras', 'clientType', 'mfType'].includes(k)) { if (k === 'clientType') CR.f.pro = CR.f.clientType !== 'Particulier'; if (k === 'kind' && CR.f.kind === 'Aller-retour') { CR.f.roundTrip = true; CR.f.returnEmpty = false; } rerenderForm(); } crsSide(); });
+    const redraw = ['gridId', 'kind', 'base', 'roundTrip', 'cat', 'extras', 'clientType', 'mfType'].includes(k);
+    if (redraw) { if (k === 'clientType') CR.f.pro = CR.f.clientType !== 'Particulier'; if (k === 'kind' && CR.f.kind === 'Aller-retour') { CR.f.roundTrip = true; CR.f.returnEmpty = false; } rerenderForm(); }
+    // champ de saisie : déjà pris en compte à la frappe (input) ; le panneau n'est pas redessiné à la sortie du champ, sinon le clic
+    // sur un de ses boutons (Enregistrer, Valider…) qui provoque cette sortie serait perdu
+    if (redraw || !/^(text|number|email|tel|date|time|search|textarea)$/.test(e.target.type || '')) crsSide(); });
   crsSide();
   crsGeotab();
 }
 function crsRow(f, p) {
-  const t = crsTimes(f), lv = crsLevel(f), val = crsValidation(f, p.total, crsG());
+  const t = crsTimes(f), lv = crsLevel(f), val = crsVal(f, p.total, crsG());
   const v = f.vehicleKey ? S.veh[f.vehicleKey] : null;
   return { client_name: f.client || null, client_company: f.company || null, client_phone: f.phone || null, client_email: f.email || null, kind: f.kind || null, category: f.cat || null,
     vehicle_key: f.vehicleKey || null, driver_name: f.driverName || null, start_at: t.a ? t.a.toISOString() : null, end_at: t.b ? t.b.toISOString() : null,
-    level: lv.level, needs_validation: val.length > 0, total_ttc: p.lines.length ? p.total : null, deposit: p.deposit || null,
+    level: lv.level, needs_validation: val.length > 0 || !!(CR.cur && CR.cur.needs_validation && !f.quick), total_ttc: p.lines.length ? p.total : null, deposit: p.deposit || null,
     agency_id: v && v.agency_id ? v.agency_id : (CR.cur && CR.cur.agency_id) || (agFilter() ? +agFilter() : (S.agencies.length === 1 ? S.agencies[0].id : null)) };
 }
 async function crsSave(status) {
@@ -471,26 +508,60 @@ async function crsConflicts(m) {
   const rows = await all('missions', 'id,number,status,start_at,end_at,client_name', q => q.eq('vehicle_key', m.vehicle_key).in('status', CRS_BLOCK).lt('start_at', m.end_at || m.start_at));
   return rows.filter(x => x.id !== m.id && new Date(x.end_at || x.start_at) > new Date(m.start_at));
 }
+/** Validation des devis : le gestionnaire prépare et envoie à l'administrateur, qui réajuste au besoin et valide ; ensuite le devis part au client */
+function crsValBox(m, needVal, validated, fin) {
+  if (!m.id || !needVal || fin) return '';
+  const sub = m.data && m.data.submitted, when = sub ? fmtDTY(sub.at) + (sub.by ? ' par ' + esc(sub.by) : '') : '';
+  if (validated) return `<div class="msg ok small">Validé par l'administrateur le ${fmtDTY(m.validated_at)} : le devis peut être envoyé au client.</div>`;
+  if (isAdmin()) return `<div class="mfgo"><button class="small" id="crsval">Enregistrer et valider</button>${sub ? ' <button class="small ghost" id="crsback">Demander une correction</button>' : ''}</div>
+    <div class="small">${sub ? 'Envoyé pour validation le ' + when + '. ' : ''}Réajuster si besoin (champs du devis, « Ajustement de l'administrateur » dans la section 6), puis valider.</div>`;
+  if (m.status !== 'Demande' || !CR.edit) return '';
+  return sub ? `<div class="msg warn small">Envoyé à l'administrateur pour validation le ${when} : en attente. Le devis pourra partir au client une fois validé.</div>`
+    : `<div class="mfgo"><button class="small" id="crssub">Envoyer à l'administrateur pour validation</button></div>`;
+}
 function crsBindSide(p, val, miss) {
   const sv = $('#crssave'); if (sv) sv.onclick = () => crsSave();
   const pdf = $('#crspdf'); if (pdf) pdf.onclick = () => { try { crsPdf(CR.cur || {}, crsRead(), p, crsG()); } catch (e) { alert(e.message); } };
   document.querySelectorAll('[data-crst]').forEach(b => { b.onclick = async () => {
     const to = b.dataset.crst, f = crsRead(), m = CR.cur;
     if (to === 'Devis envoyé' && miss.length) { alert('À préciser avant d\'envoyer un prix : ' + miss.join(', ') + '.'); return; }
-    if (['Devis envoyé', 'Accepté', 'Acompte reçu', 'Confirmée'].includes(to) && val.length && !m.validated_at) { alert('Validation de l\'exploitation obligatoire (' + val.join(', ') + ').' + (isAdmin() ? ' Cliquez « Valider (exploitation) ».' : ' L\'administrateur doit valider.')); return; }
+    if (['Devis envoyé', 'Accepté', 'Acompte reçu', 'Confirmée'].includes(to) && val.length && !m.validated_at) { alert('Validation de l\'exploitation obligatoire (' + val.join(', ') + ').' + (isAdmin() ? ' Cliquez « Enregistrer et valider ».' : ' Envoyez d\'abord le devis à l\'administrateur pour validation.')); return; }
     if (to === 'Confirmée' || to === 'Acompte reçu') {
       if (!f.vehicleKey) { alert('Affecter un véhicule avant de le bloquer pour la mission.'); return; }
       const c = await crsConflicts(Object.assign({}, m, crsRow(f, p)));
       if (c.length) { alert('Véhicule déjà bloqué sur cette période : ' + c.map(x => (x.number || '#' + x.id) + ' (' + (x.client_name || '') + ', ' + x.status + ')').join(' ; ')); return; }
     }
-    if ((to === 'Annulée' || to === 'Refusée') && !confirm('Passer la demande en « ' + to + ' » ?')) return;
+    if ((to === 'Annulée' || to === 'Refusée') && !await ask('Passer la demande en « ' + to + ' » ?')) return;
     const saved = await crsSave(to);
     if (saved && ['Confirmée', 'En cours'].includes(to) && !(saved.data && saved.data.manifest)) crsManifest(true);   // manifeste automatique
   }; });
+  const note = (st, extra) => ({ at: new Date().toISOString(), status: st, by: S.profile.email || '', ...(extra || {}) });
+  // administrateur : fiche enregistrée (réajustements compris) puis validée
   const vb = $('#crsval'); if (vb) vb.onclick = async () => {
-    const m = CR.cur, r = await sb.from('missions').update({ validated_at: new Date().toISOString(), validated_by: S.session.user.id }).eq('id', m.id).select('*').single();
+    vb.disabled = true;
+    const saved = await crsSave(); if (!saved) { vb.disabled = false; return; }
+    const d = Object.assign({}, saved.data, { history: ((saved.data && saved.data.history) || []).concat([note('Validé par l\'administrateur')]) });
+    const r = await sb.from('missions').update({ validated_at: new Date().toISOString(), validated_by: S.session.user.id, data: d }).eq('id', saved.id).select('*').single();
+    if (r.error) { alert(r.error.message); vb.disabled = false; return; }
+    CR.cur = r.data; crsSide(); $('#crsres').innerHTML = '<span class="ok">Devis validé : il peut être envoyé au client.</span>';
+  };
+  // gestionnaire : devis enregistré et envoyé à l'administrateur (file « À valider » et pastille du menu de l'administrateur)
+  const sb2 = $('#crssub'); if (sb2) sb2.onclick = async () => {
+    if (miss.length) { alert('À préciser avant d\'envoyer pour validation : ' + miss.join(', ') + '.'); return; }
+    sb2.disabled = true;
+    const saved = await crsSave(); if (!saved) { sb2.disabled = false; return; }
+    const d = Object.assign({}, saved.data, { submitted: { at: new Date().toISOString(), by: S.profile.email || '' }, history: ((saved.data && saved.data.history) || []).concat([note('Envoyé pour validation')]) });
+    const r = await sb.from('missions').update({ data: d }).eq('id', saved.id).select('*').single();
+    if (r.error) { alert(r.error.message); sb2.disabled = false; return; }
+    CR.cur = r.data; crsSide(); crsBadgeLoad(); $('#crsres').innerHTML = '<span class="ok">Envoyé à l\'administrateur pour validation.</span>';
+  };
+  // administrateur : devis rendu au gestionnaire avec un motif (sort de la file « À valider »)
+  const bk = $('#crsback'); if (bk) bk.onclick = async () => {
+    const why = await askText('Correction demandée au gestionnaire (motif) :'); if (why === null) return;
+    const m = CR.cur, d = Object.assign({}, m.data, { submitted: undefined, history: ((m.data && m.data.history) || []).concat([note('Correction demandée' + (why.trim() ? ' : ' + why.trim() : ''))]) });
+    const r = await sb.from('missions').update({ data: d }).eq('id', m.id).select('*').single();
     if (r.error) { alert(r.error.message); return; }
-    CR.cur = r.data; crsSide();
+    CR.cur = r.data; crsSide(); crsBadgeLoad();
   };
   const msgTxt = () => crsQuoteText(p);
   const wa = $('#crswa'); if (wa) wa.onclick = () => {
@@ -526,7 +597,7 @@ async function crsSendQuote() {
   let f = crsRead(), p = crsPrice(f, G);
   if (!CR.cur || !CR.cur.id) { say('Enregistrer la demande avant d\'envoyer le devis.', 'err'); return; }
   if (!list.length || list.length > 10 || list.some(x => !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(x))) { say('Adresse e-mail invalide.', 'err'); return; }
-  const miss = crsMissing(f, G), val = crsValidation(f, p.total, G);
+  const miss = crsMissing(f, G), val = crsVal(f, p.total, G);
   if (!p.lines.length || !p.total) { say('Pas de prix à envoyer.', 'err'); return; }
   if (miss.length) { say('À préciser avant d\'envoyer un prix : ' + esc(miss.join(', ')) + '.', 'err'); return; }
   if (val.length && !CR.cur.validated_at) { say('Validation de l\'exploitation obligatoire avant d\'envoyer le prix (' + esc(val.join(', ')) + ').', 'err'); return; }
@@ -536,7 +607,7 @@ async function crsSendQuote() {
     const sv = await crsSave(); if (!sv) throw new Error('fiche non enregistrée');   // devis envoyé = fiche enregistrée
     f = CR.f; p = crsPrice(f, G);
     // prix changé à l'enregistrement : la base a pu retirer la validation, contrôlée à nouveau sur la fiche enregistrée
-    if (sv.needs_validation && !sv.validated_at) throw new Error('validation de l\'exploitation obligatoire avant d\'envoyer ce prix (' + crsValidation(f, p.total, G).join(', ') + ')');
+    if (sv.needs_validation && !sv.validated_at) throw new Error('validation de l\'exploitation obligatoire avant d\'envoyer ce prix (' + crsVal(f, p.total, G).join(', ') + ')');
     const m = CR.cur, doc = crsPdf(m, f, p, G, true), blob = doc.output('blob'), name = crsPdfName(m, f);
     const path = today().slice(0, 7) + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)) + '.pdf';
     const up = await sb.storage.from('devis').upload(path, blob, { contentType: 'application/pdf', upsert: false });
@@ -780,7 +851,7 @@ function crsGridPage(head, work) {
   const clean = g => { const d = {}; Object.keys(g).forEach(k => { if (k[0] !== '_') d[k] = g[k]; }); return d; };   // _id, _name… : pas dans la base
   const fail = r => { $('#gres').innerHTML = '<span class="err">Non enregistrée : ' + esc(r.error ? r.error.message : 'droits insuffisants') + (r.error && /name|agency_id|column/i.test(r.error.message) ? ' (exécuter supabase/migrations/20261117000000_grilles_villes.sql)' : '') + '</span>'; };
   $('#gcopy').onclick = async () => {
-    const name = (prompt('Ville de départ de la nouvelle grille (copie de la grille ' + crsGridName(G) + ', prix à adapter) :') || '').trim();
+    const name = (await askText('Ville de départ de la nouvelle grille (copie de la grille ' + crsGridName(G) + ', prix à adapter) :') || '').trim();
     if (!name) return;
     if (CR.grids.some(g => crsGridName(g).toLowerCase() === name.toLowerCase())) { $('#gres').innerHTML = '<span class="err">Une grille « ' + esc(name) + ' » existe déjà.</span>'; return; }
     read(); const d = clean(G); d.origin = name; delete d.calc;
@@ -789,7 +860,7 @@ function crsGridPage(head, work) {
     await crsLoadGrid(); location.hash = '#/courses?t=grille&g=' + r.data[0].id;
   };
   if ($('#gdrop')) $('#gdrop').onclick = async () => {
-    if (!confirm('Retirer la grille ' + crsGridName(G) + ' ? Les devis déjà enregistrés gardent leurs prix.')) return;
+    if (!await ask('Retirer la grille ' + crsGridName(G) + ' ? Les devis déjà enregistrés gardent leurs prix.')) return;
     const r = await sb.from('pricing_grid').delete().eq('id', G._id).select('id');
     if (r.error || !r.data || !r.data.length) return fail(r);
     await crsLoadGrid(); location.hash = '#/courses?t=grille';
@@ -797,7 +868,7 @@ function crsGridPage(head, work) {
   $('#gsave').onclick = async () => {
     read();
     const bad = []; ['hourly', 'half', 'day', 'kmExtra', 'wait15'].forEach(k => cats.forEach(c => { if (!(crsN((G[k] || {})[c.id]) > 0)) bad.push(k + ' ' + c.model); }));
-    if (bad.length && !confirm('Prix vides ou à 0 : ' + bad.join(', ') + '. Enregistrer quand même ?')) return;
+    if (bad.length && !await ask('Prix vides ou à 0 : ' + bad.join(', ') + '. Enregistrer quand même ?')) return;
     meta(); if (!G._name) G._name = crsOrigin(G);
     const row = { data: clean(G), updated_at: new Date().toISOString(), updated_by: S.session.user.id };
     if (CR.grids.length > 1 || G._id !== 1 || G._agency || G._name !== 'Casablanca') Object.assign(row, { name: G._name, agency_id: G._agency });   // colonnes de la migration 20261117
@@ -818,7 +889,7 @@ function crsCl(v) { return String(v == null ? '' : v).replace(/[  ]/g, ' ').r
 function crsPdfName(m, f) { return 'Devis-' + (m.number || 'Ludy') + (f.client ? '-' + String(f.client).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '-') : '') + '.pdf'; }
 function crsPdf(m, f, p, G, keep) {
   const doc = crsPdfDoc(), W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 14, acc = [123, 30, 46], ink = [20, 32, 43], mute = [93, 107, 120];
-  const t = crsTimes(f), inc = p.included || {}, cl = crsCl, draft = m.needs_validation !== false && crsValidation(f, p.total, G).length && !m.validated_at;
+  const t = crsTimes(f), inc = p.included || {}, cl = crsCl, draft = m.needs_validation !== false && crsVal(f, p.total, G).length && !m.validated_at;
   const font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); doc.setTextColor(...(c || ink)); };
   try { doc.addImage(RPT_LOGO, 'PNG', M, 10, 38, 9.3); } catch (e) { }
   font('bold', 16); doc.text('DEVIS' + (m.number ? ' N° ' + m.number : ''), W - M, 15, { align: 'right' });

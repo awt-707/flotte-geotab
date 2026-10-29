@@ -443,7 +443,7 @@ async function pageArrets() {
   $('#vsel').onchange = e => { location.hash = '#/arrets' + (e.target.value ? '?k=' + encodeURIComponent(e.target.value) : ''); };
   const bk = $('#stopsback');
   if (bk) bk.onclick = async () => {
-    if (!confirm('Retélécharger les 14 derniers jours depuis Geotab pour calculer leurs arrêts moteur tournant ? (les autres chiffres sont recalculés à l\'identique)')) return;
+    if (!await ask('Retélécharger les 14 derniers jours depuis Geotab pour calculer leurs arrêts moteur tournant ? (les autres chiffres sont recalculés à l\'identique)')) return;
     try { await job('resync', addDays(today(), -14) + '|' + addDays(today(), -1)); $('#stopsres').textContent = 'Demandé : calcul en arrière-plan (Journal technique).'; bk.disabled = true; }
     catch (e) { $('#stopsres').textContent = 'Erreur : ' + e.message; } };
   };

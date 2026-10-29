@@ -75,7 +75,7 @@ async function pagePlanning() {
   $('#plcopy').onclick = async () => {
     const prev = await all('manager_shifts', '*', x => x.eq('agency_id', ag).gte('day', addDays(monday, -7)).lte('day', addDays(monday, -1)));
     if (!prev.length) { $('#plres').textContent = 'Semaine précédente vide.'; return; }
-    if (shifts.length && !confirm('Remplacer le planning de cette semaine par celui de la semaine précédente ?')) return;
+    if (shifts.length && !await ask('Remplacer le planning de cette semaine par celui de la semaine précédente ?')) return;
     let r = await sb.from('manager_shifts').delete().eq('agency_id', ag).gte('day', monday).lte('day', addDays(monday, 6));
     if (!r.error) r = await sb.from('manager_shifts').insert(prev.map(x => ({ agency_id: x.agency_id, user_id: x.user_id, day: addDays(x.day, 7), shift: x.shift })));
     if (r.error) { alert(r.error.message); return; }

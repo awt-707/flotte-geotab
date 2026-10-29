@@ -72,6 +72,7 @@ test('Réglages > Volets externes : ajout et retrait d\'un site sans nouvelle ap
     assert.deepStrictEqual(v.map(x => x.id + '=' + x.url), ['uber=https://fleethub.uber.com/orgs/test/livemap?tab=4', 'clicar=https://new.clicar.ma/', 'essai=https://exemple.ma/']);
     await page.waitForSelector('.navext[data-ext="essai"]');
     await page.click('[data-exdel="2"]');
+    await page.click('.uidlg #uiok');   // application : confirmation dessinée par le site (WKWebView n'affiche pas confirm())
     await page.waitForFunction(() => document.querySelectorAll('#text tbody tr').length === 2);
     assert.strictEqual(JSON.parse(env.psql("select value from params where key = 'appSites'")).length, 2);
     assert.deepStrictEqual(errors, []);

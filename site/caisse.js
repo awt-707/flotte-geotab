@@ -148,7 +148,7 @@ async function cshInsert(row) {
 }
 function cshCanFix(m) { return isAdmin() || (m.created_by === S.session.user.id && Date.now() - new Date(m.created_at).getTime() < 24 * HOUR); }
 async function cshCancel(id) {
-  const why = prompt('Annuler ce mouvement ? Motif (gardé dans l\'historique) :'); if (why === null) return;
+  const why = await askText('Annuler ce mouvement ? Motif (gardé dans l\'historique) :'); if (why === null) return;
   const r = await sb.from('cash_moves').update({ cancelled_at: new Date().toISOString(), cancel_reason: why || 'annulé' }).eq('id', id);
   if (r.error) { alert(r.error.message); return; }
   pageCaisse();
@@ -257,7 +257,7 @@ function cshTabShift() {
     const g = cshN(gv), ch = cshN(tr.querySelector('.cch').value), net = cshR(g - ch);
     if (net < 0) { alert('La monnaie rendue dépasse le montant remis.'); return; }
     const man = r.uber == null ? 0 : cshR(r.uber - net), cm = tr.querySelector('.ccm').value.trim();
-    if (man > 0 && !cm && !confirm('Manquant de ' + cshMoney(man) + ' sans commentaire : il sera déduit de la paie. Enregistrer ?')) return;
+    if (man > 0 && !cm && !await ask('Manquant de ' + cshMoney(man) + ' sans commentaire : il sera déduit de la paie. Enregistrer ?')) return;
     b.disabled = true;
     try { await cshInsert({ caisse: 'uber', kind: 'encaissement', flow: 'in', amount: net, day, shift: s, driver_code: r.c.client_code, driver_name: cshDrvName(r.c.client_code), uber_uuid: r.uuid || null,
       contract_num: r.c.num, vehicle_key: r.c.vehicle_key || null, uber_cash: r.uber, given: g, change: ch, source: 'Chauffeur', comment: cm || null }); pageCaisse(); }
@@ -590,7 +590,7 @@ function cshTabImport() {
     catch (x) { out.innerHTML = msg('Erreur : ' + esc(x.message || x), 'err'); } };
   document.querySelectorAll('[data-cshmapok]').forEach(b => { b.onclick = async () => { const u = b.dataset.cshmapok, s = document.querySelector('[data-cshmap="' + u + '"]'); if (!s.value) { alert('Choisir le chauffeur Ludy.'); return; }
     const r = await sb.from('drivers').update({ uber_uuid: u }).eq('code', s.value); if (r.error) { alert(r.error.message); return; } pageCaisse(); }; });
-  document.querySelectorAll('[data-cshunmap]').forEach(b => { b.onclick = async () => { if (!confirm('Délier ce chauffeur de son compte Uber ?')) return; const r = await sb.from('drivers').update({ uber_uuid: null }).eq('code', b.dataset.cshunmap); if (r.error) { alert(r.error.message); return; } pageCaisse(); }; });
+  document.querySelectorAll('[data-cshunmap]').forEach(b => { b.onclick = async () => { if (!await ask('Délier ce chauffeur de son compte Uber ?')) return; const r = await sb.from('drivers').update({ uber_uuid: null }).eq('code', b.dataset.cshunmap); if (r.error) { alert(r.error.message); return; } pageCaisse(); }; });
 }
 /** Classeur ou CSV : les exports Uber sont en UTF-8 (accents des en-têtes), lus comme texte ; sinon Windows-1252 */
 function cshReadBook(buf, name) {

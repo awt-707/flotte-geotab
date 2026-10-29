@@ -172,7 +172,7 @@ function rhList() {
   window.__rerender = rhList;
   $('#rhnew').onclick = () => rhEmpForm(null, $('#rhform'));
   if ($('#rhdrv')) $('#rhdrv').onclick = async () => {
-    if (!confirm('Créer ' + noFile.length + ' fiche(s) chauffeur à partir des chauffeurs de Ludy (nom, téléphone, agence) ? La date d\'entrée, le salaire et la société seront à compléter.')) return;
+    if (!await ask('Créer ' + noFile.length + ' fiche(s) chauffeur à partir des chauffeurs de Ludy (nom, téléphone, agence) ? La date d\'entrée, le salaire et la société seront à compléter.')) return;
     const rows = noFile.filter(d => rhFull() || S.agencies.some(a => a.id === d.agency_id)).map(d => ({ kind: 'chauffeur', name: d.name, driver_code: d.code, phone: d.phone || null, agency_id: d.agency_id || null, position: 'Chauffeur' }));
     for (let i = 0; i < rows.length; i += 200) { const r = await sb.from('hr_employees').insert(rows.slice(i, i + 200)); if (r.error) { alert('Erreur : ' + r.error.message); break; } }
     route();
@@ -276,8 +276,8 @@ async function rhFiche(my, q) {
       effet: e.hired_on || '', sal: sal || '', employee_id: e.id, _linkName: e.name }; CT.last = null; location.hash = '#/travail';
   };
   if ($('#rhfleft')) $('#rhfleft').onclick = async () => {
-    const d = ctrParseDate(prompt('Date de sortie (JJ/MM/AAAA) :', fmtDay(d0)) || ''); if (!d) return;
-    const why = prompt('Motif (démission, fin de période d\'essai, licenciement…) :') || null;
+    const d = ctrParseDate(await askText('Date de sortie (JJ/MM/AAAA) :', fmtDay(d0)) || ''); if (!d) return;
+    const why = await askText('Motif (démission, fin de période d\'essai, licenciement…) :') || null;
     const r = await sb.from('hr_employees').update(Object.assign({ left_on: d, left_reason: why }, d <= today() ? { pointage: false } : {})).eq('id', e.id); if (r.error) alert(r.error.message); else route();
   };
   if ($('#rhfback')) $('#rhfback').onclick = async () => { const r = await sb.from('hr_employees').update({ left_on: null, left_reason: null }).eq('id', e.id); if (r.error) alert(r.error.message); else route(); };
@@ -303,10 +303,10 @@ function rhTrialBind(e) {
   document.querySelectorAll('[data-rhtd]').forEach(b => b.onclick = async () => {
     const dec = b.dataset.rhtd || null, row = { trial_decision: dec, trial_decided_on: dec ? today() : null };
     if (dec === 'rompue') {
-      const d = ctrParseDate(prompt('Date de fin du contrat (JJ/MM/AAAA). Préavis de 8 jours prévu au contrat :', fmtDay(addDays(today(), 8))) || ''); if (!d) return;
+      const d = ctrParseDate(await askText('Date de fin du contrat (JJ/MM/AAAA). Préavis de 8 jours prévu au contrat :', fmtDay(addDays(today(), 8))) || ''); if (!d) return;
       Object.assign(row, { trial_decided_on: today(), left_on: d, left_reason: 'Rupture de la période d\'essai' }, d <= today() ? { pointage: false } : {});
     } else if (!dec && e.trial_decision === 'rompue' && e.left_reason === 'Rupture de la période d\'essai') Object.assign(row, { left_on: null, left_reason: null });   // décision annulée : la sortie aussi
-    else if (dec && !confirm(dec === 'confirmée' ? 'Confirmer l\'embauche de ' + e.name + ' ?' : 'Renouveler la période d\'essai de ' + e.name + ' ?')) return;
+    else if (dec && !await ask(dec === 'confirmée' ? 'Confirmer l\'embauche de ' + e.name + ' ?' : 'Renouveler la période d\'essai de ' + e.name + ' ?')) return;
     const r = await sb.from('hr_employees').update(row).eq('id', e.id); if (r.error) alert(r.error.message); else route();
   });
 }
@@ -343,7 +343,7 @@ function rhEventsBox(box, list, emps, kinds, opt) {
     route();
   });
   box.querySelectorAll('[data-rhcx]').forEach(b => b.onclick = async () => {
-    const x = list.find(y => String(y.id) === b.dataset.rhcx), why = prompt('Motif de l\'annulation :'); if (why === null) return;
+    const x = list.find(y => String(y.id) === b.dataset.rhcx), why = await askText('Motif de l\'annulation :'); if (why === null) return;
     const r = await sb.from('hr_events').update({ cancelled_at: new Date().toISOString(), cancel_reason: why || null }).eq('id', x.id);
     if (r.error) { alert(r.error.message); return; }
     await rhPlanSync(Object.assign({}, x, { cancelled_at: 1 })); route();
@@ -478,7 +478,7 @@ async function rhClockBoard(my, q) {
     const r = await sb.from('hr_clock').insert({ employee_id: e.id, user_id: e.user_id, kind: $('#rhc_kind').value, at: t.toISOString(), client: 'Correction', note: note + ' (' + (S.profile.email || '') + ')' });
     if (r.error) $('#rhcres').innerHTML = '<span class="err">' + esc(r.error.message) + '</span>'; else route();
   };
-  document.querySelectorAll('[data-rhcdel]').forEach(b => b.onclick = async () => { if (!confirm('Supprimer ce pointage ?')) return; const r = await sb.from('hr_clock').delete().eq('id', b.dataset.rhcdel); if (r.error) alert(r.error.message); else route(); });
+  document.querySelectorAll('[data-rhcdel]').forEach(b => b.onclick = async () => { if (!await ask('Supprimer ce pointage ?')) return; const r = await sb.from('hr_clock').delete().eq('id', b.dataset.rhcdel); if (r.error) alert(r.error.message); else route(); });
 }
 
 // ---------- Absences et congés / Avances et primes / Avenants ----------
@@ -607,7 +607,7 @@ function rhWcBind(e, wc) {
   document.querySelectorAll('[data-rhwcup]').forEach(b => b.onclick = () => rhWcForm(e, byId(b.dataset.rhwcup)));
   document.querySelectorAll('[data-rhwcln]').forEach(b => b.onclick = async () => { const r = await sb.from('work_contracts').update({ employee_id: e.id }).eq('id', b.dataset.rhwcln); if (r.error) alert(r.error.message); else route(); });
   document.querySelectorAll('[data-rhwcend]').forEach(b => b.onclick = async () => {
-    const d = ctrParseDate(prompt('Contrat clos (remplacé par un nouveau contrat, ou terminé) le (JJ/MM/AAAA) :', fmtDay(today())) || ''); if (!d) return;
+    const d = ctrParseDate(await askText('Contrat clos (remplacé par un nouveau contrat, ou terminé) le (JJ/MM/AAAA) :', fmtDay(today())) || ''); if (!d) return;
     const r = await sb.from('work_contracts').update({ ended_on: d }).eq('id', b.dataset.rhwcend); if (r.error) alert(r.error.message); else route();
   });
   if ($('#rhwcext')) $('#rhwcext').onclick = () => rhWcForm(e, null);
@@ -658,7 +658,7 @@ function rhDocsBind(e, docs) {
   const byId = id => docs.find(d => String(d.id) === String(id));
   document.querySelectorAll('[data-rhdo]').forEach(b => b.onclick = () => rhOpen('rh', byId(b.dataset.rhdo).path));
   document.querySelectorAll('[data-rhdx]').forEach(b => b.onclick = async () => {
-    const d = byId(b.dataset.rhdx); if (!confirm('Supprimer « ' + (RH_DOCS[d.category] || d.category) + ' » du dossier de ' + e.name + ' ?')) return;
+    const d = byId(b.dataset.rhdx); if (!await ask('Supprimer « ' + (RH_DOCS[d.category] || d.category) + ' » du dossier de ' + e.name + ' ?')) return;
     const r = await sb.from('hr_documents').delete().eq('id', d.id); if (r.error) { alert(r.error.message); return; }
     await sb.storage.from('rh').remove([d.path]).catch(() => { }); route();
   });
@@ -825,7 +825,7 @@ async function rhDo(kind, out) {
   S.rhMe = r.data; route(); return true;
 }
 async function rhEndDay(out) {
-  if (!confirm('Pointer la fin de votre journée ?')) return false;
+  if (!await ask('Pointer la fin de votre journée ?')) return false;
   const ok = await rhDo('out', out); if (ok) rhOkSet(false); return ok;
 }
 /** Bas du menu : état du pointage, pause, fin de journée */
