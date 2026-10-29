@@ -125,7 +125,7 @@ test('site : compte Ressources humaines limité au dossier RH, alertes, dossier,
     await login(page, '#/direct');
     await page.waitForFunction(() => /^#\/rh/.test(location.hash) && document.querySelector('#rhbody') && !document.querySelector('#rhbody .loading'));
     const nav = await page.$$eval('.side nav a', a => a.map(x => x.getAttribute('href')));
-    assert.ok(nav.every(h => h === '#' || /^#\/(rh|travail)/.test(h)), 'menu : dossier Ressources humaines seulement (' + nav.join(', ') + ')');
+    assert.ok(nav.every(h => h === '#' || /^#\/(rh|travail|menu$)/.test(h)), 'menu : dossier Ressources humaines seulement (' + nav.join(', ') + ')');
     assert.strictEqual(await page.$('#health'), null, 'pas d\'état de la collecte pour les RH');
     assert.match(await page.innerText('#rhbody'), /À traiter pour rester en règle/);
     await page.waitForFunction(() => { const n = document.querySelector('#nbrh'); return n && !n.hidden && +n.textContent >= 2; });

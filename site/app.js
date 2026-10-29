@@ -8,7 +8,7 @@ const canEdit = () => S.profile && ['admin', 'manager'].includes(S.profile.role)
 const isAdmin = () => S.profile && S.profile.role === 'admin';
 // Compte « Ressources humaines » : seulement le dossier Ressources humaines (droits de la base : 20261111000000_rh_acces.sql)
 const isRH = () => S.profile && S.profile.role === 'rh';
-const RH_ONLY = { rh: 1, travail: 1, moi: 1, application: 1 };
+const RH_ONLY = { rh: 1, travail: 1, moi: 1, application: 1, menu: 1 };
 const PARAM_DEFAULTS = { limDbMb: 500, limStorageMb: 1024, limLiveMonth: 500000, manifestKeepDays: 30, shiftAdvance: 2, minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
 
 // ---------- Accès aux données ----------
@@ -294,7 +294,7 @@ async function pageApplication() {
 
 // ---------- Volets visibles par utilisateur (Réglages > Utilisateurs) : profiles.pages = liste des volets, vide = tous ----------
 // Le menu ne montre que les volets choisis ; les données restent limitées par agence dans la base.
-const ALWAYS_PAGES = { vehicule: 1, chauffeur: 1, application: 1, moi: 1 };   // fiches ouvertes depuis les autres volets, page de téléchargement
+const ALWAYS_PAGES = { vehicule: 1, chauffeur: 1, application: 1, moi: 1, menu: 1 };   // fiches ouvertes depuis les autres volets, page de téléchargement
 function allPages() { return NAV.filter(n => !ADMIN_PAGES[n[0]]).map(n => [n[0], n[1]]).concat(extSites().map(x => ['x-' + x.id, x.name + ' (application)'])); }
 function canSee(page) {
   if (isRH()) return !!RH_ONLY[page];
@@ -314,29 +314,87 @@ const NAV_GROUPS = { cc: { label: 'Conduite et consommation', pages: ['chauffeur
   flotte: { label: 'Flotte', pages: ['plaques', 'vehicules'] } };
 const navGroupOf = k => k === 'rh' || k === 'travail' ? 'rh' : Object.keys(NAV_GROUPS).find(g => NAV_GROUPS[g].pages.includes(k));
 const navCmp = (a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' });
-function navHtml() {
+// ---------- Menu personnalisé (demande d'Ahmed : retrouver ses pages sans chercher) ----------
+// Par utilisateur (profiles.menu, sinon ce navigateur) : { fav: [volets en favoris, dans l'ordre], order: [entrées du menu
+// dans l'ordre], hide: [entrées masquées] }. Entrée = volet ('alertes', 'x-uber') ou dossier ('g:cc', 'g:flotte', 'g:rh') ;
+// volet d'un dossier = clé de page, onglet RH = 'rh:<onglet>'. Sans réglage : ordre alphabétique, comme avant.
+// Recherche en haut du menu (touche « / ») : tous les volets, dossiers et pages masquées compris.
+const MENU_KEY = () => 'menu:' + ((S.session && S.session.user && S.session.user.id) || '');
+function menuCfg() {
+  let m = S.profile && S.profile.menu;
+  if (!m || typeof m !== 'object') m = lsJSON(MENU_KEY(), null);
+  m = m && typeof m === 'object' ? m : {};
+  const arr = x => Array.isArray(x) ? x.filter(v => typeof v === 'string').slice(0, 200) : [];
+  return { fav: arr(m.fav), order: arr(m.order), hide: arr(m.hide) };
+}
+async function menuSave(m) {
+  S.profile = Object.assign({}, S.profile, { menu: m });
+  lsSet(MENU_KEY(), m);
+  navRefresh();
+  // base : le menu suit l'utilisateur sur tous ses appareils (migration 20261116000000_menu.sql) ; sinon ce navigateur seulement
+  const r = await sb.rpc('menu_set', { p_menu: m }).then(x => x, e => ({ error: e }));
+  return !r.error;
+}
+/** Entrées du menu (volets visibles) : { id, label, html, leaves: [{ id, href, label, group }] } */
+function navEntries() {
   const vis = NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (n[0] === 'caisse' ? canEdit() : n[0] !== 'rh' || rhCan()) && canSee(n[0])), done = {}, out = [];
-  const link = (href, label, extra) => ({ label, html: `<a href="${esc(href)}"${extra || ''}>${esc(label)}${href === '#/alertes' ? '<span class="nb" id="nbal" hidden></span>' : ''}</a>` });
-  const grp = (g, label, subs) => {
-    subs = subs.map(x => ({ href: x[0], label: x[1] })).sort(navCmp);
-    return { label, html: `<div class="navfold" data-grp="${g}"><a href="#" class="navgrp" data-grp="${g}" role="button" aria-expanded="false">${esc(label)}${g === 'rh' ? '<span class="nb" id="nbrh" hidden></span>' : ''}</a>`
-      + `<div class="navsubs closed" data-grp="${g}">${subs.map(x => `<a href="${x.href}" class="navsub">${esc(x.label)}</a>`).join('')}</div></div>` };
+  const fav = new Set(menuCfg().fav);
+  // étoile dessinée par la feuille de style (le texte du volet reste son seul nom)
+  const star = id => `<span class="navstar${fav.has(id) ? ' on' : ''}" data-fav="${esc(id)}" role="button" title="${fav.has(id) ? 'Retirer des favoris' : 'Ajouter aux favoris'}"></span>`;
+  const leafHtml = (l, cls) => `<a href="${esc(l.href)}"${cls ? ` class="${cls}"` : ''}${l.extra || ''} data-leaf="${esc(l.id)}">${esc(l.label)}${l.href === '#/alertes' && cls !== 'navfav' ? '<span class="nb" id="nbal" hidden></span>' : ''}${star(l.id)}</a>`;
+  const link = (id, href, label, extra) => { const l = { id, href, label, extra }; return { id, label, leaves: [l], html: leafHtml(l) }; };
+  const grp = (g, label, leaves) => {
+    leaves = leaves.slice().sort(navCmp).map(l => Object.assign(l, { group: label }));
+    return { id: 'g:' + g, label, leaves, html: `<div class="navfold" data-grp="${g}"><a href="#" class="navgrp" data-grp="${g}" role="button" aria-expanded="false">${esc(label)}${g === 'rh' ? '<span class="nb" id="nbrh" hidden></span>' : ''}</a>`
+      + `<div class="navsubs closed" data-grp="${g}">${leaves.map(l => leafHtml(l, 'navsub')).join('')}</div></div>` };
   };
   vis.forEach(n => {
     const g = n[0] === 'rh' ? null : navGroupOf(n[0]);
     if (g) {
       if (done[g]) return;
       done[g] = 1; const its = vis.filter(x => navGroupOf(x[0]) === g);
-      if (its.length > 1) { out.push(grp(g, NAV_GROUPS[g].label, its.map(x => ['#/' + x[0], x[1]]))); return; }
+      if (its.length > 1) { out.push(grp(g, NAV_GROUPS[g].label, its.map(x => ({ id: x[0], href: '#/' + x[0], label: x[1] })))); return; }
     }
-    if (n[0] === 'rh') { out.push(grp('rh', n[1], rhTabsFor().map(x => [rhHref(x[0]), x[1]]))); return; }
-    out.push(link('#/' + n[0], n[1]));
+    if (n[0] === 'rh') { out.push(grp('rh', n[1], rhTabsFor().map(x => ({ id: x[0] === 'travail' ? 'travail' : 'rh:' + x[0], href: rhHref(x[0]), label: x[1] })))); return; }
+    out.push(link(n[0], '#/' + n[0], n[1]));
     if (n[0] === 'direct') {
-      if (appMode() === 'link') out.push(link(appUber(), 'Uber Fleet', ' id="navuber"'));
-      else navSites().filter(x => canSee('x-' + x.id)).forEach(x => out.push(link('#/x-' + x.id, x.name, ` class="navext" data-ext="${x.id}"`)));
+      if (appMode() === 'link') out.push(link('uber', appUber(), 'Uber Fleet', ' id="navuber"'));
+      else navSites().filter(x => canSee('x-' + x.id)).forEach(x => out.push(link('x-' + x.id, '#/x-' + x.id, x.name, ` class="navext" data-ext="${x.id}"`)));
     }
   });
-  return out.sort(navCmp).map(x => x.html).join('');
+  return out.sort(navCmp);
+}
+/** Entrées dans l'ordre choisi (les autres ensuite, par ordre alphabétique) */
+function navOrdered(ents, cfg) {
+  const pos = new Map(cfg.order.map((id, i) => [id, i]));
+  return ents.slice().sort((a, b) => (pos.has(a.id) ? pos.get(a.id) : 1e4) - (pos.has(b.id) ? pos.get(b.id) : 1e4) || navCmp(a, b));
+}
+function navHtml() {
+  const cfg = menuCfg(), ents = navEntries(), hide = new Set(cfg.hide), leaves = [].concat(...ents.map(e => e.leaves)), byId = new Map(leaves.map(l => [l.id, l]));
+  const favs = cfg.fav.map(id => byId.get(id)).filter(Boolean);
+  const favHtml = favs.length ? `<div class="navfavs"><div class="navtitle">Favoris</div>${favs.map(l => `<a href="${esc(l.href)}" class="navfav" data-leaf="${esc(l.id)}">${esc(l.label)}</a>`).join('')}</div>` : '';
+  return `<div class="navsearch"><input id="navq" type="search" placeholder="Rechercher une page…  ( / )" autocomplete="off" aria-label="Rechercher une page"></div><div id="navres" class="navres" hidden></div>`
+    + `<div id="navmain" class="navmain">${favHtml}${navOrdered(ents, cfg).filter(e => !hide.has(e.id)).map(e => e.html).join('')}`
+    + `<a href="#/menu" class="navcfg" data-leaf="menu">Personnaliser le menu</a></div>`;
+}
+/** Recherche : volets dont le nom (ou le dossier) contient les mots tapés, accents ignorés ; Entrée = premier résultat */
+const navNorm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+function navSearch(q) {
+  const res = $('#navres'), main = $('#navmain'); if (!res || !main) return [];
+  const words = navNorm(q).split(/\s+/).filter(Boolean);
+  if (!words.length) { res.hidden = true; main.hidden = false; return []; }
+  const leaves = [].concat(...navEntries().map(e => e.leaves)), seen = new Set();
+  const hits = leaves.filter(l => { const t = navNorm(l.label + ' ' + (l.group || '')); return !seen.has(l.href) && words.every(w => t.includes(w)) && seen.add(l.href); });
+  res.innerHTML = hits.length ? hits.map((l, i) => `<a href="${esc(l.href)}" class="navhit${i ? '' : ' first'}">${esc(l.label)}${l.group ? `<span class="small">${esc(l.group)}</span>` : ''}</a>`).join('') : '<div class="navnone">Aucune page</div>';
+  res.hidden = false; main.hidden = true;
+  return hits;
+}
+/** Menu redessiné après un changement de réglage (sans recharger la page affichée) */
+function navRefresh() {
+  const nav = $('.side nav'); if (!nav) return;
+  nav.innerHTML = navHtml(); SHELL_KEY = shellHtml();
+  navMark(NAV_PAGE || (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct');
+  nbalPaint(); rhBadgePaint();
 }
 /** Dossiers ouverts : celui de la page affichée à chaque changement de page (les autres refermés), puis au clic sur leur titre */
 let NAV_OPEN = {}, NAV_PAGE = null;
@@ -350,10 +408,29 @@ function navFold() {
 function navBind() {
   const nav = $('.side nav'); if (!nav) return;
   nav.addEventListener('click', e => {
+    const st = e.target.closest('.navstar');
+    if (st) {   // étoile : ajouter / retirer des favoris sans changer de page
+      e.preventDefault(); e.stopPropagation();
+      const m = menuCfg(), id = st.dataset.fav;
+      m.fav = m.fav.includes(id) ? m.fav.filter(x => x !== id) : m.fav.concat([id]);
+      menuSave(m); return;
+    }
+    if (e.target.closest('#navres a')) { const q = $('#navq'); if (q) q.value = ''; setTimeout(() => navSearch(''), 0); return; }
     const h = e.target.closest('a.navgrp'); if (!h) return;
     e.preventDefault(); NAV_OPEN[h.dataset.grp] = !NAV_OPEN[h.dataset.grp]; navFold();
   });
+  nav.addEventListener('input', e => { if (e.target.id === 'navq') navSearch(e.target.value); });
+  nav.addEventListener('keydown', e => {
+    if (e.target.id !== 'navq') return;
+    if (e.key === 'Escape') { e.target.value = ''; navSearch(''); e.target.blur(); }
+    if (e.key === 'Enter') { const h = navSearch(e.target.value)[0]; if (h) { e.preventDefault(); e.target.value = ''; navSearch(''); e.target.blur(); if (/^https?:/.test(h.href)) { if (!openOut(h.href)) window.open(h.href, '_blank', 'noopener'); } else location.hash = h.href; } }
+  });
 }
+// « / » : recherche du menu (hors d'une case de saisie)
+document.addEventListener('keydown', e => {
+  if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '') || (document.activeElement || {}).isContentEditable) return;
+  const q = document.getElementById('navq'); if (q) { e.preventDefault(); q.focus(); }
+});
 /** Volet en surbrillance, dossier de la page ouvert */
 function navMark(page) {
   let t = new URLSearchParams(location.hash.split('?')[1] || '').get('t') || 'bord'; if (t === 'fiche') t = 'salaries';
@@ -1433,7 +1510,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
