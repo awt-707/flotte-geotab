@@ -321,13 +321,16 @@ const navCmp = (a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'ba
 // Recherche en haut du menu (touche « / ») : tous les volets, dossiers et pages masquées compris.
 const MENU_KEY = () => 'menu:' + ((S.session && S.session.user && S.session.user.id) || '');
 function menuCfg() {
-  let m = S.profile && S.profile.menu;
-  if (!m || typeof m !== 'object') m = lsJSON(MENU_KEY(), null);
-  m = m && typeof m === 'object' ? m : {};
+  // réglage le plus récent (at) entre la base et ce navigateur : un changement juste fait n'est pas perdu si la page est
+  // rechargée avant la fin de son enregistrement dans la base
+  const db = S.profile && S.profile.menu, loc = lsJSON(MENU_KEY(), null), ok = x => x && typeof x === 'object';
+  let m = ok(db) && ok(loc) ? ((+loc.at || 0) > (+db.at || 0) ? loc : db) : ok(db) ? db : loc;
+  m = ok(m) ? m : {};
   const arr = x => Array.isArray(x) ? x.filter(v => typeof v === 'string').slice(0, 200) : [];
   return { fav: arr(m.fav), order: arr(m.order), hide: arr(m.hide), closed: m.closed === true };   // closed : « Toutes les pages » refermé
 }
 async function menuSave(m) {
+  m = Object.assign({}, m, { at: Date.now() });
   S.profile = Object.assign({}, S.profile, { menu: m });
   lsSet(MENU_KEY(), m);
   navRefresh();
