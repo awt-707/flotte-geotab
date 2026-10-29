@@ -7,7 +7,7 @@ const CRS_KINDS = [['Transfert aéroport', 'aeroport'], ['Transfert simple', 'in
   ['Mise à disposition à l\'heure', 'heure'], ['Mise à disposition à la journée', 'journee'], ['Mise à disposition sur plusieurs jours', 'jours'],
   ['Circuit touristique', 'jours'], ['Roadshow professionnel', 'jours'], ['Transport d\'une délégation', 'jours'], ['Service événementiel', 'jours'],
   ['Disponibilité de nuit', 'jours'], ['Disponibilité 24 h/24', 'special'], ['Chauffeur dédié résidant avec le client', 'special']];
-const CRS_BASES = { aeroport: 'Transfert aéroport Mohammed V (grille)', interville: 'Interville depuis Casablanca (grille)', heure: 'Tarif horaire (grille)',
+const CRS_BASES = { aeroport: 'Transfert aéroport (grille)', interville: 'Interville depuis la ville de départ (grille)', heure: 'Tarif horaire (grille)',
   demi: 'Demi-journée (grille)', journee: 'Journée complète (grille)', jours: 'Journée × nombre de jours (grille)', special: 'Tarification spécifique (prix fixé par la direction)',
   convenu: 'Prix convenu avec le client (course rapide)' };
 const CRS_LEVELS = ['Standard', 'Premium', 'VIP', 'Protocolaire'];
@@ -20,6 +20,9 @@ const CRS_EXTRAS = ['Accueil nominatif à l\'aéroport', 'Pancarte personnalisé
 const CRS_STATUS = ['Demande', 'Devis envoyé', 'Accepté', 'Acompte reçu', 'Confirmée', 'En cours', 'Terminée', 'Facturée', 'Annulée', 'Refusée'];
 const CRS_BLOCK = ['Acompte reçu', 'Confirmée', 'En cours'];   // véhicule bloqué pour la mission
 
+/** Ville de départ et aéroport d'une grille (grilles d'avant les villes de départ : Casablanca, aéroport Mohammed V) */
+function crsOrigin(G) { return (G && G.origin) || 'Casablanca'; }
+function crsAirport(G) { return 'aéroport ' + ((G && G.airportName) || 'Mohammed V'); }
 function crsN(v) { const n = typeof v === 'number' ? v : parseFloat(String(v == null ? '' : v).replace(/\s/g, '').replace(',', '.')); return isNaN(n) ? 0 : n; }
 function crsMoney(v) { const n = Math.round(crsN(v) * 100) / 100, s = Math.abs(n).toFixed(Number.isInteger(n) ? 0 : 2).split('.'); return (n < 0 ? '-' : '') + s[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (s[1] ? ',' + s[1] : '') + ' MAD'; }
 /** Heures « HH:MM » → nombre d'heures ; durée d'une journée (fin après minuit acceptée) */
@@ -124,14 +127,14 @@ function crsPrice(f, G) {
     baseSum += add('Course' + (route ? ' ' + route : '') + (f.gridRef ? ' (' + f.gridRef + ')' : '') + ' : prix convenu' + vehTxt, 1, crsN(f.agreedPrice));
   } else if (base === 'aeroport' || base === 'interville') {
     const tab = base === 'aeroport' ? G.airport : G.intercity, row = (tab || []).find(r => r.dest === f.dest), p = val(row, cat);
-    const what = (base === 'aeroport' ? 'Transfert aéroport Mohammed V ↔ ' : 'Casablanca → ') + (f.dest || '?');
+    const what = (base === 'aeroport' ? 'Transfert ' + crsAirport(G) + ' ↔ ' : crsOrigin(G) + ' → ') + (f.dest || '?');
     if (!row) notes.push('Destination absente de la grille : prix à fixer par la direction.');
     else if (!p) notes.push('Pas de prix dans la grille pour cette catégorie de véhicule.');
     // chaque trajet : prix de la grille ; nuit (22h–6h) ou jour férié : +15 % sur ce trajet (nuit et férié non cumulables)
     const nightTxt = 'Nuit (' + (G.nightFrom || 22) + 'h–' + (G.nightTo || 6) + 'h) ou jour férié : +' + nightPct + ' % (non cumulables)';
     // course retour (grille) : course dans le sens du retour d'un véhicule qui rentrerait à vide (déposé par un autre client) : −30 % sur ce trajet
     const retour = !f.roundTrip && f.returnEmpty && crsN(G.returnPct);
-    let go = add((retour && base === 'interville' ? (f.dest || '?') + ' → Casablanca' : what) + (f.roundTrip ? ' (aller)' : '') + vehTxt, nVeh, p); baseSum += go;
+    let go = add((retour && base === 'interville' ? (f.dest || '?') + ' → ' + crsOrigin(G) : what) + (f.roundTrip ? ' (aller)' : '') + vehTxt, nVeh, p); baseSum += go;
     if (retour && go) { const r = add('Course retour : véhicule qui rentre à vide (−' + G.returnPct + ' %)', 1, -go * crsN(G.returnPct) / 100, 'remise'); go += r; baseSum += r; }
     if ((f.night || f.holiday) && nightPct && go) add(nightTxt + (f.roundTrip ? ', aller' : ''), 1, go * nightPct / 100, 'majoration');
     if (f.roundTrip) {
@@ -197,19 +200,33 @@ function crsActual(trips, f, price, dayOf, hmOf) {
 }
 
 // ---------- 2. Page du site ----------
-const CR = { grid: null, gridErr: '', list: [], cur: null, f: null };
+const CR = { grid: null, grids: [], gridErr: '', list: [], cur: null, f: null };
 const CRS_SCRIPT = ['Quelles sont vos dates ?', 'Combien de passagers et de bagages ?', 'Quel véhicule souhaitez-vous ?', 'Quelles villes comptez-vous visiter ?',
   'À quoi ressemble une journée type ?', 'Combien d\'heures et de kilomètres prévoyez-vous par jour ?', 'Aurez-vous besoin du véhicule le soir ou la nuit ?',
   'Votre planning sera-t-il défini à l\'avance ou souhaitez-vous une disponibilité flexible ?'];
 const CRS_LVL_CLS = { Standard: 'ok', Intensive: 'warn', '24h / VIP': 'crit' };
 const CRS_ST_CLS = { Demande: '', 'Devis envoyé': 'warn', 'Accepté': 'warn', 'Acompte reçu': 'ok', 'Confirmée': 'ok', 'En cours': 'ok', 'Terminée': '', 'Facturée': '', 'Annulée': 'crit', 'Refusée': 'crit' };
-/** Grille d'une course déjà enregistrée : celle de sa date (gardée dans la course), sinon la grille du jour */
-function crsG() { return (CR.cur && CR.cur.data && CR.cur.data.grid) || CR.grid; }
+/** Grille du jour d'une ville de départ (id de pricing_grid ; 1 = Casablanca) */
+function crsGridOf(id) { return CR.grids.find(g => g._id === (+id || 1)) || CR.grid; }
+/** Grille proposée par défaut : celle de l'agence choisie (ou de la seule agence), sinon Casablanca */
+function crsGridDefault(agencyId) {
+  const ag = +agencyId || (agFilter() ? +agFilter() : (S.agencies.length === 1 ? S.agencies[0].id : 0));
+  return (ag && CR.grids.find(g => +g._agency === ag)) || CR.grid;
+}
+/** Grille d'une course : celle de sa date (gardée dans la course) si la ville de départ n'a pas changé, sinon la grille du jour */
+function crsG() {
+  const id = +(CR.f && CR.f.gridId) || 1, s = CR.cur && CR.cur.data && CR.cur.data.grid;
+  return s && (+s._id || 1) === id ? s : crsGridOf(id);
+}
+function crsGridName(G) { return (G && (G._name || G.origin)) || 'Casablanca'; }
 function crsCats() { return (CR.grid && CR.grid.cats) || []; }
 function crsCatName(id) { const c = crsCats().find(x => x.id === id); return c ? c.model + ' (' + c.label + ')' : (id || ''); }
 async function crsLoadGrid() {
-  const r = await sb.from('pricing_grid').select('data,updated_at').eq('id', 1).maybeSingle();
-  if (r.error) { CR.gridErr = r.error.message; CR.grid = null; } else { CR.gridErr = ''; CR.grid = (r.data && r.data.data) || null; CR.gridAt = r.data && r.data.updated_at; }
+  const r = await sb.from('pricing_grid').select('*').order('id');
+  if (r.error) { CR.gridErr = r.error.message; CR.grid = null; CR.grids = []; return; }
+  CR.gridErr = '';
+  CR.grids = (r.data || []).map(x => Object.assign({}, x.data, { _id: x.id, _name: x.name || (x.data && x.data.origin) || (x.id === 1 ? 'Casablanca' : 'Grille ' + x.id), _agency: x.agency_id || null, _at: x.updated_at }));
+  CR.grid = CR.grids.find(g => g._id === 1) || CR.grids[0] || null;
 }
 function crsTabs(t) {
   return `<div class="tabs">${[['', 'Demandes et devis'], ['planning', 'Planning des véhicules'], ['grille', 'Grille tarifaire']].map(x => `<a href="#/courses${x[0] ? '?t=' + x[0] : ''}" class="${t === x[0] ? 'on' : ''}">${x[1]}</a>`).join('')}</div>`;
@@ -270,6 +287,12 @@ function crsField(k, label, type, opt) {
   if (type === 'area') return `<label class="wide">${label} <textarea data-f="${k}" rows="${o.rows || 2}" ${ro} placeholder="${esc(o.ph || '')}">${esc(v)}</textarea></label>`;
   return `<label>${label} <input data-f="${k}" type="${type || 'text'}" value="${esc(v)}" ${o.size ? 'size="' + o.size + '"' : ''} ${o.step ? 'step="' + o.step + '"' : ''} ${o.min !== undefined ? 'min="' + o.min + '"' : ''} placeholder="${esc(o.ph || '')}" ${o.list ? 'list="' + o.list + '"' : ''} ${o.addr ? 'data-addr' : ''} ${ro}></label>`;
 }
+/** Villes de départ proposées (grilles du jour ; celle d'une course dont la grille a été retirée reste proposée) */
+function crsGridOpts(cur) {
+  const o = CR.grids.map(g => [String(g._id), crsGridName(g)]), id = String(+cur || 1);
+  if (!o.some(x => x[0] === id)) { const s = CR.cur && CR.cur.data && CR.cur.data.grid; o.push([id, crsGridName(s) + ' (grille retirée)']); }
+  return o;
+}
 function crsChecks(k, items) { const sel = CR.f[k] || []; return `<div class="crschk">${items.map(x => `<label class="chk"><input type="checkbox" data-fa="${k}" value="${esc(x)}" ${sel.includes(x) ? 'checked' : ''} ${CR.edit ? '' : 'disabled'}> ${esc(x)}</label>`).join('')}</div>`; }
 function crsForm() {
   const f = CR.f, G = crsG() || {}, base = crsBase(f, G), tab = base === 'aeroport' ? G.airport : base === 'interville' ? G.intercity : null;
@@ -284,10 +307,11 @@ function crsForm() {
     ${crsField('pro', 'Remise agences, DMC et entreprises (' + (G.proPct || 0) + ' % sur facture)', 'check')}</div></details>
   <details class="panel" open><summary><h2>2. Prestation</h2></summary>
     <div class="small"><b>Question centrale :</b> le client souhaite-t-il réserver des trajets définis ou disposer librement du véhicule et du chauffeur ? Une mise à disposition bloque le véhicule, même quand il ne roule pas.</div>
-    <div class="mfrow">${crsField('kind', 'Type de prestation', 'select', { options: CRS_KINDS.map(x => x[0]) })}
+    <div class="mfrow">${CR.grids.length > 1 || (+f.gridId || 1) !== 1 ? crsField('gridId', 'Ville de départ (grille tarifaire)', 'select', { empty: false, options: crsGridOpts(f.gridId) }) : ''}
+    ${crsField('kind', 'Type de prestation', 'select', { options: CRS_KINDS.map(x => x[0]) })}
     ${crsField('base', 'Formule tarifaire', 'select', { empty: 'Automatique : ' + (CRS_BASES[crsBase(Object.assign({}, f, { base: '' }), G)] || '—'), options: Object.keys(CRS_BASES).map(k => [k, CRS_BASES[k]]) })}
     ${base === 'convenu' ? crsField('agreedPrice', 'Prix convenu (MAD TTC)', 'number', { min: 0 }) : ''}
-    ${tab ? crsField('dest', base === 'aeroport' ? 'Destination (depuis / vers l\'aéroport Mohammed V)' : 'Destination depuis Casablanca', 'select', { options: tab.map(r => r.dest) }) : ''}
+    ${tab ? crsField('dest', base === 'aeroport' ? 'Destination (depuis / vers l\'' + crsAirport(G) + ')' : 'Destination depuis ' + crsOrigin(G), 'select', { options: tab.map(r => r.dest) }) : ''}
     ${tab ? crsField('roundTrip', 'Aller-retour', 'check') + (!f.roundTrip ? crsField('returnEmpty', 'Course retour : sens du retour, le véhicule rentrerait à vide (−' + (G.returnPct || 0) + ' %)', 'check') : '') : ''}
     ${crsField('dispo', 'Niveau de disponibilité', 'select', { options: CRS_DISPO })}${crsField('planning', 'Planning', 'select', { options: [['oui', 'Confirmé'], ['partiel', 'Approximatif'], ['non', 'Non défini']] })}
     ${crsField('changes', 'Changements de dernière minute probables', 'check')}${crsField('flatOrReal', 'Facturation', 'select', { options: ['Prix forfaitaire', 'Selon l\'utilisation réelle'] })}</div></details>
@@ -401,7 +425,8 @@ async function crsEditor(id, head) {
     CR.cur = r.data; CR.f = Object.assign({}, (r.data.data && r.data.data.f) || {});
   } else {
     CR.cur = null;
-    CR.f = { kind: '', cat: (crsCats()[0] || {}).id || '', nVeh: 1, drivers: 1, pax: 1, service: 'Standard', clientType: 'Particulier', dispo: 'Disponibilité planifiée', planning: 'oui', startCity: 'Casablanca', validDays: 7, startDate: today(), cities: [], extras: [] };
+    const G0 = crsGridDefault();
+    CR.f = { gridId: (G0 && G0._id) || 1, kind: '', cat: (crsCats()[0] || {}).id || '', nVeh: 1, drivers: 1, pax: 1, service: 'Standard', clientType: 'Particulier', dispo: 'Disponibilité planifiée', planning: 'oui', startCity: crsOrigin(G0), validDays: 7, startDate: today(), cities: [], extras: [] };
   }
   const m = CR.cur || {};
   $('#page').innerHTML = head + crsTabs('') + `<div class="bar"><a href="#/courses">← Toutes les demandes</a> <b>${esc(m.number || 'Nouvelle demande')}</b>${m.client_name ? ' · ' + esc(m.client_name) : ''}</div>
@@ -410,8 +435,10 @@ async function crsEditor(id, head) {
   const rerenderForm = () => { const open = [...document.querySelectorAll('#crsform details')].map(d => d.open); $('#crsform').innerHTML = crsForm(); document.querySelectorAll('#crsform details').forEach((d, i) => { if (open[i] !== undefined) d.open = open[i]; }); };
   $('#crsform').addEventListener('input', () => { crsRead(); crsSide(); });
   // champs qui changent le formulaire lui-même (type, formule, aller-retour, catégorie, prestations) : formulaire redessiné
+  let origin = crsOrigin(crsG());
   $('#crsform').addEventListener('change', e => { const k = e.target.dataset.f || e.target.dataset.fa; crsRead();
-    if (['kind', 'base', 'roundTrip', 'cat', 'extras', 'clientType', 'mfType'].includes(k)) { if (k === 'clientType') CR.f.pro = CR.f.clientType !== 'Particulier'; if (k === 'kind' && CR.f.kind === 'Aller-retour') { CR.f.roundTrip = true; CR.f.returnEmpty = false; } rerenderForm(); } crsSide(); });
+    if (k === 'gridId') { const o = crsOrigin(crsG()); if (!CR.f.startCity || CR.f.startCity === origin) CR.f.startCity = o; origin = o; }   // ville de prise en charge suivie
+    if (['gridId', 'kind', 'base', 'roundTrip', 'cat', 'extras', 'clientType', 'mfType'].includes(k)) { if (k === 'clientType') CR.f.pro = CR.f.clientType !== 'Particulier'; if (k === 'kind' && CR.f.kind === 'Aller-retour') { CR.f.roundTrip = true; CR.f.returnEmpty = false; } rerenderForm(); } crsSide(); });
   crsSide();
   crsGeotab();
 }
@@ -537,7 +564,7 @@ function crsMfDraft(m, f) {
   const dep = a ? crsLocalDT(a) : '', ret = b && a && crsLocalDT(b).slice(0, 10) !== dep.slice(0, 10) ? crsLocalDT(b).slice(0, 10) : '';
   const kind = f.kind || '', base = crsBase(f, crsG() || {});
   const pre = kind === 'Transfert aéroport' ? 'Transfert aéroport' : kind === 'Circuit touristique' ? 'Circuit' : base === 'interville' || base === 'aeroport' || base === 'convenu' ? 'Transfert' : 'Mise à disposition';
-  const terminus = f.endAddr || f.endCity || (base === 'aeroport' ? 'Aéroport Mohammed V, Casablanca' : f.dest) || '';
+  const G = crsG() || {}, terminus = f.endAddr || f.endCity || (base === 'aeroport' ? 'A' + crsAirport(G).slice(1) + ', ' + crsOrigin(G) : f.dest) || '';
   return { type: f.mfType === 'Non résident' ? 'non' : 'resident', vehicle: m.vehicle_key || '', remplacement: '', dateDep: dep, dateRet: ret,
     chauffeur: String(f.driverName || m.driver_name || '').trim(), chauffeurTel: String(f.driverPhone || '').trim(), donneur: String(f.client || m.client_name || '').trim(),
     cin: f.cin || '', nb: Math.max(1, crsN(f.pax) || 1), passengers: String(f.paxNames || '').split(/\n|;/).map(x => x.trim()).filter(Boolean), donneurVoyage: true,
@@ -589,7 +616,11 @@ async function crsQuick(head) {
   const G = CR.grid || {}, ok = inAgency(), vs = S.vehList.filter(v => ok(v.key) && String(v.active || 'OUI').toUpperCase() !== 'NON').sort((a, b) => String(a.plate).localeCompare(String(b.plate)));
   const dep0 = mfNowLocal(), q = CR.q = CR.q || { veh: '', dep: dep0, end: crsLocalDT(new Date((parseLocalDT(dep0) || new Date()).getTime() + 2 * HOUR)), type: 'Non résident', pax: 1 };
   if (typeof addrSetPlaces === 'function') addrSetPlaces(MANIF_PLACES);
-  const rows = [].concat((G.airport || []).map(r => ['A|' + r.dest, 'Aéroport Mohammed V ↔ ' + r.dest])).concat((G.intercity || []).map(r => ['I|' + r.dest, 'Casablanca → ' + r.dest]));
+  // tarifs de chaque ville de départ (grille de l'agence en premier) : valeur « grille|A ou I|destination »
+  const G1 = crsGridDefault(), gs = (CR.grids.length ? CR.grids : [G]).slice().sort((a, b) => (b === G1) - (a === G1));
+  const rows = gs.map(g => [crsGridName(g), [].concat((g.airport || []).map(r => [(g._id || 1) + '|A|' + r.dest, 'A' + crsAirport(g).slice(1) + ' ↔ ' + r.dest]))
+    .concat((g.intercity || []).map(r => [(g._id || 1) + '|I|' + r.dest, crsOrigin(g) + ' → ' + r.dest]))]);
+  const opt = r => `<option value="${esc(r[0])}" ${r[0] === q.grid ? 'selected' : ''}>${esc(r[1])}</option>`;
   const v = (k, d) => esc(q[k] == null ? (d || '') : q[k]);
   $('#page').innerHTML = head + crsTabs('') + `<div class="bar"><a href="#/courses">← Toutes les demandes</a> <b>⚡ Course rapide</b> <span class="small">sans devis : la course est confirmée tout de suite, le véhicule est bloqué et le manifeste est créé.</span></div>
     ${canEdit() ? '' : msg('Lecture seule : les courses sont créées par les gestionnaires et l\'administrateur.', 'warn')}
@@ -602,7 +633,7 @@ async function crsQuick(head) {
       <div class="mfrow"><label>Chauffeur <input id="qkdrv" list="qkdrvl" value="${v('drv')}" placeholder="Contrat en cours, sinon choisir" size="24" autocomplete="off"></label>
         <datalist id="qkdrvl">${Object.keys(S.drv || {}).filter(c => c !== HORS).map(c => `<option value="${esc(S.drv[c])}"></option>`).join('')}</datalist>
         <label>Téléphone du chauffeur <input id="qktel" value="${v('tel')}" placeholder="06…" size="14"></label></div><div id="qkdinfo" class="small"></div>
-      <div class="mfrow"><label>Tarif de la grille (option) <select id="qkgrid"><option value="">—</option>${rows.map(r => `<option value="${esc(r[0])}" ${r[0] === q.grid ? 'selected' : ''}>${esc(r[1])}</option>`).join('')}</select></label>
+      <div class="mfrow"><label>Tarif de la grille (option) <select id="qkgrid"><option value="">—</option>${rows.length > 1 ? rows.map(g => `<optgroup label="Départ ${esc(g[0])}">${g[1].map(opt).join('')}</optgroup>`).join('') : rows.map(g => g[1].map(opt).join('')).join('')}</select></label>
         <label>Prix convenu (MAD TTC) <input type="number" min="0" id="qkprice" value="${v('price')}" style="width:120px"></label></div><div id="qkpinfo" class="small"></div></div>
       <div class="panel"><h2>Client et passagers</h2>
         <div class="mfrow"><label>Nom et prénom du client <input id="qkcli" value="${v('client')}" size="26"></label><label>Téléphone <input id="qkcph" value="${v('cphone')}" size="14"></label>
@@ -615,9 +646,9 @@ async function crsQuick(head) {
         <div class="mfgo"><button id="qkgo" ${canEdit() ? '' : 'disabled'}>Lancer la course</button> <button class="ghost" id="qknew">Effacer</button></div><div id="qkres"></div></div></div>
     <div><div id="qkdone"></div></div></div>`;
   const rd = () => { ['veh', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cmail', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph', cmail: 'cml' }[k] || k)); if (e) q[k] = e.value; }); return q; };
-  const gridPrice = () => { rd(); const vv = S.veh[q.veh], cat = crsCatOf(vv), [t, dest] = String(q.grid || '').split('|'), row = ((t === 'A' ? G.airport : G.intercity) || []).find(r => r.dest === dest);
+  const gridPrice = () => { rd(); const vv = S.veh[q.veh], cat = crsCatOf(vv), [gid, t, dest] = String(q.grid || '').split('|'), g = crsGridOf(gid), row = ((t === 'A' ? g.airport : g.intercity) || []).find(r => r.dest === dest);
     const pr = row && cat ? crsN(row[cat]) : 0, info = $('#qkpinfo');
-    if (row && pr) { $('#qkprice').value = q.price = pr; info.textContent = 'Prix de la grille ' + (G.valid || '') + ' pour ' + crsCatName(cat) + ' : ' + crsMoney(pr) + ' (modifiable).'; }
+    if (row && pr) { $('#qkprice').value = q.price = pr; info.textContent = 'Prix de la grille ' + crsGridName(g) + ' ' + (g.valid || '') + ' pour ' + crsCatName(cat) + ' : ' + crsMoney(pr) + ' (modifiable).'; }
     else info.textContent = q.grid ? (cat ? 'Pas de prix dans la grille pour ce véhicule.' : 'Choisir le véhicule pour le prix de la grille.') : ''; };
   const drvAuto = async () => { rd(); const el = $('#qkdinfo'), t = parseLocalDT(q.dep); if (!q.veh || !t) { el.textContent = ''; return; }
     const key = q.veh + '|' + q.dep; CR.qDrv = key; el.textContent = 'Recherche du contrat…';
@@ -637,13 +668,14 @@ async function crsQuick(head) {
   if (q.veh && !q.drv) drvAuto();
 }
 async function crsQuickGo(head) {
-  const q = CR.q, G = CR.grid || {}, res = $('#qkres'), btn = $('#qkgo');
+  const q = CR.q, res = $('#qkres'), btn = $('#qkgo');
   ['veh', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cmail', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph', cmail: 'cml' }[k] || k)); if (e) q[k] = e.value; });
   const vv = S.veh[q.veh], a = parseLocalDT(q.dep), b = parseLocalDT(q.end), bad = [];
+  const G = (q.grid ? crsGridOf(String(q.grid).split('|')[0]) : crsGridDefault(vv && vv.agency_id)) || {};
   if (!vv) bad.push('le véhicule'); if (!a) bad.push('la date de départ'); if (a && (!b || b <= a)) bad.push('une fin prévue après le départ');
   if (!String(q.from || '').trim()) bad.push('l\'adresse de départ'); if (!String(q.to || '').trim()) bad.push('l\'adresse d\'arrivée');
   if (!String(q.client || '').trim()) bad.push('le client'); if (!crsN(q.price)) bad.push('le prix convenu');
-  const f = { quick: true, kind: 'Transfert simple', base: 'convenu', agreedPrice: crsN(q.price), gridRef: q.grid ? ($('#qkgrid').selectedOptions[0] || {}).textContent : '', cat: crsCatOf(vv), nVeh: 1, drivers: 1,
+  const f = { quick: true, gridId: G._id || 1, kind: 'Transfert simple', base: 'convenu', agreedPrice: crsN(q.price), gridRef: q.grid ? ($('#qkgrid').selectedOptions[0] || {}).textContent : '', cat: crsCatOf(vv), nVeh: 1, drivers: 1,
     vehicleKey: q.veh, driverName: String(q.drv || '').trim(), driverPhone: String(q.tel || '').trim(), client: String(q.client || '').trim(), phone: String(q.cphone || '').trim(), email: String(q.cmail || '').trim(),
     clientType: 'Particulier', service: 'Standard', dispo: 'Disponibilité planifiée', planning: 'oui', pax: Math.max(1, crsN(q.pax) || 1), startAddr: String(q.from || '').trim(), endAddr: String(q.to || '').trim(),
     startDate: (q.dep || '').slice(0, 10), startTime: (q.dep || '').slice(11, 16), endDate: (q.end || '').slice(0, 10), endTime: (q.end || '').slice(11, 16),
@@ -695,8 +727,11 @@ async function crsGeotab() {
 }
 
 // ---------- grille tarifaire (lecture : administrateur et gestionnaires ; modification : administrateur) ----------
-function crsGridPage(head) {
-  const G = JSON.parse(JSON.stringify(CR.grid || {})), adm = isAdmin(), cats = G.cats || [], ro = adm ? '' : 'disabled';
+function crsGridPage(head, work) {
+  // une grille par ville de départ (#/courses?t=grille&g=<id>) ; work = grille en cours de modification (destination ajoutée ou retirée)
+  const gid = +(qs().get('g') || 0) || (crsGridDefault() || {})._id || 1, cur = crsGridOf(gid) || {};
+  const G = work || JSON.parse(JSON.stringify(cur)), adm = isAdmin(), cats = G.cats || [], ro = adm ? '' : 'disabled';
+  const ags = S.agencies || [], one = CR.grids.length > 1;
   const inp = (path, v, w) => `<input data-g="${esc(path)}" value="${esc(v == null ? '' : v)}" style="width:${w || 90}px" ${ro}>`;
   const catCols = row => cats.map(c => `<td class="n">${inp(row + '.' + c.id, ((path => path.split('.').reduce((o, k) => o && o[k], G))(row) || {})[c.id], 80)}</td>`).join('');
   const tbl = (key, title) => `<h3>${title}</h3><div class="tw"><table><thead><tr><th>Destination</th>${cats.map(c => `<th class="n">${esc(c.model)}</th>`).join('')}${adm ? '<th></th>' : ''}</tr></thead><tbody>
@@ -704,7 +739,13 @@ function crsGridPage(head) {
     ${adm ? `<button class="ghost small" data-gadd="${key}">+ Destination</button>` : ''}`;
   $('#page').innerHTML = head + crsTabs('grille') + `
     ${adm ? msg('Grille modifiable par l\'administrateur seul. Les devis déjà enregistrés gardent les prix de leur date.', 'ok') : msg('Lecture seule : la grille est modifiée par l\'administrateur.', 'warn')}
-    <div class="panel"><div class="mfrow"><label>En vigueur ${inp('valid', G.valid, 90)}</label><label>TVA (%) ${inp('vat', G.vat, 60)}</label>
+    ${one || adm ? `<div class="tabs">${CR.grids.map(g => `<a href="#/courses?t=grille&g=${g._id}" class="${g._id === G._id ? 'on' : ''}">Départ ${esc(crsGridName(g))}</a>`).join('')}</div>` : ''}
+    <div class="panel"><h2>Grille au départ de ${esc(crsGridName(G))}</h2>
+    ${G.calc ? `<div class="small">${esc(G.calc)}</div>` : ''}
+    <div class="mfrow"><label>Nom ${adm ? `<input id="gname" value="${esc(G._name || '')}" style="width:140px">` : esc(G._name || '')}</label>
+      <label>Ville de départ (intervilles) ${inp('origin', crsOrigin(G), 130)}</label><label>Aéroport des transferts ${inp('airportName', G.airportName || 'Mohammed V', 150)}</label>
+      <label>Proposée par défaut aux courses de l'agence <select id="gag" ${ro}><option value="">—</option>${ags.map(a => `<option value="${a.id}" ${+G._agency === +a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label></div>
+    <div class="mfrow"><label>En vigueur ${inp('valid', G.valid, 90)}</label><label>TVA (%) ${inp('vat', G.vat, 60)}</label>
       <label>Seuil « montant important » pour la validation (MAD, vide = aucun) ${inp('validationAmount', G.validationAmount, 100)}</label></div>
     <h3>Véhicules</h3><div class="tw"><table><thead><tr><th>Code</th><th>Modèle</th><th>Libellé</th><th class="n">Places</th></tr></thead><tbody>
       ${cats.map((c, i) => `<tr><td>${esc(c.id)}</td><td>${inp('cats.' + i + '.model', c.model, 150)}</td><td>${inp('cats.' + i + '.label', c.label, 180)}</td><td class="n">${inp('cats.' + i + '.seats', c.seats, 60)}</td></tr>`).join('')}</tbody></table></div>
@@ -712,7 +753,7 @@ function crsGridPage(head) {
       <tr><td>Tarif horaire (minimum ${inp('hourlyMinH', G.hourlyMinH, 50)} h)</td><td></td><td></td>${catCols('hourly')}</tr>
       <tr><td>Demi-journée</td><td>${inp('half.h', (G.half || {}).h, 50)}</td><td>${inp('half.km', (G.half || {}).km, 60)}</td>${catCols('half')}</tr>
       <tr><td>Journée complète</td><td>${inp('day.h', (G.day || {}).h, 50)}</td><td>${inp('day.km', (G.day || {}).km, 60)}</td>${catCols('day')}</tr></tbody></table></div>
-    ${tbl('airport', '2. Transferts aéroport Mohammed V')}${tbl('intercity', '3. Intervilles depuis Casablanca')}
+    ${tbl('airport', '2. Transferts ' + crsAirport(G))}${tbl('intercity', '3. Intervilles depuis ' + crsOrigin(G))}
     <h3>4. Suppléments et conditions</h3><div class="tw"><table><tbody>
       <tr><td>Nuit et jours fériés (%)</td><td>${inp('nightPct', G.nightPct, 60)} de ${inp('nightFrom', G.nightFrom, 40)} h à ${inp('nightTo', G.nightTo, 40)} h</td></tr>
       <tr><td>Attente (MAD / 15 min)</td><td>${cats.map(c => esc(c.model) + ' ' + inp('wait15.' + c.id, (G.wait15 || {})[c.id], 60)).join(' ')} · incluses : aéroport ${inp('waitFreeAirport', G.waitFreeAirport, 50)} min, ailleurs ${inp('waitFreeOther', G.waitFreeOther, 50)} min</td></tr>
@@ -724,22 +765,46 @@ function crsGridPage(head) {
       <label class="wide">Notes imprimées <textarea data-g="notes" rows="2" ${ro}>${esc(G.notes || '')}</textarea></label>
       <label class="wide">Mentions légales (bas du devis) <textarea data-g="company" rows="2" ${ro}>${esc(G.company || '')}</textarea></label>
       <label class="wide">Contact <input data-g="contact" value="${esc(G.contact || '')}" size="60" ${ro}></label></div>
-    ${adm ? '<div class="mfgo"><button id="gsave">Enregistrer la grille</button> <span id="gres"></span></div>' : ''}
-    ${CR.gridAt ? `<div class="small">Dernière modification : ${fmtDTY(CR.gridAt)}</div>` : ''}</div>`;
+    ${adm ? `<div class="mfgo"><button id="gsave">Enregistrer la grille</button> <button class="ghost" id="gcopy">+ Nouvelle ville de départ (copie de cette grille)</button>
+      ${G._id !== 1 ? '<button class="ghost" id="gdrop">Retirer cette grille</button>' : ''} <span id="gres"></span></div>` : ''}
+    ${G._at ? `<div class="small">Dernière modification : ${fmtDTY(G._at)}</div>` : ''}</div>`;
   if (!adm) return;
+  const my0 = ROUTING;
   const setPath = (o, path, v) => { const k = path.split('.'); let x = o; k.slice(0, -1).forEach((p, i) => { if (x[p] == null) x[p] = /^\d+$/.test(k[i + 1]) ? [] : {}; x = x[p]; }); x[k[k.length - 1]] = v; };
   const read = () => { document.querySelectorAll('[data-g]').forEach(i => { const p = i.dataset.g, raw = i.value.trim(), last = p.split('.').pop();
-    const txt = ['valid', 'cancel', 'notes', 'company', 'contact', 'dest', 'model', 'label'].includes(last);
+    const txt = ['valid', 'cancel', 'notes', 'company', 'contact', 'dest', 'model', 'label', 'origin', 'airportName'].includes(last);
     setPath(G, p, txt ? raw : raw === '' ? null : crsN(raw)); }); return G; };
-  document.querySelectorAll('[data-gadd]').forEach(b => { b.onclick = () => { read(); (G[b.dataset.gadd] = G[b.dataset.gadd] || []).push({ dest: '' }); CR.grid = G; crsGridPage(head); }; });
-  document.querySelectorAll('[data-gdel]').forEach(b => { b.onclick = () => { read(); const [k, i] = b.dataset.gdel.split('.'); G[k].splice(+i, 1); CR.grid = G; crsGridPage(head); }; });
+  const meta = () => { G._name = $('#gname').value.trim(); G._agency = +$('#gag').value || null; };
+  document.querySelectorAll('[data-gadd]').forEach(b => { b.onclick = () => { read(); meta(); (G[b.dataset.gadd] = G[b.dataset.gadd] || []).push({ dest: '' }); crsGridPage(head, G); }; });
+  document.querySelectorAll('[data-gdel]').forEach(b => { b.onclick = () => { read(); meta(); const [k, i] = b.dataset.gdel.split('.'); G[k].splice(+i, 1); crsGridPage(head, G); }; });
+  const clean = g => { const d = {}; Object.keys(g).forEach(k => { if (k[0] !== '_') d[k] = g[k]; }); return d; };   // _id, _name… : pas dans la base
+  const fail = r => { $('#gres').innerHTML = '<span class="err">Non enregistrée : ' + esc(r.error ? r.error.message : 'droits insuffisants') + (r.error && /name|agency_id|column/i.test(r.error.message) ? ' (exécuter supabase/migrations/20261117000000_grilles_villes.sql)' : '') + '</span>'; };
+  $('#gcopy').onclick = async () => {
+    const name = (prompt('Ville de départ de la nouvelle grille (copie de la grille ' + crsGridName(G) + ', prix à adapter) :') || '').trim();
+    if (!name) return;
+    if (CR.grids.some(g => crsGridName(g).toLowerCase() === name.toLowerCase())) { $('#gres').innerHTML = '<span class="err">Une grille « ' + esc(name) + ' » existe déjà.</span>'; return; }
+    read(); const d = clean(G); d.origin = name; delete d.calc;
+    const r = await sb.from('pricing_grid').insert({ name, data: d }).select('id');
+    if (r.error || !r.data || !r.data.length) return fail(r);
+    await crsLoadGrid(); location.hash = '#/courses?t=grille&g=' + r.data[0].id;
+  };
+  if ($('#gdrop')) $('#gdrop').onclick = async () => {
+    if (!confirm('Retirer la grille ' + crsGridName(G) + ' ? Les devis déjà enregistrés gardent leurs prix.')) return;
+    const r = await sb.from('pricing_grid').delete().eq('id', G._id).select('id');
+    if (r.error || !r.data || !r.data.length) return fail(r);
+    await crsLoadGrid(); location.hash = '#/courses?t=grille';
+  };
   $('#gsave').onclick = async () => {
     read();
     const bad = []; ['hourly', 'half', 'day', 'kmExtra', 'wait15'].forEach(k => cats.forEach(c => { if (!(crsN((G[k] || {})[c.id]) > 0)) bad.push(k + ' ' + c.model); }));
     if (bad.length && !confirm('Prix vides ou à 0 : ' + bad.join(', ') + '. Enregistrer quand même ?')) return;
-    const r = await sb.from('pricing_grid').update({ data: G, updated_at: new Date().toISOString(), updated_by: S.session.user.id }).eq('id', 1).select('updated_at');
-    if (r.error || !r.data || !r.data.length) { $('#gres').innerHTML = '<span class="err">Non enregistrée : ' + esc(r.error ? r.error.message : 'droits insuffisants') + '</span>'; return; }
-    CR.grid = G; CR.gridAt = r.data[0].updated_at; $('#gres').innerHTML = '<span class="ok">Grille enregistrée.</span>';
+    meta(); if (!G._name) G._name = crsOrigin(G);
+    const row = { data: clean(G), updated_at: new Date().toISOString(), updated_by: S.session.user.id };
+    if (CR.grids.length > 1 || G._id !== 1 || G._agency || G._name !== 'Casablanca') Object.assign(row, { name: G._name, agency_id: G._agency });   // colonnes de la migration 20261117
+    const r = await sb.from('pricing_grid').update(row).eq('id', G._id || 1).select('updated_at');
+    if (r.error || !r.data || !r.data.length) return fail(r);
+    await crsLoadGrid(); if (my0 !== ROUTING) return;
+    crsGridPage(head); $('#gres').innerHTML = '<span class="ok">Grille enregistrée.</span>';
   };
 }
 
@@ -807,4 +872,4 @@ function crsActualPdf(m, f, p, r) {
   doc.save('Km-horaires-' + (m.number || 'mission') + '.pdf');
 }
 
-if (typeof module !== 'undefined') module.exports = { CRS_KINDS, crsDays, crsHoursDay, crsAmplitude, crsBase, crsLevel, crsValidation, crsMissing, crsPrice, crsActual, crsSeatsOk, crsMoney, crsSpan };
+if (typeof module !== 'undefined') module.exports = { CRS_KINDS, crsDays, crsHoursDay, crsAmplitude, crsBase, crsLevel, crsValidation, crsMissing, crsPrice, crsActual, crsSeatsOk, crsMoney, crsSpan, crsOrigin, crsAirport };

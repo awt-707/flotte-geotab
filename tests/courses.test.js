@@ -87,13 +87,13 @@ test('droits : grille modifiable par l\'administrateur seul ; validation réserv
   env.psql(`insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin';
     insert into profiles (user_id, email, role) values ('${MGR}', 'mgr@x', 'manager') on conflict (user_id) do update set role = 'manager';
     insert into agencies (id, name) overriding system value values (1, 'Casa'), (2, 'Rabat'); insert into user_agencies (user_id, agency_id) values ('${MGR}', 1);`);
-  const before = env.psql("select data->'day'->>'SONATA' from pricing_grid");
+  const before = env.psql("select data->'day'->>'SONATA' from pricing_grid where id = 1");
   try {
-    assert.strictEqual(as(MGR, "select data->'day'->>'SONATA' from pricing_grid"), '1500', 'le gestionnaire lit la grille');
-    as(MGR, `update pricing_grid set data = jsonb_set(data, '{day,SONATA}', '1')`);   // aucune ligne modifiable : sans effet
-    assert.strictEqual(env.psql("select data->'day'->>'SONATA' from pricing_grid"), before);
-    as(ADMIN, `update pricing_grid set data = jsonb_set(data, '{day,SONATA}', '1600')`);
-    assert.strictEqual(env.psql("select data->'day'->>'SONATA' from pricing_grid"), '1600');
+    assert.strictEqual(as(MGR, "select data->'day'->>'SONATA' from pricing_grid where id = 1"), '1500', 'le gestionnaire lit la grille');
+    as(MGR, `update pricing_grid set data = jsonb_set(data, '{day,SONATA}', '1') where id = 1`);   // aucune ligne modifiable : sans effet
+    assert.strictEqual(env.psql("select data->'day'->>'SONATA' from pricing_grid where id = 1"), before);
+    as(ADMIN, `update pricing_grid set data = jsonb_set(data, '{day,SONATA}', '1600') where id = 1`);
+    assert.strictEqual(env.psql("select data->'day'->>'SONATA' from pricing_grid where id = 1"), '1600');
     assert.throws(() => env.psql('begin; set local role anon; select count(*) from pricing_grid; commit;'), /permission denied/);
     // gestionnaire : devis de son agence, numéro donné par la base
     as(MGR, "insert into missions (agency_id, client_name, kind, total_ttc, needs_validation, level) values (1, 'Client A', 'Transfert aéroport', 570, false, 'Standard')");
@@ -116,7 +116,7 @@ test('droits : grille modifiable par l\'administrateur seul ; validation réserv
     env.psql("insert into missions (agency_id, client_name) values (2, 'Rabat client')");
     assert.strictEqual(as(MGR, 'select count(*) from missions'), '2');
     as(MGR, `delete from missions where id = ${id}`); assert.strictEqual(env.psql('select count(*) from missions'), '3');
-  } finally { env.psql(`update pricing_grid set data = jsonb_set(data, '{day,SONATA}', '${before}'); update profiles set role = 'pending' where user_id = '${MGR}'; truncate missions, cash_moves restart identity`); }
+  } finally { env.psql(`update pricing_grid set data = jsonb_set(data, '{day,SONATA}', '${before}') where id = 1; update profiles set role = 'pending' where user_id = '${MGR}'; truncate missions, cash_moves restart identity`); }
 });
 
 test('page Courses privées : nouvelle demande, prix en direct, enregistrement, validation, devis PDF, grille (administrateur)', async () => {
@@ -179,9 +179,9 @@ test('page Courses privées : nouvelle demande, prix en direct, enregistrement, 
     // grille : l'administrateur la modifie
     await page.goto('http://localhost:8080/#/courses?t=grille'); await page.waitForSelector('#gsave');
     await page.fill('[data-g="day.STARIA"]', '2100'); await page.click('#gsave'); await page.waitForSelector('text=Grille enregistrée');
-    assert.strictEqual(env.psql("select data->'day'->>'STARIA' from pricing_grid"), '2100');
+    assert.strictEqual(env.psql("select data->'day'->>'STARIA' from pricing_grid where id = 1"), '2100');
     assert.deepStrictEqual(errors, []);
-  } finally { env.psql(`update pricing_grid set data = jsonb_set(data, '{day,STARIA}', '2000')`); await br.close(); srv.kill(); }
+  } finally { env.psql(`update pricing_grid set data = jsonb_set(data, '{day,STARIA}', '2000') where id = 1`); await br.close(); srv.kill(); }
 });
 
 test('course rapide : prix convenu (sans grille) ; adresses : libellés Photon, lieux habituels d\'abord', () => {
@@ -226,7 +226,7 @@ test('course rapide : lancée sans devis, véhicule bloqué, manifeste créé ; 
     await page.locator('#qkto').pressSequentially('aéroport moh');   // lieu habituel, proposé sans attendre
     await page.click('.addrpop .ai >> text=Aéroport Mohammed V, Casablanca');
     await page.fill('#qkdrv', 'Youssef Amrani'); await page.fill('#qktel', '0611223344');
-    await page.selectOption('#qkgrid', 'I|Rabat');
+    await page.selectOption('#qkgrid', '1|I|Rabat');
     assert.strictEqual(await page.inputValue('#qkprice'), '1130');
     await page.fill('#qkcli', 'John Smith'); await page.fill('#qkpax', '3');
     await page.click('#qkgo');
