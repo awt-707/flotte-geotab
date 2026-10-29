@@ -32,7 +32,7 @@ function pageMenu() {
   document.querySelectorAll('[data-mnx]').forEach(b => b.onclick = () => { const m = cur(); m.fav = m.fav.filter(x => x !== b.dataset.mnx); save(m); });
   document.querySelectorAll('[data-mnh]').forEach(c => c.onchange = () => { const m = cur(); m.hide = c.checked ? m.hide.filter(x => x !== c.dataset.mnh) : m.hide.concat([c.dataset.mnh]); save(m); });
   $('#mnadd').onchange = e => { if (!e.target.value) return; const m = cur(); m.fav.push(e.target.value); save(m); };
-  $('#mnreset').onclick = () => { if (confirm('Revenir au menu d\'origine ?')) save({ fav: [], order: [], hide: [] }); };
+  $('#mnreset').onclick = async () => { if (await ask('Revenir au menu d\'origine ?')) save({ fav: [], order: [], hide: [] }); };
   // glisser-déposer dans une même liste
   let drag = null;
   document.querySelectorAll('.mnlist li').forEach(li => {

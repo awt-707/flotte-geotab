@@ -554,3 +554,11 @@ button.small:not(.ghost) { color: var(--acc-ink); }
   .side nav a .navstar { display: none; }
 }
 .rhdays { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+
+/* Fenêtres de confirmation / saisie dessinées par le site (dialog.js : application Mac, qui n'affiche pas confirm()) */
+.uidlg { position: fixed; inset: 0; z-index: 3000; background: rgba(10, 16, 22, .45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.uidlg-card { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 10px 40px rgba(0, 0, 0, .3); padding: 18px; max-width: 460px; width: 100%; }
+.uidlg-text { margin-bottom: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.uidlg-card input { width: 100%; margin-bottom: 12px; }
+.uidlg-go { display: flex; gap: 8px; justify-content: flex-end; }
+a.cardlink { color: inherit; text-decoration: underline dotted; }

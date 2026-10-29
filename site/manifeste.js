@@ -384,7 +384,7 @@ function mfDone(m, box) {
     ${m.id ? `<div class="mfrow mfmailrow"><label>E-mail avec le PDF joint (envoyé par Ludy) <input id="mfto" value="${esc(MF.cfg.email_to || m.email || '')}" placeholder="adresse@exemple.ma, autre@exemple.ma" size="40"></label><button class="small" id="mfsend">Envoyer</button></div><div id="mfsendr" class="small"></div>` : ''}
     <details><summary class="small">Aperçu du message</summary><pre class="mftxt">${esc(txt)}</pre></details></div>`;
   $('#mfdl').onclick = () => { const u = URL.createObjectURL(m.blob), a = document.createElement('a'); a.href = u; a.download = m.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); };
-  $('#mfcopy').onclick = async () => { try { await navigator.clipboard.writeText(txt); $('#mfcopy').textContent = 'Copié'; } catch (e) { prompt('Copiez le message :', txt); } };
+  $('#mfcopy').onclick = async () => { try { await navigator.clipboard.writeText(txt); $('#mfcopy').textContent = 'Copié'; } catch (e) { await askText('Copiez le message :', txt); } };
   if ($('#mfshare')) $('#mfshare').onclick = () => navigator.share({ files: [new File([m.blob], m.name, { type: 'application/pdf' })], text: txt }).catch(() => { });
   if (m.noReturn) $('#mfret2').hidden = true;
   $('#mfret2').onclick = () => { const s = Object.assign({}, MF.draft, { depart: MF.draft.terminus, terminus: MF.draft.depart, dateDep: mfNowLocal(), dateRet: '' }); MF.draft = s; MF.last = null; pageManifeste(); };

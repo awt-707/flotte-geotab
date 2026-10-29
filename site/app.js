@@ -344,7 +344,7 @@ function navEntries() {
   const fav = new Set(menuCfg().fav);
   // étoile dessinée par la feuille de style (le texte du volet reste son seul nom)
   const star = id => `<span class="navstar${fav.has(id) ? ' on' : ''}" data-fav="${esc(id)}" role="button" title="${fav.has(id) ? 'Retirer des favoris' : 'Ajouter aux favoris'}"></span>`;
-  const leafHtml = (l, cls) => `<a href="${esc(l.href)}"${cls ? ` class="${cls}"` : ''}${l.extra || ''} data-leaf="${esc(l.id)}">${esc(l.label)}${l.href === '#/alertes' && cls !== 'navfav' ? '<span class="nb" id="nbal" hidden></span>' : ''}${star(l.id)}</a>`;
+  const leafHtml = (l, cls) => `<a href="${esc(l.href)}"${cls ? ` class="${cls}"` : ''}${l.extra || ''} data-leaf="${esc(l.id)}">${esc(l.label)}${l.href === '#/alertes' && cls !== 'navfav' ? '<span class="nb" id="nbal" hidden></span>' : ''}${l.href === '#/courses' && cls !== 'navfav' ? '<span class="nb" id="nbcrs" hidden></span>' : ''}${star(l.id)}</a>`;
   const link = (id, href, label, extra) => { const l = { id, href, label, extra }; return { id, label, leaves: [l], html: leafHtml(l) }; };
   const grp = (g, label, leaves) => {
     leaves = leaves.slice().sort(navCmp).map(l => Object.assign(l, { group: label }));
@@ -399,7 +399,7 @@ function navRefresh() {
   const nav = $('.side nav'); if (!nav) return;
   nav.innerHTML = navHtml(); SHELL_KEY = shellHtml();
   navMark(NAV_PAGE || (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct');
-  nbalPaint(); rhBadgePaint();
+  nbalPaint(); rhBadgePaint(); crsBadgePaint();
 }
 /** Dossiers ouverts : celui de la page affichée à chaque changement de page (les autres refermés), puis au clic sur leur titre */
 let NAV_OPEN = {}, NAV_PAGE = null;
@@ -470,7 +470,7 @@ function shell() {
     SHELL_KEY = key; $('#app').innerHTML = shellHtml();
     $('#logout').onclick = async () => {
       // pointage : fin de journée proposée avant la déconnexion
-      if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && confirm('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).then(null, () => { });   // pas de .catch sur la requête supabase
+      if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && await ask('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).then(null, () => { });   // pas de .catch sur la requête supabase
       await sessEnd(); await sb.auth.signOut(); location.hash = '';
     };
     rhFootBind(); navBind();
@@ -481,7 +481,7 @@ function shell() {
   }
   navMark(page);
   // derniers états connus redessinés tout de suite (menu neuf), relus ensuite en arrière-plan
-  sessBadgePaint(); healthPaint(); nbalPaint(); rhBadgePaint(); health(); openAlerts(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
+  sessBadgePaint(); healthPaint(); nbalPaint(); rhBadgePaint(); crsBadgePaint(); health(); openAlerts(); crsBadgeLoad(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
   const on = $('.side nav a.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   return page;
 }
@@ -1008,7 +1008,7 @@ async function pagePlaques() {
       rows.unshift(data); await job('apply_plates').catch(e => alert(e.message)); render();
     };
     document.querySelectorAll('[data-del]').forEach(b => { b.onclick = async () => {
-      if (!confirm('Supprimer ce changement de plaque ?')) return;
+      if (!await ask('Supprimer ce changement de plaque ?')) return;
       const { error } = await sb.from('plate_changes').delete().eq('id', b.dataset.del); if (error) { alert(error.message); return; }
       rows.splice(rows.findIndex(r => String(r.id) === b.dataset.del), 1); await job('apply_plates').catch(() => { }); render(); }; });
   };
@@ -1082,7 +1082,7 @@ async function pageVehicules() {
       const ag = i.value ? +i.value : null, { error } = await sb.from('parc').update({ agency_id: ag, updated_at: new Date().toISOString() }).eq('plate', i.dataset.p);
       if (error) alert(error.message); else { i.classList.add('saved'); parc.find(r => r.plate === i.dataset.p).agency_id = ag; await loadRef(true); } }; });
     document.querySelectorAll('[data-pdel]').forEach(b => { b.onclick = async () => {
-      if (!confirm('Retirer ' + b.dataset.pdel + ' de la liste du parc ? (l\'historique est conservé ; pour ne plus suivre le véhicule, mettez Actif = NON)')) return;
+      if (!await ask('Retirer ' + b.dataset.pdel + ' de la liste du parc ? (l\'historique est conservé ; pour ne plus suivre le véhicule, mettez Actif = NON)')) return;
       const { error } = await sb.from('parc').delete().eq('plate', b.dataset.pdel); if (error) { alert(error.message); return; }
       parc.splice(parc.findIndex(r => r.plate === b.dataset.pdel), 1); render(); }; });
     const add = $('#vadd');
@@ -1156,7 +1156,7 @@ async function pageFiches() {
       const { error } = await sb.from('drivers').update({ [c]: val }).eq('code', i.dataset.k);
       if (error) { alert(error.message); return; } rows.find(d => d.code === i.dataset.k)[c] = val; i.classList.add('saved'); }; });
     document.querySelectorAll('[data-ddel]').forEach(b => { b.onclick = async () => {
-      if (!confirm('Supprimer le chauffeur ' + b.dataset.ddel + ' ?')) return;
+      if (!await ask('Supprimer le chauffeur ' + b.dataset.ddel + ' ?')) return;
       const { error } = await sb.from('drivers').delete().eq('code', b.dataset.ddel); if (error) { alert(error.message); return; }
       rows = rows.filter(d => d.code !== b.dataset.ddel); render(); }; });
     const s2 = $('#dsearch'); s2.oninput = () => { search = s2.value; const pos = s2.selectionStart; render(); const n = $('#dsearch'); n.focus(); n.setSelectionRange(pos, pos); };
@@ -1318,7 +1318,7 @@ function bindExtSettings(params) {
     if (i.classList.contains('exn')) x.name = i.value.trim(); else x.url = i.value.trim();
     if (await save(l)) { shell(); pageReglages(); } }; });
   document.querySelectorAll('[data-exdel]').forEach(b => { b.onclick = async () => {
-    const l = cur(); if (!confirm('Retirer le volet ' + (l[+b.dataset.exdel] || {}).name + ' ?')) return;
+    const l = cur(); if (!await ask('Retirer le volet ' + (l[+b.dataset.exdel] || {}).name + ' ?')) return;
     l.splice(+b.dataset.exdel, 1); if (await save(l)) { shell(); pageReglages(); } }; });
   $('#exadd').onclick = async () => {
     const name = $('#exnn').value.trim(), url = $('#exnu').value.trim();
@@ -1382,7 +1382,7 @@ async function pageAgences() {
     };
     document.querySelectorAll('.agn').forEach(i => { i.onchange = async () => { const { error } = await sb.from('agencies').update({ name: i.value.trim() }).eq('id', i.dataset.a); if (error) alert(error.message); else { i.classList.add('saved'); await loadRef(true); } }; });
     document.querySelectorAll('[data-agdel]').forEach(b => { b.onclick = async () => {
-      if (!confirm('Supprimer cette agence ? Ses véhicules et chauffeurs restent, sans agence.')) return;
+      if (!await ask('Supprimer cette agence ? Ses véhicules et chauffeurs restent, sans agence.')) return;
       const { error } = await sb.from('agencies').delete().eq('id', b.dataset.agdel); if (error) { alert(error.message); return; } await loadRef(true); render(); }; });
     document.querySelectorAll('.agu').forEach(c => { c.onchange = async () => {
       const r = { user_id: c.dataset.u, agency_id: +c.dataset.a };
@@ -1449,7 +1449,7 @@ async function pageReglages() {
     $('#upgx').onclick = () => { $('#upgbox').innerHTML = ''; };
     $('#upgsave').onclick = async () => {
       const on = boxes().filter(c => c.checked).map(c => c.value), pages = on.length === boxes().length ? null : on;
-      if (pages && !pages.length && !confirm('Aucun volet coché : cet utilisateur ne verra que la page Application. Continuer ?')) return;
+      if (pages && !pages.length && !await ask('Aucun volet coché : cet utilisateur ne verra que la page Application. Continuer ?')) return;
       const { error } = await sb.from('profiles').update({ pages }).eq('user_id', u.user_id); if (error) { alert(error.message); return; }
       u.pages = pages; b.textContent = (pages ? pages.length + ' / ' + allPages().length : 'Tous') + ' · choisir'; b.classList.add('saved'); $('#upgbox').innerHTML = msg('Volets enregistrés pour ' + esc(u.email) + ' : visibles à son prochain chargement de page.', 'ok');
     };
@@ -1478,14 +1478,14 @@ async function pageReglages() {
     if (error) alert(error.message); else reload();
   };
   document.querySelectorAll('.ract').forEach(c => { c.onchange = async () => { const { error } = await sb.from('alert_recipients').update({ active: c.checked }).eq('id', c.dataset.r); if (error) alert(error.message); }; });
-  document.querySelectorAll('[data-rdel]').forEach(b => { b.onclick = async () => { if (!confirm('Supprimer ce destinataire ?')) return; const { error } = await sb.from('alert_recipients').delete().eq('id', b.dataset.rdel); if (error) alert(error.message); else reload(); }; });
+  document.querySelectorAll('[data-rdel]').forEach(b => { b.onclick = async () => { if (!await ask('Supprimer ce destinataire ?')) return; const { error } = await sb.from('alert_recipients').delete().eq('id', b.dataset.rdel); if (error) alert(error.message); else reload(); }; });
   $('#sadd').onclick = async () => {
     const to = $('#sto').value.trim(); if (!/@/.test(to)) { alert('Saisissez au moins une adresse e-mail.'); return; }
     const { error } = await sb.from('report_schedules').insert({ name: $('#snom').value.trim() || null, frequency: $('#sfreq').value, agency_id: $('#sag').value ? +$('#sag').value : null, recipients: to });
     if (error) alert(error.message); else reload();
   };
   document.querySelectorAll('.sact').forEach(c => { c.onchange = async () => { const { error } = await sb.from('report_schedules').update({ active: c.checked }).eq('id', c.dataset.s); if (error) alert(error.message); }; });
-  document.querySelectorAll('[data-sdel]').forEach(b => { b.onclick = async () => { if (!confirm('Supprimer ce rapport automatique ?')) return; const { error } = await sb.from('report_schedules').delete().eq('id', b.dataset.sdel); if (error) alert(error.message); else reload(); }; });
+  document.querySelectorAll('[data-sdel]').forEach(b => { b.onclick = async () => { if (!await ask('Supprimer ce rapport automatique ?')) return; const { error } = await sb.from('report_schedules').delete().eq('id', b.dataset.sdel); if (error) alert(error.message); else reload(); }; });
   document.querySelectorAll('[data-snow]').forEach(b => { b.onclick = async () => { b.disabled = true; try { await job('send_report', b.dataset.snow); b.textContent = 'Envoi demandé (5 min max)'; } catch (e) { alert(e.message); b.disabled = false; } }; });
 }
 
@@ -1565,7 +1565,7 @@ window.addEventListener('hashchange', route);
 sb.auth.onAuthStateChange(async (ev, session) => {
   cacheUser(session);   // autre utilisateur ou déconnexion : lectures gardées oubliées (site/cache.js)
   if (ev === 'PASSWORD_RECOVERY') {
-    const p = prompt('Nouveau mot de passe (6 caractères minimum) :');
+    const p = await askText('Nouveau mot de passe (6 caractères minimum) :');
     if (p) { const { error } = await sb.auth.updateUser({ password: p }); alert(error ? error.message : 'Mot de passe changé.'); }
   }
   const changed = (S.session && S.session.user.id) !== (session && session.user.id);
@@ -1573,7 +1573,7 @@ sb.auth.onAuthStateChange(async (ev, session) => {
     const tb = $('#toasts'); if (tb) tb.remove();   // bandeaux d'alerte du compte précédent
     sessReset();   // connexions : nouvelle session, pastille des connectés oubliée (jamais montrée à un autre compte)
     S.profile = null; S.P = null; S.rhMe = undefined; S.rhMeAt = 0; S.rhAlertN = 0; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
-    S.health = null; S.nbal = null; SHELL_KEY = '';   // bas du menu : collecte et pastille Alertes oubliées, menu reconstruit
+    S.health = null; S.nbal = null; S.nbcrs = null; SHELL_KEY = '';   // bas du menu : collecte et pastille Alertes oubliées, menu reconstruit
     Object.assign(LIVE, { rows: [], pos: {}, at: 0, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {}, drv: {}, drvAt: 0, sel: '' });
   }
   S.session = session; if (changed) route();
