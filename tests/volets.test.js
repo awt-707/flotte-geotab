@@ -99,7 +99,7 @@ test('volets visibles par utilisateur : l\'administrateur choisit, le gestionnai
     await login(o.page, '#/tableau');
     await o.page.waitForFunction(() => location.hash === '#/direct', null, { timeout: 15000 });
     const nav = await o.page.$$eval('.side nav a', as => as.map(a => a.getAttribute('href')));
-    assert.deepStrictEqual(nav, ['#/carburant', '#/x-clicar', '#/direct']);   // ordre alphabétique : Carburant, Clicar, En direct
+    assert.deepStrictEqual(nav, ['#/carburant', '#/x-clicar', '#/direct', '#/menu']);   // ordre alphabétique : Carburant, Clicar, En direct ; puis Personnaliser le menu
     await o.page.goto('http://localhost:8080/#/x-uber');
     await o.page.waitForFunction(() => location.hash === '#/direct');
     await o.page.goto('http://localhost:8080/#/application');

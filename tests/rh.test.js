@@ -175,7 +175,7 @@ test('page Ressources humaines : fiche, congé posé dans le planning, présence
     await page.click('.side nav a.navgrp[data-grp="cc"]'); await page.click('.side nav a.navsub[href="#/chauffeurs"]');
     await page.waitForFunction(() => location.hash === '#/chauffeurs' && document.querySelector('.side nav a[href="#/chauffeurs"].on') && !document.querySelector('.side nav .navsubs[data-grp="cc"]').classList.contains('closed') && document.querySelector('.side nav .navsubs[data-grp="rh"]').classList.contains('closed'));
     assert.deepStrictEqual(await page.$$eval('.side nav a[aria-current]', a => a.map(x => x.getAttribute('href'))), ['#/chauffeurs']);
-    const top = await page.$$eval('.side nav > a, .side nav > .navfold > a.navgrp', a => a.map(x => x.textContent.trim()));
+    const top = await page.$$eval('.side nav .navmain > a:not(.navcfg), .side nav .navmain > .navfold > a.navgrp', a => a.map(x => x.textContent.trim()));
     assert.deepStrictEqual(top, [...top].sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' })));
     assert.ok(top.includes('Flotte') && !top.includes('Plaques') && !top.includes('Véhicules'), top.join(', '));
     assert.deepStrictEqual(await page.$$eval('.side nav .navsubs[data-grp="flotte"] a', a => a.map(x => x.textContent)), ['Plaques', 'Véhicules']);
