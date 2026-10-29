@@ -9,7 +9,7 @@ test.after(() => { env.psql(`update profiles set menu = null where user_id = '${
 
 test('menu : recherche, favoris, ordre, volets masqués, enregistrés pour l\'utilisateur', async () => {
   const { br, page, errors } = await openBrowser();
-  const top = () => page.$$eval('.side nav .navmain > a:not(.navcfg), .side nav .navmain > .navfold > a.navgrp', a => a.map(x => x.textContent.trim()));
+  const top = () => page.$$eval('.side nav .navmain > a:not(.navcfg):not(.navallhd), .side nav .navmain > .navfold > a.navgrp', a => a.map(x => x.textContent.trim()));
   try {
     await login(page, '#/tableau');
     await page.waitForSelector('#navq');
@@ -51,6 +51,15 @@ test('menu : recherche, favoris, ordre, volets masqués, enregistrés pour l\'ut
     await page.reload(); await page.waitForSelector('#navq');
     assert.deepStrictEqual(await page.$$eval('.side nav .navfavs a', a => a.map(x => x.textContent)), ['Alertes', 'Carburant']);
     assert.strictEqual((await top())[1], t0[0], 'ordre gardé');
+    // « Toutes les pages » fermé d'un clic : seuls les favoris restent ; choix gardé après rechargement, rouvert d'un clic
+    await page.click('.side nav a.navallhd');
+    await page.waitForFunction(() => document.querySelector('#navmain.allclosed'));
+    assert.strictEqual(await page.isVisible('.side nav .navmain > a[href="#/tableau"]'), false);
+    assert.strictEqual(await page.isVisible('.side nav a.navfav[href="#/alertes"]'), true);
+    await page.reload(); await page.waitForSelector('#navq');
+    assert.ok(await page.$('#navmain.allclosed'), 'fermé après rechargement');
+    await page.click('.side nav a.navallhd');
+    await page.waitForFunction(() => !document.querySelector('#navmain.allclosed') && document.querySelector('.side nav .navmain > a[href="#/tableau"]'));
     // retour au menu d'origine
     await page.goto('http://localhost:8080/#/menu'); await page.waitForSelector('#mnreset');
     page.once('dialog', d => d.accept());
