@@ -509,12 +509,14 @@ button.small:not(.ghost) { color: var(--acc-ink); }
 .side nav .navres > a.first { box-shadow: inset 3px 0 0 var(--acc); }
 .side nav .navres .small { opacity: .65; font-size: 11px; }
 .side nav .navnone { padding: 8px 12px; opacity: .65; font-size: 13px; }
-.side nav .navfavs { display: flex; flex-direction: column; gap: 3px; padding: 6px; border-radius: 8px; background: rgba(255,255,255,.06);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
-.side nav .navtitle { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .6; padding: 2px 6px; }
-.side nav a.navfav { padding: 7px 10px; border-radius: 6px; }
-.side nav a.navfav:hover { background: rgba(255,255,255,.08); }
-.side nav a.navfav.on { background: rgba(255,255,255,.12); box-shadow: inset 3px 0 0 var(--acc); }
+.side nav .navfavs { display: flex; flex-direction: column; gap: 5px; padding: 8px; border-radius: 8px; background: #d9dde2;
+  box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+.side nav .navtitle { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #2b323a; padding: 0 4px 2px; }
+/* favoris : gris foncé avec contour, toujours lisibles (demande d'Ahmed) */
+.side nav a.navfav { padding: 8px 10px; border-radius: 6px; background: #3b434c; color: #ffffff; border: 1px solid #1d2329; font-weight: 600;
+  box-shadow: 0 1px 1px rgba(0,0,0,.25); white-space: normal; }
+.side nav a.navfav:hover { background: #4a535d; color: #ffffff; }
+.side nav a.navfav.on { background: #2a3037; color: #ffffff; border-color: var(--acc); box-shadow: inset 3px 0 0 var(--acc); }
 .side nav a .navstar { margin-left: auto; padding: 0 2px 0 8px; opacity: 0; font-size: 13px; line-height: 1; cursor: pointer; transition: opacity .1s; }
 .side nav a:hover .navstar, .side nav a .navstar:focus { opacity: .55; }
 .side nav a .navstar:hover { opacity: 1; color: #f5c451; }
@@ -537,9 +539,10 @@ button.small:not(.ghost) { color: var(--acc-ink); }
 .mnact label.chk { margin: 0 0 0 6px; padding: 0; }
 @media (max-width: 900px) {
   .side nav .navsearch { padding: 4px 0; min-width: 160px; }
-  .side nav .navmain, .side nav .navres, .side nav .navfavs { flex-direction: row; gap: 0; background: transparent; box-shadow: none; padding: 0; }
+  .side nav .navmain, .side nav .navres { flex-direction: row; gap: 0; background: transparent; box-shadow: none; padding: 0; }
+  .side nav .navfavs { flex-direction: row; flex-wrap: wrap; gap: 4px; padding: 6px; margin: 4px 0; }
   .side nav .navmain > a, .side nav .navmain > .navfold, .side nav .navres > a { background: transparent; box-shadow: none; border-radius: 0; }
-  .side nav .navmain > a.on, .side nav a.navfav.on { box-shadow: inset 0 -3px 0 var(--acc); }
+  .side nav .navmain > a.on { box-shadow: inset 0 -3px 0 var(--acc); }
   .side nav .navtitle { display: none; }
   .side nav a .navstar { display: none; }
 }
