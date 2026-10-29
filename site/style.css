@@ -517,6 +517,13 @@ button.small:not(.ghost) { color: var(--acc-ink); }
   box-shadow: 0 1px 1px rgba(0,0,0,.25); white-space: normal; }
 .side nav a.navfav:hover { background: #4a535d; color: #ffffff; }
 .side nav a.navfav.on { background: #2a3037; color: #ffffff; border-color: var(--acc); box-shadow: inset 3px 0 0 var(--acc); }
+/* « Toutes les pages » : titre qui ouvre / ferme le reste du menu */
+.side nav .navmain > a.navallhd { background: transparent; box-shadow: none; padding: 8px 12px 4px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--side-ink); opacity: .85; cursor: pointer; user-select: none; }
+.side nav .navmain > a.navallhd:hover { opacity: 1; background: transparent; color: var(--side-hi); }
+.side nav a.navallhd::after { content: ''; margin-left: auto; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); transition: transform .15s; }
+.side nav a.navallhd.open::after { transform: rotate(45deg); }
+.side nav .navmain.allclosed > a:not(.navallhd):not(.navcfg), .side nav .navmain.allclosed > .navfold { display: none; }
 .side nav a .navstar { margin-left: auto; padding: 0 2px 0 8px; opacity: 0; font-size: 13px; line-height: 1; cursor: pointer; transition: opacity .1s; }
 .side nav a:hover .navstar, .side nav a .navstar:focus { opacity: .55; }
 .side nav a .navstar:hover { opacity: 1; color: #f5c451; }

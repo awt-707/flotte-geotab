@@ -23,7 +23,7 @@ function pageMenu() {
       <p><button type="button" class="ghost" id="mnreset">Revenir au menu d'origine (ordre alphabétique, aucun favori)</button> <span id="mnout" class="small"></span></p></div></div>`;
   if (my !== ROUTING) return;
   const save = async m => { const ok = await menuSave(m); if (my !== ROUTING) return; pageMenu(); const o = $('#mnout'); if (o) o.textContent = ok ? 'Enregistré.' : 'Enregistré sur cet appareil seulement (exécuter supabase/migrations/20261116000000_menu.sql pour le retrouver partout).'; };
-  const cur = () => ({ fav: favs.slice(), order: ents.map(e => e.id), hide: [...hide] });
+  const cur = () => Object.assign({}, cfg, { fav: favs.slice(), order: ents.map(e => e.id), hide: [...hide] });
   const move = (list, i, j) => { const a = list.slice(), [x] = a.splice(i, 1); a.splice(j, 0, x); return a; };
   document.querySelectorAll('[data-mn]').forEach(b => b.onclick = () => {
     const m = cur(), k = b.dataset.mn, i = +b.dataset.i, j = i + +b.dataset.d;

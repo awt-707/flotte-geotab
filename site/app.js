@@ -325,7 +325,7 @@ function menuCfg() {
   if (!m || typeof m !== 'object') m = lsJSON(MENU_KEY(), null);
   m = m && typeof m === 'object' ? m : {};
   const arr = x => Array.isArray(x) ? x.filter(v => typeof v === 'string').slice(0, 200) : [];
-  return { fav: arr(m.fav), order: arr(m.order), hide: arr(m.hide) };
+  return { fav: arr(m.fav), order: arr(m.order), hide: arr(m.hide), closed: m.closed === true };   // closed : « Toutes les pages » refermé
 }
 async function menuSave(m) {
   S.profile = Object.assign({}, S.profile, { menu: m });
@@ -374,7 +374,9 @@ function navHtml() {
   const favs = cfg.fav.map(id => byId.get(id)).filter(Boolean);
   const favHtml = favs.length ? `<div class="navfavs"><div class="navtitle">Favoris</div>${favs.map(l => `<a href="${esc(l.href)}" class="navfav" data-leaf="${esc(l.id)}">${esc(l.label)}</a>`).join('')}</div>` : '';
   return `<div class="navsearch"><input id="navq" type="search" placeholder="Rechercher une page…  ( / )" autocomplete="off" aria-label="Rechercher une page"></div><div id="navres" class="navres" hidden></div>`
-    + `<div id="navmain" class="navmain">${favHtml}${navOrdered(ents, cfg).filter(e => !hide.has(e.id)).map(e => e.html).join('')}`
+    // sous les favoris : « Toutes les pages », ouvert ou fermé d'un clic (choix gardé dans le réglage du menu)
+    + `<div id="navmain" class="navmain${cfg.closed ? ' allclosed' : ''}">${favHtml}<a href="#" class="navallhd${cfg.closed ? '' : ' open'}" role="button" aria-expanded="${cfg.closed ? 'false' : 'true'}">Toutes les pages</a>`
+    + `${navOrdered(ents, cfg).filter(e => !hide.has(e.id)).map(e => e.html).join('')}`
     + `<a href="#/menu" class="navcfg" data-leaf="menu">Personnaliser le menu</a></div>`;
 }
 /** Recherche : volets dont le nom (ou le dossier) contient les mots tapés, accents ignorés ; Entrée = premier résultat */
@@ -408,6 +410,7 @@ function navFold() {
 function navBind() {
   const nav = $('.side nav'); if (!nav) return;
   nav.addEventListener('click', e => {
+    if (e.target.closest('a.navallhd')) { e.preventDefault(); const m = menuCfg(); m.closed = !m.closed; menuSave(m); return; }
     const st = e.target.closest('.navstar');
     if (st) {   // étoile : ajouter / retirer des favoris sans changer de page
       e.preventDefault(); e.stopPropagation();
