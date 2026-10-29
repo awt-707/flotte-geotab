@@ -28,7 +28,7 @@ test('PDF de manifestes plus anciens que « manifestKeepDays » effacés du stoc
   env.psql("delete from params where key = 'manifestKeepDays'");
   const B = collector(NOW); B.run('installer()');   // paramètre recréé avec sa valeur par défaut (30 jours)
   env.psql(`truncate manifests restart identity;
-    insert into manifests (vehicle_key, plate, file_path, created_at) values ('A', 'A', '2026-09/ancien.pdf', now() - interval '40 days'), ('B', 'B', '2026-10/recent.pdf', now() - interval '2 days')`);
+    insert into manifests (vehicle_key, plate, file_path, created_at) values ('A', 'A', '2026-09/ancien.pdf', '${new Date(NOW - 40 * 86400000).toISOString()}'), ('B', 'B', '2026-10/recent.pdf', '${new Date(NOW - 2 * 86400000).toISOString()}')`);   // âges comptés depuis l'heure du collecteur (NOW), pas la date du jour
   assert.strictEqual(B.run('pruneManifests_()'), '1 PDF de manifestes de plus de 30 jours effacés du stockage');
   assert.deepStrictEqual(await (await fetch('http://localhost:8080/storage/v1/object/__liste')).json(), ['manifestes/2026-10/recent.pdf']);
   assert.strictEqual(env.psql("select string_agg(plate || '=' || coalesce(file_path, 'effacé'), ',' order by id) from manifests"), 'A=effacé,B=2026-10/recent.pdf');

@@ -435,8 +435,9 @@ test('deux agences : chaque agence a sa caisse (page, saisies) et son classeur d
   const mk = () => B.run(`(function () { const b = SpreadsheetApp.create('x'); ['Caisse - Encaissements chauffeurs Ludy', 'Caisse - Dépenses chauffeurs Ludy', 'Caisse - Avance RH Ludy', 'Caisse - Courses indep Ludy',
     'Caisse - Bonus performance Ludy', 'Export Uber - Driver Status Ludy', 'Export Uber - Opérations de paiement Ludy'].forEach(n => b.insertSheet(n)); return b.getId(); })()`);
   const s1 = mk(), s2 = mk();
+  const d1 = new Date(Date.now() - 86400000).toISOString().slice(0, 10);   // hier : dans les 7 jours affichés par défaut sur la page
   env.psql(`insert into agencies (id, name, cash_sheet_id) overriding system value values (1, 'Casa', '${s1}'), (2, 'Rabat', '${s2}');
-    insert into cash_moves (caisse, kind, flow, amount, day, driver_name, label, agency_id) values ('depenses', 'depense', 'out', 11, '2026-10-20', 'Un', 'Péage', 1), ('depenses', 'depense', 'out', 22, '2026-10-20', 'Deux', 'Parking', 2);`);
+    insert into cash_moves (caisse, kind, flow, amount, day, driver_name, label, agency_id) values ('depenses', 'depense', 'out', 11, '${d1}', 'Un', 'Péage', 1), ('depenses', 'depense', 'out', 22, '${d1}', 'Deux', 'Parking', 2);`);
   B.run('cashSheetStep_(Date.now())');
   const dep = id => B.books[id].getSheetByName('Caisse - Dépenses chauffeurs Ludy').data.slice(4).filter(r => r.some(x => x !== '')).map(r => r[5]);
   assert.deepStrictEqual([dep(s1), dep(s2)], [[11], [22]]);
