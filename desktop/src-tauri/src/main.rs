@@ -160,15 +160,26 @@ fn open_external<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), Strin
 }
 
 /// Affiche le volet `id` (adresse `url`) sur la zone (x, y, w, h) de la page Ludy (pixels CSS = pixels logiques) ; les autres sont masqués
+#[cfg(not(target_os = "windows"))]
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: String, url: String, x: f64, y: f64, w: f64, h: f64, name: Option<String>) -> Result<(), String> {
   let label = ext_label(&id)?;
   let target = ext_parse(&url)?;
-  #[cfg(target_os = "windows")]
-  { let _ = (x, y, w, h); ext_window(&app, &mut opened.0.lock().unwrap(), &label, &target, &url, name) }
-  #[cfg(not(target_os = "windows"))]
-  { let _ = name; ext_pane(&app, &mut opened.0.lock().unwrap(), label, target, url, x, y, w, h) }
+  let _ = name;
+  ext_pane(&app, &mut opened.0.lock().unwrap(), label, target, url, x, y, w, h)
+}
+/// Windows : commande asynchrone. Créer une fenêtre depuis une commande synchrone bloque toute l'application sous Windows
+/// (WebView2, documenté par Tauri : « deadlocks when used in a synchronous command ») : fenêtre Clicar figée, Ludy aussi (1.6)
+#[cfg(target_os = "windows")]
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<'_, Opened>, id: String, url: String, x: f64, y: f64, w: f64, h: f64, name: Option<String>) -> Result<(), String> {
+  let label = ext_label(&id)?;
+  let target = ext_parse(&url)?;
+  let _ = (x, y, w, h);
+  let mut op = opened.0.lock().map_err(|e| e.to_string())?;
+  ext_window(&app, &mut op, &label, &target, &url, name)
 }
 /// Mac : volet posé sur la zone de contenu de la page Ludy, dans la même fenêtre
 #[cfg(not(target_os = "windows"))]
@@ -201,7 +212,7 @@ fn ext_pane<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap<S
   Ok(())
 }
 
-/// Volet externe dans sa propre fenêtre (Windows) : créée au premier affichage (agrandie), ensuite ramenée au premier plan ;
+/// Volet externe dans sa propre fenêtre (Windows) : créée au premier affichage (85 % de l'écran, centrée), ensuite ramenée au premier plan ;
 /// rouverte à sa nouvelle adresse si elle a changé dans les Réglages ; jamais fermée en changeant de page dans Ludy
 #[cfg(target_os = "windows")]
 fn ext_window<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap<String, String>, label: &str, target: &url::Url, url: &str, name: Option<String>) -> Result<(), String> {
@@ -212,8 +223,12 @@ fn ext_window<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap
   }
   let (h2, l2, home) = (app.clone(), label.to_string(), target.clone());
   let title = format!("Ludy · {}", name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| target.host_str().unwrap_or("").to_string()));
+  // 85 % de la zone utile de l'écran de Ludy (barre des tâches exclue), centrée : jamais plus grande que l'écran, quelle que soit la mise à l'échelle
+  let (w, h) = app.get_webview_window("ludy").and_then(|m| m.current_monitor().ok().flatten())
+    .map(|m| { let a = m.work_area().size; let f = m.scale_factor().max(1.0); (a.width as f64 / f * 0.85, a.height as f64 / f * 0.85) })
+    .unwrap_or((1100.0, 700.0));
   WebviewWindowBuilder::new(app, label, WebviewUrl::External(with_login(app, target)))
-    .title(title).inner_size(1280.0, 800.0).min_inner_size(700.0, 500.0).maximized(true)
+    .title(title).inner_size(w.max(700.0), h.max(500.0)).min_inner_size(700.0, 500.0).center()
     .on_new_window(move |u, _f| {
       if same_site(&u, &home) { if let Some(v) = h2.get_webview(&l2) { let _ = v.navigate(u); } }
       else { let _ = open_out(&h2, &u); }
