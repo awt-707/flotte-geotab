@@ -181,6 +181,8 @@ function appIpc() { return !!(window.__TAURI_INTERNALS__ && window.__TAURI_INTER
 /** Mode de l'application : 'ext' (1.2 et suivantes : volets des Réglages), 'uber' (1.1 : Uber seul), 'link' (1.0 : lien plein écran), '' (navigateur) */
 function appMode() { const A = window.LUDY_APP; if (!A) return ''; if (A.ext && appIpc()) return 'ext'; if (A.embed && appIpc()) return 'uber'; return appUber() ? 'link' : ''; }
 function appEmbed() { return appMode() === 'ext' || appMode() === 'uber'; }
+/** Application 1.6 sous Windows : volets externes dans leur propre fenêtre (vues superposées mal placées à 125 / 150 %) */
+function appExtWin() { return appMode() === 'ext' && !!(window.LUDY_APP && window.LUDY_APP.extWin); }
 function appInvoke(cmd, args) { if (!appIpc()) return Promise.resolve(); return window.__TAURI_INTERNALS__.invoke(cmd, args || {}); }
 /**
  * Liens vers l'extérieur dans l'application (WhatsApp, e-mail, cartes, PDF) : la vue web ne sait pas ouvrir WhatsApp ni la messagerie.
@@ -229,6 +231,7 @@ function navSites() { const m = appMode(); return m === 'ext' ? extSites() : m =
 function extPlace() {
   const id = pageOf().slice(2), site = navSites().find(x => x.id === id), m = $('#page'), bar = $('#extbar');
   if (!site || !m || !$('#extzone')) return Promise.resolve();
+  if (appExtWin()) return appInvoke('ext_show', { id: site.id, url: site.url, name: site.name, x: 0, y: 0, w: 0, h: 0 });   // sa fenêtre, au premier plan
   const r = m.getBoundingClientRect(), top = bar ? Math.round(bar.getBoundingClientRect().bottom + 8) : Math.round(r.top);
   const box = { x: Math.round(r.left), y: top, w: Math.round(r.width), h: Math.round(window.innerHeight - top) };
   EXT_ON = true;
@@ -249,7 +252,10 @@ async function pageExt(id) {
   const show = () => {
     $('#page').innerHTML = `<div class="extbar" id="extbar"><b>${esc(site.name)}</b><span class="small">${esc(site.url.replace(/^https:\/\//, '').replace(/\/$/, ''))}</span>
       ${ext ? '<button class="ghost small" id="extrl">Recharger</button><button class="ghost small" id="extlog">Accès réservé…</button>' : ''}
-      <a class="small" href="${esc(site.url)}" target="_blank" rel="noopener">Ouvrir dans le navigateur</a></div><div class="uberbox" id="extzone">Chargement de ${esc(site.name)}…</div>`;
+      <a class="small" href="${esc(site.url)}" target="_blank" rel="noopener">Ouvrir dans le navigateur</a></div>
+      ${appExtWin() ? `<div class="panel" id="extzone" style="max-width:640px"><p><b>${esc(site.name)}</b> s'ouvre dans sa propre fenêtre (Windows). Elle reste ouverte : passez de Ludy à ${esc(site.name)} par la barre des tâches ou <b>Alt + Tab</b>.</p>
+        <p><button id="extwin">Afficher la fenêtre ${esc(site.name)}</button></p></div>` : `<div class="uberbox" id="extzone">Chargement de ${esc(site.name)}…</div>`}`;
+    if ($('#extwin')) $('#extwin').onclick = () => extPlace().catch(e => alert(e));
     if (ext) {
       $('#extrl').onclick = () => appInvoke('ext_reload', { id: site.id, url: site.url }).catch(e => alert(e));
       $('#extlog').onclick = () => login();
@@ -272,7 +278,7 @@ async function pageExt(id) {
   };
   await show();
 }
-window.addEventListener('resize', () => { if (/^x-/.test(pageOf())) extPlace().catch(() => { }); });
+window.addEventListener('resize', () => { if (/^x-/.test(pageOf()) && !appExtWin()) extPlace().catch(() => { }); });
 function pageOf() { return (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct'; }
 const APP_DL = { mac: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.dmg', win: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy-setup.exe' };
 async function pageApplication() {
@@ -289,7 +295,7 @@ async function pageApplication() {
         <li>Si Windows affiche « Windows a protégé votre ordinateur » : <b>Informations complémentaires › Exécuter quand même</b> (une seule fois).</li>
         <li>Se connecter à Ludy, puis une fois à Uber dans le volet <b>Uber Fleet</b>.</li></ol></div>
     </div>
-    <div class="sub">Dans l'application : <b>Uber Fleet</b>, <b>Clicar</b>… (liste dans Réglages) s'affichent à droite du menu Ludy ; un clic sur un autre volet revient au logiciel, ils restent ouverts en arrière-plan. Accès réservé (identifiant demandé par le site) : bouton « Accès réservé… » au-dessus du volet. Les PDF sont enregistrés dans Téléchargements et s'ouvrent tout seuls.</div>`;
+    <div class="sub">Dans l'application : <b>Uber Fleet</b>, <b>Clicar</b>… (liste dans Réglages) s'affichent à droite du menu Ludy (sous Windows, application 1.6 : chacun dans sa propre fenêtre, ouverte agrandie) ; un clic sur un autre volet revient au logiciel, ils restent ouverts en arrière-plan. Accès réservé (identifiant demandé par le site) : bouton « Accès réservé… » au-dessus du volet. Les PDF sont enregistrés dans Téléchargements et s'ouvrent tout seuls.</div>`;
 }
 
 // ---------- Volets visibles par utilisateur (Réglages > Utilisateurs) : profiles.pages = liste des volets, vide = tous ----------

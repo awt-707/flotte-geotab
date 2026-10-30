@@ -5,7 +5,8 @@ const test = require('node:test'), assert = require('node:assert');
 const env = require('./lib/env'), { sheetV6, collector, copyContracts } = require('./lib/v6');
 const L = (d, h, m) => Date.UTC(2026, 9, d, h, m || 0) - env.maOff(Date.UTC(2026, 9, d, h, m || 0)) * 60000;   // heure du Maroc -> UTC
 const fillsOf = () => JSON.parse(env.psql("select coalesce(json_agg(t order by t.id), '[]') from (select id, stop_start, lvl_before, lvl_after, liters_gauge, liters_geotab, driver_code, final from fuel where type = 'PLEIN' and day = '2026-10-03') t"));
-let refN, night, final;
+let refN, night, final, early;
+const gaugeOf = () => JSON.parse(env.psql("select coalesce(json_agg(t order by t.id), '[]') from (select id, stop_start, lvl_before, lvl_after, liters_gauge, source, driver_code, final from fuel where id like '%|PLEIN_JAUGE') t"));
 
 test.before(() => {
   global.__FILL_DELAY_MS = 6 * 3600000;
@@ -18,6 +19,7 @@ test.before(() => {
   B.run("sbReq_('post', 'jobs', [{ kind: 'after_inject', arg: '2026-10-01' }])");
   for (let t = L(3, 19, 0); t <= L(4, 13, 30); t += 5 * 60000) {
     B.setNow(t); B.run('collect()');
+    if (t === L(3, 22, 0)) early = gaugeOf();
     if (t === L(4, 4, 0)) night = fillsOf();
   }
   final = fillsOf();
@@ -28,6 +30,13 @@ test('pleins calculés par Geotab après coup : visibles dans la nuit, sans atte
   assert.ok(refN >= 2, 'pleins de référence du 03/10 : ' + refN);
   assert.strictEqual(night.length, refN, 'pleins du 03/10 présents à 04:00');
   assert.ok(night.every(f => !f.final), 'lignes provisoires avant la finalisation');
+});
+
+test('avant le FillUp Geotab : plein vu par la jauge tout de suite, retiré quand Geotab publie le sien', () => {
+  assert.ok(early.length >= 1, 'plein vu par la jauge à 22:00 : ' + JSON.stringify(early));
+  early.forEach(f => { assert.ok(!f.final && f.liters_gauge === null && /Jauge/.test(f.source), JSON.stringify(f));
+    assert.ok(f.lvl_after - f.lvl_before >= 20, 'montée de jauge ' + f.id); assert.ok(f.driver_code, 'chauffeur du plein ' + f.id); });
+  assert.ok(night.every(f => !/PLEIN_JAUGE/.test(f.id)), 'lignes de la jauge retirées une fois les FillUp publiés');
 });
 
 test('après la finalisation : mêmes pleins, mêmes valeurs', () => {

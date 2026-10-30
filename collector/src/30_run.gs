@@ -219,6 +219,8 @@ function collect() {
     } catch (e) { msg.push('Erreur temps réel : ' + e.message); }
     // Pleins calculés par Geotab après coup : relus à chaque passage pour les journées pas encore finalisées
     try { if (liveFills_() && !(live && live.wrote)) markDirty_(localDay_(Date.now() - DAY)); } catch (e) { msg.push('Pleins : ' + e.message); }
+    // Pleins vus par la jauge sans FillUp Geotab (publié des heures après, ou jamais) : affichés tout de suite, retirés quand le FillUp arrive
+    try { if (gaugeFills_()) markDirty_(addDays_(localDay_(Date.now()), -(GAUGE_FILL_DAYS - 1))); } catch (e) { msg.push('Pleins (jauge) : ' + e.message); }
     if (live && live.wrote) markDirty_(localDay_(Date.now() - DAY));
     // Demandes du site (contrats importés, plaques, synchro immédiate, recalcul)
     try { const j = processJobs_(t0); if (j) msg.push(j); } catch (e) { msg.push('Demandes du site : ' + e.message); }

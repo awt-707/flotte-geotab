@@ -12,12 +12,12 @@ test.before(async () => {
 test.after(() => { if (srv) srv.kill(); env.psql(`update profiles set role = 'pending', pages = null where user_id = '${MGR}'`); });
 
 // application 1.2 simulée : window.LUDY_APP + commandes enregistrées dans window.__calls
-async function appBrowser() {
+async function appBrowser(extWin) {
   const o = await openBrowser();
-  await o.page.context().addInitScript(() => {
-    window.LUDY_APP = { version: '1.2.0', uber: 'https://fleethub.uber.com/orgs/test/livemap?tab=4', embed: true, ext: true };
+  await o.page.context().addInitScript(w => {
+    window.LUDY_APP = { version: w ? '1.6.0' : '1.2.0', uber: 'https://fleethub.uber.com/orgs/test/livemap?tab=4', embed: true, ext: true, open: !!w, extWin: !!w };
     window.__calls = []; window.__TAURI_INTERNALS__ = { invoke: (c, a) => { window.__calls.push([c, a]); return Promise.resolve(c === 'ext_status' ? { saved: false, user: '' } : null); } };
-  });
+  }, !!extWin);
   return o;
 }
 const calls = (page, c) => page.evaluate(c => window.__calls.filter(x => x[0] === c).map(x => x[1]), c);
@@ -54,6 +54,27 @@ test('application 1.2 : Uber Fleet et Clicar dans le menu, volet posé sous sa b
     await page.evaluate(() => { window.__calls = []; });
     await page.click('.side nav a[href="#/alertes"]'); await page.waitForTimeout(800);
     assert.deepStrictEqual(await calls(page, 'ext_hide'), []);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); }
+});
+
+test('application 1.6 sous Windows : chaque volet dans sa propre fenêtre (nom transmis), jamais masqué en changeant de page', async () => {
+  const { br, page, errors } = await appBrowser(true);
+  try {
+    await login(page, '#/tableau');
+    await page.waitForSelector('.navext');
+    await page.click('.navext[data-ext="uber"]');
+    await page.waitForFunction(() => window.__calls.some(c => c[0] === 'ext_show'));
+    const s = (await calls(page, 'ext_show')).pop();
+    assert.deepStrictEqual([s.id, s.name, s.url], ['uber', 'Uber Fleet', 'https://fleethub.uber.com/orgs/test/livemap?tab=4']);
+    assert.match(await page.innerText('#extzone'), /s'ouvre dans sa propre fenêtre/);
+    await page.evaluate(() => { window.__calls = []; });
+    await page.click('#extwin');   // ramener la fenêtre au premier plan
+    await page.waitForFunction(() => window.__calls.some(c => c[0] === 'ext_show'));
+    await page.setViewportSize({ width: 1200, height: 800 }); await page.waitForTimeout(300);
+    assert.strictEqual((await calls(page, 'ext_show')).length, 1, 'pas de nouveau placement au redimensionnement');
+    await page.click('.side nav a[href="#/tableau"]'); await page.waitForTimeout(800);
+    assert.deepStrictEqual(await calls(page, 'ext_hide'), [], 'fenêtre laissée ouverte');
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
