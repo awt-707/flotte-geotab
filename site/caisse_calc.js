@@ -1,7 +1,9 @@
 // Caisse : calculs et lecture des fichiers (sans navigateur : testés sous Node, mêmes règles que le classeur
 // « Suivi Cash Chauffeurs - Luxury » : encaissements Uber, dépenses, avances RH, courses privées, bonus, rapprochement Uber, paie).
+// Bolt (30/10/2026) : même logique que Uber, à partir de l'export Bolt Fleet « Journal d'activité des services » (cshParseBolt) ;
+// sessions Bolt passées aux mêmes calculs (cshRappro, cshCA, cshDaily) avec leur chauffeur déjà trouvé (_key) et pf = CSH_PF.bolt.
 
-const CASH_CAISSES = [['uber', 'Encaissements Uber'], ['depenses', 'Dépenses chauffeurs'], ['rh', 'Avances RH'], ['courses', 'Courses privées'], ['bonus', 'Bonus performance']];
+const CASH_CAISSES = [['uber', 'Encaissements Uber'], ['bolt', 'Encaissements Bolt'], ['depenses', 'Dépenses chauffeurs'], ['rh', 'Avances RH'], ['courses', 'Courses privées'], ['bonus', 'Bonus performance']];
 const CASH_DEP_CATS = ['Carburant', 'Péage', 'Parking', 'Lavage', 'Contravention', 'NDF', 'Adblue', 'Vidange', 'Recharge téléphone', 'Autre'];
 const CASH_RIDE_TYPES = ['Course Uber', 'Course Privée', 'Course Bolt', 'Course InDrive', 'Non applicable'];
 const CASH_BONUS = ['Challenge Shift', 'Challenge Semaine', 'Challenge 5k', 'Autre'];
@@ -40,6 +42,9 @@ function cshLive(m) { return !m.cancelled_at; }
  * Dépense payée par le chauffeur avec les espèces Uber : source « Chauffeur / Uber », « Chauffeur » ou non renseignée (règle du classeur) ;
  * payée par une caisse (« Caisse - Dépenses », « Caisse RH », « Cash Nico ») ou la banque : pas prise sur les espèces Uber.
  */
+/** Plateforme du rapprochement : caisse des encaissements, type de course des frais, libellés */
+const CSH_PF = { uber: { id: 'uber', caisse: 'uber', ride: 'Course Uber', name: 'Uber', unlinked: 'Compte Uber non relié', fix: 'Aucun (relier le compte Uber)' },
+  bolt: { id: 'bolt', caisse: 'bolt', ride: 'Course Bolt', name: 'Bolt', unlinked: 'Chauffeur Bolt non relié', fix: 'Aucun (chauffeur Bolt non relié)' } };
 function cshUberPaid(m) { const s = cshNorm(m.source); return !s || !/caisse|banque|nico/.test(s); }
 /** Solde de chaque caisse et total en espèces */
 function cshBalances(moves) {
@@ -83,28 +88,30 @@ function cshLinks(o) {
  * o : { payments, moves, from, to, uuid2code, drivers, udrv, dayOfPayment(p) → aaaa-mm-jj (jour du shift), names: clé → nom }
  */
 function cshRappro(o) {
-  o = Object.assign({}, o, { uuid2code: cshLinks(o) });
+  const pf = o.pf || CSH_PF.uber, bolt = pf.id === 'bolt';
+  o = Object.assign({}, o, { uuid2code: bolt ? {} : cshLinks(o) });
   const by = {}, get = (k, name) => (by[k] = by[k] || { key: k, name: name || '', uber: 0, frais: 0, net: 0, trips: 0 });
   const inP = d => d && d >= o.from && d <= o.to;
   (o.payments || []).forEach(p => {
     const d = o.dayOfPayment ? o.dayOfPayment(p) : String(p.day || '').slice(0, 10);
     if (!inP(d)) return;
-    const r = get(cshKey(null, p.driver_uuid, p.driver_name, o.uuid2code), p.driver_name); r.uber = cshR(r.uber + cshN(p.cash)); if (cshN(p.cash)) r.trips++;
+    const r = get(p._key || cshKey(null, p.driver_uuid, p.driver_name, o.uuid2code), p.driver_name); r.uber = cshR(r.uber + cshN(p.cash)); if (cshN(p.cash)) r.trips++;
   });
   (o.moves || []).filter(cshLive).forEach(m => {
     if (!inP(m.day)) return;
     const k = cshMoveKey(m, o.uuid2code); if (!k) return;
-    if (m.caisse === 'uber' && m.kind === 'encaissement') { const r = get(k, m.driver_name); r.net = cshR(r.net + cshN(m.amount)); }
-    if (m.kind === 'depense' && m.ride_type === 'Course Uber' && m.justif === 'OK' && cshUberPaid(m)) { const r = get(k, m.driver_name); r.frais = cshR(r.frais + cshN(m.amount)); }
+    if (m.caisse === pf.caisse && m.kind === 'encaissement') { const r = get(k, m.driver_name); r.net = cshR(r.net + cshN(m.amount)); }
+    if (m.kind === 'depense' && m.ride_type === pf.ride && m.justif === 'OK' && cshUberPaid(m)) { const r = get(k, m.driver_name); r.frais = cshR(r.frais + cshN(m.amount)); }
   });
   const linked = new Set(Object.values(o.uuid2code));
   return Object.values(by).map(r => {
     if (o.names && o.names[r.key]) r.name = o.names[r.key];
     r.theo = cshR(r.uber - r.frais); r.ecart = cshR(r.theo - r.net);
-    // espèces Uber d'un compte sans chauffeur Ludy, ou chauffeur sans compte Uber rattaché (rien à comparer) : pas d'effet sur la paie
-    r.unlinked = r.key.indexOf('U:') === 0 || (!r.uber && !linked.has(r.key));
-    r.statut = r.uber === 0 && r.net === 0 ? 'Sans activité' : r.unlinked ? 'Compte Uber non relié' : r.theo > 0 && r.net === 0 ? 'Non remis' : Math.abs(r.ecart) < 0.01 ? 'Cadré' : r.ecart > 0 ? 'Manquant' : 'Excédent';
-    r.effet = r.unlinked ? 'Aucun (relier le compte Uber)' : r.ecart > 0.004 ? 'Retenir ' + Math.round(r.ecart) + ' MAD' : r.ecart < -0.004 ? 'Ajouter ' + Math.round(-r.ecart) + ' MAD' : 'Aucun';
+    // espèces Uber d'un compte sans chauffeur Ludy, ou chauffeur sans compte Uber rattaché (rien à comparer) : pas d'effet sur la paie ;
+    // Bolt : session d'un chauffeur Bolt qu'aucun chauffeur Ludy ne porte (nom ni contrat du véhicule), ou encaissement sans session Bolt importée
+    r.unlinked = bolt ? r.key.indexOf('N:') === 0 || !r.uber : r.key.indexOf('U:') === 0 || (!r.uber && !linked.has(r.key));
+    r.statut = r.uber === 0 && r.net === 0 ? 'Sans activité' : r.unlinked ? (bolt && r.key.indexOf('N:') !== 0 ? 'Sans session Bolt' : pf.unlinked) : r.theo > 0 && r.net === 0 ? 'Non remis' : Math.abs(r.ecart) < 0.01 ? 'Cadré' : r.ecart > 0 ? 'Manquant' : 'Excédent';
+    r.effet = r.unlinked ? (bolt && r.key.indexOf('N:') !== 0 ? 'Aucun (export Bolt à importer)' : pf.fix) : r.ecart > 0.004 ? 'Retenir ' + Math.round(r.ecart) + ' MAD' : r.ecart < -0.004 ? 'Ajouter ' + Math.round(-r.ecart) + ' MAD' : 'Aucun';
     r.taux = r.theo ? r.net / r.theo : 0;
     return r;
   }).sort((a, b) => b.ecart - a.ecart || String(a.name).localeCompare(String(b.name)));
@@ -122,14 +129,17 @@ function cshRappro(o) {
  */
 function cshPayroll(o) {
   const u2c = cshLinks(o), rap = o.rappro || cshRappro(o), by = {};
+  // Bolt (o.bolt = sessions avec leur chauffeur _key) : mêmes règles que Uber, manquants et excédents additionnés
+  const rapB = o.rapproBolt || (o.bolt ? cshRappro(Object.assign({}, o, { payments: o.bolt, dayOfPayment: o.dayOfBolt, pf: CSH_PF.bolt })) : []);
   const get = (k, name) => (by[k] = by[k] || { key: k, name: name || '', manquant: 0, excedent: 0, depKo: 0, nDepKo: 0, avances: 0, rembours: 0, primes: 0, primePaid: 0, primeReste: 0, bonusPaid: 0, bonusToPay: 0 });
-  const inRap = new Set(rap.filter(r => !r.unlinked && r.uber).map(r => r.key));
-  rap.forEach(r => { if (r.unlinked) return; if (r.ecart > 0) get(r.key, r.name).manquant = r.ecart; else if (r.ecart < 0) get(r.key, r.name).excedent = -r.ecart; });
+  const inRap = new Set(rap.filter(r => !r.unlinked && r.uber).map(r => r.key)), inRapB = new Set(rapB.filter(r => !r.unlinked && r.uber).map(r => r.key));
+  rap.concat(rapB).forEach(r => { if (r.unlinked) return; const x = get(r.key, r.name); if (r.ecart > 0) x.manquant = cshR(x.manquant + r.ecart); else if (r.ecart < 0) x.excedent = cshR(x.excedent - r.ecart); });
   (o.moves || []).filter(cshLive).forEach(m => {
     if (!(m.day >= o.from && m.day <= o.to)) return;
     const k = cshMoveKey(m, u2c); if (!k || k.indexOf('N:') === 0 && !m.driver_name) return;
     const a = cshN(m.amount);
     if (m.kind === 'depense' && m.ride_type === 'Course Uber' && cshUberPaid(m) && inRap.has(k)) return;
+    if (m.kind === 'depense' && m.ride_type === 'Course Bolt' && cshUberPaid(m) && inRapB.has(k)) return;
     if (m.kind === 'depense' && a > 0 && m.justif !== 'OK' && m.justif !== 'N.A') { const r = get(k, m.driver_name); r.depKo = cshR(r.depKo + a); r.nDepKo++; }
     else if (m.kind === 'avance') { const r = get(k, m.driver_name); r.avances = cshR(r.avances + a); }
     else if (m.kind === 'remboursement') { const r = get(k, m.driver_name); r.rembours = cshR(r.rembours + a); }
@@ -153,7 +163,7 @@ function cshCA(o) {
   const cols = new Set(), by = {}, tot = {}, u2c = cshLinks(o);
   (o.payments || []).forEach(p => {
     const d = o.dayOfPayment ? o.dayOfPayment(p) : String(p.day || '').slice(0, 10); if (!(d >= o.from && d <= o.to)) return;
-    const c = o.by === 'week' ? cshWeek(d) : d, k = cshKey(null, p.driver_uuid, p.driver_name, u2c);
+    const c = o.by === 'week' ? cshWeek(d) : d, k = p._key || cshKey(null, p.driver_uuid, p.driver_name, u2c);
     cols.add(c); const r = by[k] = by[k] || { key: k, name: (o.names && o.names[k]) || p.driver_name || '', total: 0, v: {} };
     r.v[c] = cshR((r.v[c] || 0) + cshN(p.revenue)); r.total = cshR(r.total + cshN(p.revenue)); tot[c] = cshR((tot[c] || 0) + cshN(p.revenue));
   });
@@ -163,12 +173,14 @@ function cshCA(o) {
 }
 /** Évolution jour par jour : espèces Uber, encaissé net, dépenses, avances, courses privées, bonus, dépôts en banque */
 function cshDaily(o) {
-  const by = {}, get = d => (by[d] = by[d] || { day: d, uber: 0, net: 0, depenses: 0, avances: 0, courses: 0, bonus: 0, depots: 0, revenue: 0 });
+  const by = {}, get = d => (by[d] = by[d] || { day: d, uber: 0, net: 0, depenses: 0, avances: 0, courses: 0, bonus: 0, depots: 0, revenue: 0, bolt: 0, boltRevenue: 0, boltNet: 0 });
+  (o.bolt || []).forEach(p => { const d = o.dayOfBolt ? o.dayOfBolt(p) : String(p.day || '').slice(0, 10); if (d >= o.from && d <= o.to) { const r = get(d); r.bolt = cshR(r.bolt + cshN(p.cash)); r.boltRevenue = cshR(r.boltRevenue + cshN(p.revenue)); } });
   (o.payments || []).forEach(p => { const d = o.dayOfPayment ? o.dayOfPayment(p) : String(p.day || '').slice(0, 10); if (d >= o.from && d <= o.to) { const r = get(d); r.uber = cshR(r.uber + cshN(p.cash)); r.revenue = cshR(r.revenue + cshN(p.revenue)); } });
   (o.moves || []).filter(cshLive).forEach(m => {
     if (!(m.day >= o.from && m.day <= o.to)) return;
     const r = get(m.day), a = cshN(m.amount);
-    if (m.kind === 'encaissement') r.net = cshR(r.net + a);
+    if (m.kind === 'encaissement' && m.caisse === 'bolt') r.boltNet = cshR(r.boltNet + a);
+    else if (m.kind === 'encaissement') r.net = cshR(r.net + a);
     else if (m.kind === 'depense') r.depenses = cshR(r.depenses + a);
     else if (m.kind === 'avance') r.avances = cshR(r.avances + a);
     else if (m.kind === 'course') r.courses = cshR(r.courses + a);
@@ -229,6 +241,36 @@ function cshParseUberPayments(rows, localToDate) {
       trip: ix.trip >= 0 ? String(r[ix.trip] || '').trim() || null : null, description: ix.desc >= 0 ? String(r[ix.desc] || '').trim() || null : null,
       cash: cshR(-v(r, ix.cash)), revenue: cshR(v(r, ix.revenue)), payout: cshR(v(r, ix.payout)), fare: cshR(v(r, ix.fare)), tip: cshR(v(r, ix.tip)), toll: cshR(v(r, ix.toll)),
       bonus: cshR(bonusCols.reduce((s, c) => s + v(r, c), 0)) });
+  }
+  return { rows: out, bad };
+}
+/** Plaque comparable : lettres et chiffres en majuscules (« 968202WW • Noir » → « 968202WW ») */
+function cshPlate(s) { return String(s || '').split('•')[0].toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+/**
+ * Export Bolt Fleet « Journal d'activité des services » (Shift activity log, CSV) → sessions
+ * { key, at, driver_name, vehicle, plate, minutes, online_min, pause_min, span, trips, done, cancel_pax, cancel_drv, total, cash, terminal, app, business, raw }.
+ * Date = début de la session, heure du Maroc ; clé = début + chauffeur + plaque (réimport sans doublon).
+ */
+function cshParseBolt(rows, localToDate) {
+  const h = cshHeader(rows, c => c.indexOf('espece') === 0 && c.indexOf('|') > 0);
+  if (h < 0 || !rows[h].some(c => cshNorm(c) === 'chauffeur')) return { error: 'colonnes « Chauffeur » et « Espèce|DH » introuvables (export Bolt « Journal d\'activité des services »)', rows: [] };
+  const H = rows[h].map(cshNorm), eq = t => H.indexOf(t), pre = t => H.findIndex(c => c.indexOf(t) === 0);
+  const ix = { at: eq('date'), drv: eq('chauffeur'), veh: eq('vehicule'), det: eq('details'), min: pre('duree totale du service'), span: eq('plage horaire'), on: pre('temps en ligne'), pause: pre('temps de pause'),
+    trips: eq('total de trajets'), done: eq('termine'), cpax: eq('annulation passager'), cdrv: eq('annulation chauffeur'), total: pre('total des paiements'), cash: pre('espece'),
+    term: pre('terminal de paiement'), app: pre('dans l\'app'), biz: pre('entreprise') };
+  const v = (r, i) => i >= 0 ? cshAmount(r[i]) || 0 : 0, t = (r, i) => i >= 0 ? String(r[i] == null ? '' : r[i]).trim() : '', out = [], bad = [], seen = new Set();
+  for (let i = h + 1; i < rows.length; i++) {
+    const r = rows[i] || [], name = t(r, ix.drv); if (!name) continue;
+    const m = t(r, ix.at).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/) || (cshDay(t(r, ix.at)) && t(r, ix.at).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[ T](\d{2}):(\d{2})/));
+    if (!m) { bad.push(i + 1); continue; }
+    const [y, mo, d] = m[1].length === 4 ? [+m[1], +m[2], +m[3]] : [+m[3], +m[2], +m[1]];
+    const at = localToDate ? localToDate(y, mo, d, +m[4], +m[5]).toISOString() : new Date(Date.UTC(y, mo - 1, d, +m[4], +m[5])).toISOString();
+    const plate = cshPlate(t(r, ix.det)), key = [y, String(mo).padStart(2, '0'), String(d).padStart(2, '0')].join('-') + ' ' + m[4] + ':' + m[5] + '|' + cshName(name) + '|' + plate;
+    if (seen.has(key)) continue; seen.add(key);
+    const raw = {}; rows[h].forEach((c, j) => { const x = t(r, j); if (x !== '') raw[String(c).trim()] = x; });
+    out.push({ key, at, driver_name: name, vehicle: t(r, ix.veh) || null, plate: plate || null, minutes: cshR(v(r, ix.min)), online_min: cshR(v(r, ix.on)), pause_min: cshR(v(r, ix.pause)),
+      span: t(r, ix.span) || null, trips: Math.round(v(r, ix.trips)), done: Math.round(v(r, ix.done)), cancel_pax: Math.round(v(r, ix.cpax)), cancel_drv: Math.round(v(r, ix.cdrv)),
+      total: cshR(v(r, ix.total)), cash: cshR(v(r, ix.cash)), terminal: cshR(v(r, ix.term)), app: cshR(v(r, ix.app)), business: cshR(v(r, ix.biz)), raw });
   }
   return { rows: out, bad };
 }
@@ -363,4 +405,4 @@ function cshParseHistory(sheets, ctx) {
 }
 
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
-  cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory };
+  cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory };
