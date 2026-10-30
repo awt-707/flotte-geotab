@@ -4,7 +4,7 @@ const ROOT = path.join(__dirname, '..'), read = f => fs.readFileSync(path.join(R
 const errors = [], ok = m => console.log('  ok  ' + m), fail = m => errors.push(m);
 
 // 1. Syntaxe
-for (const f of ['collector/dist/Collecteur.gs', 'site/app.js', 'site/cache.js', 'site/lib.js', 'site/report.js', 'site/pages2.js', 'site/direct.js', 'site/adresses.js', 'site/manifeste.js', 'site/contrat_modele.js', 'site/contrat_pdf.js', 'site/contrat.js', 'site/rh_calc.js', 'site/rh.js', 'site/courses.js', 'site/caisse_calc.js', 'site/caisse.js', 'site/plan_calc.js', 'site/plan.js', 'site/planning.js', 'site/connexions.js', 'site/config.js', 'collector/loader/Code.gs']) {
+for (const f of ['collector/dist/Collecteur.gs', 'site/app.js', 'site/cache.js', 'site/lib.js', 'site/report.js', 'site/pages2.js', 'site/direct.js', 'site/adresses.js', 'site/manifeste.js', 'site/contrat_modele.js', 'site/contrat_pdf.js', 'site/contrat.js', 'site/rh_calc.js', 'site/rh.js', 'site/courses.js', 'site/caisse_calc.js', 'site/caisse.js', 'site/caisse_rpt.js', 'site/plan_calc.js', 'site/plan.js', 'site/planning.js', 'site/connexions.js', 'site/config.js', 'collector/loader/Code.gs']) {
   try { new vm.Script(read(f), { filename: f }); ok('syntaxe ' + f); } catch (e) { fail('syntaxe ' + f + ' : ' + e.message); }
 }
 try { new vm.Script(read('site/pager.js'), { filename: 'site/pager.js' }); ok('syntaxe site/pager.js'); } catch (e) { fail('syntaxe site/pager.js : ' + e.message); }

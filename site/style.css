@@ -562,3 +562,16 @@ button.small:not(.ghost) { color: var(--acc-ink); }
 .uidlg-card input { width: 100%; margin-bottom: 12px; }
 .uidlg-go { display: flex; gap: 8px; justify-content: flex-end; }
 a.cardlink { color: inherit; text-decoration: underline dotted; }
+
+/* Caisse > Rapports (30/10/2026) : documents, graphiques */
+.cshdocs { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 10px 0 14px; }
+.cshdocs .panel { margin: 0; display: flex; flex-direction: column; } .cshdocs .panel p:last-child { margin-top: auto; }
+.cshchart2 { width: 100%; max-height: 240px; }
+.cshchart2 .cg { stroke: var(--line2); stroke-width: 1; } .cshchart2 .ca { stroke: var(--mute); stroke-width: 1; }
+.cshchart2 .ct { font-size: 10px; fill: var(--mute); }
+.cs-uber { fill: var(--ink); } .cs-bolt { fill: #18a068; } .cs-crs { fill: var(--acc); } .cs-net { fill: #2563eb; } .cs-decl { fill: #94a3b8; }
+polyline.cs-prev { stroke: #949ca6; stroke-width: 2; } polyline.cs-cum { stroke: var(--acc); stroke-width: 2.5; }
+.cshlg { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 4px; } .cshlg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.cshlg i.cs-uber { background: var(--ink); } .cshlg i.cs-bolt { background: #18a068; } .cshlg i.cs-crs { background: var(--acc); } .cshlg i.cs-net { background: #2563eb; } .cshlg i.cs-decl { background: #94a3b8; }
+.cshlg i.ln { height: 0; border-top: 2px solid #949ca6; border-radius: 0; width: 16px; } .cshlg i.ln.dash { border-top-style: dashed; }
+table.cshdep { width: 100%; } table.cshdep td, table.cshdep th { padding: 4px 6px; }
