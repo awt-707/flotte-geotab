@@ -3,18 +3,28 @@
 // - une vue par volet externe (Uber Fleet, Clicar… : liste réglée sur le site, Réglages > Volets externes), posée sur la zone de contenu du site, à droite du menu Ludy, quand
 //   le volet est choisi dans le menu ; masquée (pas fermée : session et page gardées) quand on choisit un autre volet.
 // Ces sites interdisent d'être affichés dans un cadre d'un autre site ; une vue de l'application peut les ouvrir directement.
+// Windows (1.6, signalé par Ahmed : défilement et clics sans effet, affichage décalé, lenteur, écran à 125 / 150 %) : les vues
+// superposées dans une même fenêtre (multiwebview de Tauri, encore « unstable ») sont mal placées et ne reçoivent plus bien la
+// souris quand la mise à l'échelle de Windows n'est pas 100 %. Sous Windows : Ludy dans une fenêtre normale (une seule vue,
+// ouverte agrandie) et chaque volet externe dans sa propre fenêtre. Mac : inchangé (une fenêtre, volets à droite du menu).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::CapabilityBuilder;
-use tauri::webview::{DownloadEvent, NewWindowResponse, WebviewBuilder};
-use tauri::window::WindowBuilder;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Runtime, WebviewUrl};
+use tauri::webview::{DownloadEvent, NewWindowResponse};
+#[cfg(target_os = "windows")]
+use tauri::WebviewWindowBuilder;
+#[cfg(not(target_os = "windows"))]
+use tauri::{webview::WebviewBuilder, window::WindowBuilder, LogicalPosition, LogicalSize};
+use tauri::{AppHandle, Manager, Runtime, WebviewUrl};
 use tauri_plugin_opener::OpenerExt;
 
 const HOME: &str = "https://ludy-flotte.pages.dev/";
 const UBER: &str = "https://fleethub.uber.com/orgs/692d0268-9766-4061-9c0e-85d7c124d10e/livemap?tab=4";
+const TITLE: &str = "Ludy · Supervision de flotte";
+/// Volets externes dans leur propre fenêtre (Windows) plutôt qu'à droite du menu Ludy
+const EXT_WINDOWS: bool = cfg!(target_os = "windows");
 
 /// Volets externes (Uber Fleet, Clicar…) : la liste est réglée sur le site (Réglages > Volets externes), l'application
 /// ouvre l'adresse demandée par le site Ludy (https seulement) : ajouter un site ne demande pas de nouvelle application.
@@ -73,11 +83,15 @@ fn safe_open(p: &std::path::Path) -> bool {
 
 /// Téléchargements (PDF, exports) : dossier Téléchargements, puis fichier ouvert s'il vient de Ludy (auto_open) et sans risque ;
 /// sinon (volet externe : Uber, Clicar…, ou autre type de fichier) seulement montré dans son dossier
+#[cfg(not(target_os = "windows"))]
 fn with_downloads<R: Runtime>(b: WebviewBuilder<R>, app: &AppHandle<R>, auto_open: bool) -> WebviewBuilder<R> {
+  b.on_download(downloads(app, auto_open))
+}
+fn downloads<R: Runtime>(app: &AppHandle<R>, auto_open: bool) -> impl Fn(tauri::Webview<R>, DownloadEvent<'_>) -> bool + Send + Sync + 'static {
   let dir = app.path().download_dir().ok();
   let last: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
   let h = app.clone();
-  b.on_download(move |_w, event| {
+  move |_w, event| {
     match event {
       DownloadEvent::Requested { destination, .. } => {
         if let Some(d) = &dir {
@@ -97,7 +111,7 @@ fn with_downloads<R: Runtime>(b: WebviewBuilder<R>, app: &AppHandle<R>, auto_ope
       _ => {}
     }
     true
-  })
+  }
 }
 
 /// Application WhatsApp installée sur cet ordinateur ? (Mac : dossier Applications ; Windows : application du Store ou ancienne version)
@@ -147,19 +161,28 @@ fn open_external<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), Strin
 
 /// Affiche le volet `id` (adresse `url`) sur la zone (x, y, w, h) de la page Ludy (pixels CSS = pixels logiques) ; les autres sont masqués
 #[tauri::command]
-fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: String, url: String, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: String, url: String, x: f64, y: f64, w: f64, h: f64, name: Option<String>) -> Result<(), String> {
   let label = ext_label(&id)?;
   let target = ext_parse(&url)?;
+  #[cfg(target_os = "windows")]
+  { let _ = (x, y, w, h); ext_window(&app, &mut opened.0.lock().unwrap(), &label, &target, &url, name) }
+  #[cfg(not(target_os = "windows"))]
+  { let _ = name; ext_pane(&app, &mut opened.0.lock().unwrap(), label, target, url, x, y, w, h) }
+}
+/// Mac : volet posé sur la zone de contenu de la page Ludy, dans la même fenêtre
+#[cfg(not(target_os = "windows"))]
+#[allow(clippy::too_many_arguments)]
+fn ext_pane<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap<String, String>, label: String, target: url::Url, url: String, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+  let app = app.clone();
   for v in app.webviews().values() { if v.label().starts_with("ext-") && v.label() != label { let _ = v.hide(); } }
   let (pos, size) = (LogicalPosition::new(x.max(0.0), y.max(0.0)), LogicalSize::new(w.max(100.0), h.max(100.0)));
-  let mut op = opened.0.lock().unwrap();
   if let Some(v) = app.get_webview(&label) {
     v.set_position(pos).map_err(|e| e.to_string())?;
     v.set_size(size).map_err(|e| e.to_string())?;
     if op.get(&label).map(|u| u != &url).unwrap_or(true) { let _ = v.navigate(with_login(&app, &target)); op.insert(label.clone(), url); }
     v.show().map_err(|e| e.to_string())?;
-    #[cfg(not(target_os = "windows"))]
-    let _ = v.set_focus();   // pas sous Windows : molette bloquée après un focus donné par programme (voir ext_hide)
+    let _ = v.set_focus();
     return Ok(());
   }
   let win = app.get_window("main").ok_or("fenêtre absente")?;
@@ -174,21 +197,42 @@ fn ext_show<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: Str
     .on_navigation({ let h = app.clone(); move |u| { if matches!(u.scheme(), "mailto" | "tel" | "whatsapp") { let _ = open_out(&h, u); false } else { true } } });
   let v = win.add_child(with_downloads(b, &app, false), pos, size).map_err(|e| e.to_string())?;
   op.insert(label, url);
-  #[cfg(not(target_os = "windows"))]
   let _ = v.set_focus();
-  #[cfg(target_os = "windows")]
-  let _ = &v;
   Ok(())
 }
 
-/// Masque les volets externes (leurs pages restent chargées : retour instantané)
+/// Volet externe dans sa propre fenêtre (Windows) : créée au premier affichage (agrandie), ensuite ramenée au premier plan ;
+/// rouverte à sa nouvelle adresse si elle a changé dans les Réglages ; jamais fermée en changeant de page dans Ludy
+#[cfg(target_os = "windows")]
+fn ext_window<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap<String, String>, label: &str, target: &url::Url, url: &str, name: Option<String>) -> Result<(), String> {
+  if let Some(w) = app.get_webview_window(label) {
+    if op.get(label).map(|u| u != url).unwrap_or(true) { let _ = w.navigate(with_login(app, target)); op.insert(label.to_string(), url.to_string()); }
+    let _ = w.unminimize(); let _ = w.show(); let _ = w.set_focus();
+    return Ok(());
+  }
+  let (h2, l2, home) = (app.clone(), label.to_string(), target.clone());
+  let title = format!("Ludy · {}", name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| target.host_str().unwrap_or("").to_string()));
+  WebviewWindowBuilder::new(app, label, WebviewUrl::External(with_login(app, target)))
+    .title(title).inner_size(1280.0, 800.0).min_inner_size(700.0, 500.0).maximized(true)
+    .on_new_window(move |u, _f| {
+      if same_site(&u, &home) { if let Some(v) = h2.get_webview(&l2) { let _ = v.navigate(u); } }
+      else { let _ = open_out(&h2, &u); }
+      NewWindowResponse::Deny
+    })
+    .on_navigation({ let h = app.clone(); move |u| { if matches!(u.scheme(), "mailto" | "tel" | "whatsapp") { let _ = open_out(&h, u); false } else { true } } })
+    .on_download(downloads(app, false))
+    .build().map_err(|e| e.to_string())?;
+  op.insert(label.to_string(), url.to_string());
+  Ok(())
+}
+
+/// Masque les volets externes (leurs pages restent chargées : retour instantané) ; Windows : fenêtres propres, laissées ouvertes
 #[tauri::command]
 fn ext_hide<R: Runtime>(app: AppHandle<R>) {
+  if EXT_WINDOWS { let _ = app; return; }   // Windows : fenêtres propres, rien à masquer (et jamais de focus donné par programme :
+  // WebView2 ne fait plus défiler la page à la molette après, MicrosoftEdge/WebView2Feedback#829)
   for v in app.webviews().values() { if v.label().starts_with("ext-") { let _ = v.hide(); } }
-  // clavier rendu à Ludy (Mac) ; pas sous Windows : après un focus donné par programme, WebView2 ne fait plus défiler la page à la
-  // molette tant qu'on n'a pas cliqué dedans (MicrosoftEdge/WebView2Feedback#829)
-  #[cfg(not(target_os = "windows"))]
-  if let Some(v) = app.get_webview("ludy") { let _ = v.set_focus(); }
+  if let Some(v) = app.get_webview("ludy") { let _ = v.set_focus(); }   // clavier rendu à Ludy
 }
 
 /// Recharge le volet à son adresse de départ (avec l'accès réservé enregistré)
@@ -234,35 +278,51 @@ fn main() {
       // seul le site Ludy peut afficher / masquer les volets externes et enregistrer leurs accès réservés
       app.add_capability(CapabilityBuilder::new("ludy-site").webview("ludy").remote(format!("{origin}/*"))
         .permission("allow-ext-show").permission("allow-ext-hide").permission("allow-ext-reload").permission("allow-ext-status").permission("allow-ext-login").permission("allow-open-external"))?;
+      let init = include_str!("init.js").replace("__VERSION__", env!("CARGO_PKG_VERSION")).replace("__UBER__", UBER).replace("__EXTWIN__", if EXT_WINDOWS { "true" } else { "false" });
+      let (site, site2) = (origin.clone(), origin.clone());
+      // liens « nouvel onglet » : le site dans sa vue, le reste (cartes…) dans le navigateur
+      let h1 = app.handle().clone();
+      let new_window = move |url: url::Url, _f| {
+        if url.origin().ascii_serialization() == site { if let Some(v) = h1.get_webview("ludy") { let _ = v.navigate(url); } }
+        else { let _ = open_out(&h1, &url); }
+        NewWindowResponse::Deny
+      };
+      // e-mail, téléphone, WhatsApp dans la page : ouverts par le système (la vue web ne les ouvre pas) ; la vue Ludy ne montre que
+      // le site Ludy (une page externe, sans barre d'adresse, pourrait imiter l'écran de connexion) : le reste va au navigateur
+      let h3 = app.handle().clone();
+      let navigation = move |url: &url::Url| {
+        if matches!(url.scheme(), "mailto" | "tel" | "whatsapp") { let _ = open_out(&h3, url); return false; }
+        if matches!(url.scheme(), "blob" | "data" | "about") || url.origin().ascii_serialization() == site2 { return true; }
+        let _ = open_out(&h3, url); false
+      };
+      // Windows : fenêtre normale avec une seule vue (pas de vue superposée), ouverte agrandie (1440 × 900 dépasse l'écran à 150 %)
+      #[cfg(target_os = "windows")]
+      {
+        WebviewWindowBuilder::new(app, "ludy", WebviewUrl::External(home.parse().unwrap()))
+          .title(TITLE).inner_size(1280.0, 800.0).min_inner_size(900.0, 600.0).maximized(true)
+          .initialization_script(&init)
+          .on_new_window(new_window).on_navigation(navigation).on_download(downloads(app.handle(), true))
+          .build()?;
+        return Ok(());
+      }
+      #[cfg(not(target_os = "windows"))]
       let win = WindowBuilder::new(app, "main")
-        .title("Ludy · Supervision de flotte")
+        .title(TITLE)
         .inner_size(1440.0, 900.0)
         .min_inner_size(900.0, 600.0)
         .center()
         .build()?;
-      let init = include_str!("init.js").replace("__VERSION__", env!("CARGO_PKG_VERSION")).replace("__UBER__", UBER);
-      let h1 = app.handle().clone();
-      let h3 = app.handle().clone();
-      let (site, site2) = (origin.clone(), origin.clone());
-      let b = WebviewBuilder::new("ludy", WebviewUrl::External(home.parse().unwrap()))
-        .initialization_script(&init)
-        .auto_resize()
-        // liens « nouvel onglet » : le site dans sa vue, le reste (cartes…) dans le navigateur
-        .on_new_window(move |url, _f| {
-          if url.origin().ascii_serialization() == site { if let Some(v) = h1.get_webview("ludy") { let _ = v.navigate(url); } }
-          else { let _ = open_out(&h1, &url); }
-          NewWindowResponse::Deny
-        })
-        // e-mail, téléphone, WhatsApp dans la page : ouverts par le système (la vue web ne les ouvre pas) ; la vue Ludy ne montre que
-        // le site Ludy (une page externe, sans barre d'adresse, pourrait imiter l'écran de connexion) : le reste va au navigateur
-        .on_navigation(move |url| {
-          if matches!(url.scheme(), "mailto" | "tel" | "whatsapp") { let _ = open_out(&h3, url); return false; }
-          if matches!(url.scheme(), "blob" | "data" | "about") || url.origin().ascii_serialization() == site2 { return true; }
-          let _ = open_out(&h3, url); false
-        });
-      let size = win.inner_size()?.to_logical::<f64>(win.scale_factor()?);
-      win.add_child(with_downloads(b, app.handle(), true), LogicalPosition::new(0.0, 0.0), size)?;
-      Ok(())
+      #[cfg(not(target_os = "windows"))]
+      {
+        let b = WebviewBuilder::new("ludy", WebviewUrl::External(home.parse().unwrap()))
+          .initialization_script(&init)
+          .auto_resize()
+          .on_new_window(new_window)
+          .on_navigation(navigation);
+        let size = win.inner_size()?.to_logical::<f64>(win.scale_factor()?);
+        win.add_child(with_downloads(b, app.handle(), true), LogicalPosition::new(0.0, 0.0), size)?;
+        Ok(())
+      }
     })
     .run(tauri::generate_context!())
     .expect("Ludy n'a pas pu démarrer");
