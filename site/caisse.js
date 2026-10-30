@@ -4,7 +4,7 @@
 
 const CS = { moves: [], all: [], pay: [], bolt: [], boltPay: [], drivers: [], udrv: [], uuid2code: {}, names: {}, ctrByDrv: {}, err: '' };
 const CSH_TABS = [['bord', 'Tableau de bord'], ['shift', 'Encaissement du shift'], ['depenses', 'Dépenses'], ['rh', 'Avances RH'], ['courses', 'Courses privées'],
-  ['bonus', 'Bonus'], ['rappro', 'Rapprochement Uber'], ['rapbolt', 'Rapprochement Bolt'], ['paie', 'Paie'], ['ca', 'Chiffre d\'affaires'], ['journal', 'Journal'], ['import', 'Imports']];
+  ['bonus', 'Bonus'], ['rappro', 'Rapprochement Uber'], ['rapbolt', 'Rapprochement Bolt'], ['paie', 'Paie'], ['ca', 'Chiffre d\'affaires'], ['rapports', 'Rapports'], ['depot', 'Dépôt en banque'], ['journal', 'Journal'], ['import', 'Imports']];
 const CSH_KIND = { encaissement: 'Encaissement', depense: 'Dépense', avance: 'Avance', remboursement: 'Remboursement d\'avance', course: 'Course privée', bonus: 'Bonus',
   recharge: 'Recharge de caisse', depot: 'Dépôt en banque', autre: 'Autre' };
 const CSH_FLOW_TXT = { in: 'Entrée de cash', out: 'Sortie de cash', virement: 'Virement' };
@@ -71,7 +71,7 @@ async function cshLoad(from, to) {
     all('drivers', 'code,name,phone,email,uber_uuid,agency_id', null, ['name']),
     all('uber_drivers', 'uuid,name,phone,email,status', A, ['name']),
     all('cash_moves', '*', q => A(q).gte('day', from).lte('day', to), ['day']),
-    all('cash_moves', 'id,caisse,flow,amount,cancelled_at', A),
+    all('cash_moves', 'id,caisse,kind,flow,amount,day,comment,cancelled_at', A),
     all('uber_payments', 'tx,at,driver_uuid,driver_name,cash,revenue', q => A(q).gte('at', dayBounds(lo).start.toISOString()).lt('at', dayBounds(hi).end.toISOString()), ['at']),
     keys && !keys.length ? Promise.resolve([]) : all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => { q = q.lt('start_at', dayBounds(hi).end.toISOString()).gte('start_at', dayBounds(addDays(lo, -7)).start.toISOString()); return keys ? q.in('vehicle_key', keys) : q; }, ['start_at']),
     A(sb.from('uber_payments').select('at')).order('at', { ascending: false }).limit(1)]);
@@ -106,7 +106,7 @@ async function pageCaisse() {
   CS.agId = ag.id; CS.agName = ag.name || '';
   $('#page').innerHTML = head + agSel + '<div class="loading">Chargement de la caisse…</div>'; bindAg();
   const sh = cshShiftSel();
-  try { if (t === 'shift') await cshLoad(sh.day, addDays(sh.day, 1)); else await cshLoad(p.from, p.to); }
+  try { if (t === 'shift') await cshLoad(sh.day, addDays(sh.day, 1)); else if (t === 'rapports') await cshLoad(cshPrev(p.from, p.to).from, p.to); else await cshLoad(p.from, p.to); }   // rapports : période précédente comprise (comparaison)
   catch (e) {
     if (my !== ROUTING) return;
     $('#page').innerHTML = head + agSel + msg(/agency_id/i.test(e.message) ? 'Caisse par agence pas encore installée : exécuter <b>supabase/migrations/20261105000000_chauffeurs_auto.sql</b> dans Supabase &gt; SQL Editor. (' + esc(e.message) + ')'
@@ -115,15 +115,17 @@ async function pageCaisse() {
     return;
   }
   if (my !== ROUTING) return;
-  const tabs = `<div class="tabs">${CSH_TABS.map(x => `<a href="${cshHref(x[0])}" class="${t === x[0] ? 'on' : ''}">${x[1]}</a>`).join('')}</div>`;
-  const bar = t === 'shift' || t === 'import' ? '' : `<div class="bar"><label>Du <input type="date" id="cshdu" value="${p.from}"></label><label>Au <input type="date" id="cshau" value="${p.to}"></label>
+  const tabs = `<div class="tabs">${CSH_TABS.map(x => `<a href="${cshHref(x[0])}" class="${t === x[0] ? 'on' : ''}">${x[1]}</a>`).join('')}<span id="cshsl" class="small"></span></div>`;
+  const bar = t === 'shift' || t === 'import' || t === 'depot' ? '' : `<div class="bar"><label>Du <input type="date" id="cshdu" value="${p.from}"></label><label>Au <input type="date" id="cshau" value="${p.to}"></label>
     <span class="small">${[['Aujourd\'hui', 0, 0], ['7 jours', 6, 0], ['30 jours', 29, 0]].map(x => `<a href="${cshHref(t, { du: addDays(today(), -x[1]), au: today() })}">${x[0]}</a>`).join(' · ')}</span></div>`;
   $('#page').innerHTML = head + agSel + tabs + bar + '<div id="cshbody"></div>' + `<datalist id="cshdrv">${[...new Set(CS.drivers.filter(d => !CS.agId || !d.agency_id || String(d.agency_id) === String(CS.agId)).map(d => d.name).concat(CS.udrv.filter(u => !CS.uuid2code[u.uuid]).map(u => u.name)).filter(Boolean))].sort().map(n => `<option value="${esc(n)}"></option>`).join('')}</datalist>`;
   const go = () => { location.hash = cshHref(t, { du: $('#cshdu').value, au: $('#cshau').value }); };
   if ($('#cshdu')) { $('#cshdu').onchange = go; $('#cshau').onchange = go; }
   bindAg();
-  const tab = ({ bord: cshTabBord, shift: cshTabShift, depenses: cshTabDep, rh: cshTabRh, courses: cshTabCourses, bonus: cshTabBonus, rappro: cshTabRappro, rapbolt: cshTabRapBolt, paie: cshTabPaie, ca: cshTabCA, journal: cshTabJournal, import: cshTabImport })[t];
+  const tab = ({ bord: cshTabBord, shift: cshTabShift, depenses: cshTabDep, rh: cshTabRh, courses: cshTabCourses, bonus: cshTabBonus, rappro: cshTabRappro, rapbolt: cshTabRapBolt, paie: cshTabPaie, ca: cshTabCA, rapports: cshTabRapports, depot: cshTabDepot, journal: cshTabJournal, import: cshTabImport })[t];
   tab(p);
+  // classeur Google de l'agence (un par agence, créé par le collecteur) : lien à côté des onglets
+  cshSheetLink().then(id => { const x = $('#cshsl'); if (x && id && my === ROUTING) x.innerHTML = `<a href="${cshSheetUrl(id)}" target="_blank" rel="noopener">Classeur Google de l'agence ↗</a>`; }).catch(() => { });
   window.__rerender = () => pageCaisse();
   window.__repage = () => tab(p);   // page ou tri d'une liste : onglet redessiné avec les mouvements déjà lus (sans relire la base)
 }
@@ -559,8 +561,9 @@ function cshTabImport() {
       <input type="file" id="cshfd" accept=".csv,.xlsx,.xls"><div id="cshfdr"></div></div></div>
     ${isAdmin() ? `<div class="panel"><h3>3. Historique du classeur « Suivi Cash Chauffeurs »</h3><p class="small">Google Sheets &gt; Fichier &gt; Télécharger &gt; Microsoft Excel (.xlsx), puis choisir le fichier : onglets Caisse (encaissements, dépenses, avance RH, courses indep, bonus), exports Uber. Réimporter le même classeur n'ajoute pas de doublon. Administrateur seulement.</p>
       <input type="file" id="cshfh" accept=".xlsx"><div id="cshfhr"></div></div>` : ''}
-    ${isAdmin() && CS.agId ? `<div class="panel"><h3>4. Classeur de sauvegarde${CS.agName ? ' · ' + esc(CS.agName) : ''}</h3><p class="small">Chaque saisie de la caisse de cette agence est recopiée dans ce classeur Google Sheets (onglets « … Ludy ») toutes les 5 minutes. Coller le lien du classeur (vide = pas de copie).</p>${S.P.cashSheetStatus ? `<p class="small">Dernier passage du collecteur : <b>${esc(S.P.cashSheetStatus)}</b></p>` : ''}
-      <div class="mfrow"><input id="cshsheet" size="60" placeholder="https://docs.google.com/spreadsheets/d/…"><button class="small" id="cshsheetok">Enregistrer</button></div><div id="cshsheetr"></div></div>` : ''}
+    ${isAdmin() && CS.agId ? `<div class="panel"><h3>4. Classeur de sauvegarde${CS.agName ? ' · ' + esc(CS.agName) : ''}</h3><p class="small">Chaque agence a son classeur Google Sheets : créé automatiquement par le collecteur pour toute nouvelle agence (copie vierge du classeur modèle, mêmes onglets et formules), puis chaque saisie de la caisse de l'agence y est recopiée toutes les 5 minutes (onglets « … Ludy »). Le lien peut être remplacé ici (vide = pas de copie).</p>${S.P.cashSheetStatus ? `<p class="small">Dernier passage du collecteur : <b>${esc(S.P.cashSheetStatus)}</b></p>` : ''}
+      <div class="mfrow"><input id="cshsheet" size="60" placeholder="https://docs.google.com/spreadsheets/d/…"><button class="small" id="cshsheetok">Enregistrer</button><a class="small" id="cshsheetgo" target="_blank" rel="noopener" hidden>Ouvrir ↗</a>
+        <button class="ghost small" id="cshsheetnew">Créer un nouveau classeur vierge</button></div><div id="cshsheetr"></div></div>` : ''}
     <h3>Chauffeurs Uber non reliés à un chauffeur Ludy (${unmapped.length})</h3>
     ${table('tcshmap', [['Chauffeur Uber', u => esc(u.name || '')], ['Téléphone', u => esc(u.phone || '')], ['Statut Uber', u => esc(u.status || '')],
       ['Chauffeur Ludy', u => { const s = sugg(u); return `<select data-cshmap="${esc(u.uuid)}"><option value="">—</option>${CS.drivers.filter(d => !d.uber_uuid).map(d => `<option value="${esc(d.code)}" ${s && s.code === d.code ? 'selected' : ''}>${esc(d.name || d.code)}</option>`).join('')}</select>${s ? ' <span class="small">proposé</span>' : ''}`; }],
@@ -570,10 +573,15 @@ function cshTabImport() {
   if (CS.flash) { const x = $('#' + CS.flash.id); if (x) x.innerHTML = CS.flash.html; CS.flash = null; }
   const shIn = $('#cshsheet');
   if (shIn) {
-    sb.from('agencies').select('cash_sheet_id').eq('id', CS.agId).single().then(r => { if (r.data && r.data.cash_sheet_id) shIn.value = 'https://docs.google.com/spreadsheets/d/' + r.data.cash_sheet_id; });
+    sb.from('agencies').select('cash_sheet_id').eq('id', CS.agId).single().then(r => { if (r.data && r.data.cash_sheet_id) { shIn.value = 'https://docs.google.com/spreadsheets/d/' + r.data.cash_sheet_id; const g = $('#cshsheetgo'); if (g) { g.href = cshSheetUrl(r.data.cash_sheet_id); g.hidden = false; } } });
+    $('#cshsheetnew').onclick = async () => {
+      if (!(await ask('Créer un nouveau classeur vierge pour ' + (CS.agName || 'cette agence') + ' ? La caisse y sera recopiée à la place du classeur actuel (qui reste dans le Drive).'))) return;
+      try { await job('cash_sheet_new', String(CS.agId)); CS.sheetFor = null; $('#cshsheetr').innerHTML = msg('Demande envoyée : le collecteur crée le classeur au prochain passage (5 min), puis y recopie la caisse. Résultat dans Réglages &gt; demandes.', 'ok'); }
+      catch (e) { $('#cshsheetr').innerHTML = msg(esc(e.message), 'err'); } };
     $('#cshsheetok').onclick = async () => { const v = shIn.value.trim(), m = v.match(/\/d\/([\w-]{20,})/) || v.match(/^([\w-]{20,})$/);
       if (v && !m) { $('#cshsheetr').innerHTML = msg('Lien de classeur Google Sheets non reconnu.', 'err'); return; }
       const r = await sb.from('agencies').update({ cash_sheet_id: m ? m[1] : null }).eq('id', CS.agId);
+      CS.sheetFor = null;
       $('#cshsheetr').innerHTML = r.error ? msg(esc(r.error.message), 'err') : msg(m ? 'Classeur enregistré : la caisse de l\'agence y sera recopiée au prochain passage du collecteur (5 min).' : 'Copie arrêtée pour cette agence.', 'ok'); };
   }
   const read = async (f, out) => { out.innerHTML = msg('Lecture du fichier…'); return cshReadBook(new Uint8Array(await f.arrayBuffer()), f.name); };

@@ -113,8 +113,18 @@ function newFolder(n, id) {
     getFiles: () => { const l = files.filter(x => !x.trashed); let k = 0; return { hasNext: () => k < l.length, next: () => l[k++] }; } };
   folders.push(f); return f;
 }
+// classeur dans le faux Drive : dossier parent, copie (makeCopy : onglets, données, tailles, langue copiés), comme DriveApp
+function driveBook(b, n) {
+  return { id: b.id, name: n, book: b, getId: () => b.id, getName() { return this.name; },
+    moveTo(f) { this.folder = f; f.files.push(this); return this; },
+    getParents() { const l = this.folder ? [this.folder] : []; let k = 0; return { hasNext: () => k < l.length, next: () => l[k++] }; },
+    makeCopy(name, folder) {
+      const c = new SS(); c.id = 'COPY' + Object.keys(books).length; c.name = name; c.locale = b.locale; c.getId = () => c.id; c.getUrl = () => 'https://copy/' + c.id;
+      b.sheets.forEach(sh => { const t = c.insertSheet(sh.name); t.data = JSON.parse(JSON.stringify(sh.data)); t.maxR = sh.maxR; t.maxC = sh.maxC; });
+      books[c.id] = c; const x = driveBook(c, name); driveFiles[c.id] = x; if (folder) x.moveTo(folder); return x; } };
+}
 const ctx = vm.createContext({ console, Utilities, Date: FakeDate, Math, JSON,
-  SpreadsheetApp: { getActive: () => main, openById: id => (id && books[id]) || parc, create: n => { const b = new SS(); b.name = n; b.id = 'ARCH' + Object.keys(books).length; b.getId = () => b.id; b.getUrl = () => 'https://archive/' + b.id; books[b.id] = b; driveFiles[b.id] = { id: b.id, name: n, book: b, getId: () => b.id, moveTo(f) { this.folder = f; f.files.push(this); return this; } }; return b; }, getUi: () => { throw new Error('no ui'); }, newConditionalFormatRule: () => chain(), newDataValidation: () => chain(), DataValidationCriteria: { VALUE_IN_LIST: 'VALUE_IN_LIST', VALUE_IN_RANGE: 'VALUE_IN_RANGE', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE' }, InterpolationType: { PERCENTILE: 'P' }, BorderStyle: { SOLID: 1, SOLID_THICK: 2 } },
+  SpreadsheetApp: { getActive: () => main, openById: id => (id && books[id]) || parc, create: n => { const b = new SS(); b.name = n; b.id = 'ARCH' + Object.keys(books).length; b.getId = () => b.id; b.getUrl = () => 'https://archive/' + b.id; books[b.id] = b; driveFiles[b.id] = driveBook(b, n); return b; }, getUi: () => { throw new Error('no ui'); }, newConditionalFormatRule: () => chain(), newDataValidation: () => chain(), DataValidationCriteria: { VALUE_IN_LIST: 'VALUE_IN_LIST', VALUE_IN_RANGE: 'VALUE_IN_RANGE', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE' }, InterpolationType: { PERCENTILE: 'P' }, BorderStyle: { SOLID: 1, SOLID_THICK: 2 } },
   PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => { props[k] = String(v); }, deleteProperty: k => { delete props[k]; }, getProperties: () => Object.assign({}, props), setProperties: o => { Object.keys(o).forEach(k => { props[k] = String(o[k]); }); } }) },
   LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() { } }) },
   ScriptApp: { getScriptId: () => 'SCRIPT_ID', getOAuthToken: () => 'tok', getProjectTriggers: () => triggers.slice(), deleteTrigger: t => { triggers.splice(triggers.indexOf(t), 1); }, newTrigger: fn => chain({ create: () => { const t = { getHandlerFunction: () => fn }; triggers.push(t); return t; } }) },

@@ -191,13 +191,70 @@ function cshLoosen_(sh, rg) {
  * Un classeur de sauvegarde par agence (agencies.cash_sheet_id) : chaque agence a sa propre caisse. Sans classeur d'agence,
  * param cashSheetId = classeur de toute la caisse (installation sans agences).
  */
+// ---------- Classeur de chaque agence (30/10/2026, demande d'Ahmed : un classeur par agence, même tableau vierge) ----------
+// Agence sans classeur : copie du modèle (param cashSheetTemplate, sinon le classeur de la première agence qui en a un, sinon cashSheetId),
+// rangée dans le même dossier Drive, nommée « Suivi Cash Chauffeurs - <agence> - Ludy » ; lignes de données vidées (onglets Caisse, exports
+// Uber et Bolt, liste des gestionnaires) ; onglets de calcul (tableaux de bord, rapprochement, consolidation, chiffre d'affaires) gardés :
+// leurs formules lisent les onglets de données. Une seule création par agence (propriété CSH_NEW|<agence>) : un lien retiré à la main
+// n'est pas recréé ; « Créer un nouveau classeur vierge » (Caisse > Imports, administrateur) = demande cash_sheet_new.
+const CSH_MGR_TAB_ = 'Base gestionnaire/Chauffeur Ludy';
+function cshBlankTabs_() {
+  return Object.keys(CSH_SHEET_).map(c => [CSH_SHEET_[c].tab, CSH_SHEET_[c].first]).concat([[CSH_DRV_TAB_, 2], [CSH_PAY_TAB_, 6], [CSH_BOLT_ENC_, 2], [CSH_BOLT_SES_, 2], [CSH_MGR_TAB_, 2]]);
+}
+function cshTemplateId_(P, ags) {
+  return String(P.cashSheetTemplate || '').trim() || String((ags.find(a => String(a.cash_sheet_id || '').trim()) || {}).cash_sheet_id || '').trim() || String(P.cashSheetId || '').trim();
+}
+/** Copie vierge du modèle pour l'agence ; identifiant du nouveau classeur */
+function cshNewSheet_(tpl, name) {
+  const f = DriveApp.getFileById(tpl), par = f.getParents(), folder = par.hasNext() ? par.next() : null;
+  const title = 'Suivi Cash Chauffeurs - ' + String(name || 'Agence').trim() + ' - Ludy';
+  const c = folder ? f.makeCopy(title, folder) : f.makeCopy(title), ss = SpreadsheetApp.openById(c.getId());
+  cshBlankTabs_().forEach(([tab, first]) => {
+    const sh = ss.getSheetByName(tab); if (!sh) return;
+    const n = sh.getMaxRows() - first + 1; if (n > 0) sh.getRange(first, 1, n, sh.getMaxColumns()).clearContent();
+  });
+  return c.getId();
+}
+function cshCreateFor_(a, tpl, props) {
+  const id = cshNewSheet_(tpl, a.name);
+  sbReq_('patch', 'agencies?id=eq.' + a.id, { cash_sheet_id: id }, { Prefer: 'return=minimal' });
+  props.setProperty('CSH_NEW|' + a.id, id); props.setProperty('CSH|' + id + '|auto', '1');
+  a.cash_sheet_id = id;
+  log_('Caisse', 'Classeur de sauvegarde créé pour l\'agence ' + a.name + ' : https://docs.google.com/spreadsheets/d/' + id);
+  return id;
+}
+/** Agences sans classeur (jamais créé) : un classeur vierge, une agence par passage */
+function cshAutoSheets_(t0, P, ags) {
+  const props = PropertiesService.getScriptProperties(), tpl = cshTemplateId_(P, ags);
+  if (!tpl || Date.now() - t0 > 120000) return '';
+  const a = ags.find(x => !String(x.cash_sheet_id || '').trim() && props.getProperty('CSH_NEW|' + x.id) === null);
+  if (!a) return '';
+  try { cshCreateFor_(a, tpl, props); return 'classeur créé pour ' + a.name; }
+  catch (e) { props.setProperty('CSH_NEW|' + a.id, 'erreur'); return 'classeur de ' + a.name + ' non créé : ' + e.message; }   // pas de nouvel essai à chaque passage
+}
+/** Demande du site (administrateur) : nouveau classeur vierge pour une agence (arg = id de l'agence) */
+function jobCashSheetNew_(args, createdBy) {
+  const adm = createdBy ? dbSelect_('profiles', 'select=user_id&role=eq.admin&user_id=eq.' + createdBy, 'user_id') : [];
+  if (!adm.length) return 'Refusé : réservé à l\'administrateur';
+  const P = params_(), ags = dbSelect_('agencies', 'select=id,name,cash_sheet_id', 'id'), props = PropertiesService.getScriptProperties(), out = [];
+  [...new Set(args.map(String))].forEach(id => {
+    const a = ags.find(x => String(x.id) === id); if (!a) { out.push('agence ' + id + ' inconnue'); return; }
+    const tpl = cshTemplateId_(P, ags.filter(x => String(x.id) !== id)) || String(a.cash_sheet_id || '').trim();
+    if (!tpl) { out.push(a.name + ' : aucun classeur modèle'); return; }
+    try { const nid = cshCreateFor_(a, tpl, props); out.push(a.name + ' : https://docs.google.com/spreadsheets/d/' + nid); } catch (e) { out.push(a.name + ' : ' + e.message); }
+  });
+  return 'Classeur de la caisse : ' + out.join(' ; ');
+}
+
 function cashSheetStep_(t0) {
   const P = params_();
   let moves;
   try { moves = dbSelect_('cash_moves', 'select=*&cancelled_at=is.null', 'day,id'); }
   catch (e) { if (/cash_moves|404|does not exist|schema cache/i.test(e.message)) return ''; throw e; }   // caisse pas encore installée dans la base
-  let ags = [];
-  try { ags = dbSelect_('agencies', 'select=id,name,cash_sheet_id&cash_sheet_id=not.is.null', 'id'); } catch (e) { ags = []; }   // colonne pas encore créée
+  let ags = [], made = '';
+  try { ags = dbSelect_('agencies', 'select=id,name,cash_sheet_id', 'id'); } catch (e) { ags = []; }   // colonne pas encore créée
+  try { made = cshAutoSheets_(t0, P, ags); } catch (e) { made = 'création du classeur : ' + e.message; }
+  ags = ags.filter(a => String(a.cash_sheet_id || '').trim());
   let targets = ags.filter(a => String(a.cash_sheet_id || '').trim()).map(a => ({ ag: a.id, name: a.name, sheet: String(a.cash_sheet_id).trim() }));
   if (!targets.length && String(P.cashSheetId || '').trim()) targets = [{ ag: null, name: '', sheet: String(P.cashSheetId).trim() }];
   if (!targets.length) return '';
@@ -213,6 +270,7 @@ function cashSheetStep_(t0) {
     try { const m = cashSheetOne_(t0, T, P, moves, drv, udrv, crsDay, bolt); if (m) out.push((targets.length > 1 || T.name ? T.name + ' : ' : '') + m); }
     catch (e) { out.push((T.name ? T.name + ' : ' : '') + e.message); }
   });
+  if (made) out.unshift(made);
   return out.length ? 'Classeur de la caisse : ' + out.join(' ; ') : '';
 }
 /** État d'écriture d'un classeur (clé par classeur ; reprend l'état de la version sans agences pour le même classeur) */
@@ -279,6 +337,15 @@ function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay, bolt0) {
       props.setProperty(st.key, h + '|' + rows.length);
       if (h !== prev[0]) out.push(label);
     });
+  }
+  // classeur créé par Ludy : liste des gestionnaires (listes déroulantes du classeur) = gestionnaires des saisies de l'agence
+  if (props.getProperty('CSH|' + T.sheet + '|auto')) {
+    const msh = ss.getSheetByName(CSH_MGR_TAB_);
+    if (msh) {
+      const rows = [...new Set(moves.map(m => String(m.manager_name || '').trim()).filter(Boolean))].sort().map(n => [cshTxt_(n)]);
+      const st = cshProp_(props, T.sheet, 'mgr', P), prev = (st.v || '|0').split('|'), h = cshHashStr_(CSH_FMT_ + JSON.stringify(rows));
+      if (h !== prev[0] || props.getProperty(st.key) === null) { cshWrite_(msh, 2, rows, 1, +prev[1] || 0); props.setProperty(st.key, h + '|' + rows.length); }
+    }
   }
   if (daily) props.setProperty(dayP.key, today);
   return out.join(', ');

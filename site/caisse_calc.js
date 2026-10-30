@@ -404,5 +404,77 @@ function cshParseHistory(sheets, ctx) {
   return res;
 }
 
+// ---------- Rapports de la caisse (30/10/2026) : périodes, synthèse, courbes, dépôt en banque ----------
+function cshAddDay(d, n) { return new Date(Date.parse(d.slice(0, 10) + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10); }
+function cshNDays(from, to) { return Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000) + 1; }
+/** Périodes proposées : semaine précédente et semaine en cours (lundi → dimanche), mois précédent, mois en cours */
+function cshPresets(d) {
+  const mon = cshWeek(d), m1 = d.slice(0, 8) + '01', pm = new Date(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 2, 1)).toISOString().slice(0, 10);
+  return [{ id: 'sp', label: 'Semaine précédente', from: cshAddDay(mon, -7), to: cshAddDay(mon, -1) }, { id: 'sc', label: 'Semaine en cours', from: mon, to: d },
+    { id: 'mp', label: 'Mois précédent', from: pm, to: cshAddDay(m1, -1) }, { id: 'mc', label: 'Mois en cours', from: m1, to: d }];
+}
+/** Période précédente de même durée, juste avant */
+function cshPrev(from, to) { const n = cshNDays(from, to); return { from: cshAddDay(from, -n), to: cshAddDay(from, -1) }; }
+/** Évolution (cur − prev) / prev ; null sans base de comparaison */
+function cshPct(cur, prev) { return prev ? (cur - prev) / Math.abs(prev) : null; }
+/**
+ * Synthèse d'une période : espèces déclarées par Uber / Bolt et encaissées, chiffre d'affaires (Uber « Vos revenus », Bolt « Total des
+ * paiements », courses privées = montant de la course), dépenses, avances, bonus, dépôts, manquants / excédents (chauffeurs reliés),
+ * taux de remise des espèces (encaissé / à remettre), chauffeurs actifs (chiffre d'affaires > 0). o = contexte des calculs de la caisse.
+ */
+function cshSummary(o) {
+  const daily = cshDaily(o), rap = cshRappro(o), rapB = o.bolt ? cshRappro(Object.assign({}, o, { payments: o.bolt, dayOfPayment: o.dayOfBolt, pf: CSH_PF.bolt })) : [];
+  const S = k => cshR(daily.reduce((s, d) => s + d[k], 0)), linked = rap.concat(rapB).filter(r => !r.unlinked), L = f => cshR(linked.reduce((s, r) => s + f(r), 0));
+  const live = (o.moves || []).filter(m => cshLive(m) && m.day >= o.from && m.day <= o.to);
+  const ca = cshCA(o), cb = o.bolt ? cshCA(Object.assign({}, o, { payments: o.bolt, dayOfPayment: o.dayOfBolt })) : { rows: [], sum: 0 };
+  const act = new Set(ca.rows.filter(r => r.total > 0).map(r => r.key).concat(cb.rows.filter(r => r.total > 0).map(r => r.key)));
+  const r = { daily, rap, rapB, caUber: ca, caBolt: cb, uber: S('uber'), uberNet: S('net'), bolt: S('bolt'), boltNet: S('boltNet'), courses: S('courses'),
+    coursesCA: cshR(live.filter(m => m.kind === 'course').reduce((s, m) => s + cshN(m.course_amount), 0)), nCourses: live.filter(m => m.kind === 'course').length,
+    revenue: S('revenue'), boltRevenue: S('boltRevenue'), depenses: S('depenses'), avances: S('avances'), bonus: S('bonus'), depots: S('depots'),
+    manquant: L(x => Math.max(0, x.ecart)), excedent: L(x => Math.max(0, -x.ecart)), theo: L(x => x.theo), netLinked: L(x => x.net), active: act.size,
+    nEnc: live.filter(m => m.kind === 'encaissement').length };
+  r.ca = cshR(r.revenue + r.boltRevenue + r.coursesCA);
+  r.cash = cshR(r.uberNet + r.boltNet + r.courses);
+  r.declared = cshR(r.uber + r.bolt);
+  r.taux = r.theo > 0 ? r.netLinked / r.theo : null;
+  r.caPerDriver = r.active ? cshR((r.revenue + r.boltRevenue) / r.active) : null;
+  return r;
+}
+/** Points des courbes : chaque jour de la période (jours sans activité compris), ou chaque semaine (lundi) au-delà de 45 jours */
+function cshBuckets(daily, from, to, by) {
+  by = by || (cshNDays(from, to) > 45 ? 'week' : 'day');
+  const keys = [], seen = {};
+  for (let d = from; d <= to; d = cshAddDay(d, 1)) { const k = by === 'week' ? cshWeek(d) : d; if (!seen[k]) { seen[k] = 1; keys.push(k); } }
+  const z = () => ({ uber: 0, net: 0, bolt: 0, boltNet: 0, courses: 0, revenue: 0, boltRevenue: 0, depenses: 0, depots: 0 }), by_ = {};
+  keys.forEach(k => { by_[k] = Object.assign({ key: k }, z()); });
+  (daily || []).forEach(d => { const k = by === 'week' ? cshWeek(d.day) : d.day, b = by_[k]; if (!b) return; Object.keys(z()).forEach(f => { b[f] = cshR(b[f] + (d[f] || 0)); }); });
+  return { by, list: keys.map(k => by_[k]) };
+}
+/** Coupures du billetage (dirhams) */
+const CSH_DENOMS = [[200, 'Billet'], [100, 'Billet'], [50, 'Billet'], [20, 'Billet'], [10, 'Pièce'], [5, 'Pièce'], [2, 'Pièce'], [1, 'Pièce'], [0.5, 'Pièce']];
+function cshBillTotal(counts) { return cshR(CSH_DENOMS.reduce((s, d, i) => s + d[0] * Math.max(0, Math.floor(cshN((counts || [])[i]))), 0)); }
+/** Montant en lettres : « mille deux cent trente-quatre dirhams et cinquante centimes » (words = ctrFrWords des contrats) */
+function cshMadWords(n, words) {
+  const w = words || (typeof ctrFrWords === 'function' ? ctrFrWords : null), a = Math.round(Math.abs(cshN(n)) * 100), d = Math.floor(a / 100), c = a % 100;
+  if (!w) return '';
+  return w(d) + ' dirham' + (d > 1 ? 's' : '') + (c ? ' et ' + w(c) + ' centime' + (c > 1 ? 's' : '') : '');
+}
+/**
+ * Dépôt en banque à la date day : solde de chaque caisse en fin de journée (mouvements non annulés jusqu'à ce jour),
+ * dernier dépôt avant ce jour, espèces entrées depuis ce dépôt jour par jour (encaissements Uber, Bolt, courses privées).
+ */
+function cshDepositInfo(moves, day) {
+  const live = (moves || []).filter(m => cshLive(m) && m.day && m.day <= day);
+  const bal = cshBalances(live), last = live.filter(m => m.kind === 'depot').reduce((x, m) => m.day > x ? m.day : x, '');
+  const by = {};
+  live.filter(m => m.flow === 'in' && (!last || m.day > last) && (m.kind === 'encaissement' || m.kind === 'course')).forEach(m => {
+    const r = by[m.day] = by[m.day] || { day: m.day, uber: 0, bolt: 0, courses: 0, total: 0 }, a = cshN(m.amount);
+    if (m.kind === 'course') r.courses = cshR(r.courses + a); else if (m.caisse === 'bolt') r.bolt = cshR(r.bolt + a); else r.uber = cshR(r.uber + a);
+    r.total = cshR(r.total + a);
+  });
+  return { balances: bal, lastDeposit: last || null, since: Object.values(by).sort((a, b) => a.day.localeCompare(b.day)) };
+}
+
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
-  cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory };
+  cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory,
+  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo };

@@ -1225,11 +1225,11 @@ function reportPdf(rep) {
   if (!window.jspdf) throw new Error('bibliothèque PDF non chargée, réessayez dans un instant');
   if (window.applyPlugin && !window.jspdf.jsPDF.API.autoTable) window.applyPlugin(window.jspdf.jsPDF);
   // signes absents de la police Helvetica du PDF (espaces fines des nombres, flèches, ≥ ≤)
-  const cl = v => String(v == null ? '' : v).replace(/[\u202f\u00a0]/g, ' ').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/\s*→\s*/g, ' – ');
+  const cl = v => String(v == null ? '' : v).replace(/[\u202f\u00a0]/g, ' ').replace(/−/g, '-').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/\s*→\s*/g, ' – ');
   const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }), W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 12, TOP = 22;
   const C = { ink: [20, 32, 43], mute: [93, 107, 120], line: [216, 222, 228], soft: [243, 245, 247], head: [15, 38, 51], acc: [91, 75, 214], zebra: [247, 248, 250],
     crit: [180, 35, 24], high: [180, 70, 26], warn: [154, 90, 0], ok: [24, 121, 74] };
-  const LEVEL = { Dangereux: 'crit', Critique: 'crit', 'Élevé': 'high', Haute: 'high', 'Modéré': 'warn', Moyenne: 'warn', Faible: 'ok' };
+  const LEVEL = { Dangereux: 'crit', Critique: 'crit', 'Élevé': 'high', Haute: 'high', 'Modéré': 'warn', Moyenne: 'warn', Faible: 'ok', Manquant: 'crit', 'Non remis': 'crit', 'Excédent': 'warn', 'Cadré': 'ok' };
   const col = (k, c) => doc['set' + k](c[0], c[1], c[2]), font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); col('TextColor', c || C.ink); };
   const sub = cl(rep.agency + ' · ' + rep.period);
   // première page : logo, type de document, titre, agence et période
@@ -1252,8 +1252,55 @@ function reportPdf(rep) {
       font('bold', 10.5); doc.text(c.v, x + 3, y + 4.2 + c.l.length * 3 + 3.6); });
     y += h + gap;
   }
+  // graphique d'une section (t.chart) : barres empilées ou groupées, courbes (période précédente en pointillé), barres horizontales
+  const axisTxt = v => { const a = Math.abs(v); return a >= 1e6 ? rptFmt(v / 1e6, 1) + ' M' : a >= 1e4 ? rptFmt(v / 1e3, 0) + ' k' : a >= 1e3 ? rptFmt(v / 1e3, 1) + ' k' : rptFmt(v, 0); };
+  const nice = v => { if (!(v > 0)) return 1; const e = Math.pow(10, Math.floor(Math.log10(v))), f = v / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e; };
+  const drawChart = t => {
+    const ch = t.chart, h = ch.height || 64, ser = ch.series || [], n = (ch.labels || []).length;
+    if (y + h + 12 > H - 14) y = newPage();
+    y += 6; col('FillColor', C.acc); doc.rect(M, y - 3.7, 1.3, 4.8, 'F');
+    font('bold', 11.5); doc.text(cl(t.title), M + 3.5, y);
+    // légende, à droite du titre
+    let lx = W - M; font('normal', 7.2, C.mute);
+    ser.filter(s => s.name).reverse().forEach(s => { const tw = doc.getTextWidth(cl(s.name)); lx -= tw; doc.text(cl(s.name), lx, y);
+      col('FillColor', s.color); col('DrawColor', s.color);
+      if (s.type === 'line') { doc.setLineWidth(0.5); if (s.dash) doc.setLineDashPattern([1, 0.8], 0); doc.line(lx - 6, y - 1.1, lx - 1.5, y - 1.1); doc.setLineDashPattern([], 0); lx -= 9; }
+      else { doc.rect(lx - 4.6, y - 2.6, 3, 3, 'F'); lx -= 8; } });
+    const top = y + 4, base = top + h - 9;
+    if (!n || !ser.length) { font('normal', 9, C.mute); doc.text(cl(t.empty || 'Aucune donnée sur la période'), M + 3.5, y + 6); y += 10; return; }
+    if (ch.type === 'hbar') {   // barres horizontales : libellé à gauche, valeur au bout de la barre
+      const vals = ser[0].values, mx = Math.max(...vals.map(v => Math.abs(v)), 0) || 1, rowH = Math.min(7, (h - 4) / n), lw = 62, bx = M + 3.5 + lw, bwMax = W - M - bx - 30;
+      ch.labels.forEach((lb, i) => { const yy = top + i * rowH, bw = Math.max(0.4, Math.abs(vals[i]) / mx * bwMax);
+        font('normal', 7.6); doc.text(doc.splitTextToSize(cl(lb), lw - 3)[0], M + 3.5, yy + rowH * 0.62);
+        col('FillColor', (ser[0].colors && ser[0].colors[i]) || ser[0].color); doc.roundedRect(bx, yy + rowH * 0.18, bw, rowH * 0.64, 0.6, 0.6, 'F');
+        font('bold', 7.4); doc.text(cl(ch.fmt ? ch.fmt(vals[i], i) : rptFmt(vals[i], 0)), bx + bw + 2, yy + rowH * 0.62); });
+      y = top + n * rowH + 3; return;
+    }
+    const bars = ser.filter(s => s.type !== 'line'), lines = ser.filter(s => s.type === 'line'), stack = ch.type !== 'group';
+    const tot = i => stack ? bars.reduce((a, s) => a + Math.max(0, s.values[i] || 0), 0) : Math.max(0, ...bars.map(s => s.values[i] || 0));
+    let mx = 0; for (let i = 0; i < n; i++) mx = Math.max(mx, tot(i), ...lines.map(s => s.values[i] || 0));
+    const step = nice(mx / 4), ymax = step * Math.max(1, Math.ceil(mx / step)), x0 = M + 15, x1 = W - M - 2, ph = base - top, Y = v => base - Math.max(0, v) / ymax * ph;
+    // grille et axe des montants
+    doc.setLineWidth(0.15); col('DrawColor', C.line); font('normal', 6.6, C.mute);
+    for (let v = 0; v <= ymax + 1e-9; v += step) { const yy = Y(v); doc.line(x0, yy, x1, yy); doc.text(axisTxt(v), x0 - 1.6, yy + 1.1, { align: 'right' }); }
+    const slot = (x1 - x0) / n, gw = Math.min(16, slot * 0.68), bw = stack ? gw : gw / Math.max(1, bars.length), every = Math.ceil(n / 18);
+    for (let i = 0; i < n; i++) {
+      const cx = x0 + slot * (i + 0.5); let acc = 0;
+      bars.forEach((s, j) => { const v = Math.max(0, s.values[i] || 0); if (!v) return; col('FillColor', s.color);
+        if (stack) { doc.rect(cx - gw / 2, Y(acc + v), gw, Y(acc) - Y(acc + v), 'F'); acc += v; }
+        else doc.rect(cx - gw / 2 + j * bw, Y(v), bw * 0.92, base - Y(v), 'F'); });
+      if (i % every === 0) { font('normal', 6.4, C.mute); doc.text(cl(ch.labels[i]), cx, base + 3.6, { align: 'center' }); }
+    }
+    lines.forEach(s => { col('DrawColor', s.color); doc.setLineWidth(s.dash ? 0.45 : 0.7); if (s.dash) doc.setLineDashPattern([1, 0.8], 0);
+      let prev = null; s.values.forEach((v, i) => { if (v == null) { prev = null; return; } const pt = [x0 + slot * (i + 0.5), Y(v)]; if (prev) doc.line(prev[0], prev[1], pt[0], pt[1]); prev = pt; });
+      doc.setLineDashPattern([], 0); if (!s.dash && n <= 40) { col('FillColor', s.color); s.values.forEach((v, i) => { if (v != null) doc.circle(x0 + slot * (i + 0.5), Y(v), 0.55, 'F'); }); } });
+    col('DrawColor', C.mute); doc.setLineWidth(0.25); doc.line(x0, base, x1, base);
+    y = base + 7;
+  };
   // sections : titre (et nombre de lignes), tableau ; un titre n'est jamais laissé seul en bas de page
   rptTables(rep).forEach(t => {
+    if (t.chart) { drawChart(t); return; }
+    if (t.pageBreak) y = newPage();
     if (y > H - 34) y = newPage();
     y += 6; col('FillColor', C.acc); doc.rect(M, y - 3.7, 1.3, 4.8, 'F');
     font('bold', 11.5); const tt = cl(t.title); doc.text(tt, M + 3.5, y);
