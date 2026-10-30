@@ -12,7 +12,7 @@ const RH_ONLY = { rh: 1, travail: 1, moi: 1, application: 1, menu: 1 };
 const PARAM_DEFAULTS = { limDbMb: 500, limStorageMb: 1024, limLiveMonth: 500000, manifestKeepDays: 30, shiftAdvance: 2, minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
 
 // ---------- Accès aux données ----------
-const PK = { trips: 'id', user_sessions: 'id', vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key', manager_shifts: 'agency_id,user_id,day,shift', uber_payments: 'tx', uber_drivers: 'uuid', driver_roster: 'driver_code', plan_weeks: 'agency_id,week' };
+const PK = { trips: 'id', user_sessions: 'id', vehicles: 'key', drivers: 'code', params: 'key', contracts: 'num', parc: 'plate', profiles: 'user_id', user_agencies: 'user_id,agency_id', live_status: 'vehicle_key', manager_shifts: 'agency_id,user_id,day,shift', uber_payments: 'tx', bolt_sessions: 'key', uber_drivers: 'uuid', driver_roster: 'driver_code', plan_weeks: 'agency_id,week' };
 async function all(table, cols, build, order) {
   const page = 1000;
   const get = async i => {

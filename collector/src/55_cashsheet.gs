@@ -16,6 +16,11 @@ const CSH_SHEET_ = {
 let CSH_FMT_ = 'v4|';
 const CSH_DRV_TAB_ = 'Export Uber - Driver Status Ludy', CSH_PAY_TAB_ = 'Export Uber - Opérations de paiement Ludy', CSH_PAY_COLS_ = 37;
 const CSH_FLOW_TXT_ = { in: 'Entrée de cash', out: 'Sortie de cash', virement: 'Virement' };
+// Bolt (30/10/2026) : onglets créés par le collecteur (absents du classeur d'origine), en-tête en ligne 1, réécrits en entier s'ils ont changé
+const CSH_BOLT_ENC_ = 'Caisse - Encaissements Bolt Ludy', CSH_BOLT_SES_ = 'Export Bolt - Activité des services Ludy';
+const CSH_BOLT_ENC_H_ = ['Date', 'Shift', 'Chauffeur', 'Contrat', 'Gestionnaire', 'Opération', 'Entrée / sortie', 'Source', 'Espèces Bolt', 'Remis', 'Monnaie rendue', 'Encaissé net', 'Manquant', 'Commentaire'];
+const CSH_BOLT_SES_H_ = ['Date', 'Chauffeur', 'Véhicule', 'Plaque', 'Durée totale du service (min)', 'Plage horaire', 'Temps en ligne (min)', 'Temps de pause (min)', 'Total de trajets', 'Terminé',
+  'Annulation passager', 'Annulation chauffeur', 'Total des paiements|DH', 'Espèce|DH', 'Terminal de paiement|DH', 'Dans l\'app|DH', 'Entreprise|DH'];
 const CSH_KIND_TXT_ = { depot: 'Dépôt en banque', recharge: 'Recharge de caisse', remboursement: 'Remboursement d\'avance', avance: 'Avance sur Salaire' };
 
 /**
@@ -69,6 +74,26 @@ function cshSheetRow_(caisse, m, r, who, crsDay) {
       '=IF($E' + r + '="Encaissement chauffeur",L' + r + ',0)', crs && m.prime_paid != null ? +m.prime_paid : '=IF($E' + r + '="Encaissement chauffeur",J' + r + '-D' + r + ',0)', '=IF($E' + r + '="Encaissement chauffeur",O' + r + '-P' + r + ',0)'];
   }
   return [day, name, uuidF('B'), mgr, amt, flow, cshTxt_(m.kind === 'bonus' ? m.label || 'Bonus' : op), cshTxt_(m.status), cshTxt_(m.source), com];
+}
+
+/** Ligne de l'onglet « Caisse - Encaissements Bolt Ludy » (r = numéro de ligne) : net = remis − monnaie, manquant = espèces Bolt − net */
+function cshBoltEncRow_(m, r, who) {
+  const enc = m.kind === 'encaissement', given = m.given != null ? cshNum_(m.given) : cshNum_(m.amount);
+  return [cshSerial_(m.day), cshTxt_(m.shift), cshTxt_(who), cshTxt_(m.contract_num), cshTxt_(m.manager_name), enc ? 'Encaissement chauffeur' : cshTxt_(CSH_KIND_TXT_[m.kind] || m.label || 'Autre'),
+    CSH_FLOW_TXT_[m.flow] || '', cshTxt_(m.source), enc ? cshNum_(m.uber_cash) : '', given, enc ? cshNum_(m.change) : '', '=J' + r + '-K' + r,
+    enc ? '=IF(I' + r + '="","",I' + r + '-L' + r + ')' : '', cshTxt_(m.comment)];
+}
+/** Ligne de l'onglet « Export Bolt - Activité des services Ludy » : mêmes colonnes que l'export Bolt */
+function cshBoltSesRow_(x) {
+  return [fmtMa_(x.at, 'yyyy-MM-dd HH:mm'), cshTxt_(x.driver_name), cshTxt_(x.vehicle), cshTxt_(x.plate), cshNum_(x.minutes), cshTxt_(x.span), cshNum_(x.online_min), cshNum_(x.pause_min),
+    cshNum_(x.trips), cshNum_(x.done), cshNum_(x.cancel_pax), cshNum_(x.cancel_drv), cshNum_(x.total), cshNum_(x.cash), cshNum_(x.terminal), cshNum_(x.app), cshNum_(x.business)];
+}
+/** Onglet Bolt du classeur : créé s'il manque, en-tête en ligne 1 */
+function cshBoltTab_(ss, name, head) {
+  let sh = ss.getSheetByName(name);
+  if (!sh) { sh = ss.insertSheet(name); sh.setFrozenRows(1); }
+  sh.getRange(1, 1, 1, head.length).setValues([head]);
+  return sh;
 }
 
 /** Lignes du tableur d'une transaction Uber : colonnes rangées d'après les en-têtes de l'onglet (ligne 5) */
@@ -177,13 +202,15 @@ function cashSheetStep_(t0) {
   if (!targets.length && String(P.cashSheetId || '').trim()) targets = [{ ag: null, name: '', sheet: String(P.cashSheetId).trim() }];
   if (!targets.length) return '';
   const drv = dbSelect_('drivers', 'select=code,name,uber_uuid', 'code'), udrv = dbSelect_('uber_drivers', 'select=*', 'uuid');
+  let bolt = null; try { bolt = dbSelect_('bolt_sessions', 'select=key,at,driver_name,vehicle,plate,minutes,span,online_min,pause_min,trips,done,cancel_pax,cancel_drv,total,cash,terminal,app,business,agency_id', 'at,key'); }
+  catch (e) { bolt = null; }   // Bolt pas encore installé dans la base (migration 20261119000000_bolt.sql)
   // jour des courses Ludy : identifiants dédoublonnés, lus par 100 (adresse limitée à 2 Ko)
   const mis = [...new Set(moves.filter(m => m.mission_id).map(m => m.mission_id))], crsDay = {};
   for (let i = 0; i < mis.length; i += 100) dbSelect_('missions', 'select=id,start_at&id=in.(' + mis.slice(i, i + 100).join(',') + ')', 'id').forEach(x => { if (x.start_at) crsDay[x.id] = localDay_(x.start_at); });
   const out = [];
   targets.forEach(T => {
     if (Date.now() - t0 > MAX_RUN_MS - 90000) return;
-    try { const m = cashSheetOne_(t0, T, P, moves, drv, udrv, crsDay); if (m) out.push((targets.length > 1 || T.name ? T.name + ' : ' : '') + m); }
+    try { const m = cashSheetOne_(t0, T, P, moves, drv, udrv, crsDay, bolt); if (m) out.push((targets.length > 1 || T.name ? T.name + ' : ' : '') + m); }
     catch (e) { out.push((T.name ? T.name + ' : ' : '') + e.message); }
   });
   return out.length ? 'Classeur de la caisse : ' + out.join(' ; ') : '';
@@ -195,7 +222,7 @@ function cshProp_(props, sheet, k, P) {
   const old = props.getProperty('CSH_SHEET_' + k);
   return { key, v: old !== null && sheet === String(P.cashSheetId || '').trim() ? old : null };
 }
-function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay) {
+function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay, bolt0) {
   const props = PropertiesService.getScriptProperties(), out = [], mine = x => T.ag == null || String(x.agency_id) === String(T.ag);
   const moves = allMoves.filter(mine), udrv = udrv0.filter(mine);
   const ss = SpreadsheetApp.openById(T.sheet);
@@ -239,6 +266,19 @@ function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay) {
       if (page.length < 1000) break;
     }
     if (added) out.push(added + ' transactions Uber');
+  }
+  // Bolt : encaissements de la caisse Bolt et sessions de l'export Bolt de l'agence, onglets réécrits en entier s'ils ont changé
+  if (bolt0) {
+    const encL = moves.filter(m => m.caisse === 'bolt'), sesL = bolt0.filter(mine);
+    [[CSH_BOLT_ENC_, CSH_BOLT_ENC_H_, 'boltenc', encL.map((m, i) => cshBoltEncRow_(m, 2 + i, who(m))), [1], [4], encL.length + ' encaissements Bolt'],
+     [CSH_BOLT_SES_, CSH_BOLT_SES_H_, 'boltses', sesL.map(cshBoltSesRow_), [], [1], sesL.length + ' sessions Bolt']].forEach(([tab, head, k, rows, dates, txt, label]) => {
+      if (!rows.length && !ss.getSheetByName(tab)) return;   // rien à recopier : onglet pas créé
+      const st = cshProp_(props, T.sheet, k, P), prev = (st.v || '|0').split('|'), h = cshHashStr_(CSH_FMT_ + JSON.stringify(rows));
+      if (h === prev[0] && !daily && st.v !== null && ss.getSheetByName(tab)) return;
+      cshWrite_(cshBoltTab_(ss, tab, head), 2, rows, head.length, +prev[1] || 0, txt, dates);
+      props.setProperty(st.key, h + '|' + rows.length);
+      if (h !== prev[0]) out.push(label);
+    });
   }
   if (daily) props.setProperty(dayP.key, today);
   return out.join(', ');

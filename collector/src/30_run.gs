@@ -435,7 +435,7 @@ function backup_() {
     ['parc', 'plate'], ['agencies', 'id'], ['user_agencies', 'user_id,agency_id'], ['alert_recipients', 'id'], ['report_schedules', 'id']];
   // tables ajoutées par les migrations récentes : absentes tant que la migration n'est pas exécutée (sauvegarde du reste quand même)
   const later = [['fuel_card_tx', 'id'], ['manager_shifts', 'agency_id,user_id,day,shift'], ['manifest_config', 'id'], ['manifests', 'id'],
-    ['missions', 'id'], ['pricing_grid', 'id'], ['cash_moves', 'id'], ['cash_log', 'id'], ['uber_drivers', 'uuid'], ['uber_payments', 'tx'],
+    ['missions', 'id'], ['pricing_grid', 'id'], ['cash_moves', 'id'], ['cash_log', 'id'], ['uber_drivers', 'uuid'], ['uber_payments', 'tx'], ['bolt_sessions', 'key'],
     ['driver_roster', 'driver_code'], ['driver_plan', 'id'], ['driver_absences', 'id'], ['plan_weeks', 'agency_id,week'],
     ['employers', 'id'], ['work_contracts', 'id'], ['hr_employees', 'id'], ['hr_events', 'id'], ['hr_clock', 'id'], ['hr_documents', 'id']];
   base.forEach(t => { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); });

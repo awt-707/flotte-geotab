@@ -97,7 +97,7 @@ test('chiffre d\'affaires et évolution : par jour de shift et par semaine', () 
   assert.deepStrictEqual([ca.total['2026-10-19'], ca.active['2026-10-19'], ca.sum], [500, 1, 750]);
   assert.strictEqual(C.cshWeek('2026-10-25'), '2026-10-19', 'dimanche → lundi de la semaine');
   const d = C.cshDaily({ payments: pay, moves: [{ kind: 'encaissement', amount: 90, day: '2026-10-19' }, { kind: 'depense', amount: 20, day: '2026-10-19' }], from: '2026-10-19', to: '2026-10-19', dayOfPayment: p => p.at });
-  assert.deepStrictEqual(d, [{ day: '2026-10-19', uber: 100, net: 90, depenses: 20, avances: 0, courses: 0, bonus: 0, depots: 0, revenue: 400 }]);
+  assert.deepStrictEqual(d, [{ day: '2026-10-19', uber: 100, net: 90, depenses: 20, avances: 0, courses: 0, bonus: 0, depots: 0, revenue: 400, bolt: 0, boltRevenue: 0, boltNet: 0 }]);
 });
 
 // export Uber « Opérations de paiement » synthétique (mêmes en-têtes que le portail)
