@@ -169,11 +169,11 @@ test('manques à encaisser : shift encaissé en partie (ligne rouge), complémen
   try {
     const base = () => page.url().replace(/#.*/, '');
     await login(page, '#/caisse?t=shift');
-    await page.waitForSelector('.cshshift .cuc');   // export Uber pas importé : espèces annoncées par le chauffeur
-    const sel = await page.evaluate(() => cshShiftSel());
-    if (await page.$('.cshshift tr[data-row]') === null) { await page.goto(base() + `#/caisse?t=shift&jour=${sel.day}&s=${sel.s}`); await page.waitForSelector('.cshshift .cuc'); }
-    await page.fill('.cshshift .cuc', '300'); await page.fill('.cshshift .cgv', '260');
-    assert.match(await page.innerText('.cshshift .cman'), /−\s*40|-40/);
+    await page.waitForSelector('.cshshift');
+    // shift du contrat (heure de début du contrat) ; export Uber pas importé : manque saisi sur la ligne du shift
+    const sel = await page.evaluate(() => { const c = CS.ctr.find(x => x.num === 'K1'); return { day: c._day, s: c._shift }; });
+    await page.goto(base() + `#/caisse?t=shift&jour=${sel.day}&s=${sel.s}`); await page.waitForSelector('.cshshift .cmq');
+    await page.fill('.cshshift .cgv', '260'); await page.fill('.cshshift .cmq', '40');
     page.once('dialog', d => d.accept());
     await page.click('[data-csav="0"]');
     await page.waitForSelector('.cshshift tr.done.short');
@@ -192,7 +192,7 @@ test('manques à encaisser : shift encaissé en partie (ligne rouge), complémen
     assert.match(await page.innerText('table.cshmq tbody'), /\+ 40 MAD[\s\S]*0 MAD\s*Soldé/);
     // encaissement du shift : une seule ligne (complément compris), verte ; modification de l'encaissement enregistré
     await page.goto(base() + `#/caisse?t=shift&jour=${sel.day}&s=${sel.s}`); await page.waitForSelector('.cshshift tr.done.paid');
-    assert.match(await page.innerText('.cshshift tr.done'), /300 MAD annoncées[\s\S]*300 MAD[\s\S]*\+ 40 MAD complément[\s\S]*manquant remis/);
+    assert.match(await page.innerText('.cshshift tr.done'), /300 MAD \(encaissé \+ manque saisi\)[\s\S]*300 MAD[\s\S]*\+ 40 MAD complément[\s\S]*manque remis/);
     await page.click('[data-cshed="0"]'); await page.fill('.cshshift .egv', '280');
     await page.click('[data-cshes]');
     await page.waitForFunction(() => /320 MAD/.test((document.querySelector('.cshshift tr.done') || {}).innerText || ''));
@@ -230,6 +230,31 @@ test('amendes : payée par le chauffeur (hors caisse, rien retenu) ou par la soc
       'uber|depense|out|300.00|KO|Encaissement Uber du shift|Non applicable|Excès de vitesse, Casablanca, PV 1234');
     assert.match(await page.innerText('#tcshdep'), /Encaissement Uber du shift \(caisse Encaissements Uber\)/);
     assert.match(await page.innerText('#cshbody'), /300 MAD\s*1 amende · 1 sans justificatif\s*Amendes de la période/);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
+});
+
+test('encaissement du shift : chauffeur sans contrat à son nom ajouté au shift, encaissé avec son manque, gardé sur la ligne', async () => {
+  env.resetDb();
+  env.psql("insert into drivers (code, name) values ('C2', 'BETA Test')");
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/caisse?t=shift');
+    await page.waitForSelector('#cxadd');
+    const sel = await page.evaluate(() => cshShiftSel());
+    await page.fill('#cxd', 'BETA Test'); await page.click('#cxadd');
+    await page.waitForSelector('.cshshift tr[data-row]');
+    assert.match(await page.innerText('.cshshift tbody'), /BETA Test\s*sans contrat · ajouté au shift/);
+    await page.fill('.cshshift .cgv', '150'); await page.fill('.cshshift .cmq', '50');
+    page.once('dialog', d => d.accept());
+    await page.click('[data-csav="0"]');
+    await page.waitForSelector('.cshshift tr.done.short');
+    assert.strictEqual(env.psql("select driver_code || '|' || coalesce(contract_num, '-') || '|' || amount || '|' || uber_cash || '|' || shift || '|' || day from cash_moves"), `C2|-|150.00|200.00|${sel.s}|${sel.day}`);
+    // relu : la ligne reste dans le shift (sans contrat), classée dans les manques
+    await page.goto(page.url().replace(/#.*/, '') + '#/caisse?t=manques'); await page.waitForSelector('table.cshmq');
+    assert.match(await page.innerText('table.cshmq tbody'), /BETA Test[\s\S]*200 MAD[\s\S]*150 MAD[\s\S]*50 MAD[\s\S]*50 MAD\s*Manquant/);
+    await page.goto(page.url().replace(/#.*/, '') + `#/caisse?t=shift&jour=${sel.day}&s=${sel.s}`); await page.waitForSelector('.cshshift tr.done.short');
+    assert.match(await page.innerText('.cshshift tr.done'), /BETA Test\s*sans contrat · ajouté au shift/);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
