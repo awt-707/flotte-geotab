@@ -200,3 +200,36 @@ test('manques à encaisser : shift encaissé en partie (ligne rouge), complémen
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
+
+test('amendes : payée par le chauffeur (hors caisse, rien retenu) ou par la société (caisse Dépenses ou encaissement du shift) ; sans justificatif = retenue', async () => {
+  const C3 = require('../site/caisse_calc.js');
+  assert.ok(C3.CASH_DEP_CATS.includes('Amende') && C3.CASH_DEP_CATS.includes('Amende sans justificatif'));
+  assert.deepStrictEqual(C3.cshFineMove('chauffeur', 'Amende', 'OK'), { caisse: 'depenses', flow: 'virement', source: 'Chauffeur (payée de sa poche)', justif: 'N.A', ride_type: 'Non applicable' });
+  assert.deepStrictEqual(C3.cshFineMove('uber', 'Amende sans justificatif', 'OK'), { caisse: 'uber', flow: 'out', source: 'Encaissement Uber du shift', justif: 'KO', ride_type: 'Non applicable' });
+  // paie : amende payée par la société sans justificatif retenue ; payée par le chauffeur : rien ; jamais comptée comme frais de course
+  const d = '2026-11-01', mk = (o, extra) => Object.assign({ kind: 'depense', amount: 200, day: d, driver_code: 'A', label: o.label }, C3.cshFineMove(o.payer, o.label, o.justif), extra);
+  const moves = [mk({ payer: 'chauffeur', label: 'Amende', justif: 'En attente' }), mk({ payer: 'bolt', label: 'Amende sans justificatif' }), mk({ payer: 'depenses', label: 'Amende', justif: 'OK' })];
+  const pay = C3.cshPayroll({ moves, payments: [], from: d, to: d, uuid2code: {} }).find(x => x.key === 'A');
+  assert.deepStrictEqual([pay.depKo, pay.nDepKo], [200, 1]);
+  assert.deepStrictEqual(C3.cshBalances(moves).bolt, -200, 'sortie des espèces de l\'encaissement Bolt');
+  assert.deepStrictEqual(C3.cshBalances(moves).depenses, -200, 'payée par le chauffeur : hors caisse');
+
+  env.resetDb();
+  env.psql("insert into drivers (code, name) values ('C1', 'ALPHA Test')");
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/caisse?t=depenses');
+    await page.waitForSelector('#cdsave');
+    assert.ok(await page.isHidden('#cdpfine'));
+    await page.fill('#cdw', 'ALPHA Test'); await page.selectOption('#cdc', 'Amende sans justificatif');
+    assert.ok(await page.isVisible('#cdpfine')); assert.strictEqual(await page.inputValue('#cdj'), 'KO');
+    await page.selectOption('#cdp', 'uber'); await page.fill('#cda', '300'); await page.fill('#cdm', 'Excès de vitesse, Casablanca, PV 1234');
+    await page.click('#cdsave');
+    await page.waitForFunction(() => /Amende sans justificatif/.test((document.querySelector('#tcshdep') || {}).innerText || ''));
+    assert.strictEqual(env.psql("select caisse || '|' || kind || '|' || flow || '|' || amount || '|' || justif || '|' || source || '|' || ride_type || '|' || comment from cash_moves"),
+      'uber|depense|out|300.00|KO|Encaissement Uber du shift|Non applicable|Excès de vitesse, Casablanca, PV 1234');
+    assert.match(await page.innerText('#tcshdep'), /Encaissement Uber du shift \(caisse Encaissements Uber\)/);
+    assert.match(await page.innerText('#cshbody'), /300 MAD\s*1 amende · 1 sans justificatif\s*Amendes de la période/);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
+});

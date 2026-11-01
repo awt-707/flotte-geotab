@@ -392,28 +392,40 @@ function cshTabManques(p) {
 
 // ---------- Dépenses ----------
 function cshTabDep(p) {
-  const rows = CS.moves.filter(m => m.caisse === 'depenses'), bal = cshBalances(CS.all);
-  const cur = shiftAt(new Date(), S.P) || {};
+  // dépenses de toutes les caisses (amende payée avec les espèces de l'encaissement du shift : caisse Uber / Bolt)
+  const rows = CS.moves.filter(m => m.caisse === 'depenses' || m.kind === 'depense'), bal = cshBalances(CS.all);
+  const cur = shiftAt(new Date(), S.P) || {}, fines = rows.filter(m => cshLive(m) && m.kind === 'depense' && cshIsFine(m.label));
   cshBody(cards([['Solde de la caisse dépenses', cshMoney(bal.depenses), bal.depenses < 0 ? 'crit' : 'ok'], ['Dépenses de la période', cshMoney(rows.filter(m => cshLive(m) && m.kind === 'depense').reduce((s, m) => s + cshN(m.amount), 0))],
-      ['Justificatifs à fournir', f0(rows.filter(m => cshLive(m) && m.kind === 'depense' && m.driver_name && m.justif !== 'OK' && m.justif !== 'N.A').length)]]) +
+      ['Justificatifs à fournir', f0(rows.filter(m => cshLive(m) && m.kind === 'depense' && m.driver_name && m.justif !== 'OK' && m.justif !== 'N.A').length)],
+      ['Amendes de la période', cshMoney(fines.reduce((s, m) => s + cshN(m.amount), 0)) + `<div class="small">${f0(fines.length)} amende${fines.length > 1 ? 's' : ''} · ${f0(fines.filter(m => /sans justificatif/i.test(m.label)).length)} sans justificatif</div>`, fines.length ? 'warn' : '']]) +
     `<div class="panel"><h3>Nouvelle dépense (ticket par ticket)</h3><div class="mfrow">
       ${cshField('cdd', 'Date du shift', 'date', { value: cur.day || today() })}${cshField('cds', 'Shift', 'select', { options: ['Jour', 'Nuit'], value: cur.s })}
       ${cshField('cdw', 'Chauffeur', 'text', { list: 'cshdrv', size: 22 })}${cshField('cdc', 'Catégorie', 'select', { options: CASH_DEP_CATS })}
       ${cshField('cdr', 'Type de course', 'select', { options: CASH_RIDE_TYPES })}${cshField('cda', 'Montant (MAD)', 'number', { min: 0, step: 1 })}
       ${cshField('cdj', 'Justificatif', 'select', { options: [['En attente', 'En attente'], ['OK', 'OK (rangé)'], ['KO', 'KO (absent)'], ['N.A', 'N.A']] })}
-      ${cshField('cdo', 'Source', 'select', { options: ['Chauffeur / Uber', 'Caisse - Dépenses', 'Banque'] })}${cshField('cdm', 'Commentaire', 'text', { size: 26 })}
+      <span id="cdosrc">${cshField('cdo', 'Source', 'select', { options: ['Chauffeur / Uber', 'Caisse - Dépenses', 'Banque'] })}</span>
+      <span id="cdpfine" hidden>${cshField('cdp', 'Amende payée par', 'select', { options: CASH_FINE_PAY })}</span>${cshField('cdm', 'Commentaire', 'text', { size: 30 })}
       <button id="cdsave">Enregistrer</button></div>
+      <div class="small" id="cdfinehelp" hidden>Amende : préciser dans le commentaire le motif, le lieu, le n° du procès-verbal. Payée par le chauffeur = hors caisse (simple suivi, rien retenu) ; payée par la société = sortie de la caisse Dépenses ou des espèces de l'encaissement du shift (Uber / Bolt). « Amende sans justificatif » : justificatif KO, retenue sur la paie du chauffeur quand la société l'a payée.</div>
       <div class="small">Tout décaissement sans justificatif OK est déduit de la paie du chauffeur (Paie). Les dépenses « Course Uber » (ou « Course Bolt ») justifiées et payées avec les espèces du chauffeur réduisent le cash à remettre (Rapprochement Uber / Bolt) ; sans justificatif, elles restent dans le manquant (retenues une seule fois). Payée par la banque : hors caisse.</div></div>` +
-    cshList('tcshdep', rows, [['Date', m => fmtDay(m.day) + (m.shift ? ' <span class="small">' + m.shift + '</span>' : ''), m => m.day], cshDrvCol(), ['Opération', m => esc(m.label || CSH_KIND[m.kind] || '') + (m.kind !== 'depense' ? ' <span class="small">(' + CSH_FLOW_TXT[m.flow] + ')</span>' : '')],
-      ['Type', m => esc(m.ride_type || '')], ['Montant', m => cshMoney(m.amount), m => cshN(m.amount), 'n'],
+    cshList('tcshdep', rows, [['Date', m => fmtDay(m.day) + (m.shift ? ' <span class="small">' + m.shift + '</span>' : ''), m => m.day], cshDrvCol(), ['Opération', m => (cshIsFine(m.label) ? '<b>' + esc(m.label) + '</b>' : esc(m.label || CSH_KIND[m.kind] || '')) + (m.kind !== 'depense' ? ' <span class="small">(' + CSH_FLOW_TXT[m.flow] + ')</span>' : '')],
+      ['Type', m => esc(m.ride_type || '')], ['Payée par', m => esc(m.source || '') + (m.caisse !== 'depenses' ? ' <span class="small">(caisse ' + esc((CASH_CAISSES.find(c => c[0] === m.caisse) || [])[1] || m.caisse) + ')</span>' : ''), m => m.source || ''],
+      ['Montant', m => cshMoney(m.amount), m => cshN(m.amount), 'n'],
       ['Justificatif', m => m.kind !== 'depense' ? esc(m.justif || '') : `<select data-cshj="${m.id}" ${m.cancelled_at ? 'disabled' : ''}>${['En attente', 'OK', 'KO', 'N.A'].map(x => `<option ${x === (m.justif || 'En attente') ? 'selected' : ''}>${x}</option>`).join('')}</select>`, m => m.justif || ''],
       ['Gestionnaire', m => esc(m.manager_name || '')], ['Commentaire', m => esc(m.comment || '')], cshActCol()], ['depense']) + cshMoveForm('depenses'));
+  // amende : « payée par » à la place de la source, justificatif KO pour « Amende sans justificatif »
+  const fineUi = () => { const f = cshIsFine(cshVal('cdc')); $('#cdosrc').hidden = f; $('#cdpfine').hidden = !f; $('#cdfinehelp').hidden = !f;
+    if (/sans justificatif/i.test(cshVal('cdc'))) $('#cdj').value = 'KO'; };
+  $('#cdc').onchange = fineUi;
   $('#cdsave').onclick = async () => {
     const a = cshN(cshVal('cda')); if (!(a > 0) || !cshVal('cdd')) { alert('Date et montant obligatoires.'); return; }
-    const who = cshVal('cdw') ? cshResolve(cshVal('cdw')) : {};
+    const who = cshVal('cdw') ? cshResolve(cshVal('cdw')) : {}, fine = cshIsFine(cshVal('cdc'));
+    if (fine && !who.driver_name) { alert('Amende : choisir le chauffeur.'); return; }
+    if (fine && !cshVal('cdm') && !await ask('Amende sans commentaire (motif, lieu, n° de procès-verbal). Enregistrer quand même ?')) return;
     // payée par la banque : hors caisse (virement), comme les avances et bonus
-    try { await cshInsert(Object.assign(who, { caisse: 'depenses', kind: 'depense', flow: cshVal('cdo') === 'Banque' ? 'virement' : 'out', amount: a, day: cshVal('cdd'), shift: cshVal('cds'), label: cshVal('cdc'), ride_type: cshVal('cdr'),
-      justif: cshVal('cdj'), source: cshVal('cdo'), comment: cshVal('cdm') || null })); pageCaisse(); }
+    const mv = fine ? cshFineMove(cshVal('cdp'), cshVal('cdc'), cshVal('cdj'))
+      : { caisse: 'depenses', flow: cshVal('cdo') === 'Banque' ? 'virement' : 'out', ride_type: cshVal('cdr'), justif: cshVal('cdj'), source: cshVal('cdo') };
+    try { await cshInsert(Object.assign(who, mv, { kind: 'depense', amount: a, day: cshVal('cdd'), shift: cshVal('cds'), label: cshVal('cdc'), comment: cshVal('cdm') || null })); pageCaisse(); }
     catch (e) { alert(e.message); }
   };
   cshBindRowActions(); cshBindMoveForm();

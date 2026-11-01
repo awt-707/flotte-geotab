@@ -4,7 +4,18 @@
 // sessions Bolt passées aux mêmes calculs (cshRappro, cshCA, cshDaily) avec leur chauffeur déjà trouvé (_key) et pf = CSH_PF.bolt.
 
 const CASH_CAISSES = [['uber', 'Encaissements Uber'], ['bolt', 'Encaissements Bolt'], ['depenses', 'Dépenses chauffeurs'], ['rh', 'Avances RH'], ['courses', 'Courses privées'], ['bonus', 'Bonus performance']];
-const CASH_DEP_CATS = ['Carburant', 'Péage', 'Parking', 'Lavage', 'Contravention', 'NDF', 'Adblue', 'Vidange', 'Recharge téléphone', 'Autre'];
+const CASH_DEP_CATS = ['Carburant', 'Péage', 'Parking', 'Lavage', 'Contravention', 'Amende', 'Amende sans justificatif', 'NDF', 'Adblue', 'Vidange', 'Recharge téléphone', 'Autre'];
+/** Amende (01/11/2026, demande d'Ahmed) : qui l'a payée. Chauffeur = de sa poche (hors caisse, pas de retenue) ; société = sortie de la caisse
+ *  Dépenses ou des espèces de l'encaissement du shift (Uber / Bolt), jamais comptée comme frais de course au rapprochement. */
+const CASH_FINE_PAY = [['chauffeur', 'Le chauffeur (de sa poche)'], ['depenses', 'La société · caisse Dépenses'], ['uber', 'La société · encaissement Uber du shift'], ['bolt', 'La société · encaissement Bolt du shift']];
+function cshIsFine(label) { return /^amende/i.test(String(label || '')); }
+/** Mouvement d'une amende selon qui l'a payée (caisse, sortie, source, justificatif) */
+function cshFineMove(payer, label, justif) {
+  const noProof = /sans justificatif/i.test(String(label || ''));
+  if (payer === 'chauffeur') return { caisse: 'depenses', flow: 'virement', source: 'Chauffeur (payée de sa poche)', justif: 'N.A', ride_type: 'Non applicable' };
+  const c = payer === 'uber' || payer === 'bolt' ? payer : 'depenses';
+  return { caisse: c, flow: 'out', source: c === 'depenses' ? 'Caisse - Dépenses' : 'Encaissement ' + (c === 'bolt' ? 'Bolt' : 'Uber') + ' du shift', justif: noProof ? 'KO' : justif || 'En attente', ride_type: 'Non applicable' };
+}
 const CASH_RIDE_TYPES = ['Course Uber', 'Course Privée', 'Course Bolt', 'Course InDrive', 'Non applicable'];
 const CASH_BONUS = ['Challenge Shift', 'Challenge Semaine', 'Challenge 5k', 'Autre'];
 const CASH_SOURCES = ['Chauffeur', 'Caisse', 'Banque', 'Caisse RH', 'Cash Nico'];
@@ -502,4 +513,4 @@ function cshShortfalls(moves, declaredOf) {
 
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
   cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory,
-  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, CSH_COMPLEMENT, cshShortfalls };
+  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, CSH_COMPLEMENT, cshShortfalls, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };
