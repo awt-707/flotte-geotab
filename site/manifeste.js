@@ -141,9 +141,9 @@ function manifSeats(model, parcSeats) { const n = parseInt(parcSeats, 10); if (n
 // ---------- Page Manifeste ----------
 const MF = { cfg: null, parc: [], bg: {}, last: null, draft: null, hist: [], drvAuto: null };
 function mfParcOf(v) { const n = normPlate(v.plate); return MF.parc.find(p => normPlate(p.plate) === n) || MF.parc.find(p => String(v.other_plates || '').split(/[,;]/).some(o => o.trim() && normPlate(o) === normPlate(p.plate))) || {}; }
-function mfVehicles() { const ok = inAgency(); return S.vehList.filter(v => ok(v.key) && String(v.active || 'OUI').toUpperCase() !== 'NON').sort((a, b) => String(a.plate).localeCompare(String(b.plate))); }
+function mfVehicles() { return vehPick(); }
 function mfVeh(key) {
-  const v = S.veh[key]; if (!v) return null; const p = mfParcOf(v);
+  const v = vehOf(key); if (!v) return null; const p = mfParcOf(v);
   return { key, plaque: v.plate, marque: String(v.brand || p.brand || 'HYUNDAI').toUpperCase(), modele: String(v.model || p.model || '').replace(/^hyundai\s+/i, ''), places: manifSeats(v.model || p.model, p.seats), autorisation: String(p.agrement || '').trim() };
 }
 function mfNowLocal() { const d = new Date(), p = parts(d); return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute; }
@@ -169,7 +169,12 @@ function mfRatio(src) { return new Promise(res => { const i = new Image(); i.onl
 
 /** Réglages des manifestes et parc (places, agrément) : lus une fois, relus avec force */
 async function mfEnsure(force) {
-  if (MF.cfg && !MF.cfgErr && !force) return '';
+  await vehRefresh();   // véhicules et plaques du parc ajoutées depuis l'ouverture de Ludy
+  if (MF.cfg && !MF.cfgErr && !force) {
+    if (Date.now() - (MF.parcAt || 0) > 30000) { MF.parcAt = Date.now(); MF.parc = await all('parc', '*').catch(() => MF.parc); }
+    return '';
+  }
+  MF.parcAt = Date.now();
   try {
     const [c, parc] = await Promise.all([sb.from('manifest_config').select('*').eq('id', 1).maybeSingle(), all('parc', '*').catch(() => [])]);
     if (c.error) throw new Error(c.error.message);

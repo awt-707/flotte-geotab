@@ -273,3 +273,26 @@ test('course rapide : lancée sans devis, véhicule bloqué, manifeste créé ; 
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); }
 });
+
+test('course rapide : véhicule ajouté au parc pendant la session (Santa Fe) proposé tout de suite, avant le passage du collecteur', async () => {
+  env.resetDb();
+  env.psql(`insert into vehicles (key, plate, model, active) values ('968199WW', 'WW968199', 'STARIA', 'OUI');
+    insert into parc (plate, model) values ('WW968199', 'STARIA');`);
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/courses?rapide=1');
+    await page.waitForSelector('#qkveh');
+    assert.doesNotMatch(await page.innerText('#qkveh'), /SANTA FE/);
+    // Santa Fe ajoutés au parc après l'ouverture de Ludy (pas encore dans les véhicules du collecteur)
+    env.psql("insert into parc (plate, brand, model) values ('12345-A-6', 'HYUNDAI', 'SANTA FE'), ('12346-A-6', 'HYUNDAI', 'SANTA FE')");
+    await page.evaluate(() => { VEH_AT = 0; });   // relecture (au plus toutes les 30 s)
+    await page.goto(page.url().replace(/#.*/, '') + '#/courses'); await page.waitForSelector('text=⚡ Course rapide');
+    await page.click('text=⚡ Course rapide'); await page.waitForSelector('#qkgo');
+    const opts = await page.$$eval('#qkveh option', o => o.map(x => x.value + '|' + x.textContent));
+    assert.ok(opts.includes('123456A|12345-A-6 · SANTA FE') && opts.includes('123466A|12346-A-6 · SANTA FE'), opts.join(', '));
+    assert.ok(opts.includes('968199WW|WW968199 · STARIA'), 'véhicule du collecteur toujours proposé, sans doublon : ' + opts.join(', '));
+    assert.strictEqual(opts.filter(x => /WW968199/.test(x)).length, 1);
+    await page.selectOption('#qkveh', '123456A');   // même clé que celle que le collecteur donnera au véhicule (normPlate_)
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
+});

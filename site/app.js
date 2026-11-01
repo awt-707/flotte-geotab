@@ -90,6 +90,30 @@ async function loadRef(force) {
   S.drv = { [HORS]: 'Hors contrat' }; drv.forEach(d => { S.drv[d.code] = d.name; });
 }
 
+// ---------- Véhicules des saisies (courses privées, manifestes) ----------
+// 01/11/2026 (signalé par Ahmed : Santa Fe ajoutés au parc absents de la course rapide) : la liste des véhicules était lue une seule fois
+// à l'ouverture de Ludy, et un véhicule ajouté au parc n'existe pour le collecteur qu'à son passage suivant (5 min). Les pages de saisie
+// relisent les véhicules (au plus toutes les 30 s) et proposent aussi les plaques du parc pas encore importées par le collecteur.
+let VEH_AT = 0;
+async function vehRefresh() {
+  if (Date.now() - VEH_AT < 30000) return;
+  VEH_AT = Date.now();
+  try {
+    const [veh, parc] = await Promise.all([all('vehicles', '*', null, ['plate']), all('parc', 'plate,brand,model,agency_id', null, ['plate']).catch(() => [])]);
+    S.vehList = veh; S.veh = {}; veh.forEach(v => { S.veh[v.key] = v; });
+    const known = new Set();
+    veh.forEach(v => { known.add(v.key); [v.plate].concat(String(v.other_plates || '').split(/[,;]/)).forEach(x => { if (String(x || '').trim()) known.add(normPlate(x)); }); });
+    S.vehParc = parc.filter(p => p.plate && !known.has(normPlate(p.plate))).map(p => ({ key: normPlate(p.plate), plate: p.plate, brand: p.brand, model: p.model, agency_id: p.agency_id, active: 'OUI', _parc: true }));
+  } catch (e) { VEH_AT = 0; }
+}
+/** Véhicules actifs proposés dans les saisies : agence choisie, part du planning du gestionnaire de service, plaques du parc pas encore importées */
+function vehPick() {
+  const a = agFilter(), m = typeof mineOn === 'function' && mineOn() ? S.mine : null;
+  return S.vehList.concat(S.vehParc || []).filter(v => String(v.active || 'OUI').toUpperCase() !== 'NON' && (!a || String(v.agency_id) === a) && (!m || m.has(v.key)))
+    .sort((x, y) => String(x.plate).localeCompare(String(y.plate)));
+}
+function vehOf(k) { return S.veh[k] || (S.vehParc || []).find(v => v.key === k) || null; }
+
 // ---------- Agences ----------
 /** Agence choisie dans la barre latérale (vide = toutes celles que l'utilisateur peut voir) */
 function agFilter() { let a = ''; try { a = localStorage.getItem('agence') || ''; } catch (e) { } return S.agencies.some(x => String(x.id) === a) ? a : ''; }
