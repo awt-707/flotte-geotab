@@ -222,6 +222,8 @@ function collect() {
     // Pleins vus par la jauge sans FillUp Geotab (publié des heures après, ou jamais) : affichés tout de suite, retirés quand le FillUp arrive
     try { if (gaugeFills_()) markDirty_(addDays_(localDay_(Date.now()), -(GAUGE_FILL_DAYS - 1))); } catch (e) { msg.push('Pleins (jauge) : ' + e.message); }
     if (live && live.wrote) markDirty_(localDay_(Date.now() - DAY));
+    // Véhicules encore sans boîtier Geotab (boîtier installé ou renommé après l'ajout au parc, VIN lu par le boîtier…) : nouvel essai toutes les 30 min
+    try { const m = geoLinkStep_(); if (m) msg.push(m); } catch (e) { msg.push('Association Geotab : ' + e.message); }
     // Demandes du site (contrats importés, plaques, synchro immédiate, recalcul)
     try { const j = processJobs_(t0); if (j) msg.push(j); } catch (e) { msg.push('Demandes du site : ' + e.message); }
     // Caisse recopiée dans le classeur de sauvegarde (onglets « … Ludy ») : avant le journal, qui peut prendre tout le passage
@@ -302,7 +304,7 @@ function processJobs_(t0) {
     try {
       if (kind === 'after_inject') res = jobAfterInject_(injDay(args), t0);
       else if (kind === 'apply_plates') res = jobPlates_();
-      else if (kind === 'import_vehicles') res = importVehicles(true) + ' véhicules';
+      else if (kind === 'import_vehicles') { const x = importVehiclesLink_(); res = x.n + ' véhicules' + (x.msg ? ' | ' + x.msg : ''); }
       else if (kind === 'sync_now') res = jobSyncNow_(t0);
       else if (kind === 'recompute') res = jobRecompute_(args.map(a => toDayStr_(a)).filter(Boolean).sort()[0]);
       else if (kind === 'resync') res = jobResync_(args, t0);
@@ -327,7 +329,7 @@ function jobAfterInject_(fromDay, t0) {
 /** Recalcul fait à partir de day : la demande de recalcul en attente (journées finalisées) n'est effacée que si elle est couverte */
 function clearDirty_(day) { const p = PropertiesService.getScriptProperties(), d = p.getProperty('DERIVED_DIRTY'); if (d && (!day || d >= day)) p.deleteProperty('DERIVED_DIRTY'); }
 function jobPlates_() {
-  importVehicles(true);
+  importVehiclesLink_();
   const minDay = rekeyAll_();
   const from = minDay || addDays_(localDay_(new Date()), -7), r = rebuild_(from);
   clearDirty_(from);
@@ -385,7 +387,7 @@ function dailyStep_(t0) {
   while (st.steps.length && Date.now() - t0 < MAX_RUN_MS - 90000) {
     const s = st.steps[0];
     try {
-      if (s === 'vehicles') importVehicles(true);
+      if (s === 'vehicles') importVehiclesLink_();
       else if (s === 'rules') syncRules_();
       else if (s === 'drivers') { const d = refreshDrivers_(); if (d.newDrivers.length) out.push('nouveaux chauffeurs : ' + d.newDrivers.join(', ')); }
       else if (s === 'backup') out.push(backup_());

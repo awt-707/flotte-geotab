@@ -1073,6 +1073,26 @@ async function agencyIds(names) {
 }
 
 // ---------- VÉHICULES (liste du parc gérée ici : remplace le Sheet ETAT PARC) ----------
+/** Boîtiers Geotab non associés (param geotabDevices, publié par le collecteur) et choix manuels (param geotabManual) */
+function geoFree() { const P = S.P || {}; try { const o = JSON.parse(String(P.geotabDevices || '')); return o && Array.isArray(o.list) ? o : { list: [] }; } catch (e) { return { list: [] }; } }
+function geoManualCfg() { const P = S.P || {}; try { const o = JSON.parse(String(P.geotabManual || '{}')); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch (e) { return {}; } }
+function geoDevTxt(d) { return [d.n, d.p && d.p !== d.n ? d.p : '', d.v ? 'VIN …' + d.v.slice(-6) : '', d.t ? 'vu ' + fmtDTY(d.t) : 'jamais vu'].filter(Boolean).join(' · '); }
+function geoCell(v) {
+  const man = geoManualCfg()[v.key], free = geoFree().list;
+  const pend = man && man !== v.geotab_id ? ' <span class="badge warn">boîtier choisi, associé au prochain passage</span>' : '';
+  const base = v.geotab_id ? esc(v.geotab_name || v.geotab_id) : '<span class="badge high">non associé</span>';
+  if (!isAdmin() || (v.geotab_id && !free.length)) return base + pend;
+  const opts = free.map(d => `<option value="${esc(d.id)}">${esc(geoDevTxt(d))}</option>`).join('');
+  return base + pend + (free.length ? ` <select class="vgeo small" data-k="${esc(v.key)}" title="Choisir le boîtier Geotab de ce véhicule"><option value="">${v.geotab_id ? 'changer de boîtier…' : 'choisir le boîtier…'}</option>${opts}</select>` : '');
+}
+function geoInfo(rows) {
+  const miss = rows.filter(v => !v.geotab_id && v.active !== 'NON');
+  if (!miss.length) return '';
+  const g = geoFree();
+  return msg(`<b>${miss.length} véhicule${miss.length > 1 ? 's' : ''} sans boîtier Geotab</b> (${miss.map(v => esc(v.plate)).join(', ')}) : « Non relié à Geotab » sur En direct, aucun trajet.
+    Le collecteur réessaie toutes les 30 minutes : VIN saisi ou lu par le boîtier, plaque dans le nom, la plaque ou le commentaire du boîtier Geotab.
+    ${isAdmin() ? (g.list.length ? `Sinon, choisissez le boîtier dans la colonne « Boîtier Geotab » (${g.list.length} boîtiers Geotab non associés${g.at ? ', liste du ' + fmtDTY(g.at) : ''}).` : 'La liste des boîtiers Geotab non associés apparaît ici après le prochain passage du collecteur.') : 'L\'administrateur peut choisir le boîtier sur cette page.'}`, 'warn');
+}
 async function pageVehicules() {
   const rid = ROUTING;   // page demandée pendant le chargement : rien n'est affiché
   await loadRef(true);
@@ -1088,10 +1108,10 @@ async function pageVehicules() {
     <div class="panel row"><label>Plaque <input id="vplate" placeholder="12345-A-1" size="11"></label><label>Marque <input id="vbrand" placeholder="HYUNDAI" size="9"></label>
       <label>Modèle <input id="vmodel" placeholder="STARIA" size="9"></label><label>VIN <input id="vvin" size="17"></label><label>Carburant <select id="vfuel"><option>GO</option><option>ES</option><option>Hybride</option><option>Électrique</option></select></label>
       <label>Agence <select id="vag">${agOptions('', '')}</select></label><button id="vadd">Ajouter le véhicule</button></div>` : ''}
-    <div id="vres">${info || ''}</div>
+    <div id="vres">${info || ''}</div>${geoInfo(rows)}
     ${table('tvh', [['Plaque', v => plate(v.plate), v => v.plate], ['Autres plaques', v => esc(v.other_plates || '')], ['Agence', v => isAdmin() ? `<select class="vag" data-k="${esc(v.key)}">${agOptions(v.agency_id, '—')}</select>` : agTxt(v.agency_id), v => S.agName[v.agency_id] || ''],
       ['Marque', v => esc(v.brand || '')], ['Modèle', v => esc(v.model || '')],
-      ['Carburant', v => esc(v.fuel || '')], ['VIN', v => esc(v.vin || '')], ['Boîtier Geotab', v => v.geotab_id ? esc(v.geotab_name || v.geotab_id) : '<span class="badge high">non associé</span>'],
+      ['Carburant', v => esc(v.fuel || '')], ['VIN', v => esc(v.vin || '')], ['Boîtier Geotab', v => geoCell(v), v => v.geotab_name || ''],
       ['Réservoir (L)', v => ed(v, 'tank_l', 4)], ['Conso réf (L/100)', v => ed(v, 'ref_l100', 4)], ['Recette/contrat (MAD)', v => ed(v, 'revenue', 6)], ['Actif', v => ed(v, 'active', 3)],
       ['Dernière finalisation', v => fmtDTY(v.last_sync), v => v.last_sync]], rows, { empty: 'Aucun véhicule : importez la liste du parc ou ajoutez un véhicule ci-dessus.' })}
     ${isAdmin() ? `<h2>Liste du parc (${parc.length})</h2>
@@ -1099,6 +1119,13 @@ async function pageVehicules() {
       ['Agence', r => `<select class="pag" data-p="${esc(r.plate)}">${agOptions(r.agency_id, '—')}</select>`, r => S.agName[r.agency_id] || ''],
       ['État', r => known.has(normPlate(r.plate)) ? '<span class="badge ok">dans la flotte</span>' : '<span class="badge warn">ajouté au prochain passage du collecteur</span>'],
       ['Note', r => esc(r.note || '')], ['', r => `<button class="ghost small" data-pdel="${esc(r.plate)}">Retirer</button>`]], parc, { empty: 'Liste du parc vide' })}` : ''}`;
+    document.querySelectorAll('.vgeo').forEach(i => { i.onchange = async () => {
+      if (!i.value) return;
+      const cur = geoManualCfg(); cur[i.dataset.k] = i.value;
+      const { data, error } = await sb.from('params').update({ value: JSON.stringify(cur) }).eq('key', 'geotabManual').select('key');
+      if (error || !(data || []).length) { alert(error ? error.message : 'Réglage geotabManual absent : il est créé par le collecteur au prochain passage (5 min), réessayez ensuite.'); return; }
+      S.P = null; await job('import_vehicles').catch(() => { }); await loadRef(true);
+      render(msg('Boîtier choisi pour ' + esc(i.dataset.k) + ' : associé au prochain passage du collecteur (5 min max). Les 7 derniers jours sont ensuite téléchargés.', 'ok')); }; });
     document.querySelectorAll('.ved').forEach(i => { i.onchange = async () => {
       const c = i.dataset.c, val = c === 'active' ? (i.value.toUpperCase() === 'NON' ? 'NON' : 'OUI') : (i.value === '' ? null : num(i.value, null));
       const { error } = await sb.from('vehicles').update({ [c]: val }).eq('key', i.dataset.k); if (error) alert(error.message); else i.classList.add('saved'); }; });
@@ -1478,7 +1505,7 @@ async function pageReglages() {
   if (my !== ROUTING) return;   // autre page demandée pendant le chargement : ne pas l'écraser
   const alTypes = [...new Set(types.map(x => x.type))].sort();
   const SEVS = ['Critique', 'Haute', 'Moyenne', 'Info'], FREQ = { jour: 'Chaque jour (veille)', semaine: 'Chaque lundi (semaine passée)', mois: 'Le 1er du mois (mois passé)' };
-  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, cashSheetStatus: 1, geoStudy: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1, mailName: 1, mailReplyTo: 1, mailFrom: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
+  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, cashSheetStatus: 1, geoStudy: 1, geotabDevices: 1, geotabManual: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1, mailName: 1, mailReplyTo: 1, mailFrom: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
   $('#page').innerHTML = `<div class="head"><h1>Réglages</h1></div>
     <h2>Limites de l'hébergement</h2><div class="sub">Offre Supabase (base, stockage, appels du temps réel). Le site lui-même (Cloudflare) n'a pas de limite. À 80 % : avertissement en bas du menu. Limites à changer dans les paramètres ci-dessous si l'offre change (Pro : 8 000 Mo, 102 400 Mo, 2 000 000 appels).</div>
     ${usageHtml(usage, S.P)}
