@@ -120,7 +120,7 @@ function cshRepEnc(p) {
       { title: 'Détail des encaissements', empty: 'Aucun encaissement saisi sur la période', num: [4, 5, 6, 7],
         head: ['Jour', 'Shift', 'Chauffeur', 'Caisse', 'Espèces déclarées', 'Remis', 'Monnaie rendue', 'Encaissé net', 'Gestionnaire'],
         rows: enc.map(m => [fmtDay(m.day), m.shift || '', m.driver_code ? cshDrvName(m.driver_code) : m.driver_name || '', m.caisse === 'bolt' ? 'Bolt' : 'Uber',
-          m.uber_cash == null ? RPT_NM : M(m.uber_cash), m.given == null ? '' : M(m.given), m.change == null ? '' : M(m.change), M(m.amount), m.manager_name || '']) },
+          m.uber_cash == null ? (m.label === CSH_COMPLEMENT ? 'complément' : RPT_NM) : M(m.uber_cash), m.given == null ? '' : M(m.given), m.change == null ? '' : M(m.change), M(m.amount), m.manager_name || '']) },
       { title: 'Dépenses par catégorie', empty: 'Aucune dépense sur la période', num: [1, 2], head: ['Catégorie', 'Montant', 'Part'],
         rows: cats.length ? cats.map(x => [x.label, M(x.amount), catT ? rptFmt(x.amount / catT * 100, 1) + ' %' : '']).concat([['Total', M(catT), '100 %']]) : [] },
       { title: 'Dépôts en banque', empty: 'Aucun dépôt sur la période', num: [2], head: ['Jour', 'Caisse', 'Montant', 'Référence / commentaire', 'Gestionnaire'],

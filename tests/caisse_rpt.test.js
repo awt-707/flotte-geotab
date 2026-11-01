@@ -149,3 +149,87 @@ test('page Caisse : rapports (PDF, tableur, graphiques) et bordereau de dépôt 
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
+
+test('manques à encaisser : shift encaissé en partie (ligne rouge), complément remis plus tard (ligne verte), encaissement modifié', async () => {
+  // calcul : premier encaissement du contrat = shift, les suivants = compléments ; annoncées par le chauffeur quand l'export manque
+  const C2 = require('../site/caisse_calc.js');
+  const mv = [{ id: 1, caisse: 'uber', kind: 'encaissement', amount: 260, uber_cash: 300, day: '2026-11-01', shift: 'Jour', driver_code: 'A', contract_num: 'K1', created_at: '2026-11-01T10:00:00Z' },
+    { id: 2, caisse: 'uber', kind: 'encaissement', amount: 25, uber_cash: null, day: '2026-11-01', shift: 'Jour', driver_code: 'A', contract_num: 'K1', label: 'Complément', created_at: '2026-11-02T09:00:00Z' },
+    { id: 3, caisse: 'uber', kind: 'encaissement', amount: 100, uber_cash: 100, day: '2026-11-01', shift: 'Nuit', driver_code: 'B', contract_num: 'K2', created_at: '2026-11-01T22:00:00Z' }];
+  assert.deepStrictEqual(C2.cshShortfalls(mv).map(x => [x.contract_num, x.dueAtShift, x.extra, x.rest, x.status]), [['K1', 40, 25, 15, 'Manquant'], ['K2', 0, 0, 0, 'Cadré']]);
+  mv.push({ id: 4, caisse: 'uber', kind: 'encaissement', amount: 15, day: '2026-11-01', shift: 'Jour', driver_code: 'A', contract_num: 'K1', label: 'Complément', created_at: '2026-11-03T09:00:00Z' });
+  assert.deepStrictEqual(C2.cshShortfalls(mv).find(x => x.contract_num === 'K1').status, 'Soldé');
+
+  env.resetDb();
+  const start = new Date(Date.now() - 3 * 3600000).toISOString(), end = new Date(Date.now() - 3600000).toISOString();
+  env.psql(`insert into vehicles (key, plate, model, active) values ('968199WW', 'WW968199', 'STARIA', 'OUI');
+    insert into drivers (code, name) values ('C1', 'ALPHA Test');
+    insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at) values ('K1', 'C1', 'ALPHA Test', 'WW968199', '968199WW', '${start}', '${end}');`);
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    const base = () => page.url().replace(/#.*/, '');
+    await login(page, '#/caisse?t=shift');
+    await page.waitForSelector('.cshshift .cuc');   // export Uber pas importé : espèces annoncées par le chauffeur
+    const sel = await page.evaluate(() => cshShiftSel());
+    if (await page.$('.cshshift tr[data-row]') === null) { await page.goto(base() + `#/caisse?t=shift&jour=${sel.day}&s=${sel.s}`); await page.waitForSelector('.cshshift .cuc'); }
+    await page.fill('.cshshift .cuc', '300'); await page.fill('.cshshift .cgv', '260');
+    assert.match(await page.innerText('.cshshift .cman'), /−\s*40|-40/);
+    page.once('dialog', d => d.accept());
+    await page.click('[data-csav="0"]');
+    await page.waitForSelector('.cshshift tr.done.short');
+    assert.match(await page.innerText('.cshshift tr.done'), /reste à encaisser/);
+    // volet Manques à encaisser : alerte (pastille), ligne rouge, 40 dus
+    await page.goto(base() + '#/caisse?t=manques'); await page.waitForSelector('table.cshmq');
+    assert.match(await page.innerText('.tabs'), /Manques à encaisser\s*1/);
+    assert.match(await page.innerText('table.cshmq tbody'), /ALPHA Test[\s\S]*300 MAD[\s\S]*260 MAD[\s\S]*40 MAD[\s\S]*40 MAD\s*Manquant/);
+    assert.ok(await page.$('table.cshmq tr.short'));
+    // le chauffeur remet les 40 : complément, la ligne passe au vert
+    page.once('dialog', d => { assert.match(d.message(), /Espèces manquantes remises par ALPHA Test/); d.accept('40'); });
+    await page.click('[data-mqc="0"]');
+    await page.waitForFunction(() => /Aucun manque à encaisser/.test((document.querySelector('table.cshmq') || {}).innerText || ''));
+    assert.strictEqual(env.psql("select string_agg(amount || ':' || coalesce(label, '-') || ':' || contract_num || ':' || shift, ',' order by id) from cash_moves"), `260.00:-:K1:${sel.s},40.00:Complément:K1:${sel.s}`);
+    await page.goto(base() + '#/caisse?t=manques&f=soldes'); await page.waitForSelector('table.cshmq tr.paid');
+    assert.match(await page.innerText('table.cshmq tbody'), /\+ 40 MAD[\s\S]*0 MAD\s*Soldé/);
+    // encaissement du shift : une seule ligne (complément compris), verte ; modification de l'encaissement enregistré
+    await page.goto(base() + `#/caisse?t=shift&jour=${sel.day}&s=${sel.s}`); await page.waitForSelector('.cshshift tr.done.paid');
+    assert.match(await page.innerText('.cshshift tr.done'), /300 MAD annoncées[\s\S]*300 MAD[\s\S]*\+ 40 MAD complément[\s\S]*manquant remis/);
+    await page.click('[data-cshed="0"]'); await page.fill('.cshshift .egv', '280');
+    await page.click('[data-cshes]');
+    await page.waitForFunction(() => /320 MAD/.test((document.querySelector('.cshshift tr.done') || {}).innerText || ''));
+    assert.strictEqual(env.psql("select amount || '|' || given from cash_moves where label is null"), '280.00|280.00');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
+});
+
+test('amendes : payée par le chauffeur (hors caisse, rien retenu) ou par la société (caisse Dépenses ou encaissement du shift) ; sans justificatif = retenue', async () => {
+  const C3 = require('../site/caisse_calc.js');
+  assert.ok(C3.CASH_DEP_CATS.includes('Amende') && C3.CASH_DEP_CATS.includes('Amende sans justificatif'));
+  assert.deepStrictEqual(C3.cshFineMove('chauffeur', 'Amende', 'OK'), { caisse: 'depenses', flow: 'virement', source: 'Chauffeur (payée de sa poche)', justif: 'N.A', ride_type: 'Non applicable' });
+  assert.deepStrictEqual(C3.cshFineMove('uber', 'Amende sans justificatif', 'OK'), { caisse: 'uber', flow: 'out', source: 'Encaissement Uber du shift', justif: 'KO', ride_type: 'Non applicable' });
+  // paie : amende payée par la société sans justificatif retenue ; payée par le chauffeur : rien ; jamais comptée comme frais de course
+  const d = '2026-11-01', mk = (o, extra) => Object.assign({ kind: 'depense', amount: 200, day: d, driver_code: 'A', label: o.label }, C3.cshFineMove(o.payer, o.label, o.justif), extra);
+  const moves = [mk({ payer: 'chauffeur', label: 'Amende', justif: 'En attente' }), mk({ payer: 'bolt', label: 'Amende sans justificatif' }), mk({ payer: 'depenses', label: 'Amende', justif: 'OK' })];
+  const pay = C3.cshPayroll({ moves, payments: [], from: d, to: d, uuid2code: {} }).find(x => x.key === 'A');
+  assert.deepStrictEqual([pay.depKo, pay.nDepKo], [200, 1]);
+  assert.deepStrictEqual(C3.cshBalances(moves).bolt, -200, 'sortie des espèces de l\'encaissement Bolt');
+  assert.deepStrictEqual(C3.cshBalances(moves).depenses, -200, 'payée par le chauffeur : hors caisse');
+
+  env.resetDb();
+  env.psql("insert into drivers (code, name) values ('C1', 'ALPHA Test')");
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/caisse?t=depenses');
+    await page.waitForSelector('#cdsave');
+    assert.ok(await page.isHidden('#cdpfine'));
+    await page.fill('#cdw', 'ALPHA Test'); await page.selectOption('#cdc', 'Amende sans justificatif');
+    assert.ok(await page.isVisible('#cdpfine')); assert.strictEqual(await page.inputValue('#cdj'), 'KO');
+    await page.selectOption('#cdp', 'uber'); await page.fill('#cda', '300'); await page.fill('#cdm', 'Excès de vitesse, Casablanca, PV 1234');
+    await page.click('#cdsave');
+    await page.waitForFunction(() => /Amende sans justificatif/.test((document.querySelector('#tcshdep') || {}).innerText || ''));
+    assert.strictEqual(env.psql("select caisse || '|' || kind || '|' || flow || '|' || amount || '|' || justif || '|' || source || '|' || ride_type || '|' || comment from cash_moves"),
+      'uber|depense|out|300.00|KO|Encaissement Uber du shift|Non applicable|Excès de vitesse, Casablanca, PV 1234');
+    assert.match(await page.innerText('#tcshdep'), /Encaissement Uber du shift \(caisse Encaissements Uber\)/);
+    assert.match(await page.innerText('#cshbody'), /300 MAD\s*1 amende · 1 sans justificatif\s*Amendes de la période/);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
+});
