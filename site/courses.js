@@ -243,7 +243,7 @@ function crsTabs(t) {
 }
 async function pageCourses() {
   const q = qs(), my = ROUTING, t = q.get('t') || '';
-  await crsLoadGrid();
+  await Promise.all([crsLoadGrid(), vehRefresh()]);
   if (my !== ROUTING) return;
   const head = `<div class="head"><h1>Courses privées</h1><div class="sub">Mise à disposition avec chauffeur et courses privées : découverte client, devis selon la grille tarifaire, validation de l'exploitation, suivi jusqu'à la facture, contrôle réel par Geotab.</div></div>`;
   if (CR.gridErr) { $('#page').innerHTML = head + msg('Module pas encore installé dans la base : exécuter <b>supabase/migrations/20261031000000_courses.sql</b> dans Supabase &gt; SQL Editor. (' + esc(CR.gridErr) + ')', 'err'); return; }
@@ -267,7 +267,7 @@ async function pageCourses() {
       <label>Statut <select id="crsf">${[['actives', 'En cours de traitement'], ['avalider', 'À valider par l\'administrateur'], ['prets', 'Validés, à envoyer au client'], ['toutes', 'Toutes']].concat(CRS_STATUS.map(x => [x, x])).map(x => `<option value="${esc(x[0])}" ${x[0] === fst ? 'selected' : ''}>${esc(x[1])}</option>`).join('')}</select></label></div>
     ${table('tcrs', [['N°', m => `<a href="#/courses?id=${m.id}">${esc(m.number || '#' + m.id)}</a>`, m => m.number], ['Client', m => esc(m.client_name || '') + (m.client_company ? '<div class="small">' + esc(m.client_company) + '</div>' : '')],
       ['Prestation', m => esc(m.kind || '') + '<div class="small">' + esc(crsCatName(m.category)) + '</div>'], ['Début', m => fmtDTY(m.start_at), m => m.start_at || ''], ['Fin', m => fmtDTY(m.end_at), m => m.end_at || ''],
-      ['Véhicule', m => m.vehicle_key ? plate((S.veh[m.vehicle_key] || {}).plate || m.vehicle_key) : '<span class="small">à affecter</span>'],
+      ['Véhicule', m => m.vehicle_key ? plate((vehOf(m.vehicle_key) || {}).plate || m.vehicle_key) : '<span class="small">à affecter</span>'],
       ['Niveau', m => badge(m.level, CRS_LVL_CLS[m.level])], ['Statut', m => badge(m.status, CRS_ST_CLS[m.status]) + (m.needs_validation ? (m.validated_at ? ' <span class="small ok">validé</span>' : m.submitted ? ' <span class="small crit">envoyé pour validation</span>' : ' <span class="small warn">à envoyer pour validation</span>') : '')],
       ['Total TTC', m => m.total_ttc == null ? '' : crsMoney(m.total_ttc), m => m.total_ttc || 0, 'n']], list, { empty: CR.listErr ? 'Erreur : ' + esc(CR.listErr) : 'Aucune demande', page: true })}`;
   $('#crsf').onchange = e => { location.hash = '#/courses?s=' + encodeURIComponent(e.target.value); };
@@ -297,7 +297,7 @@ async function crsBadgeLoad() {
 // planning : véhicules × 14 jours, missions qui bloquent le véhicule (acompte reçu, confirmée, en cours)
 function crsPlanning(head) {
   const q = qs(), from = /^\d{4}-\d{2}-\d{2}$/.test(q.get('d') || '') ? q.get('d') : today(), days = [...Array(14).keys()].map(i => addDays(from, i));
-  const ok = inAgency(), vs = S.vehList.filter(v => ok(v.key) && String(v.active || 'OUI').toUpperCase() !== 'NON');
+  const vs = vehPick();
   const live = CR.list.filter(m => !['Annulée', 'Refusée', 'Terminée', 'Facturée'].includes(m.status) && m.start_at);
   const on = (m, d) => { const b = dayBounds(d); return new Date(m.start_at) < b.end && new Date(m.end_at || m.start_at) >= b.start; };
   const cell = (k, d) => live.filter(m => (k ? m.vehicle_key === k : !m.vehicle_key) && on(m, d))
@@ -327,7 +327,7 @@ function crsGridOpts(cur) {
 function crsChecks(k, items) { const sel = CR.f[k] || []; return `<div class="crschk">${items.map(x => `<label class="chk"><input type="checkbox" data-fa="${k}" value="${esc(x)}" ${sel.includes(x) ? 'checked' : ''} ${CR.edit ? '' : 'disabled'}> ${esc(x)}</label>`).join('')}</div>`; }
 function crsForm() {
   const f = CR.f, G = crsG() || {}, base = crsBase(f, G), tab = base === 'aeroport' ? G.airport : base === 'interville' ? G.intercity : null;
-  const vs = S.vehList.filter(v => String(v.active || 'OUI').toUpperCase() !== 'NON');
+  const vs = S.vehList.concat(S.vehParc || []).filter(v => String(v.active || 'OUI').toUpperCase() !== 'NON');
   return `
   <details class="panel" open><summary><h2>1. Client</h2></summary><div class="mfrow">
     ${crsField('client', 'Nom et prénom', 'text', { size: 26 })}${crsField('company', 'Société, agence ou hôtel', 'text', { size: 24 })}${crsField('nationality', 'Nationalité du client final', 'text', { size: 14 })}
@@ -481,7 +481,7 @@ async function crsEditor(id, head) {
 }
 function crsRow(f, p) {
   const t = crsTimes(f), lv = crsLevel(f), val = crsVal(f, p.total, crsG());
-  const v = f.vehicleKey ? S.veh[f.vehicleKey] : null;
+  const v = f.vehicleKey ? vehOf(f.vehicleKey) : null;
   return { client_name: f.client || null, client_company: f.company || null, client_phone: f.phone || null, client_email: f.email || null, kind: f.kind || null, category: f.cat || null,
     vehicle_key: f.vehicleKey || null, driver_name: f.driverName || null, start_at: t.a ? t.a.toISOString() : null, end_at: t.b ? t.b.toISOString() : null,
     level: lv.level, needs_validation: val.length > 0 || !!(CR.cur && CR.cur.needs_validation && !f.quick), total_ttc: p.lines.length ? p.total : null, deposit: p.deposit || null,
@@ -684,7 +684,7 @@ function crsMfRender() {
 function crsCatOf(v) { const mo = String((v && v.model) || '').toUpperCase(); return (crsCats().find(c => mo.indexOf(String(c.id).toUpperCase()) >= 0) || {}).id || ''; }
 async function crsQuick(head) {
   const my = ROUTING; await mfEnsure(); if (my !== ROUTING) return;
-  const G = CR.grid || {}, ok = inAgency(), vs = S.vehList.filter(v => ok(v.key) && String(v.active || 'OUI').toUpperCase() !== 'NON').sort((a, b) => String(a.plate).localeCompare(String(b.plate)));
+  const G = CR.grid || {}, vs = vehPick();
   const dep0 = mfNowLocal(), q = CR.q = CR.q || { veh: '', dep: dep0, end: crsLocalDT(new Date((parseLocalDT(dep0) || new Date()).getTime() + 2 * HOUR)), type: 'Non résident', pax: 1 };
   if (typeof addrSetPlaces === 'function') addrSetPlaces(MANIF_PLACES);
   // tarifs de chaque ville de départ (grille de l'agence en premier) : valeur « grille|A ou I|destination »
@@ -717,7 +717,7 @@ async function crsQuick(head) {
         <div class="mfgo"><button id="qkgo" ${canEdit() ? '' : 'disabled'}>Lancer la course</button> <button class="ghost" id="qknew">Effacer</button></div><div id="qkres"></div></div></div>
     <div><div id="qkdone"></div></div></div>`;
   const rd = () => { ['veh', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cmail', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph', cmail: 'cml' }[k] || k)); if (e) q[k] = e.value; }); return q; };
-  const gridPrice = () => { rd(); const vv = S.veh[q.veh], cat = crsCatOf(vv), [gid, t, dest] = String(q.grid || '').split('|'), g = crsGridOf(gid), row = ((t === 'A' ? g.airport : g.intercity) || []).find(r => r.dest === dest);
+  const gridPrice = () => { rd(); const vv = vehOf(q.veh), cat = crsCatOf(vv), [gid, t, dest] = String(q.grid || '').split('|'), g = crsGridOf(gid), row = ((t === 'A' ? g.airport : g.intercity) || []).find(r => r.dest === dest);
     const pr = row && cat ? crsN(row[cat]) : 0, info = $('#qkpinfo');
     if (row && pr) { $('#qkprice').value = q.price = pr; info.textContent = 'Prix de la grille ' + crsGridName(g) + ' ' + (g.valid || '') + ' pour ' + crsCatName(cat) + ' : ' + crsMoney(pr) + ' (modifiable).'; }
     else info.textContent = q.grid ? (cat ? 'Pas de prix dans la grille pour ce véhicule.' : 'Choisir le véhicule pour le prix de la grille.') : ''; };
@@ -741,7 +741,7 @@ async function crsQuick(head) {
 async function crsQuickGo(head) {
   const q = CR.q, res = $('#qkres'), btn = $('#qkgo');
   ['veh', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cmail', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph', cmail: 'cml' }[k] || k)); if (e) q[k] = e.value; });
-  const vv = S.veh[q.veh], a = parseLocalDT(q.dep), b = parseLocalDT(q.end), bad = [];
+  const vv = vehOf(q.veh), a = parseLocalDT(q.dep), b = parseLocalDT(q.end), bad = [];
   const G = (q.grid ? crsGridOf(String(q.grid).split('|')[0]) : crsGridDefault(vv && vv.agency_id)) || {};
   if (!vv) bad.push('le véhicule'); if (!a) bad.push('la date de départ'); if (a && (!b || b <= a)) bad.push('une fin prévue après le départ');
   if (!String(q.from || '').trim()) bad.push('l\'adresse de départ'); if (!String(q.to || '').trim()) bad.push('l\'adresse d\'arrivée');
@@ -788,7 +788,7 @@ async function crsGeotab() {
   const p = crsPrice(CR.f, crsG()), r = crsActual(trips, CR.f, p, t => localDay(t), t => localHM(t));
   CR.actual = r;
   box.innerHTML = `<div class="panel"><h2>Contrôle réel (Geotab)</h2>
-    <div class="small">Véhicule ${esc((S.veh[m.vehicle_key] || {}).plate || m.vehicle_key)} du ${fmtDTY(a)} au ${fmtDTY(b)}${b < new Date(m.end_at || 0) ? ' (mission en cours)' : ''}. Amplitude = du premier départ au dernier arrêt du véhicule (l'attente avant le premier départ n'est pas mesurée).</div>
+    <div class="small">Véhicule ${esc((vehOf(m.vehicle_key) || {}).plate || m.vehicle_key)} du ${fmtDTY(a)} au ${fmtDTY(b)}${b < new Date(m.end_at || 0) ? ' (mission en cours)' : ''}. Amplitude = du premier départ au dernier arrêt du véhicule (l'attente avant le premier départ n'est pas mesurée).</div>
     ${table('tcrsg', [['Jour', d => fmtDay(d.day)], ['Trajets', d => f0(d.n), null, 'n'], ['Km', d => f1(d.km), null, 'n'], ['Premier départ', d => esc(d.from)], ['Dernier arrêt', d => esc(d.to)], ['Amplitude (h)', d => f1(d.h), null, 'n'],
       ['Heures au-delà', d => d.overH ? '<b class="crit">' + f0(d.overH) + '</b>' : '0', null, 'n'], ['Km au-delà', d => d.overKm ? '<b class="crit">' + f1(d.overKm) + '</b>' : '0', null, 'n']], r.days, { empty: 'Aucun trajet Geotab sur la période' })}
     ${cards([['Km mesurés', f1(r.km)], ['Heures au-delà (heures commencées)', f0(r.overH), r.overH ? 'warn' : ''], ['Km au-delà du forfait', f1(r.overKm), r.overKm ? 'warn' : ''],
@@ -931,7 +931,7 @@ function crsActualPdf(m, f, p, r) {
   const doc = crsPdfDoc(), W = doc.internal.pageSize.getWidth(), M = 14;
   try { doc.addImage(RPT_LOGO, 'PNG', M, 10, 38, 9.3); } catch (e) { }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.text('Rapport kilomètres et horaires', W - M, 15, { align: 'right' });
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.text(crsCl((m.number || '') + ' · ' + (f.client || '') + ' · ' + ((S.veh[m.vehicle_key] || {}).plate || '')), W - M, 20.5, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.text(crsCl((m.number || '') + ' · ' + (f.client || '') + ' · ' + ((vehOf(m.vehicle_key) || {}).plate || '')), W - M, 20.5, { align: 'right' });
   doc.text(crsCl('Mesuré par le boîtier Geotab du véhicule : du premier départ au dernier arrêt de chaque jour.'), M, 30);
   doc.autoTable({ startY: 34, margin: { left: M, right: M }, head: [['Jour', 'Trajets', 'Km', 'Premier départ', 'Dernier arrêt', 'Amplitude (h)', 'Heures au-delà', 'Km au-delà']],
     body: r.days.map(d => [fmtDay(d.day), String(d.n), f1(d.km), d.from, d.to, f1(d.h), String(d.overH), f1(d.overKm)].map(crsCl)),
