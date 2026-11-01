@@ -575,3 +575,9 @@ polyline.cs-prev { stroke: #949ca6; stroke-width: 2; } polyline.cs-cum { stroke:
 .cshlg i.cs-uber { background: var(--ink); } .cshlg i.cs-bolt { background: #18a068; } .cshlg i.cs-crs { background: var(--acc); } .cshlg i.cs-net { background: #2563eb; } .cshlg i.cs-decl { background: #94a3b8; }
 .cshlg i.ln { height: 0; border-top: 2px solid #949ca6; border-radius: 0; width: 16px; } .cshlg i.ln.dash { border-top-style: dashed; }
 table.cshdep { width: 100%; } table.cshdep td, table.cshdep th { padding: 4px 6px; }
+/* Caisse : manques à encaisser par shift (rouge tant qu'il reste dû, vert une fois remis) */
+.pill { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; font-size: 11px; font-weight: 700; line-height: 17px; text-align: center; }
+.pill.crit { background: var(--crit); color: #fff; }
+.cshshift tr.done.short td, table.cshmq tr.short td { background: var(--crit-bg); }
+.cshshift tr.done.paid td, table.cshmq tr.paid td { background: var(--ok-bg); }
+table.cshmq { width: 100%; } table.cshmq td, table.cshmq th { padding: 6px 8px; border-bottom: 1px solid var(--line2); vertical-align: top; }

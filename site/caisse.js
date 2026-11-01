@@ -4,7 +4,7 @@
 
 const CS = { moves: [], all: [], pay: [], bolt: [], boltPay: [], drivers: [], udrv: [], uuid2code: {}, names: {}, ctrByDrv: {}, err: '' };
 const CSH_TABS = [['bord', 'Tableau de bord'], ['shift', 'Encaissement du shift'], ['depenses', 'Dépenses'], ['rh', 'Avances RH'], ['courses', 'Courses privées'],
-  ['bonus', 'Bonus'], ['rappro', 'Rapprochement Uber'], ['rapbolt', 'Rapprochement Bolt'], ['paie', 'Paie'], ['ca', 'Chiffre d\'affaires'], ['rapports', 'Rapports'], ['depot', 'Dépôt en banque'], ['journal', 'Journal'], ['import', 'Imports']];
+  ['bonus', 'Bonus'], ['rappro', 'Rapprochement Uber'], ['rapbolt', 'Rapprochement Bolt'], ['paie', 'Paie'], ['ca', 'Chiffre d\'affaires'], ['manques', 'Manques à encaisser'], ['rapports', 'Rapports'], ['depot', 'Dépôt en banque'], ['journal', 'Journal'], ['import', 'Imports']];
 const CSH_KIND = { encaissement: 'Encaissement', depense: 'Dépense', avance: 'Avance', remboursement: 'Remboursement d\'avance', course: 'Course privée', bonus: 'Bonus',
   recharge: 'Recharge de caisse', depot: 'Dépôt en banque', autre: 'Autre' };
 const CSH_FLOW_TXT = { in: 'Entrée de cash', out: 'Sortie de cash', virement: 'Virement' };
@@ -115,14 +115,16 @@ async function pageCaisse() {
     return;
   }
   if (my !== ROUTING) return;
-  const tabs = `<div class="tabs">${CSH_TABS.map(x => `<a href="${cshHref(x[0])}" class="${t === x[0] ? 'on' : ''}">${x[1]}</a>`).join('')}<span id="cshsl" class="small"></span></div>`;
+  // manques à encaisser de la période chargée : pastille rouge sur l'onglet (alerte des manques par shift)
+  let nMq = 0; try { nMq = cshShortList().filter(x => x.status === 'Manquant').length; } catch (e) { nMq = 0; }
+  const tabs = `<div class="tabs">${CSH_TABS.map(x => `<a href="${cshHref(x[0])}" class="${t === x[0] ? 'on' : ''}">${x[1]}${x[0] === 'manques' && nMq ? ` <span class="pill crit">${nMq}</span>` : ''}</a>`).join('')}<span id="cshsl" class="small"></span></div>`;
   const bar = t === 'shift' || t === 'import' || t === 'depot' ? '' : `<div class="bar"><label>Du <input type="date" id="cshdu" value="${p.from}"></label><label>Au <input type="date" id="cshau" value="${p.to}"></label>
     <span class="small">${[['Aujourd\'hui', 0, 0], ['7 jours', 6, 0], ['30 jours', 29, 0]].map(x => `<a href="${cshHref(t, { du: addDays(today(), -x[1]), au: today() })}">${x[0]}</a>`).join(' · ')}</span></div>`;
   $('#page').innerHTML = head + agSel + tabs + bar + '<div id="cshbody"></div>' + `<datalist id="cshdrv">${[...new Set(CS.drivers.filter(d => !CS.agId || !d.agency_id || String(d.agency_id) === String(CS.agId)).map(d => d.name).concat(CS.udrv.filter(u => !CS.uuid2code[u.uuid]).map(u => u.name)).filter(Boolean))].sort().map(n => `<option value="${esc(n)}"></option>`).join('')}</datalist>`;
   const go = () => { location.hash = cshHref(t, { du: $('#cshdu').value, au: $('#cshau').value }); };
   if ($('#cshdu')) { $('#cshdu').onchange = go; $('#cshau').onchange = go; }
   bindAg();
-  const tab = ({ bord: cshTabBord, shift: cshTabShift, depenses: cshTabDep, rh: cshTabRh, courses: cshTabCourses, bonus: cshTabBonus, rappro: cshTabRappro, rapbolt: cshTabRapBolt, paie: cshTabPaie, ca: cshTabCA, rapports: cshTabRapports, depot: cshTabDepot, journal: cshTabJournal, import: cshTabImport })[t];
+  const tab = ({ bord: cshTabBord, shift: cshTabShift, depenses: cshTabDep, rh: cshTabRh, courses: cshTabCourses, bonus: cshTabBonus, rappro: cshTabRappro, rapbolt: cshTabRapBolt, paie: cshTabPaie, ca: cshTabCA, manques: cshTabManques, rapports: cshTabRapports, depot: cshTabDepot, journal: cshTabJournal, import: cshTabImport })[t];
   tab(p);
   // classeur Google de l'agence (un par agence, créé par le collecteur) : lien à côté des onglets
   cshSheetLink().then(id => { const x = $('#cshsl'); if (x && id && my === ROUTING) x.innerHTML = `<a href="${cshSheetUrl(id)}" target="_blank" rel="noopener">Classeur Google de l'agence ↗</a>`; }).catch(() => { });
@@ -159,7 +161,9 @@ function cshTabBord(p) {
   cshBody(cshUberWarn(p) + `<h2>Soldes des caisses (espèces en main)</h2>` + cards(CASH_CAISSES.map(c => [c[1], cshMoney(bal[c[0]]), bal[c[0]] < 0 ? 'crit' : '']).concat([['Total espèces', '<b>' + cshMoney(bal.total) + '</b>', bal.total < 0 ? 'crit' : 'ok']])) +
     `<h2>Période du ${fmtDay(p.from)} au ${fmtDay(p.to)}</h2>` +
     cards([['Espèces déclarées par Uber', cshMoney(sum('uber'))], ['Espèces Uber encaissées (net)', cshMoney(sum('net'))], ['Espèces déclarées par Bolt', cshMoney(sum('bolt'))], ['Espèces Bolt encaissées (net)', cshMoney(sum('boltNet'))],
-      ['Manquant à retenir (Uber + Bolt)', cshMoney(man), man ? 'crit' : 'ok'], ['Excédent à ajouter (Uber + Bolt)', cshMoney(exc), exc ? 'warn' : ''],
+      ['Manquant à retenir (Uber + Bolt)', cshMoney(man), man ? 'crit' : 'ok'],
+      ...(() => { const l = cshShortList().filter(x => x.status === 'Manquant' && x.day >= p.from && x.day <= p.to), v = cshR(l.reduce((t, x) => t + x.rest, 0));
+        return [['Manques à encaisser (shifts)', `<a href="${cshHref('manques')}">${cshMoney(v)}</a><div class="small">${l.length} shift${l.length > 1 ? 's' : ''} en attente</div>`, l.length ? 'crit' : 'ok']]; })(), ['Excédent à ajouter (Uber + Bolt)', cshMoney(exc), exc ? 'warn' : ''],
       ['Dépenses chauffeurs', cshMoney(sum('depenses'))], ['Avances sur salaire', cshMoney(sum('avances'))], ['Courses privées encaissées', cshMoney(sum('courses')) + `<div class="small">CA courses : ${cshMoney(caCourses)}</div>`],
       ['Bonus', cshMoney(sum('bonus'))], ['Dépôts en banque', cshMoney(sum('depots'))], ['Chiffre d\'affaires Uber', cshMoney(sum('revenue'))], ['Chiffre d\'affaires Bolt', cshMoney(sum('boltRevenue'))]]) +
     `<div class="panel"><h3>Espèces déclarées par Uber et encaissées, par jour de shift</h3>${daily.length ? `<svg viewBox="0 0 ${W} ${H}" class="cshchart" role="img" aria-label="Espèces par jour">${bars}</svg>
@@ -239,48 +243,71 @@ function cshMoveShift(m) {
   const c = (m.contract_num && CS.ctr.find(x => x.num === m.contract_num)) || CS.ctr.filter(x => x._day === m.day && x.client_code && x.client_code === m.driver_code).sort((a, b) => a._s - b._s)[0];
   return c && c._day === m.day && c._shift ? c._shift : 'Jour';
 }
+/**
+ * Espèces de la plateforme pendant un contrat : { v } (export importé jusqu'à la fin du contrat), { v: null, pending: true } (export pas
+ * encore importé jusque-là : jamais 0), { v: null } (compte Uber du chauffeur non relié). Uber : comptes Uber du chauffeur ; Bolt : sessions
+ * du chauffeur (même nom, sinon contrat du véhicule) commencées pendant le contrat.
+ */
+function cshCtrCash(pf, c) {
+  const inC = x => { const t = new Date(x.at).getTime(); return t >= c._s && t <= c._e; };
+  if (pf === 'bolt') {
+    if (CS.boltErr || !CS.boltLastAt || new Date(CS.boltLastAt).getTime() < c._e) return { v: null, pending: true };
+    return { v: cshR(CS.boltPay.filter(x => x._key === c.client_code && inC(x)).reduce((t, x) => t + cshN(x.cash), 0)) };
+  }
+  const us = Object.keys(CS.u2c || {}).filter(u => CS.u2c[u] === c.client_code); if (!us.length) return { v: null };
+  if (!CS.lastAt || new Date(CS.lastAt).getTime() < c._e) return { v: null, pending: true };
+  return { v: cshR(CS.pay.filter(x => us.indexOf(x.driver_uuid) >= 0 && inC(x)).reduce((t, x) => t + cshN(x.cash), 0)) };
+}
+/** Espèces déclarées par la plateforme pour l'encaissement d'un contrat (export importé), sinon null */
+function cshDeclOf(m) { const c = m.contract_num && CS.ctr.find(x => x.num === m.contract_num); return c ? cshCtrCash(m.caisse, c).v : null; }
+/** Complément d'un manquant : espèces remises plus tard par le chauffeur, rattachées au shift (même jour, shift, contrat), sorties de la ligne rouge */
+async function cshComplement(main, rest) {
+  const v = await askText('Espèces manquantes remises par ' + (main.driver_code ? cshDrvName(main.driver_code) : main.driver_name || 'le chauffeur') + ' pour le shift ' + (main.shift || '') + ' du ' + fmtDay(main.day) + ' (MAD) :', rest > 0 ? String(rest) : '');
+  if (v === null) return false;
+  const a = cshR(cshN(v)); if (!(a > 0)) { alert('Montant invalide.'); return false; }
+  await cshInsert({ caisse: main.caisse, kind: 'encaissement', flow: 'in', amount: a, day: main.day, shift: main.shift || null, driver_code: main.driver_code || null, driver_name: main.driver_name || null,
+    uber_uuid: main.uber_uuid || null, contract_num: main.contract_num || null, vehicle_key: main.vehicle_key || null, uber_cash: null, given: a, change: 0, source: 'Chauffeur', label: CSH_COMPLEMENT,
+    comment: 'Complément remis le ' + fmtDTY(new Date().toISOString()) });
+  return true;
+}
 function cshTabShift() {
   const { day, s } = cshShiftSel(), pf = qs().get('pf') === 'bolt' ? 'bolt' : 'uber', P = CSH_PF[pf], B = pf === 'bolt';
   const ctr = CS.ctr.filter(c => c._day === day && c._shift === s && c.client_code).sort((a, b) => String(cshDrvName(a.client_code)).localeCompare(String(cshDrvName(b.client_code))) || a._s - b._s);
-  const enc = CS.moves.filter(m => cshLive(m) && m.caisse === pf && m.kind === 'encaissement' && m.day === day && cshMoveShift(m) === s);
-  // espèces Uber du contrat : comptes Uber du chauffeur ; export pas encore importé jusqu'à la fin du contrat = « non importé » (jamais 0)
-  const uuidsOf = code => Object.keys(CS.u2c || {}).filter(u => CS.u2c[u] === code);
-  // Bolt : sessions du chauffeur (même nom, sinon contrat du véhicule) commencées pendant le contrat
-  const cashOf = B ? c => { if (CS.boltErr || !CS.boltLastAt || new Date(CS.boltLastAt).getTime() < c._e) return { v: null, pending: true };
-      return { v: cshR(CS.boltPay.filter(x => x._key === c.client_code && new Date(x.at).getTime() >= c._s && new Date(x.at).getTime() <= c._e).reduce((t, x) => t + cshN(x.cash), 0)) }; }
-    : c => { const us = uuidsOf(c.client_code); if (!us.length) return { v: null };
-      if (!CS.lastAt || new Date(CS.lastAt).getTime() < c._e) return { v: null, pending: true };
-      return { v: cshR(CS.pay.filter(x => us.indexOf(x.driver_uuid) >= 0 && new Date(x.at).getTime() >= c._s && new Date(x.at).getTime() <= c._e).reduce((t, x) => t + cshN(x.cash), 0)) }; };
+  const enc = CS.moves.filter(m => cshLive(m) && m.caisse === pf && m.kind === 'encaissement' && m.day === day && cshMoveShift(m) === s)
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || a.id - b.id);
   const lastImp = B ? CS.boltLastAt : CS.lastAt || cshLastImport();
-  const rows = ctr.map(c => { const u = cashOf(c);
-    return { c, done: [], uber: u.v, pending: !!u.pending, uuid: B ? null : (CS.drivers.find(d => d.code === c.client_code) || {}).uber_uuid || uuidsOf(c.client_code)[0] }; });
-  // chaque encaissement compté une fois : sur son contrat (numéro), sinon sur le premier contrat du chauffeur encore sans encaissement ;
-  // encaissement en plus sur un même contrat : dans « Autres encaissements »
+  const rows = ctr.map(c => { const u = cshCtrCash(pf, c);
+    return { c, done: [], uber: u.v, pending: !!u.pending, uuid: B ? null : (CS.drivers.find(d => d.code === c.client_code) || {}).uber_uuid || Object.keys(CS.u2c || {}).find(x => CS.u2c[x] === c.client_code) }; });
+  // encaissements d'un contrat : le premier = encaissement du shift, les suivants = compléments (manquant remis plus tard) ; sans numéro de contrat :
+  // premier contrat du chauffeur dans le shift ; encaissement d'un chauffeur sans contrat dans ce shift : « Autres encaissements »
   const others = [];
-  enc.forEach(m => { const r = m.contract_num ? rows.find(x => x.c.num === m.contract_num)
-    : rows.find(x => x.c.client_code === m.driver_code && !x.done.length);
-    if (r && !r.done.length) r.done.push(m); else others.push(m); });
-  const ucOf = (r, d) => d.uber_cash != null ? cshN(d.uber_cash) : r.uber;   // saisi sans export : espèces Uber relues depuis l'export importé ensuite
+  enc.forEach(m => { const r = (m.contract_num && rows.find(x => x.c.num === m.contract_num)) || (!m.contract_num && rows.find(x => x.c.client_code === m.driver_code));
+    if (r) r.done.push(m); else others.push(m); });
+  rows.forEach(r => { if (r.done.length) r.sf = cshShortfalls(r.done.map(m => Object.assign({}, m, { contract_num: r.c.num })), () => r.uber)[0]; });
   const link = (d, sh, f) => '#/caisse?t=shift&jour=' + d + '&s=' + sh + ((f || pf) === 'bolt' ? '&pf=bolt' : '');
   const prev = s === 'Nuit' ? [day, 'Jour'] : [addDays(day, -1), 'Nuit'], next = s === 'Jour' ? [day, 'Nuit'] : [addDays(day, 1), 'Jour'];
+  const decl = r => r.uber == null ? (r.pending ? `<span class="nm" title="Export ${P.name} pas encore importé jusqu'à la fin du contrat">non importé</span>` : `<a class="nm" href="${cshHref('import')}">UUID Uber non relié</a>`) : cshMoney(r.uber);
+  const doneRow = (r, i) => { const f = r.sf, d = f.main, cls = f.status === 'Manquant' ? ' short' : f.status === 'Soldé' ? ' paid' : '';
+    const ann = r.uber == null && d.uber_cash != null ? cshMoney(d.uber_cash) + ' <span class="small">annoncées</span>' : decl(r);
+    const comps = f.comps.map(m => `<div class="small">+ ${cshMoney(m.amount)} ${m.label === CSH_COMPLEMENT ? 'complément' : 'encaissement'} · ${esc(fmtDTY(m.created_at))}${cshCanFix(m) ? ` <a href="#" data-cshx="${m.id}">annuler</a>` : ''}</div>`).join('');
+    return `<tr class="done${cls}" data-done="${i}"><td>${esc(cshDrvName(r.c.client_code))}</td><td class="small">${esc(r.c.num)} · ${esc(fmtDT(r.c.start_at))}</td><td class="n">${ann}</td>
+      <td class="n">${cshMoney(d.given)}</td><td class="n">${cshMoney(d.change)}</td><td class="n"><b>${cshMoney(f.total)}</b>${comps}</td>
+      <td class="n">${f.rest == null ? '' : cshSignedTxt(-f.rest)}${f.status === 'Soldé' ? '<div class="small ok">manquant remis</div>' : f.status === 'Manquant' ? '<div class="small red">reste à encaisser</div>' : ''}</td>
+      <td class="small">${esc(d.comment || '')}</td><td>${f.rest > 0.004 ? `<button class="small" data-cshcp="${i}">+ Complément</button> ` : ''}${cshCanFix(d) ? `<button class="ghost small" data-cshed="${i}">Modifier</button> <button class="ghost small" data-cshx="${d.id}">Annuler</button>` : '<span class="small ok">enregistré</span>'}</td></tr>`; };
   cshBody(`<div class="tabs">${['uber', 'bolt'].map(x => `<a href="${link(day, s, x)}" class="${x === pf ? 'on' : ''}">Espèces ${CSH_PF[x].name}</a>`).join('')}</div>${B ? cshBoltWarn({ to: day }) : ''}
     <div class="bar"><a class="btn small ghostb" href="${link(prev[0], prev[1])}">← Shift précédent</a><label>Jour <input type="date" id="cshsd" value="${day}"></label>
       <label>Shift <select id="cshss"><option ${s === 'Jour' ? 'selected' : ''}>Jour</option><option ${s === 'Nuit' ? 'selected' : ''}>Nuit</option></select></label>
       <b>${esc(shiftDayName({ s, day }))}</b><a class="btn small ghostb" href="${link(next[0], next[1])}">Shift suivant →</a></div>
-    <div class="small">Chauffeurs dont le contrat a commencé dans ce shift. Espèces ${P.name} = espèces collectées pendant le contrat (export ${P.name} importé${lastImp ? ', jusqu\'au ' + esc(fmtDTY(lastImp)) : ''} ; « non importé » : export pas encore importé jusqu'à la fin du contrat, manquant calculé au rapprochement). Encaissé net = remis par le chauffeur − monnaie rendue. Manquant = espèces ${P.name} − encaissé net : déduit de la paie (dépenses justifiées comptées au rapprochement).</div>
+    <div class="small">Chauffeurs dont le contrat a commencé dans ce shift. Espèces ${P.name} = espèces collectées pendant le contrat (export ${P.name} importé${lastImp ? ', jusqu\'au ' + esc(fmtDTY(lastImp)) : ''} ; « non importé » : export pas encore importé jusqu'à la fin du contrat : saisir les espèces annoncées par le chauffeur pour voir le manquant tout de suite). Encaissé net = remis − monnaie rendue. Manquant = espèces ${P.name} − encaissé : la ligne reste rouge tant qu'il n'est pas remis ; « + Complément » quand le chauffeur apporte la différence (ligne verte, suivi dans « Manques à encaisser »).</div>
     <div class="tw"><table class="cshshift"><thead><tr><th>Chauffeur</th><th>Contrat</th><th class="n">Espèces ${P.name}</th><th class="n">Remis</th><th class="n">Monnaie rendue</th><th class="n">Encaissé net</th><th class="n">Manquant</th><th>Commentaire</th><th></th></tr></thead><tbody>
-    ${rows.length ? rows.map((r, i) => { const d = r.done[0], ub = r.pending ? `<span class="nm" title="Export ${P.name} pas encore importé jusqu'à la fin du contrat">non importé</span>` : null;
-      if (d) { const uc = ucOf(r, d); return `<tr class="done"><td>${esc(cshDrvName(r.c.client_code))}</td><td class="small">${esc(r.c.num)} · ${esc(fmtDT(r.c.start_at))}</td><td class="n">${r.uber == null ? ub || '<span class="nm">UUID Uber non relié</span>' : cshMoney(r.uber)}</td>
-        <td class="n">${cshMoney(d.given)}</td><td class="n">${cshMoney(d.change)}</td><td class="n"><b>${cshMoney(d.amount)}</b></td><td class="n">${uc == null ? '' : cshSignedTxt(-(uc - cshN(d.amount)))}</td><td class="small">${esc(d.comment || '')}</td><td>${cshCanFix(d) ? `<button class="ghost small" data-cshx="${d.id}">Annuler</button>` : '<span class="small ok">enregistré</span>'}</td></tr>`; }
-      return `<tr data-row="${i}"><td>${esc(cshDrvName(r.c.client_code))}</td><td class="small">${esc(r.c.num)} · ${esc(fmtDT(r.c.start_at))}</td>
-        <td class="n">${r.uber == null ? ub || `<a class="nm" href="${cshHref('import')}">UUID Uber non relié</a>` : cshMoney(r.uber)}</td>
+    ${rows.length ? rows.map((r, i) => r.sf ? doneRow(r, i) : `<tr data-row="${i}"><td>${esc(cshDrvName(r.c.client_code))}</td><td class="small">${esc(r.c.num)} · ${esc(fmtDT(r.c.start_at))}</td>
+        <td class="n">${r.uber == null ? decl(r) + `<div><input type="number" min="0" step="1" class="cuc" style="width:90px" placeholder="annoncées" title="Espèces ${P.name} annoncées par le chauffeur (export pas encore importé)"></div>` : cshMoney(r.uber)}</td>
         <td class="n"><input type="number" min="0" step="1" class="cgv" style="width:90px"></td><td class="n"><input type="number" min="0" step="1" class="cch" style="width:80px"></td>
-        <td class="n cnet"></td><td class="n cman"></td><td><input class="ccm" size="18" placeholder="si manquant"></td><td><button class="small" data-csav="${i}">Enregistrer</button></td></tr>`; }).join('')
+        <td class="n cnet"></td><td class="n cman"></td><td><input class="ccm" size="18" placeholder="si manquant"></td><td><button class="small" data-csav="${i}">Enregistrer</button></td></tr>`).join('')
       : `<tr><td colspan="9" class="empty">Aucun contrat commencé dans ce shift${CS.ctr.length ? '' : ' (contrats non importés ?)'}.</td></tr>`}
-    </tbody>${rows.length ? (() => { const dr = rows.filter(r => r.done[0]), d = dr.map(r => r.done[0]), sum = f => cshR(d.reduce((t, m) => t + cshN(f(m)), 0)), ub = cshR(rows.reduce((t, r) => t + cshN(r.uber), 0));
-      const man = cshR(dr.reduce((t, r) => { const uc = ucOf(r, r.done[0]); return t + (uc == null ? 0 : uc - cshN(r.done[0].amount)); }, 0));
-      return `<tfoot><tr class="ttot"><td>Total · ${d.length} / ${rows.length} encaissé${d.length > 1 ? 's' : ''}</td><td></td><td class="n"><b>${cshMoney(ub)}</b></td><td class="n"><b>${cshMoney(sum(m => m.given))}</b></td><td class="n"><b>${cshMoney(sum(m => m.change))}</b></td>
-        <td class="n"><b>${cshMoney(sum(m => m.amount))}</b></td><td class="n">${cshSignedTxt(-man)}</td><td></td><td></td></tr></tfoot>`; })() : ''}</table></div>
+    </tbody>${rows.length ? (() => { const dr = rows.filter(r => r.sf), sum = f => cshR(dr.reduce((t, r) => t + cshN(f(r)), 0)), ub = cshR(rows.reduce((t, r) => t + cshN(r.uber), 0));
+      return `<tfoot><tr class="ttot"><td>Total · ${dr.length} / ${rows.length} encaissé${dr.length > 1 ? 's' : ''}</td><td></td><td class="n"><b>${cshMoney(ub)}</b></td><td class="n"><b>${cshMoney(sum(r => r.sf.main.given))}</b></td><td class="n"><b>${cshMoney(sum(r => r.sf.main.change))}</b></td>
+        <td class="n"><b>${cshMoney(sum(r => r.sf.total))}</b></td><td class="n">${cshSignedTxt(-sum(r => r.sf.rest || 0))}</td><td></td><td></td></tr></tfoot>`; })() : ''}</table></div>
     <details class="panel"><summary><h3>Encaissement d'un autre chauffeur (sans contrat dans ce shift)</h3></summary><div class="mfrow">
       ${cshField('cxd', 'Chauffeur', 'text', { list: 'cshdrv', size: 24 })}${cshField('cxu', 'Espèces ' + P.name + ' (MAD)', 'number', { min: 0 })}${cshField('cxg', 'Remis (MAD)', 'number', { min: 0 })}
       ${cshField('cxc', 'Monnaie rendue (MAD)', 'number', { min: 0 })}${cshField('cxm', 'Commentaire', 'text', { size: 24 })}<button class="small" id="cxsave">Enregistrer</button></div></details>
@@ -288,22 +315,40 @@ function cshTabShift() {
     ${cshMoveForm(pf)}`);
   const goS = () => { location.hash = link($('#cshsd').value, $('#cshss').value); };
   $('#cshsd').onchange = goS; $('#cshss').onchange = goS;
+  const declIn = (tr, r) => { const e = tr.querySelector('.cuc'); return r.uber != null ? r.uber : e && e.value !== '' ? cshN(e.value) : null; };
   document.querySelectorAll('tr[data-row]').forEach(tr => { const r = rows[+tr.dataset.row], upd = () => {
-    const g = cshN(tr.querySelector('.cgv').value), ch = cshN(tr.querySelector('.cch').value), net = cshR(g - ch);
+    const g = cshN(tr.querySelector('.cgv').value), ch = cshN(tr.querySelector('.cch').value), net = cshR(g - ch), dc = declIn(tr, r);
     tr.querySelector('.cnet').textContent = tr.querySelector('.cgv').value === '' ? '' : cshMoney(net);
-    tr.querySelector('.cman').innerHTML = tr.querySelector('.cgv').value === '' || r.uber == null ? '' : cshSignedTxt(-(r.uber - net)); };
+    tr.querySelector('.cman').innerHTML = tr.querySelector('.cgv').value === '' || dc == null ? '' : cshSignedTxt(-(dc - net)); };
     tr.querySelectorAll('input').forEach(i => { i.oninput = upd; }); });
   document.querySelectorAll('[data-csav]').forEach(b => { b.onclick = async () => {
     const r = rows[+b.dataset.csav], tr = b.closest('tr'), gv = tr.querySelector('.cgv').value;
     if (gv === '') { alert('Montant remis par le chauffeur obligatoire (0 si rien n\'a été remis).'); return; }
-    const g = cshN(gv), ch = cshN(tr.querySelector('.cch').value), net = cshR(g - ch);
+    const g = cshN(gv), ch = cshN(tr.querySelector('.cch').value), net = cshR(g - ch), dc = declIn(tr, r);
     if (net < 0) { alert('La monnaie rendue dépasse le montant remis.'); return; }
-    const man = r.uber == null ? 0 : cshR(r.uber - net), cm = tr.querySelector('.ccm').value.trim();
-    if (man > 0 && !cm && !await ask('Manquant de ' + cshMoney(man) + ' sans commentaire : il sera déduit de la paie. Enregistrer ?')) return;
+    const man = dc == null ? 0 : cshR(dc - net), cm = tr.querySelector('.ccm').value.trim();
+    if (man > 0 && !cm && !await ask('Manquant de ' + cshMoney(man) + ' : la ligne reste rouge (Manques à encaisser) jusqu\'à ce que le chauffeur remette la différence, sinon déduit de la paie. Enregistrer ?')) return;
     b.disabled = true;
     try { await cshInsert({ caisse: pf, kind: 'encaissement', flow: 'in', amount: net, day, shift: s, driver_code: r.c.client_code, driver_name: cshDrvName(r.c.client_code), uber_uuid: r.uuid || null,
-      contract_num: r.c.num, vehicle_key: r.c.vehicle_key || null, uber_cash: r.uber, given: g, change: ch, source: 'Chauffeur', comment: cm || null }); pageCaisse(); }
+      contract_num: r.c.num, vehicle_key: r.c.vehicle_key || null, uber_cash: dc, given: g, change: ch, source: 'Chauffeur', comment: cm || null }); pageCaisse(); }
     catch (e) { b.disabled = false; alert(e.message); }
+  }; });
+  // complément : le chauffeur remet la différence
+  document.querySelectorAll('[data-cshcp]').forEach(b => { b.onclick = async () => { const f = rows[+b.dataset.cshcp].sf;
+    try { if (await cshComplement(f.main, f.rest)) pageCaisse(); } catch (e) { alert(e.message); } }; });
+  // modifier l'encaissement enregistré (remis, monnaie, espèces annoncées, commentaire) : auteur dans les 24 h, administrateur toujours
+  document.querySelectorAll('[data-cshed]').forEach(b => { b.onclick = () => {
+    const r = rows[+b.dataset.cshed], d = r.sf.main, tr = b.closest('tr'), td = tr.children;
+    if (r.uber == null) td[2].innerHTML = `<input type="number" min="0" step="1" class="euc" style="width:90px" value="${d.uber_cash == null ? '' : cshN(d.uber_cash)}" placeholder="annoncées">`;
+    td[3].innerHTML = `<input type="number" min="0" step="1" class="egv" style="width:90px" value="${cshN(d.given)}">`; td[4].innerHTML = `<input type="number" min="0" step="1" class="ech" style="width:80px" value="${cshN(d.change)}">`;
+    td[7].innerHTML = `<input class="ecm" size="18" value="${esc(d.comment || '')}">`; td[8].innerHTML = '<button class="small" data-cshes>Enregistrer la modification</button>';
+    tr.querySelector('[data-cshes]').onclick = async () => {
+      const g = cshN(tr.querySelector('.egv').value), ch = cshN(tr.querySelector('.ech').value), net = cshR(g - ch);
+      if (net < 0) { alert('La monnaie rendue dépasse le montant remis.'); return; }
+      const patch = { given: g, change: ch, amount: net, comment: tr.querySelector('.ecm').value.trim() || null };
+      const eu = tr.querySelector('.euc'); if (eu) patch.uber_cash = eu.value === '' ? null : cshN(eu.value);
+      if (await cshPatch(d.id, patch)) pageCaisse();
+    };
   }; });
   $('#cxsave').onclick = async () => {
     const who = cshResolve(cshVal('cxd')), gv = cshVal('cxg');
@@ -315,6 +360,34 @@ function cshTabShift() {
     catch (e) { alert(e.message); }
   };
   cshBindRowActions(); cshBindMoveForm();
+}
+
+// ---------- Manques à encaisser (01/11/2026, demande d'Ahmed) ----------
+// Chaque shift dont le chauffeur n'a pas remis toutes les espèces : ligne rouge tant qu'il reste à encaisser, verte quand il a remis la différence
+// (« + Complément »). Mêmes règles que l'encaissement du shift : manquant = espèces de la plateforme − encaissé (dépenses justifiées : rapprochement).
+function cshShortList() { return cshShortfalls(CS.moves, cshDeclOf).filter(x => x.status === 'Manquant' || x.status === 'Soldé'); }
+function cshTabManques(p) {
+  const q = qs(), f = ['tous', 'soldes'].indexOf(q.get('f')) >= 0 ? q.get('f') : 'dus', all_ = cshShortList().filter(x => x.day >= p.from && x.day <= p.to);
+  const dus = all_.filter(x => x.status === 'Manquant'), ok = all_.filter(x => x.status === 'Soldé'), rows = f === 'dus' ? dus : f === 'soldes' ? ok : all_;
+  const sum = (l, k) => cshR(l.reduce((t, x) => t + cshN(x[k]), 0));
+  const nm = x => x.driver_code ? cshDrvName(x.driver_code) : x.driver_name || '';
+  cshBody(cards([['Reste à encaisser', cshMoney(sum(dus, 'rest')), dus.length ? 'crit' : 'ok'], ['Shifts en manque', f0(dus.length), dus.length ? 'crit' : ''],
+      ['Manquants remis ensuite', cshMoney(sum(ok, 'extra')) + `<div class="small">${f0(ok.length)} shift${ok.length > 1 ? 's' : ''} soldé${ok.length > 1 ? 's' : ''}</div>`, ok.length ? 'ok' : ''],
+      ['Chauffeurs concernés', f0(new Set(dus.map(x => x.driver_code || x.driver_name)).size)]]) +
+    `<div class="bar"><span>Afficher</span> ${[['dus', 'Reste à encaisser (' + dus.length + ')'], ['soldes', 'Soldés (' + ok.length + ')'], ['tous', 'Tous (' + all_.length + ')']].map(x => `<a class="${x[0] === f ? 'on' : ''}" href="${cshHref('manques', { f: x[0] })}">${x[1]}</a>`).join(' · ')}
+      <button class="ghost small" id="cshmqx">Tableur</button></div>
+    <div class="tw"><table class="cshmq"><thead><tr><th>Jour</th><th>Shift</th><th>Chauffeur</th><th>Plateforme</th><th class="n">Espèces déclarées</th><th class="n">Encaissé au shift</th><th class="n">Manquant au shift</th><th>Remis ensuite</th><th class="n">Reste à encaisser</th><th>Statut</th><th></th></tr></thead><tbody>
+    ${rows.length ? rows.map((x, i) => `<tr class="${x.status === 'Manquant' ? 'short' : 'paid'}"><td>${fmtDay(x.day)}</td><td>${esc(x.shift)}</td><td>${esc(nm(x))}${x.contract_num ? `<div class="small">${esc(x.contract_num)}</div>` : ''}</td>
+      <td>${x.caisse === 'bolt' ? 'Bolt' : 'Uber'}</td><td class="n">${cshMoney(x.declared)}${x.main.uber_cash != null && cshDeclOf(x.main) == null ? ' <span class="small">annoncées</span>' : ''}</td><td class="n">${cshMoney(x.first)}</td>
+      <td class="n"><b class="red">${cshMoney(x.dueAtShift)}</b></td><td>${x.comps.length ? x.comps.map(m => `<div class="small">+ ${cshMoney(m.amount)} · ${esc(fmtDTY(m.created_at))}${m.manager_name ? ' · ' + esc(m.manager_name) : ''}</div>`).join('') : '<span class="small">—</span>'}</td>
+      <td class="n"><b>${cshMoney(Math.max(0, x.rest))}</b></td><td>${x.status === 'Manquant' ? '<span class="badge crit">Manquant</span>' : '<span class="badge ok">Soldé</span>'}</td>
+      <td>${x.status === 'Manquant' ? `<button class="small" data-mqc="${i}">+ Complément</button>` : ''} <a class="small" href="#/caisse?t=shift&jour=${x.day}&s=${encodeURIComponent(x.shift || 'Jour')}${x.caisse === 'bolt' ? '&pf=bolt' : ''}">shift</a></td></tr>`).join('')
+      : `<tr><td colspan="11" class="empty">${f === 'dus' ? 'Aucun manque à encaisser sur la période.' : 'Aucune ligne.'}</td></tr>`}
+    </tbody>${rows.length ? `<tfoot><tr class="ttot"><td colspan="4">Total · ${rows.length} shift${rows.length > 1 ? 's' : ''}</td><td class="n">${cshMoney(sum(rows, 'declared'))}</td><td class="n">${cshMoney(sum(rows, 'first'))}</td><td class="n">${cshMoney(sum(rows, 'dueAtShift'))}</td><td>${cshMoney(sum(rows, 'extra'))}</td><td class="n"><b>${cshMoney(rows.reduce((t, x) => t + Math.max(0, x.rest), 0))}</b></td><td></td><td></td></tr></tfoot>` : ''}</table></div>
+    <div class="small">Manquant = espèces déclarées par la plateforme (export importé, sinon espèces annoncées saisies) − encaissé au shift. « + Complément » enregistre les espèces remises plus tard (même shift, même contrat) : la ligne passe au vert ; le rapprochement et la paie en tiennent compte. Les dépenses justifiées « Course ${'Uber'} / Bolt » sont comptées au rapprochement.</div>`);
+  document.querySelectorAll('[data-mqc]').forEach(b => { b.onclick = async () => { const x = rows[+b.dataset.mqc]; try { if (await cshComplement(x.main, x.rest)) pageCaisse(); } catch (e) { alert(e.message); } }; });
+  $('#cshmqx').onclick = () => cshXls('manques_a_encaisser_' + p.from + '_' + p.to, [['Jour', x => x.day], ['Shift', x => x.shift], ['Chauffeur', x => nm(x)], ['Contrat', x => x.contract_num || ''], ['Plateforme', x => x.caisse === 'bolt' ? 'Bolt' : 'Uber'],
+    ['Espèces déclarées', x => '', x => x.declared], ['Encaissé au shift', x => '', x => x.first], ['Manquant au shift', x => '', x => x.dueAtShift], ['Remis ensuite', x => '', x => x.extra], ['Reste à encaisser', x => '', x => Math.max(0, x.rest)], ['Statut', x => x.status]], rows);
 }
 
 // ---------- Dépenses ----------

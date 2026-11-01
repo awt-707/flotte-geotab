@@ -475,6 +475,31 @@ function cshDepositInfo(moves, day) {
   return { balances: bal, lastDeposit: last || null, since: Object.values(by).sort((a, b) => a.day.localeCompare(b.day)) };
 }
 
+// ---------- Manques à encaisser par shift (01/11/2026, demande d'Ahmed) ----------
+/** Libellé d'un complément : espèces manquantes remises plus tard par le chauffeur, rattachées à l'encaissement de son shift */
+const CSH_COMPLEMENT = 'Complément';
+/**
+ * Encaissements du shift regroupés par contrat (sinon chauffeur + jour + shift) et par plateforme : le premier = encaissement du shift,
+ * les suivants = compléments remis ensuite. Déclaré = espèces de la plateforme saisies avec l'encaissement, sinon declaredOf (export importé),
+ * sinon null (export pas encore importé). dueAtShift = déclaré − encaissé au shift ; rest = déclaré − encaissé total (compléments compris).
+ * Statut : Manquant (il reste à encaisser), Soldé (manquant remis ensuite), Cadré, Excédent, Non importé.
+ */
+function cshShortfalls(moves, declaredOf) {
+  const groups = {};
+  (moves || []).filter(m => cshLive(m) && m.kind === 'encaissement' && (m.caisse === 'uber' || m.caisse === 'bolt'))
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || (a.id || 0) - (b.id || 0))
+    .forEach(m => { const k = m.caisse + '|' + (m.contract_num || ('~' + (m.driver_code || cshName(m.driver_name)) + '|' + m.day + '|' + (m.shift || ''))); (groups[k] = groups[k] || []).push(m); });
+  return Object.keys(groups).map(k => {
+    const l = groups[k], main = l.find(m => m.label !== CSH_COMPLEMENT) || l[0], comps = l.filter(m => m !== main);
+    const declared = main.uber_cash != null && main.uber_cash !== '' ? cshN(main.uber_cash) : (declaredOf ? declaredOf(main) : null);
+    const first = cshR(main.amount), extra = cshR(comps.reduce((t, m) => t + cshN(m.amount), 0)), total = cshR(first + extra);
+    const dueAtShift = declared == null ? null : cshR(declared - first), rest = declared == null ? null : cshR(declared - total);
+    const status = declared == null ? 'Non importé' : dueAtShift > 0.004 ? (rest > 0.004 ? 'Manquant' : rest < -0.004 ? 'Excédent' : 'Soldé') : dueAtShift < -0.004 ? 'Excédent' : 'Cadré';
+    return { key: k, main, comps, caisse: main.caisse, day: main.day, shift: main.shift || '', driver_code: main.driver_code || null, driver_name: main.driver_name || '',
+      contract_num: main.contract_num || null, declared, first, extra, total, dueAtShift, rest, status };
+  }).sort((a, b) => String(b.day).localeCompare(String(a.day)) || String(a.driver_name).localeCompare(String(b.driver_name)));
+}
+
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
   cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory,
-  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo };
+  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, CSH_COMPLEMENT, cshShortfalls };
