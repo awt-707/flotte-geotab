@@ -312,7 +312,8 @@ function cshTabShift() {
   cshBody(`<div class="tabs">${['uber', 'bolt'].map(x => `<a href="${link(day, s, x)}" class="${x === pf ? 'on' : ''}">Espèces ${CSH_PF[x].name}</a>`).join('')}</div>${B ? cshBoltWarn({ to: day }) : ''}
     <div class="bar"><a class="btn small ghostb" href="${link(prev[0], prev[1])}">← Shift précédent</a><label>Jour <input type="date" id="cshsd" value="${day}"></label>
       <label>Shift <select id="cshss"><option ${s === 'Jour' ? 'selected' : ''}>Jour</option><option ${s === 'Nuit' ? 'selected' : ''}>Nuit</option></select></label>
-      <b>${esc(shiftDayName({ s, day }))}</b><a class="btn small ghostb" href="${link(next[0], next[1])}">Shift suivant →</a></div>
+      <b>${esc(shiftDayName({ s, day }))}</b><a class="btn small ghostb" href="${link(next[0], next[1])}">Shift suivant →</a>
+      <button class="small" id="cshfiche" title="Fiche à imprimer pour encaisser les chauffeurs du shift dans la rue (Uber et Bolt)">🖨 Fiche d'encaissement (PDF)</button></div>
     <div class="small">Chauffeurs dont le contrat a commencé dans ce shift, et chauffeurs ajoutés au shift. Espèces ${P.name} = espèces collectées pendant le contrat (ajouté au shift : pendant les heures du shift ; export ${P.name} importé${lastImp ? ', jusqu\'au ' + esc(fmtDTY(lastImp)) : ''}). Encaissé net = remis − monnaie rendue. <b>Manque</b> = ce que le chauffeur n'a pas remis : calculé quand l'export est importé, sinon à saisir ; il est classé dans « Manques à encaisser » (ligne rouge) et compté dès qu'il est remis (« + Complément », ligne verte).</div>
     <div class="tw"><table class="cshshift"><thead><tr><th>Chauffeur</th><th>Contrat</th><th class="n">Espèces ${P.name}</th><th class="n">Remis</th><th class="n">Monnaie rendue</th><th class="n">Encaissé net</th><th class="n">Manque</th><th>Commentaire</th><th></th></tr></thead><tbody>
     ${rows.length ? rows.map((r, i) => r.sf ? doneRow(r, i) : newRow(r, i)).join('') : `<tr><td colspan="9" class="empty">Aucun contrat commencé dans ce shift${CS.ctr.length ? '' : ' (contrats non importés ?)'} : ajouter un chauffeur ci-dessous.</td></tr>`}
@@ -321,7 +322,12 @@ function cshTabShift() {
         <td class="n"><b>${cshMoney(sum(r => r.sf.total))}</b></td><td class="n">${cshSignedTxt(-sum(r => r.sf.rest || 0))}</td><td></td><td></td></tr></tfoot>`; })() : ''}</table></div>
     <div class="panel"><h3>Ajouter un chauffeur au shift (sans contrat à son nom)</h3><p class="small">Chauffeur qui a travaillé dans ce shift sans contrat édité à son nom : il est ajouté au tableau pour l'encaisser comme les autres (espèces ${P.name} relevées pendant les heures du shift, remis, monnaie, manque, compléments).</p>
       <div class="mfrow">${cshField('cxd', 'Chauffeur', 'text', { list: 'cshdrv', size: 26 })}<button class="small" id="cxadd">Ajouter au shift</button></div></div>
+    <div class="panel"><h3>Fiche d'encaissement remplie</h3><p class="small">Imprimer la fiche (bouton « Fiche d'encaissement » ci-dessus), encaisser les chauffeurs dans la rue, saisir chaque ligne dans le tableau, puis déposer ici la photo ou le PDF de la fiche remplie et signée.</p>
+      <label class="file">Déposer la fiche remplie (photo ou PDF) <input type="file" id="cshfup" accept="image/*,application/pdf"></label><div id="cshfiches"></div></div>
     ${cshMoveForm(pf)}`);
+  $('#cshfiche').onclick = () => { try { cshFichePdf(day, s); } catch (e) { alert('Fiche : ' + e.message); } };
+  $('#cshfup').onchange = async () => { const f = $('#cshfup').files[0]; try { await cshFicheUpload(day, s, f); $('#cshfup').value = ''; cshFicheBox(day, s); } catch (e) { alert('Dépôt de la fiche : ' + (e.message || e)); } };
+  cshFicheBox(day, s);
   const goS = () => { location.hash = link($('#cshsd').value, $('#cshss').value); };
   $('#cshsd').onchange = goS; $('#cshss').onchange = goS;
   document.querySelectorAll('tr[data-row]').forEach(tr => { const r = rows[+tr.dataset.row], mq = tr.querySelector('.cmq'), upd = () => {
