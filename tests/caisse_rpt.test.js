@@ -130,6 +130,14 @@ test('page Caisse : rapports (PDF, tableur, graphiques) et bordereau de dépôt 
     await page.fill('#dpbank', 'Banque Test'); await page.fill('#dpacc', '000 111 222'); await page.fill('#dpwho', 'Déposant Test');
     assert.strictEqual(await page.inputValue('[data-dpam="uber"]'), '380');
     assert.strictEqual(await page.inputValue('[data-dpam="courses"]'), '400');
+    // jours à déposer cochés (dépôt du lundi au lundi) : décocher un jour retire ses espèces, le recocher les remet
+    assert.strictEqual(await page.locator('[data-dpd]:checked').count(), 2);
+    await page.uncheck(`[data-dpd="${d1}"]`);
+    assert.strictEqual(await page.inputValue('[data-dpam="uber"]'), '100');
+    assert.strictEqual(await page.inputValue('[data-dpam="courses"]'), '');
+    assert.match(await page.innerText('#dpdays tfoot'), /1 jour coché[\s\S]*100 MAD/);
+    await page.check(`[data-dpd="${d1}"]`);
+    assert.strictEqual(await page.inputValue('[data-dpam="uber"]'), '380');
     await page.fill('[data-dpn="0"]', '3'); await page.fill('[data-dpn="1"]', '1');   // 3 × 200 + 100 = 700 ≠ 780
     await page.click('#dpsave');
     await page.waitForFunction(() => /ne correspond pas/.test((document.querySelector('#dpres') || {}).innerText || ''));
@@ -141,11 +149,15 @@ test('page Caisse : rapports (PDF, tableur, graphiques) et bordereau de dépôt 
     assert.match(dep.suggestedFilename(), /^bordereau_depot_agence_\d{4}-\d{2}-\d{2}_DEP-0-\d{8}-1\.pdf$/);
     await page.waitForFunction(() => /Dépôt enregistré/.test((document.querySelector('#dpres') || {}).innerText || ''));
     assert.strictEqual(env.psql("select string_agg(caisse || ':' || amount || ':' || flow, ',' order by caisse) from cash_moves where kind = 'depot'"), 'courses:400.00:out,uber:380.00:out');
-    assert.match(env.psql("select min(comment) from cash_moves where kind = 'depot'"), /^Bordereau DEP-0-\d{8}-1 · Banque Test · déposé par Déposant Test$/);
+    assert.match(env.psql("select min(comment) from cash_moves where kind = 'depot'"), new RegExp(`^Bordereau DEP-0-\\d{8}-1 · Banque Test · déposé par Déposant Test · jours ${d2},${d1}$`));
     // après le dépôt : caisses à 0, banque et compte gardés pour le prochain bordereau
     assert.strictEqual(await page.inputValue('[data-dpam="courses"]'), '');
     assert.strictEqual(await page.inputValue('#dpbank'), 'Banque Test');
     assert.match(await page.innerText('#tcshdph'), /Bordereau DEP-0-/);
+    // jours déjà déposés : signalés et décochés au dépôt suivant
+    await page.goto(base() + `#/caisse?t=depot&dpdu=${d2}&dpau=${d1}`); await page.waitForSelector('#dpdays');
+    assert.match(await page.innerText('#dpdays'), /déjà déposé · DEP-0-/);
+    assert.strictEqual(await page.locator('[data-dpd]:checked').count(), 0);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
@@ -304,4 +316,16 @@ test('fiche d\'encaissement : droits (gestionnaire de l\'agence seulement, retra
     assert.strictEqual(env.psql('select count(*) from cash_sheets'), '0');
     assert.strictEqual(as(MGR, `select public.cash_folder_ok('${a1}')::text || public.cash_folder_ok('${a2}')::text`).split('\n').filter(Boolean).pop(), 'truefalse');
   } finally { env.resetDb(); env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'`); }
+});
+
+test('dépôt en banque par jours cochés : espèces par jour et par caisse, jours déjà déposés reconnus', () => {
+  const m = [{ kind: 'encaissement', flow: 'in', caisse: 'uber', amount: 100, day: '2026-10-27' }, { kind: 'encaissement', flow: 'in', caisse: 'bolt', amount: 50, day: '2026-10-28' },
+    { kind: 'course', flow: 'in', caisse: 'courses', amount: 200, day: '2026-10-28' }, { kind: 'encaissement', flow: 'in', caisse: 'uber', amount: 999, day: '2026-10-28', cancelled_at: '2026-10-28T10:00:00Z' },
+    { kind: 'depot', flow: 'out', caisse: 'uber', amount: 100, day: '2026-10-29', comment: 'Bordereau DEP-1-20261029-1 · Banque · jours 2026-10-27' }];
+  const d = C.cshDepositDays(m, '2026-10-26', '2026-10-29');
+  assert.deepStrictEqual(d.map(r => [r.day, r.uber, r.bolt, r.courses, r.total, r.deposited]), [['2026-10-26', 0, 0, 0, 0, null], ['2026-10-27', 100, 0, 0, 100, 'DEP-1-20261029-1'],
+    ['2026-10-28', 0, 50, 200, 250, null], ['2026-10-29', 0, 0, 0, 0, null]]);
+  assert.deepStrictEqual(C.cshDepositSum(d, ['2026-10-27', '2026-10-28']), { uber: 100, bolt: 50, courses: 200, total: 350 });
+  assert.deepStrictEqual(C.cshDepDaysOf('Bordereau X · jours 2026-10-27,2026-10-28'), ['2026-10-27', '2026-10-28']);
+  assert.deepStrictEqual(C.cshDepDaysOf('Bordereau X'), []);
 });
