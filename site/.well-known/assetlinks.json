@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.ludy.flotte",
+    "sha256_cert_fingerprints": ["3D:A6:63:29:5D:E4:39:4A:C5:D5:A0:CF:D1:7D:26:1F:C0:E3:AC:0D:25:1F:02:B1:85:A2:A9:3A:6D:AD:03:15"]
+  }
+}]
