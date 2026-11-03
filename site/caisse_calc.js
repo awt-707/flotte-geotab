@@ -486,6 +486,29 @@ function cshDepositInfo(moves, day) {
   return { balances: bal, lastDeposit: last || null, since: Object.values(by).sort((a, b) => a.day.localeCompare(b.day)) };
 }
 
+/** Jours couverts par un dépôt, notés dans sa référence (« · jours 2026-10-27,2026-10-28 ») */
+function cshDepDaysOf(comment) { const m = String(comment || '').match(/jours ([0-9,-]+)/); return m ? m[1].split(',').filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)) : []; }
+/**
+ * Dépôt en banque par jours cochés (03/11/2026, demande d'Ahmed : dépôt du lundi au lundi) : chaque jour de from à to (93 au plus) avec
+ * les espèces entrées ce jour-là (encaissements Uber / Bolt du shift, courses privées) et le bordereau qui l'a déjà déposé.
+ */
+function cshDepositDays(moves, from, to) {
+  const live = (moves || []).filter(cshLive), dep = {}, out = [], ix = {};
+  live.filter(m => m.kind === 'depot').forEach(m => cshDepDaysOf(m.comment).forEach(d => { dep[d] = (String(m.comment).match(/DEP-[\w-]+/) || ['dépôt du ' + m.day])[0]; }));
+  for (let d = from; d && to && d <= to && out.length < 93; d = cshAddDay(d, 1)) { const r = { day: d, uber: 0, bolt: 0, courses: 0, total: 0, deposited: dep[d] || null }; out.push(r); ix[d] = r; }
+  live.filter(m => m.flow === 'in' && (m.kind === 'encaissement' || m.kind === 'course') && ix[m.day]).forEach(m => {
+    const r = ix[m.day], a = cshN(m.amount), k = m.kind === 'course' ? 'courses' : m.caisse === 'bolt' ? 'bolt' : 'uber';
+    r[k] = cshR(r[k] + a); r.total = cshR(r.total + a);
+  });
+  return out;
+}
+/** Montant à déposer par caisse pour les jours cochés */
+function cshDepositSum(days, picked) {
+  const s = { uber: 0, bolt: 0, courses: 0, total: 0 }, set = new Set(picked || []);
+  (days || []).filter(r => set.has(r.day)).forEach(r => ['uber', 'bolt', 'courses', 'total'].forEach(k => { s[k] = cshR(s[k] + r[k]); }));
+  return s;
+}
+
 // ---------- Manques à encaisser par shift (01/11/2026, demande d'Ahmed) ----------
 /** Libellé d'un complément : espèces manquantes remises plus tard par le chauffeur, rattachées à l'encaissement de son shift */
 const CSH_COMPLEMENT = 'Complément';
@@ -513,4 +536,4 @@ function cshShortfalls(moves, declaredOf) {
 
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
   cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory,
-  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, CSH_COMPLEMENT, cshShortfalls, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };
+  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepositDays, cshDepositSum, CSH_COMPLEMENT, cshShortfalls, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };

@@ -177,10 +177,27 @@ async function cshTabDepot() {
   const q = qs(), day = /^\d{4}-\d{2}-\d{2}$/.test(q.get('jour') || '') ? q.get('jour') : today(), info = cshDepositInfo(CS.all, day), sv = lsJSON(cshDepKey()) || {};
   const box = CASH_CAISSES.filter(x => info.balances[x[0]] > 0 || ['uber', 'bolt', 'courses'].indexOf(x[0]) >= 0);
   const hist = CS.all.filter(m => cshLive(m) && m.kind === 'depot').sort((a, b) => b.day.localeCompare(a.day) || b.id - a.id).slice(0, 60);
+  // jours à déposer (demande d'Ahmed : dépôt du lundi au lundi) : période choisie, par défaut depuis le dernier jour déjà déposé
+  const okD = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
+  const lastCov = CS.all.filter(m => cshLive(m) && m.kind === 'depot' && m.day <= day).reduce((x, m) => { const l = cshDepDaysOf(m.comment); const z = l.length ? l[l.length - 1] : m.day; return z > x ? z : x; }, '');
+  const firstIn = CS.all.filter(m => cshLive(m) && m.flow === 'in' && (m.kind === 'encaissement' || m.kind === 'course') && m.day <= day).reduce((x, m) => !x || m.day < x ? m.day : x, '');
+  const dFrom0 = lastCov ? cshAddDay(lastCov, 1) : firstIn || cshAddDay(day, -7), dFrom = okD(q.get('dpdu')) ? q.get('dpdu') : (dFrom0 < cshAddDay(day, -62) ? cshAddDay(day, -62) : dFrom0);
+  const dTo = okD(q.get('dpau')) ? q.get('dpau') : day, mon = cshWeek(day), pre = cshPresets(day)[0];
+  const days = dFrom <= dTo ? cshDepositDays(CS.all, dFrom, dTo) : [];
+  const dRow = r => `<tr class="${r.deposited ? 'paid' : ''}"><td><input type="checkbox" data-dpd="${r.day}" ${r.total > 0 && !r.deposited ? 'checked' : ''} ${r.total > 0 ? '' : 'disabled'}></td>
+    <td>${esc(cshDow(r.day))} ${fmtDay(r.day)}</td><td class="n">${cshMoney(r.uber)}</td><td class="n">${cshMoney(r.bolt)}</td><td class="n">${cshMoney(r.courses)}</td><td class="n"><b>${cshMoney(r.total)}</b></td>
+    <td class="small">${r.deposited ? 'déjà déposé · ' + esc(r.deposited) : r.total > 0 ? '' : 'aucune entrée'}</td></tr>`;
   cshBody(`<div class="grid2"><div class="panel"><h3>Bordereau de dépôt en banque</h3>
       <div class="mfrow">${cshField('dpday', 'Date du dépôt', 'date', { value: day })}${cshField('dpco', 'Société', 'text', { value: sv.company || '', size: 22, ph: 'Raison sociale' })}</div>
       <div class="mfrow">${cshField('dpbank', 'Banque', 'text', { value: sv.bank || '', size: 18 })}${cshField('dpacc', 'Compte / RIB', 'text', { value: sv.account || '', size: 30 })}</div>
       <div class="mfrow">${cshField('dpwho', 'Déposant', 'text', { value: sv.who || S.profile.name || '', size: 22 })}${cshField('dpcin', 'CIN du déposant', 'text', { value: sv.cin || '', size: 12 })}</div>
+      <h3>Jours déposés</h3>
+      <div class="mfrow">${cshField('dpdu', 'Du', 'date', { value: dFrom })}${cshField('dpau', 'Au', 'date', { value: dTo })}
+        <button class="ghost small" data-dpp="${cshAddDay(mon, -7)}|${mon}">Lundi → lundi</button><button class="ghost small" data-dpp="${pre.from}|${pre.to}">Semaine précédente (lun → dim)</button>
+        <button class="ghost small" data-dpp="${dFrom0 < cshAddDay(day, -62) ? cshAddDay(day, -62) : dFrom0}|${day}">Depuis le dernier dépôt</button></div>
+      <p class="small">Cochez les jours dont les espèces partent en banque : les montants Uber, Bolt et courses privées ci-dessous se remplissent tout seuls (modifiables). Les jours déjà déposés sont signalés et décochés.</p>
+      <div class="tw"><table class="cshdep" id="dpdays"><thead><tr><th><input type="checkbox" id="dpall" title="Tout cocher / décocher"></th><th>Jour</th><th class="n">Uber</th><th class="n">Bolt</th><th class="n">Courses privées</th><th class="n">Total</th><th></th></tr></thead>
+        <tbody>${days.length ? days.map(dRow).join('') : '<tr><td colspan="7" class="empty">Choisir une période (du … au …).</td></tr>'}</tbody><tfoot><tr class="ttot"><td></td><td id="dpdn"></td><td class="n" id="dpdu_"></td><td class="n" id="dpdb_"></td><td class="n" id="dpdc_"></td><td class="n" id="dpdt_"></td><td></td></tr></tfoot></table></div>
       <h3>Montant déposé par caisse</h3>
       <table class="tw cshdep"><thead><tr><th></th><th>Caisse</th><th class="n">Solde au ${fmtDay(day)}</th><th class="n">Déposé (MAD)</th></tr></thead><tbody>
         ${box.map(x => { const b = info.balances[x[0]], on = b > 0 && ['uber', 'bolt', 'courses'].indexOf(x[0]) >= 0;
@@ -196,11 +213,24 @@ async function cshTabDepot() {
       ${table('tcshdps', [['Jour', r => fmtDay(r.day), r => r.day], ['Uber', r => cshMoney(r.uber), r => r.uber, 'n'], ['Bolt', r => cshMoney(r.bolt), r => r.bolt, 'n'], ['Courses privées', r => cshMoney(r.courses), r => r.courses, 'n'], ['Total', r => '<b>' + cshMoney(r.total) + '</b>', r => r.total, 'n']], info.since, { empty: 'Aucune entrée d\'espèces depuis le dernier dépôt', total: { fmt: x => '<b>' + cshMoney(x) + '</b>' } })}
       <h3>Derniers dépôts</h3>${table('tcshdph', [['Jour', m => fmtDay(m.day), m => m.day], ['Caisse', m => esc((CASH_CAISSES.find(x => x[0] === m.caisse) || [])[1] || m.caisse)], ['Montant', m => cshMoney(m.amount), m => cshN(m.amount), 'n'], ['Référence', m => esc(m.comment || '')]], hist, { empty: 'Aucun dépôt enregistré', page: true })}</div></div>`);
   if ($('#dpday')) $('#dpday').onchange = () => { location.hash = cshHref('depot', { jour: $('#dpday').value }); };
+  const goR = (a, b) => { location.hash = cshHref('depot', { jour: $('#dpday').value || day, dpdu: a, dpau: b }); };
+  $('#dpdu').onchange = $('#dpau').onchange = () => goR($('#dpdu').value, $('#dpau').value);
+  document.querySelectorAll('[data-dpp]').forEach(b => { b.onclick = () => { const [a, z] = b.dataset.dpp.split('|'); goR(a, z); }; });
+  const picked = () => [...document.querySelectorAll('[data-dpd]')].filter(c => c.checked).map(c => c.dataset.dpd);
+  const pickDays = () => {   // jours cochés → montants Uber / Bolt / courses privées
+    const sum = cshDepositSum(days, picked()), n = picked().length;
+    $('#dpdn').textContent = n + ' jour' + (n > 1 ? 's' : '') + ' coché' + (n > 1 ? 's' : '');
+    [['uber', 'dpdu_'], ['bolt', 'dpdb_'], ['courses', 'dpdc_'], ['total', 'dpdt_']].forEach(([k, id]) => { $('#' + id).innerHTML = '<b>' + cshMoney(sum[k]) + '</b>'; });
+    ['uber', 'bolt', 'courses'].forEach(k => { const a = $(`[data-dpam="${k}"]`), c = $(`[data-dpon="${k}"]`); if (!a || !c) return; a.value = sum[k] > 0 ? sum[k] : ''; c.checked = sum[k] > 0; });
+  };
+  document.querySelectorAll('[data-dpd]').forEach(c => { c.onchange = () => { pickDays(); show(); }; });
+  $('#dpall').onchange = () => { document.querySelectorAll('[data-dpd]:not([disabled])').forEach(c => { c.checked = $('#dpall').checked; }); pickDays(); show(); };
   const read = () => {
     const lines = box.filter(x => $(`[data-dpon="${x[0]}"]`).checked).map(x => ({ caisse: x[0], name: x[1], balance: info.balances[x[0]], amount: cshR(cshN($(`[data-dpam="${x[0]}"]`).value)) })).filter(l => l.amount > 0);
     const counts = CSH_DENOMS.map((d, i) => Math.max(0, Math.floor(cshN($(`[data-dpn="${i}"]`).value))));
     return { day: $('#dpday').value || day, company: $('#dpco').value.trim(), bank: $('#dpbank').value.trim(), account: $('#dpacc').value.trim(), who: $('#dpwho').value.trim(), cin: $('#dpcin').value.trim(),
-      note: $('#dpnote').value.trim(), lines, counts, total: cshR(lines.reduce((s, l) => s + l.amount, 0)), bills: cshBillTotal(counts), lastDeposit: info.lastDeposit, since: info.since };
+      note: $('#dpnote').value.trim(), lines, counts, total: cshR(lines.reduce((s, l) => s + l.amount, 0)), bills: cshBillTotal(counts), lastDeposit: info.lastDeposit, since: info.since,
+      days: days.filter(r => picked().indexOf(r.day) >= 0) };
   };
   const show = () => { const d = read();
     CSH_DENOMS.forEach((x, i) => { $('#dpl' + i).textContent = d.counts[i] ? cshMoney(cshR(x[0] * d.counts[i])) : ''; });
@@ -208,6 +238,7 @@ async function cshTabDepot() {
     $('#dptot').innerHTML = `<b>Montant déposé : ${cshMoney(d.total)}</b><div class="small">${esc(cshMadWords(d.total))}</div>
       <div class="small ${d.counts.some(Boolean) ? (Math.abs(gap) < 0.005 ? 'ok' : 'red') : ''}">Billetage : ${cshMoney(d.bills)}${d.counts.some(Boolean) ? (Math.abs(gap) < 0.005 ? ' · égal au montant déposé' : ' · écart ' + cshMoney(gap)) : ' (à compter)'}</div>`; };
   document.querySelectorAll('[data-dpon],[data-dpam],[data-dpn]').forEach(e => { e.oninput = show; e.onchange = show; });
+  if (days.length) pickDays();
   show();
   const keep = d => lsSet(cshDepKey(), { company: d.company, bank: d.bank, account: d.account, who: d.who, cin: d.cin });
   const check = d => { if (!d.lines.length) return 'Choisir au moins une caisse et un montant à déposer.'; if (d.lines.some(l => l.amount > l.balance + 0.005)) return 'Montant déposé supérieur au solde de la caisse.';
@@ -219,13 +250,18 @@ async function cshTabDepot() {
     keep(d); d.ref = cshDepRef(d.day);
     try {
       for (const l of d.lines) await cshInsert({ caisse: l.caisse, kind: 'depot', flow: 'out', amount: l.amount, day: d.day, source: 'Banque', label: CSH_KIND.depot,
-        comment: 'Bordereau ' + d.ref + (d.bank ? ' · ' + d.bank : '') + (d.who ? ' · déposé par ' + d.who : '') });
+        comment: 'Bordereau ' + d.ref + (d.bank ? ' · ' + d.bank : '') + (d.who ? ' · déposé par ' + d.who : '') + (d.days.length ? ' · jours ' + d.days.map(r => r.day).join(',') : '') });
       cshDepositPdf(d);
       CS.flash = { id: 'dpres', html: msg('Dépôt enregistré (' + esc(d.ref) + ') et bordereau téléchargé : à faire signer et tamponner par la banque.', 'ok') };
       pageCaisse();
     } catch (x) { $('#dpres').innerHTML = msg(esc(x.message), 'err'); }
   };
   if (CS.flash && $('#' + CS.flash.id)) { $('#' + CS.flash.id).innerHTML = CS.flash.html; CS.flash = null; }
+}
+/** Jours cochés en texte court : « du lun. 27/10 au dim. 02/11 (7 jours) », sinon la liste */
+function cshDaysTxt(l) {
+  const a = l.slice().sort(), n = a.length, suite = n > 1 && cshNDays(a[0], a[n - 1]) === n;
+  return n === 1 ? cshDow(a[0]) + ' ' + fmtDay(a[0]) : suite ? 'du ' + cshDow(a[0]) + ' ' + fmtDay(a[0]) + ' au ' + cshDow(a[n - 1]) + ' ' + fmtDay(a[n - 1]) + ' (' + n + ' jours)' : a.map(fmtDay).join(', ');
 }
 /** Référence du bordereau : DEP-<agence>-aaaammjj-n (n = dépôts déjà enregistrés ce jour + 1) */
 function cshDepRef(day, draft) {
@@ -250,7 +286,7 @@ function cshDepositPdf(d) {
   // informations du dépôt : deux colonnes de cases
   const info = [['Société', d.company || '……………………………'], ['Agence', CS.agName || '—'], ['Date du dépôt', cshDow(d.day) + ' ' + fmtDay(d.day)], ['Banque', d.bank || '……………………………'],
     ['Compte / RIB', d.account || '……………………………………………'], ['Déposant', (d.who || '……………………………') + (d.cin ? ' · CIN ' + d.cin : '')],
-    ['Période couverte', d.lastDeposit ? 'depuis le dépôt du ' + fmtDay(d.lastDeposit) : 'premier dépôt enregistré'], ['Observations', d.note || '']];
+    ['Période couverte', d.days && d.days.length ? cshDaysTxt(d.days.map(r => r.day)) : d.lastDeposit ? 'depuis le dépôt du ' + fmtDay(d.lastDeposit) : 'premier dépôt enregistré'], ['Observations', d.note || '']];
   let y = 50; const cw = (W - 2 * M - 4) / 2;
   info.forEach((it, i) => { const x = M + (i % 2) * (cw + 4), yy = y + Math.floor(i / 2) * 11.5;
     col('FillColor', C.soft); doc.roundedRect(x, yy, cw, 10, 1.4, 1.4, 'F');
@@ -283,7 +319,12 @@ function cshDepositPdf(d) {
     font('bold', 8.5); doc.text(cl(s[0]), x + 3, y + 5.5); font('normal', 7.5, C.mute); doc.text(cl(s[1] || ''), x + 3, y + 10);
     doc.text('Date et signature', x + 3, y + 30.5); });
   y += 42;
-  if (d.since && d.since.length) {
+  if (d.days && d.days.length) {
+    if (y > H - 50) { doc.addPage(); y = 24; }
+    const sm = cshDepositSum(d.days, d.days.map(r => r.day));
+    tab('Jours déposés', ['Jour', 'Uber', 'Bolt', 'Courses privées', 'Total'], d.days.map(r => [cshDow(r.day) + ' ' + fmtDay(r.day), money(r.uber), money(r.bolt), money(r.courses), money(r.total)])
+      .concat([['Total (' + d.days.length + ' jours)', money(sm.uber), money(sm.bolt), money(sm.courses), money(sm.total)]]), [1, 2, 3, 4], { total: true });
+  } else if (d.since && d.since.length) {
     if (y > H - 50) { doc.addPage(); y = 24; }
     tab('Espèces entrées depuis le dernier dépôt (pour information)', ['Jour', 'Uber', 'Bolt', 'Courses privées', 'Total'], d.since.slice(-14).map(r => [fmtDay(r.day), money(r.uber), money(r.bolt), money(r.courses), money(r.total)]), [1, 2, 3, 4]);
   }
