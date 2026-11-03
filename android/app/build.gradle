@@ -1,0 +1,26 @@
+plugins { id 'com.android.application' }
+
+// Clé de signature : fichier et mot de passe donnés par la fabrication (LUDY_KEYSTORE, LUDY_KEY_PASS), jamais dans le dépôt.
+// Toujours la même clé d'une version à l'autre : sinon Android refuse la mise à jour par-dessus l'ancienne application.
+def ks = System.getenv('LUDY_KEYSTORE')
+android {
+  namespace 'com.ludy.flotte'
+  compileSdk 36
+  defaultConfig {
+    applicationId 'com.ludy.flotte'
+    minSdk 24
+    targetSdk 35
+    versionCode 1
+    versionName '1.0'
+  }
+  signingConfigs {
+    release {
+      if (ks) { storeFile file(ks); storePassword System.getenv('LUDY_KEY_PASS'); keyAlias 'ludy'; keyPassword System.getenv('LUDY_KEY_PASS') }
+    }
+  }
+  buildTypes {
+    release { minifyEnabled false; if (ks) signingConfig signingConfigs.release }
+  }
+  compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies { implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.4' }

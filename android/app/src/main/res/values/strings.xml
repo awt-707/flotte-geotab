@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">Ludy</string>
+  <string name="start_url">https://ludy-flotte.pages.dev/</string>
+  <!-- lien site ↔ application (site : .well-known/assetlinks.json) : plein écran sans barre d'adresse -->
+  <string name="asset_statements" translatable="false">[{ \"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": { \"namespace\": \"web\", \"site\": \"https://ludy-flotte.pages.dev\" } }]</string>
+  <color name="ludy">#0f2633</color>
+</resources>
