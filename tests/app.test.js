@@ -70,3 +70,11 @@ test('écran d\'accueil (iPhone, Android) : manifeste, icônes et balises de la 
   ['rel="manifest" href="manifest.webmanifest"', 'rel="apple-touch-icon" href="icon-180.png"', 'apple-mobile-web-app-capable'].forEach(t => assert.ok(html.includes(t), t));
   assert.ok(fs.existsSync(path.join(site, 'icon-180.png')));
 });
+
+test('Android : lien site ↔ application (assetlinks.json) pour le paquet et un certificat SHA-256', () => {
+  const a = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'site', '.well-known', 'assetlinks.json'), 'utf8'));
+  const g = fs.readFileSync(path.join(__dirname, '..', 'android', 'app', 'build.gradle'), 'utf8');
+  assert.strictEqual(a[0].target.package_name, g.match(/applicationId '([^']+)'/)[1]);
+  assert.ok(a[0].target.sha256_cert_fingerprints.every(f => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f)));
+  assert.deepStrictEqual(a[0].relation, ['delegate_permission/common.handle_all_urls']);
+});
