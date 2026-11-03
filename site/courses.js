@@ -366,7 +366,7 @@ function crsForm() {
   <details class="panel" open><summary><h2>5. Véhicule</h2></summary><div class="mfrow">
     ${crsField('cat', 'Catégorie (grille)', 'select', { options: crsCats().map(c => [c.id, c.model + ' — ' + c.label]) })}${crsField('nVeh', 'Nombre de véhicules', 'number', { min: 1 })}
     ${crsField('pax', 'Passagers', 'number', { min: 1 })}${crsField('bags', 'Bagages (nombre et volume)', 'text', { size: 18 })}
-    ${crsField('vehicleKey', 'Véhicule affecté (bloqué à la confirmation)', 'select', { empty: 'À affecter', options: vs.filter(v => !f.cat || String(v.model || '').toUpperCase().indexOf(f.cat) >= 0).map(v => [v.key, v.plate + (v.model ? ' · ' + v.model : '')]) })}
+    ${crsField('vehicleKey', 'Véhicule affecté (bloqué à la confirmation)', 'select', { empty: 'À affecter', options: vs.filter(v => !f.cat || crsModelIs(v.model, f.cat)).map(v => [v.key, v.plate + (v.model ? ' · ' + v.model : '')]) })}
     ${crsField('childSeat', 'Siège enfant', 'check')}${crsField('replacement', 'Véhicule de remplacement identique demandé', 'check')}${crsField('vehNotes', 'Exigences (couleur, standing, équipements)', 'text', { size: 30 })}</div>
     <div id="crsvinfo" class="small"></div></details>
   <details class="panel" open><summary><h2>6. Chauffeur et frais</h2></summary><div class="mfrow">
@@ -681,7 +681,9 @@ function crsMfRender() {
 }
 
 // ---------- course rapide : sans devis, lancée tout de suite (véhicule bloqué, manifeste créé) ----------
-function crsCatOf(v) { const mo = String((v && v.model) || '').toUpperCase(); return (crsCats().find(c => mo.indexOf(String(c.id).toUpperCase()) >= 0) || {}).id || ''; }
+/** Modèle du véhicule dans une catégorie de la grille : lettres et chiffres seulement (« SANTA FE » = catégorie SANTAFE) */
+function crsModelIs(model, id) { const n = s => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, ''); return !!n(id) && n(model).indexOf(n(id)) >= 0; }
+function crsCatOf(v) { const mo = (v && v.model) || ''; return (crsCats().find(c => crsModelIs(mo, c.id)) || {}).id || ''; }
 async function crsQuick(head) {
   const my = ROUTING; await mfEnsure(); if (my !== ROUTING) return;
   const G = CR.grid || {}, vs = vehPick();
@@ -943,4 +945,4 @@ function crsActualPdf(m, f, p, r) {
   doc.save('Km-horaires-' + (m.number || 'mission') + '.pdf');
 }
 
-if (typeof module !== 'undefined') module.exports = { CRS_KINDS, crsDays, crsHoursDay, crsAmplitude, crsBase, crsLevel, crsValidation, crsMissing, crsPrice, crsActual, crsSeatsOk, crsMoney, crsSpan, crsOrigin, crsAirport };
+if (typeof module !== 'undefined') module.exports = { CRS_KINDS, crsDays, crsHoursDay, crsAmplitude, crsBase, crsLevel, crsValidation, crsMissing, crsPrice, crsActual, crsSeatsOk, crsModelIs, crsMoney, crsSpan, crsOrigin, crsAirport };
