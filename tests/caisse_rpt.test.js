@@ -258,3 +258,50 @@ test('encaissement du shift : chauffeur sans contrat à son nom ajouté au shift
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
+
+test('fiche d\'encaissement du shift : PDF à imprimer (chauffeurs, espèces Uber / Bolt connues, cases à remplir), fiche remplie déposée dans Ludy', async () => {
+  env.resetDb();
+  env.psql("insert into drivers (code, name, phone) values ('C2', 'BETA Test', '0600000002'), ('C3', 'GAMMA Test', null)");
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/caisse?t=shift');
+    await page.waitForSelector('#cxadd');
+    const sel = await page.evaluate(() => cshShiftSel());
+    // chauffeur ajouté au shift (Uber) et chauffeur déjà encaissé sans contrat : tous deux sur la fiche
+    env.psql(`insert into cash_moves (caisse, kind, flow, amount, day, shift, driver_code, given, change) values ('bolt', 'encaissement', 'in', 90, '${sel.day}', '${sel.s}', 'C3', 100, 10)`);
+    await page.goto(page.url().replace(/#.*/, '') + `#/caisse?t=shift&jour=${sel.day}&s=${sel.s}&r=1`); await page.waitForSelector('#cxadd');
+    await page.fill('#cxd', 'BETA Test'); await page.click('#cxadd');
+    await page.waitForSelector('.cshshift tr[data-row]');
+    const rows = await page.evaluate(([d, s]) => cshFicheRows(d, s).map(r => [r.name, r.phone, r.ctr, r.done]), [sel.day, sel.s]);
+    assert.deepStrictEqual(rows, [['GAMMA Test', '', 'sans contrat', 90], ['BETA Test', '0600000002', 'sans contrat', null]]);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#cshfiche')]);
+    assert.strictEqual(dl.suggestedFilename(), `Fiche_encaissement_${sel.day}_${sel.s}.pdf`);
+    const file = require('path').join(env.OUT, 'fiche_encaissement.pdf'); await dl.saveAs(file);
+    assert.strictEqual(require('fs').readFileSync(file).slice(0, 5).toString(), '%PDF-');
+    // fiche remplie déposée (ici le PDF lui-même) : rangée dans le seau « caisse » de l'agence, listée sur la page du shift
+    assert.match(await page.innerText('#cshfiches'), /Aucune fiche déposée/);
+    await page.setInputFiles('#cshfup', file);
+    await page.waitForFunction(() => /déposée le/.test(document.querySelector('#cshfiches').innerText), null, { timeout: 15000 });
+    assert.match(env.psql('select day || \'|\' || shift || \'|\' || path from cash_sheets'), new RegExp(`^${sel.day}\\|${sel.s}\\|0/fiches/${sel.day}_${sel.s}_\\d+\\.pdf$`));
+    assert.match(await page.innerText('#cshfiches'), /fiche_encaissement\.pdf · déposée le/);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
+});
+
+test('fiche d\'encaissement : droits (gestionnaire de l\'agence seulement, retrait par l\'administrateur)', () => {
+  env.resetDb();
+  const ADMIN = '11111111-1111-1111-1111-111111111111', MGR = '22222222-2222-2222-2222-222222222222';
+  const as = (uid, sql) => env.psql(`begin; set local role authenticated; set local request.jwt.claims = '{"sub":"${uid}","role":"authenticated"}'; ${sql}; commit;`);
+  env.psql(`update profiles set role = 'manager' where user_id = '${MGR}'; insert into agencies (name) values ('A1'), ('A2'); insert into user_agencies select '${MGR}', id from agencies where name = 'A1'`);
+  const a1 = env.psql("select id from agencies where name = 'A1'"), a2 = env.psql("select id from agencies where name = 'A2'");
+  try {
+    as(MGR, `insert into cash_sheets (agency_id, day, shift, path) values (${a1}, '2026-11-03', 'Jour', '${a1}/fiches/x.pdf')`);
+    assert.throws(() => as(MGR, `insert into cash_sheets (agency_id, day, shift, path) values (${a2}, '2026-11-03', 'Jour', '${a2}/fiches/x.pdf')`), /row-level security/);
+    assert.strictEqual(as(MGR, 'select count(*) from cash_sheets').split('\n').filter(Boolean).pop(), '1');
+    as(MGR, 'delete from cash_sheets');
+    assert.strictEqual(env.psql('select count(*) from cash_sheets'), '1', 'gestionnaire : pas de retrait');
+    as(ADMIN, 'delete from cash_sheets');
+    assert.strictEqual(env.psql('select count(*) from cash_sheets'), '0');
+    assert.strictEqual(as(MGR, `select public.cash_folder_ok('${a1}')::text || public.cash_folder_ok('${a2}')::text`).split('\n').filter(Boolean).pop(), 'truefalse');
+  } finally { env.resetDb(); env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'`); }
+});

@@ -293,3 +293,98 @@ function cshDepositPdf(d) {
   doc.text('Document généré par Ludy — à conserver avec le reçu de versement remis par la banque. Le dépôt est enregistré dans la caisse de l\'agence (sortie « Dépôt en banque »).', M, H - 10, { maxWidth: W - 2 * M - 22 });
   doc.save(('bordereau_depot_' + cshFileAg() + '_' + d.day + '_' + d.ref.replace(/[^A-Za-z0-9-]+/g, '_')).replace(/_+/g, '_') + '.pdf');
 }
+
+// ---------- Fiche d'encaissement du shift (03/11/2026, demande d'Ahmed) ----------
+// Fiche imprimée pour encaisser les chauffeurs dans la rue : chauffeurs du shift (contrats commencés dans le shift, chauffeurs ajoutés,
+// encaissements déjà saisis sans contrat), espèces Uber et Bolt connues (exports importés), cases à remplir à la main (remis, monnaie,
+// manque, signature) et lignes vides pour les chauffeurs imprévus. La fiche remplie est ensuite déposée dans Ludy (photo ou PDF).
+/** Lignes de la fiche : une par chauffeur du shift, espèces Uber / Bolt connues (null = export pas importé ou compte non relié) */
+function cshFicheRows(day, s) {
+  const win = cshShiftWin(day, s), rows = [];
+  CS.ctr.filter(c => c._day === day && c._shift === s && c.client_code).sort((a, b) => String(cshDrvName(a.client_code)).localeCompare(String(cshDrvName(b.client_code))) || a._s - b._s)
+    .forEach(c => rows.push({ c, code: c.client_code, name: cshDrvName(c.client_code) }));
+  const add = (code, name, uuid) => { const k = code || 'N:' + cshName(name);
+    if (rows.some(r => (r.code || 'N:' + cshName(r.name)) === k)) return;
+    rows.push({ c: Object.assign({ key: k, extra: true, client_code: code || null, uber_uuid: uuid || null, num: null }, win), code: code || null, name: name || cshDrvName(code), extra: true }); };
+  CS.moves.filter(m => cshLive(m) && (m.caisse === 'uber' || m.caisse === 'bolt') && m.kind === 'encaissement' && m.day === day && cshMoveShift(m) === s && !m.contract_num)
+    .forEach(m => add(m.driver_code, m.driver_name, m.uber_uuid));
+  ['uber', 'bolt'].forEach(pf => (CSH_ADDED[pf + '|' + day + '|' + s] || []).forEach(a => add(a.driver_code, a.driver_name, a.uber_uuid)));
+  return rows.map(r => {
+    const u = r.code || r.c.uber_uuid ? cshCtrCash('uber', r.c) : { v: null }, b = r.code ? cshCtrCash('bolt', r.c) : { v: null };
+    const d = (CS.drivers || []).find(x => x.code === r.code) || {}, v = r.c.vehicle_key ? vehOf(r.c.vehicle_key) : null;
+    const done = CS.moves.filter(m => cshLive(m) && (m.caisse === 'uber' || m.caisse === 'bolt') && m.kind === 'encaissement' && m.day === day && cshMoveShift(m) === s &&
+      (r.c.num ? m.contract_num === r.c.num : !m.contract_num && (m.driver_code || 'N:' + cshName(m.driver_name)) === (r.code || 'N:' + cshName(r.name))));
+    return { name: r.name, phone: d.phone || '', plate: v ? v.plate : '', ctr: r.c.num ? r.c.num + ' · ' + fmtDT(r.c.start_at) : 'sans contrat',
+      uber: u.v, uberWhy: u.pending ? 'non importé' : u.v == null ? 'non relié' : '', bolt: b.v, boltWhy: b.pending ? 'non importé' : b.v == null ? 'non relié' : '',
+      done: done.length ? cshR(done.reduce((t, m) => t + cshN(m.amount), 0)) : null };
+  });
+}
+/** PDF A4 paysage de la fiche ; renvoie { blob, name } quand asBlob, sinon télécharge */
+function cshFichePdf(day, s, asBlob) {
+  if (!window.jspdf) throw new Error('bibliothèque PDF non chargée, réessayez dans un instant');
+  if (window.applyPlugin && !window.jspdf.jsPDF.API.autoTable) window.applyPlugin(window.jspdf.jsPDF);
+  const cl = v => String(v == null ? '' : v).replace(/[  ]/g, ' ').replace(/−/g, '-').replace(/\s*→\s*/g, ' - ');
+  const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }), W = 297, H = 210, M = 10;
+  const C = { ink: [20, 32, 43], mute: [93, 107, 120], line: [150, 160, 170], soft: [243, 245, 247], head: [15, 38, 51], acc: [91, 75, 214] };
+  const col = (k, c) => doc['set' + k](c[0], c[1], c[2]), font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); col('TextColor', c || C.ink); };
+  const rows = cshFicheRows(day, s), ref = 'FE-' + (CS.agId || 0) + '-' + day.replace(/-/g, '') + '-' + (s === 'Jour' ? 'J' : 'N');
+  const win = cshShiftWin(day, s), money = v => cl(cshMoney(v));
+  const head = () => {
+    try { doc.addImage(RPT_LOGO, 'PNG', M, 7, 32, 7.8); } catch (e) { }
+    font('bold', 8, C.acc); doc.text('CAISSE · FICHE D\'ENCAISSEMENT DU SHIFT', W - M, 10, { align: 'right' });
+    font('normal', 7.5, C.mute); doc.text(cl('N° ' + ref + ' · éditée le ' + fmtDTY(new Date().toISOString())), W - M, 14, { align: 'right' });
+    font('bold', 14); doc.text(cl('Shift ' + shiftDayName({ s, day }) + (CS.agName ? ' · ' + CS.agName : '')), M, 23);
+    font('normal', 8.5, C.mute); doc.text(cl('Du ' + fmtDTY(new Date(win._s).toISOString()) + ' au ' + fmtDTY(new Date(win._e).toISOString()) +
+      ' · Espèces Uber / Bolt = espèces collectées pendant le contrat d\'après les exports importés dans Ludy à l\'édition de la fiche'), M, 28);
+  };
+  head();
+  const blank = Math.max(3, 12 - rows.length);   // jusqu'à 12 lignes : fiche et signatures sur une page
+  const body = rows.map((r, i) => [String(i + 1), r.name + (r.phone ? '\n' + r.phone : ''), r.plate, r.ctr,
+    r.uber != null ? money(r.uber) : r.uberWhy, r.bolt != null ? money(r.bolt) : r.boltWhy,
+    r.uber != null || r.bolt != null ? money(cshN(r.uber) + cshN(r.bolt)) : '', r.done != null ? 'déjà saisi : ' + money(r.done) : '', '', '', ''])
+    .concat(Array.from({ length: blank }, (x, i) => [String(rows.length + i + 1), '', '', '', '', '', '', '', '', '', '']));
+  doc.autoTable({ startY: 32, head: [['N°', 'Chauffeur / téléphone', 'Véhicule', 'Contrat · début', 'Espèces Uber', 'Espèces Bolt', 'À remettre', 'Remis', 'Monnaie rendue', 'Manque', 'Signature du chauffeur'].map(cl)],
+    body: body.map(r => r.map(cl)), theme: 'grid', margin: { left: M, right: M, top: 32 },
+    styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.4, textColor: C.ink, lineColor: C.line, lineWidth: 0.2, minCellHeight: 10.5, valign: 'middle' },
+    headStyles: { fillColor: C.head, textColor: 255, fontStyle: 'bold', minCellHeight: 7 },
+    columnStyles: { 0: { cellWidth: 8, halign: 'center' }, 1: { cellWidth: 46 }, 2: { cellWidth: 22 }, 3: { cellWidth: 30 }, 4: { cellWidth: 21, halign: 'right' }, 5: { cellWidth: 21, halign: 'right' },
+      6: { cellWidth: 21, halign: 'right', fontStyle: 'bold' }, 7: { cellWidth: 25, halign: 'right' }, 8: { cellWidth: 22 }, 9: { cellWidth: 20 }, 10: { cellWidth: 41 } },
+    didParseCell: x => { if (x.section === 'body' && (x.column.index === 4 || x.column.index === 5) && /non /.test(x.cell.raw)) { x.cell.styles.fontStyle = 'italic'; x.cell.styles.textColor = C.mute; x.cell.styles.fontSize = 7; }
+      if (x.section === 'body' && x.column.index === 7 && x.cell.raw) { x.cell.styles.fontSize = 6.8; x.cell.styles.textColor = C.mute; } },
+    didDrawPage: d => { if (d.pageNumber > 1) head(); } });
+  // totaux et signatures du gestionnaire
+  let y = doc.lastAutoTable.finalY + 4; if (y > H - 34) { doc.addPage(); head(); y = 34; }
+  const known = rows.filter(r => r.uber != null || r.bolt != null);
+  font('bold', 9); doc.text(cl('Total à remettre connu : ' + (known.length ? money(known.reduce((t, r) => t + cshN(r.uber) + cshN(r.bolt), 0)) + ' (' + known.length + ' / ' + rows.length + ' chauffeurs)' : 'exports pas encore importés')), M, y + 3);
+  const box = (x, w, label) => { col('DrawColor', C.line); doc.setLineWidth(0.3); doc.rect(x, y + 6, w, 18); font('normal', 7, C.mute); doc.text(cl(label).toUpperCase(), x + 2, y + 9.5); };
+  const bw = (W - 2 * M - 12) / 4;
+  box(M, bw, 'Total remis (espèces)'); box(M + bw + 4, bw, 'Total des manques'); box(M + 2 * (bw + 4), bw, 'Encaissé par (nom et signature)'); box(M + 3 * (bw + 4), bw, 'Fin de l\'encaissement (date et heure)');
+  font('normal', 7, C.mute); doc.text(cl('Une fois l\'encaissement fini : saisir chaque ligne dans Ludy (Caisse > Encaissement du shift) et déposer la photo de cette fiche sur la même page.'), M, H - 6);
+  const n = doc.internal.getNumberOfPages(); for (let i = 1; i <= n; i++) { doc.setPage(i); font('normal', 7, C.mute); doc.text('Page ' + i + ' / ' + n, W - M, H - 6, { align: 'right' }); }
+  const name = 'Fiche_encaissement_' + day + '_' + s + '.pdf';
+  if (asBlob) return { blob: doc.output('blob'), name, rows };
+  doc.save(name); return { name, rows };
+}
+/** Fiches remplies déposées pour ce shift : liste, dépôt (photo ou PDF), lien signé */
+async function cshFicheBox(day, s) {
+  const el = $('#cshfiches'); if (!el) return;
+  const q = sb.from('cash_sheets').select('id,day,shift,path,file_name,created_by,created_at').eq('day', day).eq('shift', s).order('created_at');
+  const { data, error } = await (CS.agId ? q.eq('agency_id', CS.agId) : q.is('agency_id', null));
+  if (!$('#cshfiches')) return;
+  if (error) { el.innerHTML = /cash_sheets|relation|schema cache/i.test(error.message) ? msg('Dépôt des fiches : migration 20261121000000_fiche_encaissement.sql à exécuter dans Supabase.', 'warn') : msg(esc(error.message), 'err'); return; }
+  el.innerHTML = (data || []).length ? `<ul class="small">${data.map(f => `<li>${esc(f.file_name || f.path.split('/').pop())} · déposée le ${esc(fmtDTY(f.created_at))} · <a href="#" data-cshfo="${esc(f.path)}">voir</a>${isAdmin() ? ` · <a href="#" data-cshfd="${f.id}">retirer</a>` : ''}</li>`).join('')}</ul>`
+    : '<p class="small">Aucune fiche déposée pour ce shift.</p>';
+  el.querySelectorAll('[data-cshfo]').forEach(a => { a.onclick = async e => { e.preventDefault();
+    const r = await sb.storage.from('caisse').createSignedUrl(a.dataset.cshfo, 3600); if (r.error) { alert(r.error.message); return; } openOut(r.data.signedUrl); }; });
+  el.querySelectorAll('[data-cshfd]').forEach(a => { a.onclick = async e => { e.preventDefault();
+    if (!await ask('Retirer cette fiche déposée ?')) return; const { error: er } = await sb.from('cash_sheets').delete().eq('id', +a.dataset.cshfd); if (er) alert(er.message); else cshFicheBox(day, s); }; });
+}
+async function cshFicheUpload(day, s, file) {
+  if (!file) return;
+  if (!/^(image\/|application\/pdf)/.test(file.type || '')) throw new Error('photo (JPG, PNG…) ou PDF seulement');
+  if (file.size > 15 * 1024 * 1024) throw new Error('fichier trop lourd (15 Mo au plus)');
+  const ext = (String(file.name || '').match(/\.([a-z0-9]{2,5})$/i) || [, (file.type.split('/')[1] || 'bin')])[1].toLowerCase();
+  const path = (CS.agId || 0) + '/fiches/' + day + '_' + s + '_' + Date.now() + '.' + ext;
+  const up = await sb.storage.from('caisse').upload(path, file, { contentType: file.type, upsert: false }); if (up.error) throw up.error;
+  const { error } = await sb.from('cash_sheets').insert({ agency_id: CS.agId || null, day, shift: s, path, file_name: file.name || null }); if (error) throw error;
+}
