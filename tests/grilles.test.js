@@ -25,6 +25,22 @@ test('grille Marrakech : transferts Menara et intervilles depuis Marrakech, rest
   assert.strictEqual(env.psql('select count(*) from pricing_grid'), '2');
 });
 
+test('Santa Fe : catégorie « 4x4 Luxe — 6 passagers » au tarif du Staria dans chaque grille, véhicule « SANTA FE » reconnu', () => {
+  [1, 2].forEach(id => {
+    const G = grid(id), sf = G.cats.find(c => c.id === 'SANTAFE');
+    assert.deepStrictEqual(sf, { id: 'SANTAFE', label: '4x4 Luxe — 6 passagers', model: 'Hyundai Santa Fe', seats: 6 });
+    ['hourly', 'half', 'day', 'kmExtra', 'wait15'].forEach(k => assert.strictEqual(G[k].SANTAFE, G[k].STARIA, id + ' ' + k));
+    ['airport', 'intercity'].forEach(k => G[k].forEach(r => assert.strictEqual(r.SANTAFE, r.STARIA, id + ' ' + k + ' ' + r.dest)));
+    const f = { kind: 'Transfert aéroport', dest: G.airport[1].dest };
+    assert.strictEqual(C.crsPrice(Object.assign({ cat: 'SANTAFE' }, f), G).total, C.crsPrice(Object.assign({ cat: 'STARIA' }, f), G).total);
+    assert.ok(C.crsSeatsOk({ cat: 'SANTAFE', pax: 6 }, G) && !C.crsSeatsOk({ cat: 'SANTAFE', pax: 7 }, G));
+  });
+  // rejouable : une seule catégorie Santa Fe
+  env.psql(require('fs').readFileSync(require('path').join(env.ROOT, 'supabase/migrations/20261120000000_santa_fe.sql'), 'utf8'));
+  assert.strictEqual(grid(2).cats.filter(c => c.id === 'SANTAFE').length, 1);
+  assert.ok(C.crsModelIs('SANTA FE', 'SANTAFE') && C.crsModelIs('Hyundai Santa-Fe', 'SANTAFE') && C.crsModelIs('STARIA', 'STARIA') && !C.crsModelIs('STARIA', 'SANTAFE'));
+});
+
 test('prix : libellés de la ville de départ ; grille d\'avant (sans ville) = Casablanca', () => {
   const M = grid(2), K = grid(1), P = f => C.crsPrice(f, M);
   let p = P({ kind: 'Transfert aéroport', cat: 'STARIA', dest: 'Essaouira' });
