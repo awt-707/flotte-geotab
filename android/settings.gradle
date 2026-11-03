@@ -1,0 +1,6 @@
+// Application Ludy pour Android (APK installé sans Google Play) : Trusted Web Activity = le site Ludy en plein écran dans Chrome
+// (téléchargements, photos, WhatsApp, e-mail comme dans le navigateur). Fabriquée par .github/workflows/android.yml.
+pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+rootProject.name = 'Ludy'
+include ':app'

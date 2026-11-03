@@ -6,3 +6,11 @@ tests/out/
 .DS_Store
 .bin/
 site/build.txt
+
+# Android : sortie de Gradle, clés de signature (jamais dans le dépôt)
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.jks
+*.keystore

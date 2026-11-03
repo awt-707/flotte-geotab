@@ -304,7 +304,7 @@ async function pageExt(id) {
 }
 window.addEventListener('resize', () => { if (/^x-/.test(pageOf()) && !appExtWin()) extPlace().catch(() => { }); });
 function pageOf() { return (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct'; }
-const APP_DL = { mac: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.dmg', win: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy-setup.exe' };
+const APP_DL = { mac: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.dmg', win: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy-setup.exe', android: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.apk' };
 async function pageApplication() {
   $('#page').innerHTML = `<div class="head"><h1>Application Ludy</h1><div class="sub">Le logiciel dans sa propre fenêtre, avec le volet <b>Uber Fleet</b> affiché à l'intérieur (impossible dans un navigateur : Uber l'interdit).
     Les mises à jour du logiciel arrivent toutes seules, sans réinstaller l'application.</div></div>
@@ -319,7 +319,18 @@ async function pageApplication() {
         <li>Si Windows affiche « Windows a protégé votre ordinateur » : <b>Informations complémentaires › Exécuter quand même</b> (une seule fois).</li>
         <li>Se connecter à Ludy, puis une fois à Uber dans le volet <b>Uber Fleet</b>.</li></ol></div>
     </div>
-    <div class="sub">Dans l'application : <b>Uber Fleet</b>, <b>Clicar</b>… (liste dans Réglages) s'affichent à droite du menu Ludy (sous Windows, application 1.7 : chacun dans sa propre fenêtre, à côté de Ludy) ; un clic sur un autre volet revient au logiciel, ils restent ouverts en arrière-plan. Accès réservé (identifiant demandé par le site) : bouton « Accès réservé… » au-dessus du volet. Les PDF sont enregistrés dans Téléchargements et s'ouvrent tout seuls.</div>`;
+    <h2>Téléphone et tablette</h2>
+    <div class="appdl">
+      <div class="panel"><h2>Android</h2><p><a class="btn" href="${APP_DL.android}">Télécharger pour Android (Ludy.apk)</a></p>
+        <ol><li>Ouvrir ce lien sur le téléphone, télécharger <b>Ludy.apk</b> puis l'ouvrir (notification ou dossier Téléchargements).</li>
+        <li>Android demande d'autoriser l'installation d'applications depuis Chrome (ou Fichiers) : <b>Paramètres › Autoriser cette source</b>, une seule fois. Si Play Protect prévient que l'application est inconnue : <b>Plus de détails › Installer quand même</b>.</li>
+        <li>Ouvrir <b>Ludy</b> depuis l'écran d'accueil et se connecter. L'application utilise Chrome : PDF, photos, WhatsApp et e-mails fonctionnent comme dans le navigateur.</li></ol></div>
+      <div class="panel"><h2>iPhone et iPad</h2><p class="small">Apple n'autorise aucune application installée hors de l'App Store : Ludy s'ajoute à l'écran d'accueil depuis Safari et s'ouvre ensuite en plein écran, comme une application.</p>
+        <ol><li>Ouvrir <b>ludy-flotte.pages.dev</b> dans <b>Safari</b>.</li>
+        <li>Toucher <b>Partager</b> (carré avec une flèche), puis <b>Sur l'écran d'accueil</b>, puis <b>Ajouter</b>.</li>
+        <li>Ouvrir <b>Ludy</b> depuis l'écran d'accueil et se connecter (une fois).</li></ol></div>
+    </div>
+    <div class="sub">Dans l'application Mac / Windows : <b>Uber Fleet</b>, <b>Clicar</b>… (liste dans Réglages) s'affichent à droite du menu Ludy (sous Windows, application 1.7 : chacun dans sa propre fenêtre, à côté de Ludy) ; un clic sur un autre volet revient au logiciel, ils restent ouverts en arrière-plan. Accès réservé (identifiant demandé par le site) : bouton « Accès réservé… » au-dessus du volet. Les PDF sont enregistrés dans Téléchargements et s'ouvrent tout seuls.</div>`;
 }
 
 // ---------- Volets visibles par utilisateur (Réglages > Utilisateurs) : profiles.pages = liste des volets, vide = tous ----------

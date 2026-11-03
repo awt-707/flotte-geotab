@@ -1,0 +1,82 @@
+name: Application Android
+
+# Application Ludy pour Android (dossier android/) : APK installé sans Google Play (Trusted Web Activity : le site Ludy en plein
+# écran dans Chrome). Fabriquée quand android/ change, puis mise en téléchargement (seau public « app », comme Ludy.dmg).
+# Signée avec la clé du seau privé « app-keys » (créée au premier passage sur main, puis toujours la même).
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', 'scripts/publish-apk.js', 'scripts/android-key.js', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['android/**', 'scripts/publish-apk.js', 'scripts/android-key.js', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Application (Android)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && 'production' || '' }}
+    env:
+      SUPABASE_URL: https://cgiiwumbblimvmrypxlc.supabase.co
+      LUDY_KEYSTORE: ${{ runner.temp }}/ludy.jks
+      LUDY_KEY_PASS: ludy-android-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+      - name: SDK Android
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+      # relance d'une ancienne exécution : une ancienne application ne remplace jamais la dernière
+      - name: Publication ?
+        id: pub
+        run: |
+          ok=0
+          if [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            git fetch -q origin main --depth=1
+            if [ "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA" ]; then ok=1; else echo "::warning::$GITHUB_SHA n'est plus la dernière version de main : application non publiée"; fi
+          fi
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+      - name: Clé de signature
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          gen() { keytool -genkeypair -keystore "$LUDY_KEYSTORE" -alias ludy -keyalg RSA -keysize 2048 -validity 20000 \
+            -storepass "$LUDY_KEY_PASS" -keypass "$LUDY_KEY_PASS" -dname "CN=Ludy, O=Ludy, C=MA" > /dev/null 2>&1; }
+          if [ "${{ steps.pub.outputs.ok }}" != "1" ] || [ -z "$SUPABASE_SERVICE_KEY" ]; then echo "fabrication d'essai : clé jetable"; gen; exit 0; fi
+          set +e; node scripts/android-key.js fetch "$LUDY_KEYSTORE"; s=$?; set -e
+          if [ $s -eq 2 ]; then gen; node scripts/android-key.js store "$LUDY_KEYSTORE"; elif [ $s -ne 0 ]; then exit 1; fi
+      - name: Fabrication
+        working-directory: android
+        run: gradle --no-daemon assembleRelease
+      - name: Fichier à télécharger
+        id: apk
+        run: |
+          mkdir -p out && cp android/app/build/outputs/apk/release/app-release.apk out/Ludy.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify out/Ludy.apk
+          sha=$(keytool -list -v -keystore "$LUDY_KEYSTORE" -storepass "$LUDY_KEY_PASS" -alias ludy | sed -n 's/.*SHA256: *//p' | tr -d ' ')
+          echo "Empreinte du certificat : $sha"; echo "sha=$sha" >> "$GITHUB_OUTPUT"; ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-Android
+          path: out/*
+          retention-days: 30
+      - name: Supabase Storage (seau public « app »)
+        if: ${{ steps.pub.outputs.ok == '1' }}
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_SERVICE_KEY" ]; then echo "::warning::Secret SUPABASE_SERVICE_KEY absent : application non publiée"; exit 0; fi
+          node scripts/publish-apk.js out/Ludy.apk "${{ steps.apk.outputs.sha }}"
