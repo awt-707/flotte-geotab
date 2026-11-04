@@ -153,7 +153,7 @@ test('page Caisse : rapports (PDF, tableur, graphiques) et bordereau de dépôt 
     // après le dépôt : caisses à 0, banque et compte gardés pour le prochain bordereau
     assert.strictEqual(await page.inputValue('[data-dpam="courses"]'), '');
     assert.strictEqual(await page.inputValue('#dpbank'), 'Banque Test');
-    assert.match(await page.innerText('#tcshdph'), /Bordereau DEP-0-/);
+    assert.match(await page.innerText('#tcshdph'), /DEP-0-\d{8}-1/);
     // jours déjà déposés : signalés et décochés au dépôt suivant
     await page.goto(base() + `#/caisse?t=depot&dpdu=${d2}&dpau=${d1}`); await page.waitForSelector('#dpdays');
     assert.match(await page.innerText('#dpdays'), /déjà déposé · DEP-0-/);

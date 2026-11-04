@@ -111,7 +111,7 @@ test('page : devis au départ de Marrakech, course rapide, grille par ville, nou
     assert.strictEqual(env.psql('select count(*) from pricing_grid'), '2');
     assert.deepStrictEqual(errors, []);
   } finally {
-    env.psql(`delete from pricing_grid where id > 2; update pricing_grid set data = jsonb_set(data, '{intercity,4,SONATA}', '1440') where id = 2; truncate missions, cash_moves restart identity`);
+    env.psql(`delete from pricing_grid where id > 2; update pricing_grid set data = jsonb_set(data, '{intercity,4,SONATA}', '1440') where id = 2; truncate missions, cash_moves, cash_files restart identity`);
     await br.close(); srv.kill();
   }
 });
