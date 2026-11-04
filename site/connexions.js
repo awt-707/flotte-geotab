@@ -12,7 +12,8 @@ function sessReset() { SESS.id = sessNewId(); SESS.off = false; SESS.badge = nul
 /** Appareil : application Ludy (version) ou navigateur, et système */
 function sessClient() {
   const ua = navigator.userAgent || '', os = /iPhone|iPad/.test(ua) ? 'iPhone / iPad' : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : '';
-  return (window.LUDY_APP ? 'Application ' + (window.LUDY_APP.version || '') : 'Navigateur') + (os ? ' · ' + os : '');
+  const and = ua.match(/LudyAndroid\/([\d.]+)/);   // application Android (vue web, mode téléphone)
+  return (window.LUDY_APP ? 'Application ' + (window.LUDY_APP.version || '') : and ? 'Application ' + and[1] : 'Navigateur') + (os ? ' · ' + os : '');
 }
 function sessPageName(p) { const n = (typeof NAV !== 'undefined' ? NAV : []).find(x => x[0] === p); return n ? n[1] : p === 'application' ? 'Application' : /^x-/.test(p) ? 'Volet ' + p.slice(2) : p; }
 /** Signal de l'onglet : page affichée, appareil, actif (visible et utilisé récemment) ; tick = signal de la minute (pastille relue) */

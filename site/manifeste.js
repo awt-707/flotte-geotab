@@ -195,7 +195,7 @@ async function pageManifeste() {
   if (typeof addrSetPlaces === 'function') addrSetPlaces(places);
   $('#page').innerHTML = `<div class="head"><h1>Manifestes</h1><div class="sub">Manifeste de passagers (transport touristique) sur les formulaires officiels : véhicule, N° d'agrément et chauffeur pris dans Ludy (contrat en cours à l'heure de départ). PDF à partager par WhatsApp ou par e-mail.</div></div>
     ${cfgErr ? msg('Manifestes pas encore installés dans la base : exécuter <b>supabase/migrations/20261027000000_manifestes.sql</b> dans Supabase &gt; SQL Editor. (' + esc(cfgErr) + ')', 'err') : ''}
-    ${!cfgErr && !MF.cfg.stamp ? msg('Cachet de l\'entreprise manquant : ' + (isAdmin() ? 'l\'ajouter dans « Réglages des manifestes » en bas de page.' : 'l\'administrateur doit l\'ajouter (Manifestes &gt; Réglages).'), 'warn') : ''}
+    ${!cfgErr && !MF.cfg.stamp ? msg('Cachet de l\'entreprise manquant : ' + (isAdmin() ? (typeof MOBILE !== 'undefined' && MOBILE ? 'l\'ajouter depuis l\'ordinateur (Manifestes &gt; Réglages).' : 'l\'ajouter dans « Réglages des manifestes » en bas de page.') : 'l\'administrateur doit l\'ajouter (Manifestes &gt; Réglages).'), 'warn') : ''}
     ${!edit ? msg('Lecture seule : la création de manifestes est réservée aux gestionnaires et à l\'administrateur.', 'warn') : ''}
     <div class="grid2 mfgrid">
     <div>
@@ -312,6 +312,7 @@ async function mfGenerate() {
     MF.last = await mfMake(st); MF.draft = st;
     mfDone(MF.last);
     if (MF.last.row) { MF.hist.unshift(MF.last.row); mfHistory(); }
+    if (typeof MOBILE !== 'undefined' && MOBILE) { const d = $('#mfdone'); if (d && d.scrollIntoView) d.scrollIntoView({ block: 'start' }); }   // téléphone : partage juste sous les yeux
   } catch (e) { alert(e.message || e); }
   btn.disabled = false; btn.textContent = 'Générer le manifeste PDF';
 }
@@ -414,9 +415,13 @@ async function mfSendMail(id, to, out) {
 function mfHistory() {
   const box = $('#mfhist'); if (!box) return;
   const ok = inAgency(), rows = MF.hist.filter(h => ok(h.vehicle_key));
-  box.innerHTML = table('mfh', [['Départ', h => esc(fmtDTY(h.depart_at)), h => h.depart_at], ['Véhicule', h => plate(h.plate)], ['Chauffeur', h => esc(h.driver_name || '')], ['Client', h => esc(h.client || '')],
+  const acts = h => `<span class="mfha">${h.file_path && canEdit() ? `<button class="ghost small" data-mfpdf="${h.id}">PDF</button><button class="ghost small" data-mfwa="${h.id}">WhatsApp</button>` : ''}${canEdit() ? `<button class="ghost small" data-mfre="${h.id}">Reprendre</button>` : ''}</span>`;
+  // téléphone (mobile.js) : une carte par manifeste, les 20 derniers
+  if (typeof MOBILE !== 'undefined' && MOBILE) box.innerHTML = rows.length ? rows.slice(0, 20).map(h => { const r = (h.data && h.data.raw) || {};
+    return `<div class="mcard mline"><div class="mch"><div class="mwho2"><b>${esc(h.client || h.driver_name || '')}</b><span>${esc(fmtDTY(h.depart_at))} · ${esc(h.plate || '')}${h.driver_name ? ' · ' + esc(h.driver_name) : ''}</span><span>${esc((r.depart || '') + ' → ' + (r.terminus || ''))}</span></div></div>${acts(h)}</div>`; }).join('') : '<div class="small">Aucun manifeste.</div>';
+  else box.innerHTML = table('mfh', [['Départ', h => esc(fmtDTY(h.depart_at)), h => h.depart_at], ['Véhicule', h => plate(h.plate)], ['Chauffeur', h => esc(h.driver_name || '')], ['Client', h => esc(h.client || '')],
     ['Trajet', h => { const r = (h.data && h.data.raw) || {}; return esc((r.depart || '') + ' → ' + (r.terminus || '')); }],
-    ['', h => `<span class="mfha">${h.file_path && canEdit() ? `<button class="ghost small" data-mfpdf="${h.id}">PDF</button><button class="ghost small" data-mfwa="${h.id}">WhatsApp</button>` : ''}${canEdit() ? `<button class="ghost small" data-mfre="${h.id}">Reprendre</button>` : ''}</span>`]], rows, { empty: 'Aucun manifeste sur les 60 derniers jours', page: true });
+    ['', acts]], rows, { empty: 'Aucun manifeste sur les 60 derniers jours', page: true });
   window.__rerender = mfHistory;
   const byId = id => rows.find(h => String(h.id) === String(id));
   box.querySelectorAll('[data-mfpdf]').forEach(b => b.onclick = async () => { try { { const u = await mfLink(byId(b.dataset.mfpdf).file_path); if (!openOut(u)) window.open(u, '_blank', 'noopener'); } } catch (e) { alert('PDF inaccessible : ' + e.message); } });
