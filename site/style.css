@@ -581,3 +581,7 @@ table.cshdep { width: 100%; } table.cshdep td, table.cshdep th { padding: 4px 6p
 .cshshift tr.done.short td, table.cshmq tr.short td { background: var(--crit-bg); }
 .cshshift tr.done.paid td, table.cshmq tr.paid td { background: var(--ok-bg); }
 table.cshmq { width: 100%; } table.cshmq td, table.cshmq th { padding: 6px 8px; border-bottom: 1px solid var(--line2); vertical-align: top; }
+/* Caisse : justificatifs et reçus de la banque (bouton « Déposer », liens 📎) */
+label.cshup { display: inline-block; cursor: pointer; border: 1px solid var(--acc); color: var(--acc); background: var(--acc-soft); border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 600; margin-top: 3px; }
+label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
+.cshfiles { margin-top: 3px; line-height: 1.5; }

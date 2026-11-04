@@ -110,7 +110,11 @@ function newFolder(n, id) {
   const f = { name: n, id: id || 'FOLDER' + folders.length, files, getId() { return this.id; },
     createFile: (a, c) => { const x = { id: 'FILE' + Object.keys(driveFiles).length, name: a.name || a, content: c !== undefined ? c : a.bytes, trashed: false, getId() { return this.id; }, getName() { return this.name; }, setTrashed(v) { this.trashed = v; }, getUrl: () => 'https://drive/' + (a.name || a) };
       files.push(x); driveFiles[x.id] = x; return x; },
-    getFiles: () => { const l = files.filter(x => !x.trashed); let k = 0; return { hasNext: () => k < l.length, next: () => l[k++] }; } };
+    getFiles: () => { const l = files.filter(x => !x.trashed); let k = 0; return { hasNext: () => k < l.length, next: () => l[k++] }; },
+    // sous-dossiers (dossiers de la caisse : un par catégorie de dépense)
+    createFolder: n2 => { const c = newFolder(n2); c.parent = f; return c; },
+    getFoldersByName: n2 => { const l = folders.filter(x => x.parent === f && x.name === n2 && !x.trashed); let k = 0; return { hasNext: () => k < l.length, next: () => l[k++] }; },
+    isTrashed() { return !!this.trashed; }, setTrashed(v) { this.trashed = v; } };
   folders.push(f); return f;
 }
 // classeur dans le faux Drive : dossier parent, copie (makeCopy : onglets, données, tailles, langue copiés), comme DriveApp
@@ -132,6 +136,7 @@ const ctx = vm.createContext({ console, Utilities, Date: FakeDate, Math, JSON,
   GmailApp: { getAliases: () => GMAIL.aliases, sendEmail: (to, subject, body, o) => mails.push(Object.assign({ to, subject, body, gmail: true }, o)) }, HtmlService: { createHtmlOutput: () => chain() }, Charts: { ChartType: { LINE: 'L', COLUMN: 'C', BAR: 'B' } },
   DriveApp: { getFoldersByName: n => { const f = folders.filter(x => x.name === n); return { hasNext: () => f.length > 0, next: () => f[0] }; },
     createFolder: n => newFolder(n),
+    getRootFolder: () => folders.find(x => x.id === 'ROOT') || newFolder('Mon Drive', 'ROOT'),
     // dossier par identifiant (copie RH dans le Drive) : identifiant inconnu = erreur, comme Google
     getFolderById: id => { const f = folders.find(x => x.id === id); if (!f) throw new Error('No item with the given ID could be found. ' + id); return f; },
     getFileById: id => { const x = driveFiles[id]; if (!x) throw new Error('No item with the given ID could be found. ' + id); return x; } },

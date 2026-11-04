@@ -80,6 +80,9 @@ async function cshLoad(from, to) {
   try { [bolt, blast] = await Promise.all([all('bolt_sessions', 'key,at,driver_name,plate,vehicle_key,trips,done,total,cash,minutes', q => A(q).gte('at', dayBounds(lo).start.toISOString()).lt('at', dayBounds(hi).end.toISOString()), ['at']),
     A(sb.from('bolt_sessions').select('at')).order('at', { ascending: false }).limit(1)]); }
   catch (e) { CS.boltErr = e.message; }
+  // fichiers joints (migration 20261122000000_justificatifs.sql) : justificatifs des dépenses, reçus de la banque
+  CS.files = []; CS.filesErr = '';
+  try { CS.files = await all('cash_files', 'id,kind,move_id,dep_ref,day,path,file_name,drive_id,created_at', A, ['id']); } catch (e) { CS.filesErr = e.message; }
   CS.bolt = bolt; CS.boltLastAt = blast && !blast.error && blast.data && blast.data[0] ? blast.data[0].at : '';
   CS.lastAt = last && !last.error && last.data && last.data[0] ? last.data[0].at : '';   // dernière transaction Uber importée (toutes dates)
   CS.drivers = drv; CS.udrv = udrv; CS.moves = moves; CS.all = all_; CS.pay = pay;
@@ -426,13 +429,16 @@ function cshTabDep(p) {
       ${cshField('cdj', 'Justificatif', 'select', { options: [['En attente', 'En attente'], ['OK', 'OK (rangé)'], ['KO', 'KO (absent)'], ['N.A', 'N.A']] })}
       <span id="cdosrc">${cshField('cdo', 'Source', 'select', { options: ['Chauffeur / Uber', 'Caisse - Dépenses', 'Banque'] })}</span>
       <span id="cdpfine" hidden>${cshField('cdp', 'Amende payée par', 'select', { options: CASH_FINE_PAY })}</span>${cshField('cdm', 'Commentaire', 'text', { size: 30 })}
+      ${CS.filesErr ? '' : '<label>Justificatif (photo ou PDF) <input type="file" id="cdf" accept="image/*,application/pdf"></label>'}
       <button id="cdsave">Enregistrer</button></div>
+      <div class="small">${CS.filesErr ? 'Dépôt des justificatifs : migration 20261122000000_justificatifs.sql à exécuter dans Supabase.' : 'Justificatif déposé : visible ici (📎) et copié dans le Google Drive de l\'agence, rangé par catégorie. ' + cshDriveLink('justif')}</div>
       <div class="small" id="cdfinehelp" hidden>Amende : préciser dans le commentaire le motif, le lieu, le n° du procès-verbal. Payée par le chauffeur = hors caisse (simple suivi, rien retenu) ; payée par la société = sortie de la caisse Dépenses ou des espèces de l'encaissement du shift (Uber / Bolt). « Amende sans justificatif » : justificatif KO, retenue sur la paie du chauffeur quand la société l'a payée.</div>
       <div class="small">Tout décaissement sans justificatif OK est déduit de la paie du chauffeur (Paie). Les dépenses « Course Uber » (ou « Course Bolt ») justifiées et payées avec les espèces du chauffeur réduisent le cash à remettre (Rapprochement Uber / Bolt) ; sans justificatif, elles restent dans le manquant (retenues une seule fois). Payée par la banque : hors caisse.</div></div>` +
     cshList('tcshdep', rows, [['Date', m => fmtDay(m.day) + (m.shift ? ' <span class="small">' + m.shift + '</span>' : ''), m => m.day], cshDrvCol(), ['Opération', m => (cshIsFine(m.label) ? '<b>' + esc(m.label) + '</b>' : esc(m.label || CSH_KIND[m.kind] || '')) + (m.kind !== 'depense' ? ' <span class="small">(' + CSH_FLOW_TXT[m.flow] + ')</span>' : '')],
       ['Type', m => esc(m.ride_type || '')], ['Payée par', m => esc(m.source || '') + (m.caisse !== 'depenses' ? ' <span class="small">(caisse ' + esc((CASH_CAISSES.find(c => c[0] === m.caisse) || [])[1] || m.caisse) + ')</span>' : ''), m => m.source || ''],
       ['Montant', m => cshMoney(m.amount), m => cshN(m.amount), 'n'],
-      ['Justificatif', m => m.kind !== 'depense' ? esc(m.justif || '') : `<select data-cshj="${m.id}" ${m.cancelled_at ? 'disabled' : ''}>${['En attente', 'OK', 'KO', 'N.A'].map(x => `<option ${x === (m.justif || 'En attente') ? 'selected' : ''}>${x}</option>`).join('')}</select>`, m => m.justif || ''],
+      ['Justificatif', m => m.kind !== 'depense' ? esc(m.justif || '') : `<select data-cshj="${m.id}" ${m.cancelled_at ? 'disabled' : ''}>${['En attente', 'OK', 'KO', 'N.A'].map(x => `<option ${x === (m.justif || 'En attente') ? 'selected' : ''}>${x}</option>`).join('')}</select>`
+        + (CS.filesErr ? '' : '<div class="cshfiles">' + cshFileLinks(CS.files.filter(f => f.kind === 'justif' && f.move_id === m.id)) + (m.cancelled_at ? '' : ' ' + cshUpBtn('justif|' + m.id, CS.files.some(f => f.kind === 'justif' && f.move_id === m.id) ? '+ fichier' : 'Déposer')) + '</div>'), m => m.justif || ''],
       ['Gestionnaire', m => esc(m.manager_name || '')], ['Commentaire', m => esc(m.comment || '')], cshActCol()], ['depense']) + cshMoveForm('depenses'));
   // amende : « payée par » à la place de la source, justificatif KO pour « Amende sans justificatif »
   const fineUi = () => { const f = cshIsFine(cshVal('cdc')); $('#cdosrc').hidden = f; $('#cdpfine').hidden = !f; $('#cdfinehelp').hidden = !f;
@@ -446,10 +452,18 @@ function cshTabDep(p) {
     // payée par la banque : hors caisse (virement), comme les avances et bonus
     const mv = fine ? cshFineMove(cshVal('cdp'), cshVal('cdc'), cshVal('cdj'))
       : { caisse: 'depenses', flow: cshVal('cdo') === 'Banque' ? 'virement' : 'out', ride_type: cshVal('cdr'), justif: cshVal('cdj'), source: cshVal('cdo') };
-    try { await cshInsert(Object.assign(who, mv, { kind: 'depense', amount: a, day: cshVal('cdd'), shift: cshVal('cds'), label: cshVal('cdc'), comment: cshVal('cdm') || null })); pageCaisse(); }
+    const file = $('#cdf') && $('#cdf').files[0];
+    try { if (file) cshFileCheck(file); } catch (e) { alert('Justificatif : ' + e.message); return; }
+    try {
+      const row = Object.assign(who, mv, { kind: 'depense', amount: a, day: cshVal('cdd'), shift: cshVal('cds'), label: cshVal('cdc'), comment: cshVal('cdm') || null });
+      if (file && (!row.justif || row.justif === 'En attente')) row.justif = 'OK';   // justificatif fourni avec la dépense
+      const id = await cshInsert(row);
+      if (file) { try { await cshFileUpload(file, { kind: 'justif', move: Object.assign({ id }, row) }); } catch (e) { alert('Dépense enregistrée, mais le justificatif n\'a pas pu être déposé : ' + (e.message || e) + '. Le déposer depuis la liste.'); } }
+      pageCaisse();
+    }
     catch (e) { alert(e.message); }
   };
-  cshBindRowActions(); cshBindMoveForm();
+  cshBindRowActions(); cshBindMoveForm(); cshBindFiles();
 }
 
 // ---------- Avances RH ----------

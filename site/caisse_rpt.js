@@ -176,7 +176,9 @@ function cshDepKey() { return 'cshDep:' + (CS.agId || 0); }
 async function cshTabDepot() {
   const q = qs(), day = /^\d{4}-\d{2}-\d{2}$/.test(q.get('jour') || '') ? q.get('jour') : today(), info = cshDepositInfo(CS.all, day), sv = lsJSON(cshDepKey()) || {};
   const box = CASH_CAISSES.filter(x => info.balances[x[0]] > 0 || ['uber', 'bolt', 'courses'].indexOf(x[0]) >= 0);
-  const hist = CS.all.filter(m => cshLive(m) && m.kind === 'depot').sort((a, b) => b.day.localeCompare(a.day) || b.id - a.id).slice(0, 60);
+  // historique : un dépôt groupé (Uber + Bolt + courses privées…) = une ligne, un montant ; reçu de la banque joint
+  const groups = cshDepGroups(CS.all), filesOf = g => (CS.files || []).filter(f => f.kind === 'depot' && f.dep_ref === g.key);
+  const pend = cshR(['uber', 'bolt', 'courses'].reduce((t, k) => t + Math.max(0, cshN(info.balances[k])), 0)), noProof = groups.filter(g => !filesOf(g).length);
   // jours à déposer (demande d'Ahmed : dépôt du lundi au lundi) : période choisie, par défaut depuis le dernier jour déjà déposé
   const okD = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
   const lastCov = CS.all.filter(m => cshLive(m) && m.kind === 'depot' && m.day <= day).reduce((x, m) => { const l = cshDepDaysOf(m.comment); const z = l.length ? l[l.length - 1] : m.day; return z > x ? z : x; }, '');
@@ -187,7 +189,10 @@ async function cshTabDepot() {
   const dRow = r => `<tr class="${r.deposited ? 'paid' : ''}"><td><input type="checkbox" data-dpd="${r.day}" ${r.total > 0 && !r.deposited ? 'checked' : ''} ${r.total > 0 ? '' : 'disabled'}></td>
     <td>${esc(cshDow(r.day))} ${fmtDay(r.day)}</td><td class="n">${cshMoney(r.uber)}</td><td class="n">${cshMoney(r.bolt)}</td><td class="n">${cshMoney(r.courses)}</td><td class="n"><b>${cshMoney(r.total)}</b></td>
     <td class="small">${r.deposited ? 'déjà déposé · ' + esc(r.deposited) : r.total > 0 ? '' : 'aucune entrée'}</td></tr>`;
-  cshBody(`<div class="grid2"><div class="panel"><h3>Bordereau de dépôt en banque</h3>
+  cshBody(cards([['Espèces à déposer (Uber + Bolt + courses)', cshMoney(pend), pend > 0 ? 'warn' : 'ok'], ['Dernier dépôt', groups.length ? cshMoney(groups[0].total) + `<div class="small">${esc(cshDow(groups[0].day))} ${fmtDay(groups[0].day)}${groups[0].ref ? ' · ' + esc(groups[0].ref) : ''}</div>` : 'aucun'],
+      ['Déposé depuis le 1er du mois', cshMoney(groups.filter(g => g.day >= day.slice(0, 8) + '01' && g.day <= day).reduce((t, g) => t + g.total, 0))],
+      ['Dépôts sans reçu de la banque', f0(CS.filesErr ? 0 : noProof.length), !CS.filesErr && noProof.length ? 'warn' : 'ok']]) +
+    `<div class="grid2"><div class="panel"><h3>Bordereau de dépôt en banque</h3>
       <div class="mfrow">${cshField('dpday', 'Date du dépôt', 'date', { value: day })}${cshField('dpco', 'Société', 'text', { value: sv.company || '', size: 22, ph: 'Raison sociale' })}</div>
       <div class="mfrow">${cshField('dpbank', 'Banque', 'text', { value: sv.bank || '', size: 18 })}${cshField('dpacc', 'Compte / RIB', 'text', { value: sv.account || '', size: 30 })}</div>
       <div class="mfrow">${cshField('dpwho', 'Déposant', 'text', { value: sv.who || S.profile.name || '', size: 22 })}${cshField('dpcin', 'CIN du déposant', 'text', { value: sv.cin || '', size: 12 })}</div>
@@ -207,11 +212,19 @@ async function cshTabDepot() {
         ${CSH_DENOMS.map((d, i) => `<tr><td>${d[1]} de ${rptFmt(d[0], d[0] < 1 ? 2 : 0)} DH</td><td><input type="number" min="0" step="1" data-dpn="${i}" style="width:90px"></td><td class="n" id="dpl${i}"></td></tr>`).join('')}
       </tbody></table>
       ${cshField('dpnote', 'Observations', 'text', { size: 50 })}
+      ${CS.filesErr ? '' : '<label>Reçu de la banque (photo ou PDF, si déjà disponible) <input type="file" id="dpfile" accept="image/*,application/pdf"></label>'}
       <div id="dptot" class="panel"></div>
       <p><button id="dpsave">Enregistrer le dépôt et télécharger le bordereau</button> <button class="ghost" id="dppdf">Bordereau seul (sans enregistrer)</button></p><div id="dpres"></div></div>
     <div class="panel"><h3>Espèces entrées depuis le dernier dépôt</h3><p class="small">${info.lastDeposit ? 'Dernier dépôt enregistré : ' + fmtDay(info.lastDeposit) : 'Aucun dépôt enregistré avant ce jour.'}</p>
       ${table('tcshdps', [['Jour', r => fmtDay(r.day), r => r.day], ['Uber', r => cshMoney(r.uber), r => r.uber, 'n'], ['Bolt', r => cshMoney(r.bolt), r => r.bolt, 'n'], ['Courses privées', r => cshMoney(r.courses), r => r.courses, 'n'], ['Total', r => '<b>' + cshMoney(r.total) + '</b>', r => r.total, 'n']], info.since, { empty: 'Aucune entrée d\'espèces depuis le dernier dépôt', total: { fmt: x => '<b>' + cshMoney(x) + '</b>' } })}
-      <h3>Derniers dépôts</h3>${table('tcshdph', [['Jour', m => fmtDay(m.day), m => m.day], ['Caisse', m => esc((CASH_CAISSES.find(x => x[0] === m.caisse) || [])[1] || m.caisse)], ['Montant', m => cshMoney(m.amount), m => cshN(m.amount), 'n'], ['Référence', m => esc(m.comment || '')]], hist, { empty: 'Aucun dépôt enregistré', page: true })}</div></div>`);
+    </div></div>
+    <div class="panel"><h3>Historique des dépôts en banque</h3><p class="small">Un dépôt groupé = une ligne : espèces Uber, Bolt et courses privées réunies en un seul montant déposé. Reçu de la banque : déposez la photo ou le PDF du reçu remis par la banque${CS.filesErr ? ' (migration 20261122000000_justificatifs.sql à exécuter dans Supabase)' : ' ; il est aussi copié dans le Google Drive de l\'agence. ' + cshDriveLink('depot')}.</p>
+      ${table('tcshdph', [['Date du dépôt', g => esc(cshDow(g.day)) + ' ' + fmtDay(g.day), g => g.day], ['Bordereau', g => g.ref ? esc(g.ref) : '<span class="small">' + esc(g.note || 'saisi sans bordereau') + '</span>', g => g.ref || ''],
+        ['Jours couverts', g => g.days.length ? esc(cshDaysTxt(g.days)) : '<span class="nm">non précisés</span>'], ['Uber', g => cshMoney(g.uber), g => g.uber, 'n'], ['Bolt', g => cshMoney(g.bolt), g => g.bolt, 'n'],
+        ['Courses privées', g => cshMoney(g.courses), g => g.courses, 'n'], ['Autres caisses', g => g.other ? cshMoney(g.other) : '', g => g.other, 'n'], ['Montant déposé', g => '<b>' + cshMoney(g.total) + '</b>', g => g.total, 'n'],
+        ['Banque', g => esc(g.bank || '')], ['Déposé par', g => esc(g.who || '')],
+        ['Reçu de la banque', g => CS.filesErr ? '' : (filesOf(g).length ? cshFileLinks(filesOf(g)) + ' ' + cshUpBtn('depot|' + g.key, '+ fichier') : '<span class="small red">à déposer</span> ' + cshUpBtn('depot|' + g.key)), g => filesOf(g).length]],
+        groups, { empty: 'Aucun dépôt enregistré', page: true, total: { fmt: x => '<b>' + cshMoney(x) + '</b>' } })}</div>`);
   if ($('#dpday')) $('#dpday').onchange = () => { location.hash = cshHref('depot', { jour: $('#dpday').value }); };
   const goR = (a, b) => { location.hash = cshHref('depot', { jour: $('#dpday').value || day, dpdu: a, dpau: b }); };
   $('#dpdu').onchange = $('#dpau').onchange = () => goR($('#dpdu').value, $('#dpau').value);
@@ -246,16 +259,22 @@ async function cshTabDepot() {
   $('#dppdf').onclick = () => { const d = read(), e = check(d); if (e) { $('#dpres').innerHTML = msg(esc(e), 'err'); return; } keep(d); d.ref = cshDepRef(d.day, 'projet'); try { cshDepositPdf(d); } catch (x) { alert(x.message); } };
   $('#dpsave').onclick = async () => {
     const d = read(), e = check(d); if (e) { $('#dpres').innerHTML = msg(esc(e), 'err'); return; }
+    const pf0 = $('#dpfile') && $('#dpfile').files[0]; if (pf0) { try { cshFileCheck(pf0); } catch (x) { $('#dpres').innerHTML = msg('Reçu de la banque : ' + esc(x.message), 'err'); return; } }
     if (!(await ask('Enregistrer le dépôt de ' + cshMoney(d.total) + ' du ' + fmtDay(d.day) + ' ? Il sort des caisses choisies.'))) return;
     keep(d); d.ref = cshDepRef(d.day);
     try {
       for (const l of d.lines) await cshInsert({ caisse: l.caisse, kind: 'depot', flow: 'out', amount: l.amount, day: d.day, source: 'Banque', label: CSH_KIND.depot,
         comment: 'Bordereau ' + d.ref + (d.bank ? ' · ' + d.bank : '') + (d.who ? ' · déposé par ' + d.who : '') + (d.days.length ? ' · jours ' + d.days.map(r => r.day).join(',') : '') });
       cshDepositPdf(d);
-      CS.flash = { id: 'dpres', html: msg('Dépôt enregistré (' + esc(d.ref) + ') et bordereau téléchargé : à faire signer et tamponner par la banque.', 'ok') };
+      let up = '';
+      const pf = $('#dpfile') && $('#dpfile').files[0];
+      if (pf) { try { await cshFileUpload(pf, { kind: 'depot', ref: d.ref, day: d.day, title: [d.day, d.ref, cshR(d.total) + ' MAD', d.bank].filter(Boolean).join(' - ') }); up = ' Reçu de la banque joint.'; }
+        catch (x) { up = ' Le reçu de la banque n\'a pas pu être déposé (' + esc(x.message || x) + ') : le déposer depuis l\'historique.'; } }
+      CS.flash = { id: 'dpres', html: msg('Dépôt enregistré (' + esc(d.ref) + ') et bordereau téléchargé : à faire signer et tamponner par la banque.' + up, 'ok') };
       pageCaisse();
     } catch (x) { $('#dpres').innerHTML = msg(esc(x.message), 'err'); }
   };
+  cshBindFiles();
   if (CS.flash && $('#' + CS.flash.id)) { $('#' + CS.flash.id).innerHTML = CS.flash.html; CS.flash = null; }
 }
 /** Jours cochés en texte court : « du lun. 27/10 au dim. 02/11 (7 jours) », sinon la liste */
@@ -428,4 +447,57 @@ async function cshFicheUpload(day, s, file) {
   const path = (CS.agId || 0) + '/fiches/' + day + '_' + s + '_' + Date.now() + '.' + ext;
   const up = await sb.storage.from('caisse').upload(path, file, { contentType: file.type, upsert: false }); if (up.error) throw up.error;
   const { error } = await sb.from('cash_sheets').insert({ agency_id: CS.agId || null, day, shift: s, path, file_name: file.name || null }); if (error) throw error;
+}
+
+// ---------- Justificatifs des dépenses et reçus de la banque (04/11/2026, demande d'Ahmed) ----------
+// Fichier (photo ou PDF) déposé dans le seau privé « caisse » (<agence>/justificatifs/… ou <agence>/depots/…) et noté dans cash_files ;
+// le collecteur le copie ensuite dans le Google Drive de l'agence : « Justificatifs agence … » (un sous-dossier par catégorie de dépense)
+// et « Dépôts banque agence … ».
+const CSH_FILE_MAX = 15 * 1024 * 1024;
+function cshFileExt(f) { return (String((f && f.name) || '').match(/\.([a-z0-9]{2,5})$/i) || [, String((f && f.type) || '').split('/')[1] || 'bin'])[1].toLowerCase().replace('jpeg', 'jpg'); }
+function cshFileCheck(f) {
+  if (!f) throw new Error('aucun fichier choisi');
+  if (!/^(image\/|application\/pdf)/.test(f.type || '')) throw new Error('photo (JPG, PNG…) ou PDF seulement');
+  if (f.size > CSH_FILE_MAX) throw new Error('fichier trop lourd (15 Mo au plus)');
+}
+/** Dépôt d'un fichier : meta = { kind: 'justif', move } ou { kind: 'depot', ref, day, title } */
+async function cshFileUpload(file, meta) {
+  cshFileCheck(file);
+  const ag = CS.agId || 0, key = meta.kind === 'justif' ? 'm' + meta.move.id : String(meta.ref).replace(/[^\w-]+/g, '_');
+  const path = ag + '/' + (meta.kind === 'justif' ? 'justificatifs' : 'depots') + '/' + key + '_' + Date.now() + '.' + cshFileExt(file);
+  const up = await sb.storage.from('caisse').upload(path, file, { contentType: file.type, upsert: false }); if (up.error) throw up.error;
+  const m = meta.move, row = meta.kind === 'justif'
+    ? { kind: 'justif', move_id: m.id, day: m.day, category: m.label || 'Autre', title: [m.day, m.driver_code ? cshDrvName(m.driver_code) : m.driver_name || 'sans chauffeur', cshR(m.amount) + ' MAD', m.label || 'Dépense', 'n°' + m.id].join(' - ') }
+    : { kind: 'depot', dep_ref: meta.ref, day: meta.day, title: meta.title };
+  const { error } = await sb.from('cash_files').insert(Object.assign(row, { agency_id: CS.agId || null, path, file_name: file.name || null })); if (error) throw error;
+}
+/** Liens des fichiers joints (ouverts par un lien signé d'une heure) */
+function cshFileLinks(list) {
+  return (list || []).map(f => `<a href="#" class="small" data-cshfo="${esc(f.path)}" title="Déposé le ${esc(fmtDTY(f.created_at))}${f.drive_id ? ' · copié dans le Drive' : ''}">📎 ${esc(f.file_name || 'fichier')}</a>${f.drive_id ? ' <span class="small ok" title="Copié dans le Google Drive de l\'agence">Drive ✓</span>' : ''}`).join('<br>');
+}
+/** Bouton « Déposer » (choix d'un fichier) : data-cshup = « justif|<id dépense> » ou « depot|<référence> » */
+function cshUpBtn(v, label) { return `<label class="btn ghost small cshup">${label || 'Déposer'}<input type="file" accept="image/*,application/pdf" data-cshup="${esc(v)}" hidden></label>`; }
+function cshDriveLink(kind) {
+  let o = {}; try { o = JSON.parse(String((S.P || {}).cashDrive || '{}')) || {}; } catch (e) { o = {}; }
+  const id = (o[CS.agId || 0] || {})[kind];
+  return id ? `<a class="small" href="https://drive.google.com/drive/folders/${encodeURIComponent(id)}" target="_blank" rel="noopener">${kind === 'justif' ? 'Dossier Google Drive des justificatifs' : 'Dossier Google Drive des dépôts'} ↗</a>`
+    : '<span class="small">Dossier Google Drive : créé par le collecteur au prochain passage (5 min).</span>';
+}
+function cshBindFiles(onDone) {
+  document.querySelectorAll('[data-cshfo]').forEach(a => { a.onclick = async e => { e.preventDefault();
+    const r = await sb.storage.from('caisse').createSignedUrl(a.dataset.cshfo, 3600); if (r.error) { alert(r.error.message); return; } openOut(r.data.signedUrl); }; });
+  document.querySelectorAll('[data-cshup]').forEach(i => { i.onchange = async () => {
+    const [kind, k] = i.dataset.cshup.split('|'), f = i.files[0]; if (!f) return;
+    try {
+      if (kind === 'justif') {
+        const m = CS.moves.find(x => x.id === +k); if (!m) throw new Error('dépense introuvable');
+        await cshFileUpload(f, { kind, move: m });
+        if (!m.justif || m.justif === 'En attente') await cshPatch(m.id, { justif: 'OK' });   // justificatif fourni
+      } else {
+        const g = cshDepGroups(CS.all).find(x => x.key === k); if (!g) throw new Error('dépôt introuvable');
+        await cshFileUpload(f, { kind, ref: g.key, day: g.day, title: [g.day, g.ref || 'Dépôt', cshR(g.total) + ' MAD', g.bank].filter(Boolean).join(' - ') });
+      }
+      (onDone || pageCaisse)();
+    } catch (e) { alert('Dépôt du fichier : ' + (e.message || e)); i.value = ''; }
+  }; });
 }

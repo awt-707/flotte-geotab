@@ -509,6 +509,26 @@ function cshDepositSum(days, picked) {
   return s;
 }
 
+/**
+ * Historique des dépôts en banque (04/11/2026, demande d'Ahmed : un dépôt groupé = un seul montant) : les sorties « dépôt » d'un même
+ * bordereau (une par caisse : Uber, Bolt, courses privées…) réunies en une ligne. Clé = référence DEP-… du commentaire, sinon le
+ * mouvement seul (« M<id> », dépôt saisi sans bordereau). Banque, déposant et jours couverts lus dans la référence du dépôt.
+ */
+function cshDepGroups(moves) {
+  const g = {};
+  (moves || []).filter(m => cshLive(m) && m.kind === 'depot').forEach(m => {
+    const c = String(m.comment || ''), ref = (c.match(/DEP-[\w-]+/) || [])[0], k = ref || 'M' + m.id;
+    const r = g[k] = g[k] || { key: k, ref: ref || null, day: m.day, uber: 0, bolt: 0, courses: 0, other: 0, total: 0, bank: '', who: '', days: [], ids: [] };
+    const a = cshN(m.amount), slot = m.caisse === 'uber' || m.caisse === 'bolt' || m.caisse === 'courses' ? m.caisse : 'other';
+    r[slot] = cshR(r[slot] + a); r.total = cshR(r.total + a); r.ids.push(m.id); if (m.day > r.day) r.day = m.day;
+    const parts = c.split(' · ').map(x => x.trim()).filter(Boolean);
+    parts.slice(ref ? 1 : 0).forEach(x => { if (/^déposé par /.test(x)) r.who = r.who || x.slice(11); else if (/^jours /.test(x)) { } else if (!r.bank && ref) r.bank = x; });
+    cshDepDaysOf(c).forEach(d => { if (r.days.indexOf(d) < 0) r.days.push(d); });
+    if (!ref && !r.note) r.note = c;
+  });
+  return Object.values(g).map(r => Object.assign(r, { days: r.days.sort() })).sort((a, b) => b.day.localeCompare(a.day) || String(b.key).localeCompare(String(a.key)));
+}
+
 // ---------- Manques à encaisser par shift (01/11/2026, demande d'Ahmed) ----------
 /** Libellé d'un complément : espèces manquantes remises plus tard par le chauffeur, rattachées à l'encaissement de son shift */
 const CSH_COMPLEMENT = 'Complément';
@@ -536,4 +556,4 @@ function cshShortfalls(moves, declaredOf) {
 
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
   cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory,
-  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepositDays, cshDepositSum, CSH_COMPLEMENT, cshShortfalls, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };
+  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepositDays, cshDepositSum, cshDepGroups, CSH_COMPLEMENT, cshShortfalls, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };
