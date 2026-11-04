@@ -6,7 +6,7 @@ import os from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createHash} from 'node:crypto';
-import {parseMacArtifactArgs,assertNativeMacTarget,inventoryMacApp,compareMacInventories,validateMacZipMembers,packageMacArtifact,buildMacArtifact} from '../scripts/build-macos-artifact.mjs';
+import {parseMacArtifactArgs,assertNativeMacTarget,parseEmbeddedBuildOutput,inventoryMacApp,compareMacInventories,validateMacZipMembers,packageMacArtifact,buildMacArtifact} from '../scripts/build-macos-artifact.mjs';
 const execute=promisify(execFile),mac={platform:'darwin',arch:'arm64',nodeVersion:'22.12.0'},ref='abcdefghijklmnopqrst';
 const config={environment:'production',projectRef:ref,supabaseUrl:'https://'+ref+'.supabase.co',publishableKey:'sb_publishable_synthetic_public_key_1234567890'};
 async function fixture(t){
@@ -40,6 +40,11 @@ test('CLI requires one explicit native Mac target, public config and output dire
   for(const args of [[],good.slice(0,-2),[...good,'--target','macos-x64'],['--config','--target','macos-arm64','--output-dir','out'],['--config','x','--target','windows-x64','--output-dir','out'],[...good,'--mac-local-test']])assert.throws(()=>parseMacArtifactArgs(args));
   assertNativeMacTarget('macos-arm64',mac);assertNativeMacTarget('macos-x64',{...mac,arch:'x64'});
   for(const host of [{...mac,platform:'linux'},{...mac,platform:'win32'},{...mac,arch:'x64'},{...mac,nodeVersion:'20.19.0'},{...mac,macVersion:'12.7.0'}])assert.throws(()=>assertNativeMacTarget('macos-arm64',host));
+});
+test('build output accepts packager progress before final JSON but never trailing or malformed data',()=>{
+  const value={target:'macos-arm64',version:'0.2.0'};
+  for(const prefix of ['', 'Packaging app for platform darwin arm64 using electron v45.2.1\n', '{progress only}\n'])assert.deepEqual(parseEmbeddedBuildOutput(prefix+JSON.stringify(value,null,2)+'\n'),value);
+  for(const text of ['', 'Packaging failed', '{"target":', JSON.stringify(value)+'\nunexpected trailer'])assert.throws(()=>parseEmbeddedBuildOutput(text),/JSON/);
 });
 test('bundle inventory preserves executable modes and framework links and refuses escaping links',async t=>{
   const {app,root}=await fixture(t),inventory=await inventoryMacApp(app);

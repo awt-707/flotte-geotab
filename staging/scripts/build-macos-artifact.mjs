@@ -34,6 +34,16 @@ export function assertNativeMacTarget(target,current=host()) {
   validateMacHost(current);
   if(current.arch!==ARCHITECTURES[target])throw Error('Le runner et Node.js doivent utiliser l’architecture native '+ARCHITECTURES[target]+'.');
 }
+export function parseEmbeddedBuildOutput(output) {
+  // Electron Packager writes progress messages to stdout before the builder's
+  // final JSON object. Only accept a complete object at the end of the output.
+  const text=String(output).trimEnd();
+  const starts=[...text.matchAll(/^\{/gm)].map(match=>match.index).reverse();
+  for(const start of starts){
+    try{const value=JSON.parse(text.slice(start));if(value&&typeof value==='object'&&!Array.isArray(value))return value;}catch{}
+  }
+  throw Error('Résultat JSON de construction invalide.');
+}
 export async function inventoryMacApp(filename) {
   const root=path.resolve(filename),rootStat=await fs.lstat(root);
   if(!rootStat.isDirectory()||rootStat.isSymbolicLink()||path.basename(root)!=='Ludy.app')throw Error('Bundle Ludy.app régulier requis.');
@@ -137,7 +147,7 @@ export async function buildMacArtifact(options,{command=run,currentHost=host(),p
   assertNativeMacTarget(options.target,{...currentHost,macVersion});
   try{await fs.lstat(options.outputDir);throw Error('Le dossier de sortie existe déjà. Choisissez un nouveau dossier.');}catch(error){if(error.code!=='ENOENT')throw error;}
   const built=await command(process.execPath,[path.join(STAGING_ROOT,'scripts/build-embedded-desktop.mjs'),'--config',options.configPath,'--target',options.target,'--mac-local-test']);
-  let result;try{result=JSON.parse(built.stdout);}catch{throw Error('Résultat JSON de construction invalide.');}
+  const result=parseEmbeddedBuildOutput(built.stdout);
   if(result?.target!==options.target||result.projectRef!==config.projectRef||result.signing!=='adhoc-local-test'||result.signed!==true||result.notarized!==false||result.distributable!==false||result.configured!==true||!path.isAbsolute(result.appPath||''))throw Error('Résultat de construction Mac incohérent.');
   return packageArtifact({...options,appPath:result.appPath,version:result.version,projectRef:result.projectRef},{command,currentHost});
 }
