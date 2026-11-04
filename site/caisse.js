@@ -299,9 +299,9 @@ async function cshSaveShift(X, r, v) {
   if (r.added) CSH_ADDED[X.addKey] = (CSH_ADDED[X.addKey] || []).filter(a => (a.driver_code || 'N:' + cshName(a.driver_name)) !== r.c.key);
   return true;
 }
-/** Lignes du shift choisi (?jour=&s=&pf=) : contrats commencés dans le shift, chauffeurs ajoutés, encaissements ; partagé par la page et le mode téléphone */
-function cshShiftRows() {
-  const { day, s } = cshShiftSel(), pf = qs().get('pf') === 'bolt' ? 'bolt' : 'uber', P = CSH_PF[pf], B = pf === 'bolt', addKey = pf + '|' + day + '|' + s;
+/** Lignes du shift choisi (?jour=&s=&pf=, ou la plateforme pfArg) : contrats commencés dans le shift, chauffeurs ajoutés, encaissements ; partagé par la page et le mode téléphone */
+function cshShiftRows(pfArg) {
+  const { day, s } = cshShiftSel(), pf = pfArg || (qs().get('pf') === 'bolt' ? 'bolt' : 'uber'), P = CSH_PF[pf], B = pf === 'bolt', addKey = pf + '|' + day + '|' + s;
   const ctr = CS.ctr.filter(c => c._day === day && c._shift === s && c.client_code).sort((a, b) => String(cshDrvName(a.client_code)).localeCompare(String(cshDrvName(b.client_code))) || a._s - b._s);
   const enc = CS.moves.filter(m => cshLive(m) && m.caisse === pf && m.kind === 'encaissement' && m.day === day && cshMoveShift(m) === s)
     .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || a.id - b.id);

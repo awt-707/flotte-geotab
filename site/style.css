@@ -662,4 +662,11 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .mempty b { color: var(--ink); font-size: 17px; } .mempty p { margin: 0; }
 .mag { font-size: 13px; color: var(--mute); text-align: center; margin: -4px 0 6px; }
 .mline .mch { align-items: center; }
+/* fiche chauffeur du shift : une ligne Uber, une ligne Bolt */
+.mpf, .mpfd { border-top: 1px solid var(--line2); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.mpfd { border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.mpfd.short { border-color: var(--crit); background: var(--crit-bg); } .mpfd.paid { border-color: var(--ok); background: var(--ok-bg); }
+.mpfh { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; } .mpfh b { font-size: 16px; } .mpfh span { font-size: 13px; color: var(--mute); text-align: right; }
+.mpfh span b { font: 700 16px var(--fc); color: var(--ink); } .mpfh .nm { color: var(--warn); }
+.mcom { border-top: 1px solid var(--line2); padding-top: 10px; }
 @media (max-width: 360px) { .mg2, .mres { grid-template-columns: minmax(0, 1fr); } .msum b { font-size: 16px; } }

@@ -104,63 +104,86 @@ async function pageCaisseM() {
 const mobNum = (attr, ph, v) => `<input type="number" inputmode="decimal" min="0" step="1" ${attr}${ph ? ` placeholder="${esc(ph)}"` : ''}${v != null && v !== '' ? ` value="${esc(v)}"` : ''}>`;
 function mobPlate(k) { const v = k && vehOf(k); return v ? v.plate : k || ''; }
 
+/**
+ * Encaissement du shift sur le téléphone (04/11/2026, demande d'Ahmed : plus de choix Uber / Bolt) : une fiche par chauffeur avec deux
+ * lignes, Uber et Bolt (espèces de chaque plateforme, remis, monnaie, manque) ; « Encaisser » enregistre les lignes remplies.
+ */
 function cshTabShiftM() {
-  const X = cshShiftRows(), { day, s, pf, P, B, addKey, rows, nameOf } = X;
-  const link = (d, sh, f) => '#/caisse?t=shift&jour=' + d + '&s=' + sh + ((f || pf) === 'bolt' ? '&pf=bolt' : '');
+  const XU = cshShiftRows('uber'), XB = cshShiftRows('bolt'), PFX = { uber: XU, bolt: XB }, { day, s } = XU;
+  const link = (d, sh) => '#/caisse?t=shift&jour=' + d + '&s=' + sh;
   const prev = s === 'Nuit' ? [day, 'Jour'] : [addDays(day, -1), 'Nuit'], next = s === 'Jour' ? [day, 'Nuit'] : [addDays(day, 1), 'Jour'];
-  const done = rows.filter(r => r.sf), tot = cshR(done.reduce((t, r) => t + cshN(r.sf.total), 0)), rest = cshR(done.reduce((t, r) => t + Math.max(0, cshN(r.sf.rest)), 0));
-  const decl = r => r.uber != null ? cshMoney(r.uber) : r.pending ? '<span class="nm">export pas encore importé</span>' : '<span class="nm">compte non relié</span>';
-  const who = r => `<div class="mch"><div class="mwho2"><b>${esc(nameOf(r))}</b><span>${r.c.extra ? 'Ajouté au shift (sans contrat)' : 'Contrat ' + esc(r.c.num) + ' · ' + esc(fmtDT(r.c.start_at))}${r.c.vehicle_key ? ' · ' + esc(mobPlate(r.c.vehicle_key)) : ''}</span></div>
-    <div class="mdecl"><span>Espèces ${P.name}</span><b>${decl(r)}</b></div></div>`;
-  const todoCard = (r, i) => `<div class="mcard" data-row="${i}">${who(r)}
-    <div class="mg2"><label>Remis par le chauffeur ${mobNum('class="cgv"', 'MAD')}</label><label>Monnaie rendue ${mobNum('class="cch"', '0')}</label></div>
-    <div class="mcalc" aria-live="polite"></div>
-    <details class="mmore"><summary>Manque (pas tout remis) et commentaire</summary>
-      <label>Manque <span class="small">${r.uber != null ? '(calculé d\'après l\'export, modifiable)' : '(si le chauffeur n\'a pas tout remis)'}</span> ${mobNum('class="cmq"', 'MAD')}</label>
-      <label>Commentaire <input class="ccm" placeholder="Ex. remet le reste demain"></label></details>
-    <button type="button" class="mbtn" data-csav="${i}">Encaisser</button>${r.added ? `<button type="button" class="mlink" data-cshrm="${i}">Retirer ce chauffeur du shift</button>` : ''}</div>`;
-  const doneCard = (r, i) => {
-    const f = r.sf, d = f.main, st = f.status, cls = st === 'Manquant' ? ' short' : ' paid';
-    const comps = f.comps.map(m => `<div class="small">+ ${cshMoney(m.amount)} ${m.label === CSH_COMPLEMENT ? 'complément' : 'encaissement'} · ${esc(fmtDT(m.created_at))}${cshCanFix(m) ? ` · <button type="button" class="mlink" data-cshx="${m.id}">annuler</button>` : ''}</div>`).join('');
-    return `<div class="mcard done${cls}">${who(r)}
-      <div class="mres"><div><span>Encaissé</span><b>${cshMoney(f.total)}</b></div><div><span>${st === 'Manquant' ? 'Reste à encaisser' : st === 'Soldé' ? 'Manque remis' : st === 'Excédent' ? 'Excédent' : 'Manque'}</span><b class="${st === 'Manquant' ? 'red' : 'ok'}">${f.rest == null ? '—' : cshMoney(Math.abs(f.rest))}</b></div></div>
-      <div class="small">Remis ${cshMoney(d.given)} · monnaie ${cshMoney(d.change)}${d.comment ? ' · ' + esc(d.comment) : ''}</div>${comps}
-      <div class="mact">${f.rest > 0.004 ? `<button type="button" class="mbtn" data-cshcp="${i}">+ Complément remis</button>` : ''}${cshCanFix(d) ? `<button type="button" class="ghost mbtn" data-cshx="${d.id}">Annuler l'encaissement</button>` : ''}</div></div>`;
+  // fiches : même contrat (ou même chauffeur ajouté au shift) dans les deux plateformes
+  const cards = [], byKey = {};
+  [['uber', XU], ['bolt', XB]].forEach(([pf, X]) => X.rows.forEach(r => { const k = r.c.extra ? 'x:' + r.c.key : 'c:' + r.c.num;
+    let c = byKey[k]; if (!c) { c = byKey[k] = { r, nameOf: X.nameOf, rows: {} }; cards.push(c); } c.rows[pf] = r; }));
+  const lines = [].concat(...cards.map(c => Object.values(c.rows))), done = lines.filter(r => r.sf);
+  const tot = cshR(done.reduce((t, r) => t + cshN(r.sf.total), 0)), rest = cshR(done.reduce((t, r) => t + Math.max(0, cshN(r.sf.rest)), 0));
+  const nDone = cards.filter(c => Object.values(c.rows).some(r => r.sf)).length;
+  const decl = r => r.uber != null ? '<b>' + cshMoney(r.uber) + '</b>' : r.pending ? '<span class="nm">export pas encore importé</span>' : '<span class="nm">compte non relié</span>';
+  const line = (c, i, pf) => {
+    const r = c.rows[pf], P = CSH_PF[pf]; if (!r) return '';
+    if (r.sf) {
+      const f = r.sf, d = f.main, st = f.status;
+      const comps = f.comps.map(m => `<div class="small">+ ${cshMoney(m.amount)} ${m.label === CSH_COMPLEMENT ? 'complément' : 'encaissement'} · ${esc(fmtDT(m.created_at))}${cshCanFix(m) ? ` · <button type="button" class="mlink" data-cshx="${m.id}">annuler</button>` : ''}</div>`).join('');
+      return `<div class="mpfd ${st === 'Manquant' ? 'short' : 'paid'}"><div class="mpfh"><b>${P.name}</b><span>espèces ${decl(r)}</span></div>
+        <div class="mres"><div><span>Encaissé</span><b>${cshMoney(f.total)}</b></div><div><span>${st === 'Manquant' ? 'Reste à encaisser' : st === 'Soldé' ? 'Manque remis' : st === 'Excédent' ? 'Excédent' : 'Manque'}</span><b class="${st === 'Manquant' ? 'red' : 'ok'}">${f.rest == null ? '—' : cshMoney(Math.abs(f.rest))}</b></div></div>
+        <div class="small">Remis ${cshMoney(d.given)} · monnaie ${cshMoney(d.change)}${d.comment ? ' · ' + esc(d.comment) : ''}</div>${comps}
+        <div class="mact">${f.rest > 0.004 ? `<button type="button" class="mbtn" data-cshcp="${i}|${pf}">+ Complément ${P.name} remis</button>` : ''}${cshCanFix(d) ? `<button type="button" class="mlink" data-cshx="${d.id}">Annuler l'encaissement ${P.name}</button>` : ''}</div></div>`;
+    }
+    return `<div class="mpf" data-pf="${pf}"><div class="mpfh"><b>${P.name}</b><span>espèces ${decl(r)}</span></div>
+      <div class="mg2"><label>Remis ${mobNum('class="cgv"', 'MAD')}</label><label>Monnaie rendue ${mobNum('class="cch"', '0')}</label></div>
+      <div class="mcalc" aria-live="polite"></div>
+      <details class="mmore"><summary>Manque ${P.name} (pas tout remis)</summary>
+        <label>Manque <span class="small">${r.uber != null ? '(calculé d\'après l\'export, modifiable)' : '(si le chauffeur n\'a pas tout remis)'}</span> ${mobNum('class="cmq"', 'MAD')}</label></details></div>`;
   };
-  cshBody(`<div class="mseg" role="group" aria-label="Plateforme">${['uber', 'bolt'].map(x => `<a href="${link(day, s, x)}" class="${x === pf ? 'on' : ''}">${CSH_PF[x].name}</a>`).join('')}</div>
-    <div class="mshift"><a href="${link(prev[0], prev[1])}" aria-label="Shift précédent">‹</a><label><b>${esc(shiftDayName({ s, day }))}</b><input type="date" id="cshsd" value="${day}" aria-label="Jour du shift"></label><a href="${link(next[0], next[1])}" aria-label="Shift suivant">›</a></div>
+  const card = (c, i) => { const open = ['uber', 'bolt'].some(pf => c.rows[pf] && !c.rows[pf].sf), r = c.r;
+    return `<div class="mcard mdrv" data-card="${i}"><div class="mch"><div class="mwho2"><b>${esc(c.nameOf(r))}</b><span>${r.c.extra ? 'Ajouté au shift (sans contrat)' : 'Contrat ' + esc(r.c.num) + ' · ' + esc(fmtDT(r.c.start_at))}${r.c.vehicle_key ? ' · ' + esc(mobPlate(r.c.vehicle_key)) : ''}</span></div></div>
+      ${line(c, i, 'uber')}${line(c, i, 'bolt')}
+      ${open ? `<label class="mcom">Commentaire <input class="ccm" placeholder="Ex. remet le reste demain"></label><button type="button" class="mbtn" data-csav="${i}">Encaisser</button>` : ''}
+      ${Object.values(c.rows).some(x => x.added) ? `<button type="button" class="mlink" data-cshrm="${i}">Retirer ce chauffeur du shift</button>` : ''}</div>`; };
+  cshBody(`<div class="mshift"><a href="${link(prev[0], prev[1])}" aria-label="Shift précédent">‹</a><label><b>${esc(shiftDayName({ s, day }))}</b><input type="date" id="cshsd" value="${day}" aria-label="Jour du shift"></label><a href="${link(next[0], next[1])}" aria-label="Shift suivant">›</a></div>
     <div class="mseg msub" role="group" aria-label="Shift">${['Jour', 'Nuit'].map(x => `<a href="${link(day, x)}" class="${x === s ? 'on' : ''}">Shift ${x.toLowerCase()}</a>`).join('')}</div>
-    <div class="msum"><div><b>${done.length} / ${rows.length}</b><span>encaissés</span></div><div><b>${cshMoney(tot)}</b><span>encaissé</span></div><div><b class="${rest > 0 ? 'red' : ''}">${cshMoney(rest)}</b><span>reste à encaisser</span></div></div>
-    ${rows.length ? rows.map((r, i) => r.sf ? doneCard(r, i) : todoCard(r, i)).join('') : `<div class="mempty"><b>Aucun chauffeur dans ce shift</b><p>${CS.ctr.length ? 'Aucun contrat commencé dans ce shift.' : 'Contrats pas encore importés.'} Ajouter un chauffeur ci-dessous.</p></div>`}
+    <div class="msum"><div><b>${nDone} / ${cards.length}</b><span>encaissés</span></div><div><b>${cshMoney(tot)}</b><span>encaissé</span></div><div><b class="${rest > 0 ? 'red' : ''}">${cshMoney(rest)}</b><span>reste à encaisser</span></div></div>
+    ${cards.length ? cards.map(card).join('') : `<div class="mempty"><b>Aucun chauffeur dans ce shift</b><p>${CS.ctr.length ? 'Aucun contrat commencé dans ce shift.' : 'Contrats pas encore importés.'} Ajouter un chauffeur ci-dessous.</p></div>`}
     <div class="mcard madd"><label>Ajouter un chauffeur au shift <input id="cxd" list="cshdrv" placeholder="Nom du chauffeur" autocomplete="off"></label><button type="button" class="ghost mbtn" id="cxadd">Ajouter</button></div>`);
   $('#cshsd').onchange = () => { if ($('#cshsd').value) location.hash = link($('#cshsd').value, s); };
-  document.querySelectorAll('.mcard[data-row]').forEach(card => {
-    const r = rows[+card.dataset.row], mq = card.querySelector('.cmq'), out = card.querySelector('.mcalc');
+  // calcul en direct de chaque ligne : encaissé net, manque proposé d'après l'export (si importé) tant qu'il n'est pas saisi
+  document.querySelectorAll('.mcard[data-card] .mpf').forEach(el => {
+    const r = cards[+el.closest('.mcard').dataset.card].rows[el.dataset.pf], mq = el.querySelector('.cmq'), out = el.querySelector('.mcalc');
     const upd = () => {
-      const has = card.querySelector('.cgv').value !== '', net = cshR(cshN(card.querySelector('.cgv').value) - cshN(card.querySelector('.cch').value));
+      const has = el.querySelector('.cgv').value !== '', net = cshR(cshN(el.querySelector('.cgv').value) - cshN(el.querySelector('.cch').value));
       if (r.uber != null && !mq.dataset.touched) mq.value = has ? String(Math.max(0, cshR(r.uber - net))) : '';
       const man = r.uber != null && !mq.dataset.touched ? cshR(r.uber - net) : mq.value === '' ? null : cshN(mq.value);
       out.innerHTML = has ? `Encaissé <b>${cshMoney(net)}</b>${man == null ? '' : man > 0.004 ? ` · manque <b class="red">${cshMoney(man)}</b>` : man < -0.004 ? ` · excédent <b class="ok">${cshMoney(-man)}</b>` : ' · <b class="ok">cadré</b>'}` : '';
     };
-    card.querySelectorAll('.cgv,.cch').forEach(x => { x.oninput = upd; });
+    el.querySelectorAll('.cgv,.cch').forEach(x => { x.oninput = upd; });
     mq.oninput = () => { mq.dataset.touched = '1'; upd(); };
   });
+  // « Encaisser » : chaque ligne remplie (Uber, Bolt) enregistrée ; ligne laissée vide = pas d'espèces remises sur cette plateforme
   document.querySelectorAll('[data-csav]').forEach(b => { b.onclick = async () => {
-    const card = b.closest('.mcard'), r = rows[+b.dataset.csav], mq = card.querySelector('.cmq');
-    b.disabled = true;
-    try { if (await cshSaveShift(X, r, { gv: card.querySelector('.cgv').value, ch: card.querySelector('.cch').value, mq: mq.value, touched: !!mq.dataset.touched, cm: card.querySelector('.ccm').value })) pageCaisse(); else b.disabled = false; }
-    catch (e) { b.disabled = false; alert(e.message); }
+    const el = b.closest('.mcard'), c = cards[+b.dataset.csav], cm = el.querySelector('.ccm').value;
+    const todo = [...el.querySelectorAll('.mpf')].filter(x => x.querySelector('.cgv').value !== '');
+    if (!todo.length) { alert('Saisir le montant remis sur la ligne Uber ou Bolt (0 si rien n\'a été remis).'); return; }
+    b.disabled = true; let n = 0;
+    try {
+      for (const x of todo) { const pf = x.dataset.pf, mq = x.querySelector('.cmq');
+        if (await cshSaveShift(PFX[pf], c.rows[pf], { gv: x.querySelector('.cgv').value, ch: x.querySelector('.cch').value, mq: mq.value, touched: !!mq.dataset.touched, cm })) n++;
+        else if (!n) { b.disabled = false; return; } }
+      pageCaisse();
+    } catch (e) { alert(e.message); if (n) pageCaisse(); else b.disabled = false; }
   }; });
-  document.querySelectorAll('[data-cshrm]').forEach(a => { a.onclick = () => { const r = rows[+a.dataset.cshrm];
-    CSH_ADDED[addKey] = (CSH_ADDED[addKey] || []).filter(x => (x.driver_code || 'N:' + cshName(x.driver_name)) !== r.c.key); cshTabShiftM(); }; });
-  document.querySelectorAll('[data-cshcp]').forEach(b => { b.onclick = async () => { const f = rows[+b.dataset.cshcp].sf;
+  document.querySelectorAll('[data-cshrm]').forEach(a => { a.onclick = () => { const r = cards[+a.dataset.cshrm].r;
+    [XU, XB].forEach(X => { CSH_ADDED[X.addKey] = (CSH_ADDED[X.addKey] || []).filter(x => (x.driver_code || 'N:' + cshName(x.driver_name)) !== r.c.key); }); cshTabShiftM(); }; });
+  document.querySelectorAll('[data-cshcp]').forEach(b => { b.onclick = async () => { const [i, pf] = b.dataset.cshcp.split('|'), f = cards[+i].rows[pf].sf;
     try { if (await cshComplement(f.main, f.rest)) pageCaisse(); } catch (e) { alert(e.message); } }; });
   document.querySelectorAll('[data-cshx]').forEach(b => { b.onclick = () => cshCancel(+b.dataset.cshx); });
   $('#cxadd').onclick = () => {
     const w = cshResolve(cshVal('cxd')); if (!w.driver_name) { alert('Choisir le chauffeur.'); return; }
     const k = w.driver_code || 'N:' + cshName(w.driver_name);
-    if (rows.some(r => (r.c.extra ? r.c.key : r.c.client_code) === k)) { alert(w.driver_name + ' est déjà dans ce shift.'); return; }
-    (CSH_ADDED[addKey] = CSH_ADDED[addKey] || []).push(B ? Object.assign({}, w, { uber_uuid: null }) : w); cshTabShiftM();
+    if (cards.some(c => (c.r.c.extra ? c.r.c.key : c.r.c.client_code) === k)) { alert(w.driver_name + ' est déjà dans ce shift.'); return; }
+    (CSH_ADDED[XU.addKey] = CSH_ADDED[XU.addKey] || []).push(w);
+    (CSH_ADDED[XB.addKey] = CSH_ADDED[XB.addKey] || []).push(Object.assign({}, w, { uber_uuid: null }));
+    cshTabShiftM();
   };
 }
 

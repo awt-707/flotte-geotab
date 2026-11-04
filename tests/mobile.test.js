@@ -39,21 +39,27 @@ test('application Android : trois écrans seulement, encaissement du shift et d\
     const sel = await page.evaluate(async () => { for (let i = 0; i < 50 && !(CS.ctr || []).some(x => x.num === 'K1'); i++) await new Promise(r => setTimeout(r, 100));
       const c = CS.ctr.find(x => x.num === 'K1'); return { day: c._day, s: c._shift }; });
     await page.evaluate(x => { location.hash = `#/caisse?t=shift&jour=${x.day}&s=${x.s}`; }, sel);
-    await page.waitForSelector('.mcard[data-row] .cgv');
-    assert.match(await page.innerText('.mcard[data-row]'), /ALPHA Test[\s\S]*Contrat K1[\s\S]*WW968199/);
+    await page.waitForSelector('.mcard[data-card] .mpf[data-pf="uber"] .cgv');
+    // une fiche par chauffeur : ligne Uber et ligne Bolt (plus de choix Uber / Bolt)
+    assert.strictEqual(await page.locator('.mseg a:has-text("Bolt")').count(), 0, 'plus d\'onglets Uber / Bolt');
+    assert.match(await page.innerText('.mcard[data-card]'), /ALPHA Test[\s\S]*Contrat K1[\s\S]*WW968199[\s\S]*Uber[\s\S]*Bolt/);
     assert.strictEqual(await page.innerText('#mtitle'), 'Encaissement du shift');
     assert.ok(await noHScroll(page), 'pas de défilement horizontal');
-    await page.fill('.mcard .cgv', '300'); await page.fill('.mcard .cch', '40'); await page.click('.mcard .mmore summary'); await page.fill('.mcard .cmq', '40');
-    assert.match(await page.innerText('.mcard .mcalc'), /Encaissé 260 MAD · manque 40 MAD/);
+    const U = '.mcard .mpf[data-pf="uber"] ', Bo = '.mcard .mpf[data-pf="bolt"] ';
+    await page.fill(U + '.cgv', '300'); await page.fill(U + '.cch', '40'); await page.click(U + '.mmore summary'); await page.fill(U + '.cmq', '40');
+    assert.match(await page.innerText(U + '.mcalc'), /Encaissé 260 MAD · manque 40 MAD/);
+    await page.fill(Bo + '.cgv', '100');
     await page.click('[data-csav="0"]');
-    await page.click('#uiok');   // manque sans commentaire : confirmation dessinée par le site
-    await page.waitForSelector('.mcard.done.short');
-    assert.strictEqual(env.psql("select amount || '|' || uber_cash || '|' || contract_num || '|' || shift from cash_moves"), `260.00|300.00|K1|${sel.s}`);
-    // le chauffeur remet les 40 : complément, carte verte
-    await page.click('[data-cshcp="0"]');
+    await page.click('#uiok');   // manque Uber sans commentaire : confirmation dessinée par le site
+    await page.waitForSelector('.mpfd.short');
+    assert.strictEqual(env.psql("select string_agg(caisse || '|' || amount || '|' || coalesce(uber_cash::text, '-') || '|' || contract_num || '|' || shift, ',' order by caisse) from cash_moves"),
+      `bolt|100.00|-|K1|${sel.s},uber|260.00|300.00|K1|${sel.s}`, 'Uber et Bolt enregistrés en une fois');
+    assert.strictEqual(await page.locator('.mpfd').count(), 2);
+    // le chauffeur remet les 40 Uber : complément, ligne verte
+    await page.click('[data-cshcp="0|uber"]');
     await page.fill('#uiin', '40'); await page.click('#uiok');
-    await page.waitForSelector('.mcard.done.paid');
-    assert.match(await page.innerText('.mcard.done'), /Encaissé\s*300 MAD/);
+    await page.waitForFunction(() => document.querySelectorAll('.mpfd.paid').length === 2);
+    assert.match(await page.innerText('.mpfd'), /Uber[\s\S]*Encaissé\s*300 MAD/);
     // courses privées : d'abord créer la course (manifeste et devis faits tout de suite), encaissement à l'arrivée du chauffeur
     await page.click('.mtabs a[data-mt="courses"]');
     await page.waitForSelector('#qkgo');
@@ -66,7 +72,8 @@ test('application Android : trois écrans seulement, encaissement du shift et d\
     await page.fill('#qkdrv', 'ALPHA Test'); await page.fill('#qktel', '0611223344');
     await page.fill('#qkprice', '550'); await page.fill('#qkcli', 'John Smith'); await page.fill('#qkcph', '+33 6 12 34 56 78');
     await page.click('#qkgo');
-    await page.waitForSelector('#mobdone', { timeout: 30000 });
+    await page.waitForSelector('#mobdone, #qkres .err', { timeout: 60000 });
+    assert.strictEqual(await page.locator('#qkres .err').count(), 0, await page.innerText('#qkres').catch(() => ''));
     assert.match(await page.innerText('#mobdone'), /Course DEV-\d{4}-\d{4} créée[\s\S]*Confirmée[\s\S]*John Smith[\s\S]*TVA 10 %[\s\S]*550 MAD/);
     const m = JSON.parse(env.psql("select row_to_json(x) from (select id, status, total_ttc, data from missions where client_name = 'John Smith') x"));
     assert.deepStrictEqual([m.status, m.total_ttc, !!(m.data.manifest && m.data.manifest.id), !!(m.data.quote && m.data.quote.path)], ['Confirmée', 550, true, true], 'course, manifeste et devis enregistrés');
