@@ -231,11 +231,23 @@ function crsG() {
 function crsGridName(G) { return (G && (G._name || G.origin)) || 'Casablanca'; }
 function crsCats() { return (CR.grid && CR.grid.cats) || []; }
 function crsCatName(id) { const c = crsCats().find(x => x.id === id); return c ? c.model + ' (' + c.label + ')' : (id || ''); }
+/**
+ * Santa Fe (demande d'Ahmed, 03/11/2026 : 4x4 Luxe, 6 passagers, même tarif que le Staria) : grille sans la catégorie SANTAFE
+ * (migration 20261120000000_santa_fe.sql pas encore exécutée) = catégorie ajoutée et prix du Staria recopiés, comme la migration ;
+ * enregistrés dans la base au prochain enregistrement de la grille par l'administrateur.
+ */
+function crsGridSantaFe(g) {
+  if (!g || !Array.isArray(g.cats) || g.cats.some(c => c.id === 'SANTAFE') || !g.cats.some(c => c.id === 'STARIA')) return g;
+  const x = Object.assign({}, g, { cats: g.cats.concat([{ id: 'SANTAFE', label: '4x4 Luxe — 6 passagers', model: 'Hyundai Santa Fe', seats: 6 }]) });
+  ['hourly', 'half', 'day', 'kmExtra', 'wait15'].forEach(k => { if (g[k] && typeof g[k] === 'object' && !Array.isArray(g[k]) && 'STARIA' in g[k]) x[k] = Object.assign({}, g[k], { SANTAFE: g[k].STARIA }); });
+  ['airport', 'intercity'].forEach(k => { if (Array.isArray(g[k])) x[k] = g[k].map(r => r && 'STARIA' in r && !('SANTAFE' in r) ? Object.assign({}, r, { SANTAFE: r.STARIA }) : r); });
+  return x;
+}
 async function crsLoadGrid() {
   const r = await sb.from('pricing_grid').select('*').order('id');
   if (r.error) { CR.gridErr = r.error.message; CR.grid = null; CR.grids = []; return; }
   CR.gridErr = '';
-  CR.grids = (r.data || []).map(x => Object.assign({}, x.data, { _id: x.id, _name: x.name || (x.data && x.data.origin) || (x.id === 1 ? 'Casablanca' : 'Grille ' + x.id), _agency: x.agency_id || null, _at: x.updated_at }));
+  CR.grids = (r.data || []).map(x => Object.assign({}, crsGridSantaFe(x.data || {}), { _id: x.id, _name: x.name || (x.data && x.data.origin) || (x.id === 1 ? 'Casablanca' : 'Grille ' + x.id), _agency: x.agency_id || null, _at: x.updated_at }));
   CR.grid = CR.grids.find(g => g._id === 1) || CR.grids[0] || null;
 }
 function crsTabs(t) {
@@ -642,22 +654,28 @@ function crsMfDraft(m, f) {
     depart: String(f.startAddr || f.startCity || '').trim(), terminus: String(terminus).trim(), prestation: pre, nature: pre === 'Mise à disposition' ? 'Mise à disposition' : 'Transfert',
     obs: [f.flight, m.number ? 'Course ' + m.number : ''].filter(Boolean).join(' · ') };
 }
-async function crsManifest(auto) {
-  const m = CR.cur; if (!m || !m.id) return null;
-  CR.mfRes = msg('Création du manifeste…'); CR.mfLast = null; crsMfRender();
+/** Manifeste d'une course créé et rattaché (missions.data.manifest) : { r } (résultat de mfMake) ou { warn } / { err } */
+async function crsMfCreate(m, f, auto) {
   const err = await mfEnsure();
-  if (err) { CR.mfRes = msg('Manifestes pas encore installés dans la base : ' + esc(err), 'err'); crsMfRender(); return null; }
-  const st = await mfDriverFill(crsMfDraft(m, CR.f)), bad = mfCheck(st);
-  if (bad.length) { CR.mfRes = msg((auto ? 'Manifeste automatique non créé' : 'Manifeste non créé') + ' : à compléter ' + esc(bad.join(', ')) + ' (fiche, section 9), puis « Créer le manifeste ».', 'warn'); crsMfRender(); return null; }
+  if (err) return { err: 'Manifestes pas encore installés dans la base : ' + err };
+  const st = await mfDriverFill(crsMfDraft(m, f)), bad = mfCheck(st);
+  if (bad.length) return { warn: (auto ? 'Manifeste automatique non créé' : 'Manifeste non créé') + ' : à compléter ' + bad.join(', ') + ' (fiche, section 9), puis « Créer le manifeste ».' };
   try {
     const r = await mfMake(st, { mission_id: m.id, mission: m.number || '' });
-    r.noReturn = true; r.missionId = m.id; CR.mfLast = r; CR.mfRes = '';
+    r.noReturn = true; r.missionId = m.id;
     if (r.id) {
       const data = Object.assign({}, m.data, { manifest: { id: r.id, name: r.name, path: r.path, at: new Date().toISOString() } });
       const u = await sb.from('missions').update({ data }).eq('id', m.id).select('*').single();
-      if (!u.error && CR.cur && CR.cur.id === m.id) CR.cur = u.data;
+      if (!u.error) { Object.assign(m, u.data); if (CR.cur && CR.cur.id === m.id) CR.cur = u.data; }
     }
-  } catch (e) { CR.mfRes = msg('Manifeste non créé : ' + esc(e.message || e), 'err'); }
+    return { r };
+  } catch (e) { return { err: 'Manifeste non créé : ' + (e.message || e) }; }
+}
+async function crsManifest(auto) {
+  const m = CR.cur; if (!m || !m.id) return null;
+  CR.mfRes = msg('Création du manifeste…'); CR.mfLast = null; crsMfRender();
+  const o = await crsMfCreate(m, CR.f, auto);
+  CR.mfRes = o.r ? '' : msg(esc(o.warn || o.err), o.warn ? 'warn' : 'err'); CR.mfLast = o.r || null;
   crsMfRender();
   return CR.mfLast;
 }
@@ -740,15 +758,18 @@ async function crsQuick(head) {
   $('#qkgo').onclick = () => crsQuickGo(head);
   if (q.veh && !q.drv) drvAuto();
 }
-async function crsQuickGo(head) {
-  const q = CR.q, res = $('#qkres'), btn = $('#qkgo');
-  ['veh', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cmail', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph', cmail: 'cml' }[k] || k)); if (e) q[k] = e.value; });
+/**
+ * Course rapide créée dans la base (partagé par la page et le mode téléphone) : q = saisie (veh, dep, end, from, to, drv, tel, grid,
+ * gridRef, price, client, cphone, cmail, type, cin, pax, obs, names). Contrôle tout ce que le manifeste exige avant de créer.
+ * Renvoie { m, f, p, G, vv, a, b, status } ; erreur « À compléter : … » (e.bad) ou refus (véhicule déjà bloqué, base).
+ */
+async function crsQuickCreate(q) {
   const vv = vehOf(q.veh), a = parseLocalDT(q.dep), b = parseLocalDT(q.end), bad = [];
   const G = (q.grid ? crsGridOf(String(q.grid).split('|')[0]) : crsGridDefault(vv && vv.agency_id)) || {};
   if (!vv) bad.push('le véhicule'); if (!a) bad.push('la date de départ'); if (a && (!b || b <= a)) bad.push('une fin prévue après le départ');
   if (!String(q.from || '').trim()) bad.push('l\'adresse de départ'); if (!String(q.to || '').trim()) bad.push('l\'adresse d\'arrivée');
   if (!String(q.client || '').trim()) bad.push('le client'); if (!crsN(q.price)) bad.push('le prix convenu');
-  const f = { quick: true, gridId: G._id || 1, kind: 'Transfert simple', base: 'convenu', agreedPrice: crsN(q.price), gridRef: q.grid ? ($('#qkgrid').selectedOptions[0] || {}).textContent : '', cat: crsCatOf(vv), nVeh: 1, drivers: 1,
+  const f = { quick: true, gridId: G._id || 1, kind: 'Transfert simple', base: 'convenu', agreedPrice: crsN(q.price), gridRef: q.grid ? q.gridRef || '' : '', cat: crsCatOf(vv), nVeh: 1, drivers: 1,
     vehicleKey: q.veh, driverName: String(q.drv || '').trim(), driverPhone: String(q.tel || '').trim(), client: String(q.client || '').trim(), phone: String(q.cphone || '').trim(), email: String(q.cmail || '').trim(),
     clientType: 'Particulier', service: 'Standard', dispo: 'Disponibilité planifiée', planning: 'oui', pax: Math.max(1, crsN(q.pax) || 1), startAddr: String(q.from || '').trim(), endAddr: String(q.to || '').trim(),
     startDate: (q.dep || '').slice(0, 10), startTime: (q.dep || '').slice(11, 16), endDate: (q.end || '').slice(0, 10), endTime: (q.end || '').slice(11, 16),
@@ -757,25 +778,47 @@ async function crsQuickGo(head) {
   if (!bad.length) { const err = await mfEnsure(); if (err) bad.push('les manifestes (base : ' + err + ')');
     else { const st = await mfDriverFill(crsMfDraft({ vehicle_key: q.veh, start_at: a.toISOString(), end_at: b.toISOString() }, f)); mfCheck(st).forEach(x => { if (!bad.includes(x)) bad.push(x); });
       if (!f.driverPhone && st.chauffeurTel) f.driverPhone = st.chauffeurTel; if (!f.driverName && st.chauffeur) f.driverName = st.chauffeur; } }
-  if (bad.length) { res.innerHTML = msg('À compléter : ' + esc(bad.join(', ')) + '.', 'err'); return; }
+  if (bad.length) { const e = new Error('À compléter : ' + bad.join(', ') + '.'); e.bad = true; throw e; }
+  CR.cur = null; CR.f = f; CR.edit = canEdit();
+  const p = crsPrice(f, G), row = crsRow(f, p);
+  const c = await crsConflicts(Object.assign({ id: null }, row));
+  if (c.length) throw new Error('véhicule déjà bloqué sur cette période : ' + c.map(x => (x.number || '#' + x.id) + ' (' + (x.client_name || '') + ', ' + x.status + ')').join(' ; '));
+  const status = a.getTime() <= Date.now() + 15 * MIN ? 'En cours' : 'Confirmée';
+  const ins = await sb.from('missions').insert(Object.assign(row, { needs_validation: false, status,
+    data: { f, price: p, quick: true, grid: G || null, history: [{ at: new Date().toISOString(), status: 'Course rapide : ' + status, by: S.profile.email || '' }] } })).select('*').single();
+  if (ins.error) throw new Error(ins.error.message);
+  CR.cur = ins.data;
+  return { m: ins.data, f, p, G, vv, a, b, status };
+}
+/** Devis PDF d'une course (détail, prix TTC, TVA de la grille) déposé dans le stockage privé « devis » et noté dans la course */
+async function crsQuoteSave(m, f, p, G) {
+  const doc = crsPdf(m, f, p, G, true), blob = doc.output('blob'), name = crsPdfName(m, f);
+  let path = null, err = '';
+  try {
+    const pth = today().slice(0, 7) + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)) + '.pdf';
+    const up = await sb.storage.from('devis').upload(pth, blob, { contentType: 'application/pdf', upsert: false });
+    if (up.error) throw up.error;
+    path = pth;
+    const data = Object.assign({}, m.data, { quote: { path, name, at: new Date().toISOString(), total: p.total } });
+    const u = await sb.from('missions').update({ data }).eq('id', m.id).select('*').single();
+    if (!u.error) { Object.assign(m, u.data); if (CR.cur && CR.cur.id === m.id) CR.cur = u.data; }
+  } catch (x) { err = x.message || String(x); }
+  return { blob, name, path, err };
+}
+async function crsQuickGo(head) {
+  const q = CR.q, res = $('#qkres'), btn = $('#qkgo');
+  ['veh', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cmail', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph', cmail: 'cml' }[k] || k)); if (e) q[k] = e.value; });
+  q.gridRef = q.grid ? ($('#qkgrid').selectedOptions[0] || {}).textContent : '';
   btn.disabled = true; res.innerHTML = msg('Lancement…');
   try {
-    CR.cur = null; CR.f = f; CR.edit = canEdit();
-    const p = crsPrice(f, G), row = crsRow(f, p);
-    const c = await crsConflicts(Object.assign({ id: null }, row));
-    if (c.length) throw new Error('véhicule déjà bloqué sur cette période : ' + c.map(x => (x.number || '#' + x.id) + ' (' + (x.client_name || '') + ', ' + x.status + ')').join(' ; '));
-    const status = a.getTime() <= Date.now() + 15 * MIN ? 'En cours' : 'Confirmée';
-    const ins = await sb.from('missions').insert(Object.assign(row, { needs_validation: false, status,
-      data: { f, price: p, quick: true, history: [{ at: new Date().toISOString(), status: 'Course rapide : ' + status, by: S.profile.email || '' }] } })).select('*').single();
-    if (ins.error) throw new Error(ins.error.message);
-    CR.cur = ins.data;
+    const { m, vv, a, b, status } = await crsQuickCreate(q);
     const done = $('#qkdone');
-    if (done) done.innerHTML = `<div class="panel mfok"><h2>Course ${esc(ins.data.number || '')} lancée</h2><div class="small">${esc(status)} · ${esc((vv || {}).plate || '')} bloqué du ${esc(fmtDTY(a))} au ${esc(fmtDTY(b))} · visible sur En direct pendant la course.</div>
-      <div class="mfgo"><a class="btn small" href="#/courses?id=${ins.data.id}">Ouvrir la fiche</a> <button class="ghost small" id="qkagain">Nouvelle course rapide</button></div></div><div class="panel" id="crsmf"></div>`;
+    if (done) done.innerHTML = `<div class="panel mfok"><h2>Course ${esc(m.number || '')} lancée</h2><div class="small">${esc(status)} · ${esc((vv || {}).plate || '')} bloqué du ${esc(fmtDTY(a))} au ${esc(fmtDTY(b))} · visible sur En direct pendant la course.</div>
+      <div class="mfgo"><a class="btn small" href="#/courses?id=${m.id}">Ouvrir la fiche</a> <button class="ghost small" id="qkagain">Nouvelle course rapide</button></div></div><div class="panel" id="crsmf"></div>`;
     if ($('#qkagain')) $('#qkagain').onclick = () => { CR.q = null; crsQuick(head); };
     res.innerHTML = '';
     await crsManifest(true);
-  } catch (e) { res.innerHTML = msg('Course non lancée : ' + esc(e.message || e), 'err'); }
+  } catch (e) { res.innerHTML = e.bad ? msg(esc(e.message), 'err') : msg('Course non lancée : ' + esc(e.message || e), 'err'); }
   if ($('#qkgo')) $('#qkgo').disabled = false;
 }
 
@@ -945,4 +988,4 @@ function crsActualPdf(m, f, p, r) {
   doc.save('Km-horaires-' + (m.number || 'mission') + '.pdf');
 }
 
-if (typeof module !== 'undefined') module.exports = { CRS_KINDS, crsDays, crsHoursDay, crsAmplitude, crsBase, crsLevel, crsValidation, crsMissing, crsPrice, crsActual, crsSeatsOk, crsModelIs, crsMoney, crsSpan, crsOrigin, crsAirport };
+if (typeof module !== 'undefined') module.exports = { CRS_KINDS, crsDays, crsHoursDay, crsAmplitude, crsBase, crsLevel, crsValidation, crsMissing, crsPrice, crsActual, crsSeatsOk, crsModelIs, crsMoney, crsSpan, crsOrigin, crsAirport, crsGridSantaFe };

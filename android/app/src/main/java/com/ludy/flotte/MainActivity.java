@@ -2,6 +2,7 @@ package com.ludy.flotte;
 
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.graphics.Color;
@@ -35,6 +36,8 @@ import java.io.OutputStream;
  * - liens hors du site (WhatsApp, e-mail, téléphone, autres sites) : ouverts dans l'application du téléphone ;
  * - fichiers à joindre (justificatifs, reçus, fiches) : galerie, fichiers ou appareil photo ;
  * - PDF et tableurs créés par le site (adresses blob:) : enregistrés dans Téléchargements puis ouverts.
+ * 1.2 (04/11/2026, demande d'Ahmed) : PDF (manifeste, devis) partagés tels quels dans WhatsApp, directement au numéro du chauffeur ou
+ *   du client (LudyAndroid.share ; fichier servi par FilesProvider, sans bibliothèque) ; sans WhatsApp : choix de l'application.
  */
 public class MainActivity extends Activity {
   static final String HOME = "https://ludy-flotte.pages.dev/";
@@ -62,7 +65,7 @@ public class MainActivity extends Activity {
     s.setSupportMultipleWindows(false);   // target="_blank" : même vue, puis shouldOverrideUrlLoading
     s.setAllowFileAccess(false);
     s.setMediaPlaybackRequiresUserGesture(true);
-    s.setUserAgentString(s.getUserAgentString() + " LudyAndroid/1.1");
+    s.setUserAgentString(s.getUserAgentString() + " LudyAndroid/1.2");
     CookieManager.getInstance().setAcceptCookie(true);
     CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
     web.addJavascriptInterface(new Bridge(), "LudyAndroid");
@@ -147,6 +150,15 @@ public class MainActivity extends Activity {
   static String q(String s) { return "'" + String.valueOf(s).replace("\\", "\\\\").replace("'", "\\'") + "'"; }
 
   class Bridge {
+    /** PDF créé par le site (base64) envoyé dans WhatsApp au numéro donné (vide : choisir la conversation) */
+    @JavascriptInterface public void share(String b64, String name, String mime, String text, String phone) {
+      runOnUiThread(() -> {
+        try {
+          String n = name == null || name.isEmpty() ? "document.pdf" : name.replaceAll("[\\\\/:*?\"<>|]+", "_");
+          shareFile(Base64.decode(b64, Base64.DEFAULT), n, mime == null || mime.isEmpty() ? "application/pdf" : mime, text, phone);
+        } catch (Exception e) { Toast.makeText(MainActivity.this, "Partage impossible : " + e.getMessage(), Toast.LENGTH_LONG).show(); }
+      });
+    }
     @JavascriptInterface public void save(String b64, String name, String mime) {
       runOnUiThread(() -> {
         try {
@@ -173,6 +185,31 @@ public class MainActivity extends Activity {
         } catch (Exception e) { Toast.makeText(MainActivity.this, "Enregistrement impossible : " + e.getMessage(), Toast.LENGTH_LONG).show(); }
       });
     }
+  }
+
+  /** Fichier partagé : copié dans le cache de l'application (dossier share, servi par FilesProvider), puis envoyé à WhatsApp */
+  void shareFile(byte[] bytes, String name, String mime, String text, String phone) throws Exception {
+    File dir = new File(getCacheDir(), "share");
+    dir.mkdirs();
+    File[] old = dir.listFiles();
+    if (old != null) for (File f : old) if (System.currentTimeMillis() - f.lastModified() > 86400000L) f.delete();   // fichiers de plus d'un jour retirés
+    File f = new File(dir, name);
+    try (FileOutputStream o = new FileOutputStream(f)) { o.write(bytes); }
+    Uri uri = Uri.parse("content://" + FilesProvider.AUTH + "/" + Uri.encode(name));
+    Intent i = new Intent(Intent.ACTION_SEND);
+    i.setType(mime);
+    i.putExtra(Intent.EXTRA_STREAM, uri);
+    if (text != null && !text.isEmpty()) i.putExtra(Intent.EXTRA_TEXT, text);
+    i.setClipData(ClipData.newRawUri(name, uri));
+    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    String digits = phone == null ? "" : phone.replaceAll("[^0-9]", "");
+    // WhatsApp (puis WhatsApp Business) : conversation du numéro ouverte avec le PDF joint ; sinon choix de l'application
+    for (String pkg : new String[] { "com.whatsapp", "com.whatsapp.w4b" }) {
+      Intent w = new Intent(i).setPackage(pkg);
+      if (digits.length() >= 8) w.putExtra("jid", digits + "@s.whatsapp.net");
+      try { startActivity(w); return; } catch (ActivityNotFoundException e) { }
+    }
+    startActivity(Intent.createChooser(i, "Partager " + name));
   }
 
   @Override public void onBackPressed() { if (web != null && web.canGoBack()) web.goBack(); else super.onBackPressed(); }

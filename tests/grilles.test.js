@@ -115,3 +115,16 @@ test('page : devis au départ de Marrakech, course rapide, grille par ville, nou
     await br.close(); srv.kill();
   }
 });
+
+test('Santa Fe ajouté par le site à une grille qui ne l\'a pas encore (migration non exécutée) : 6 places, prix du Staria', () => {
+  const { crsGridSantaFe, crsPrice } = require('../site/courses.js');
+  const g = { cats: [{ id: 'SONATA', seats: 4 }, { id: 'STARIA', seats: 7 }], hourly: { SONATA: 150, STARIA: 250 }, day: { STARIA: 1600 }, kmExtra: { STARIA: 6 },
+    airport: [{ dest: 'Casablanca', SONATA: 300, STARIA: 450 }], intercity: [{ dest: 'Rabat', SONATA: 900, STARIA: 1130 }], vat: 10 };
+  const x = crsGridSantaFe(g);
+  assert.deepStrictEqual(x.cats.find(c => c.id === 'SANTAFE'), { id: 'SANTAFE', label: '4x4 Luxe — 6 passagers', model: 'Hyundai Santa Fe', seats: 6 });
+  assert.deepStrictEqual([x.hourly.SANTAFE, x.day.SANTAFE, x.kmExtra.SANTAFE, x.airport[0].SANTAFE, x.intercity[0].SANTAFE], [250, 1600, 6, 450, 1130]);
+  assert.strictEqual(g.cats.length, 2, 'grille d\'origine inchangée');
+  assert.strictEqual(crsGridSantaFe(x), x, 'déjà présent : rien ajouté');
+  const p = crsPrice({ kind: 'Transfert simple', cat: 'SANTAFE', dest: 'Rabat', startCity: 'Casablanca' }, x);
+  assert.strictEqual(p.total, 1130);
+});
