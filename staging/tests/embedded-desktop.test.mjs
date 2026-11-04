@@ -80,7 +80,7 @@ test('bootstrap never echoes provider errors or secret values to the client',asy
   assert.equal(sent[0].type,'failed');assert.ok(!JSON.stringify(sent).includes('password'));assert.deepEqual(exits,[1]);
 });
 async function sourceFixture(t){
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'ludy-embedded-build-')),source=path.join(root,'staging');await fs.mkdir(source);t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ludy-embedded-build-'))),source=path.join(root,'staging');await fs.mkdir(source);t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const files=[...EMBEDDED_SITE_FILES.map(file=>'site/'+file),...EMBEDDED_CLIENT_FILES.map(file=>'desktop/'+file),...EMBEDDED_EXTENSION_FILES,'desktop/embedded-bootstrap.cjs','desktop/package.json','desktop-runtime/server.mjs','server/fixture.mjs','package.json','package-lock.json','vendor/xlsx-0.20.3.tgz'];
   for(const file of files){await fs.mkdir(path.dirname(path.join(source,file)),{recursive:true});await fs.writeFile(path.join(source,file),file==='desktop/package.json'?JSON.stringify({version:'0.1.1'}):'synthetic source');}
   return{root,source};

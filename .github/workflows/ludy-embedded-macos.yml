@@ -1,0 +1,132 @@
+name: Ludy macOS embarqué
+
+on:
+  push:
+    branches: [staging]
+    paths:
+      - 'staging/**'
+      - '.github/workflows/ludy-embedded-macos.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ludy-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: macOS ${{ matrix.label }}
+    if: github.repository == 'awt-707/flotte-geotab' && github.ref == 'refs/heads/staging'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Apple-Silicon
+            os: macos-15
+            arch: arm64
+          - label: Intel
+            os: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            staging/package-lock.json
+            staging/desktop/package-lock.json
+      - name: Vérifier le Mac de construction
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          node --input-type=module <<'NODE'
+          if (process.platform !== 'darwin' || process.arch !== process.env.EXPECTED_ARCH) {
+            throw new Error('Le Mac de construction ne correspond pas à la cible.');
+          }
+          console.log('Construction native macOS ' + process.arch);
+          NODE
+      - name: Installer les dépendances verrouillées
+        run: |
+          npm ci --prefix staging --ignore-scripts --no-audit --no-fund
+          npm ci --prefix staging/desktop --ignore-scripts --no-audit --no-fund
+      - name: Préparer la configuration publique Ludy
+        env:
+          LUDY_DESKTOP_PUBLIC_CONFIG: ${{ vars.LUDY_DESKTOP_PUBLIC_CONFIG }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import {createRequire} from 'node:module';
+          const require = createRequire(import.meta.url);
+          const {validateEmbeddedConfig} = require('./staging/desktop/embedded-config.cjs');
+          if (!process.env.LUDY_DESKTOP_PUBLIC_CONFIG) throw new Error('Variable publique LUDY_DESKTOP_PUBLIC_CONFIG manquante.');
+          const config = validateEmbeddedConfig(JSON.parse(process.env.LUDY_DESKTOP_PUBLIC_CONFIG));
+          if (config.projectRef !== 'cgiiwumbblimvmrypxlc') throw new Error('Projet Ludy inattendu.');
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'ludy-desktop-public.json'), JSON.stringify(config) + '\n', {mode: 0o600});
+          NODE
+      - name: Vérifier le client et le packaging
+        run: |
+          node --test staging/tests/embedded-desktop.test.mjs staging/tests/macos-artifact.test.mjs
+          node staging/tests/embedded-macos-package.e2e.mjs --self-test
+      - name: Construire et vérifier l’application et son archive
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          node staging/scripts/build-macos-artifact.mjs \
+            --config "$RUNNER_TEMP/ludy-desktop-public.json" \
+            --target "macos-$TARGET_ARCH" \
+            --output-dir "$RUNNER_TEMP/ludy-macos-$TARGET_ARCH"
+      - name: Contrôle natif indépendant du ZIP réextrait
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          node staging/tests/embedded-macos-package.e2e.mjs \
+            --manifest "$RUNNER_TEMP/ludy-macos-$TARGET_ARCH/manifest.json" \
+            > "$RUNNER_TEMP/ludy-macos-$TARGET_ARCH-verification.json"
+      - name: Relevé de construction
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const manifest = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'ludy-macos-' + process.env.TARGET_ARCH, 'manifest.json'), 'utf8'));
+          if (!manifest.archiveVerified || manifest.signing !== 'adhoc' || manifest.notarized !== false) throw new Error('Archive macOS non vérifiée.');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
+            'Application Ludy macOS construite sur son architecture native.',
+            '',
+            'Signature ad hoc vérifiée. Cette version ne possède pas de signature Developer ID ni de notarisation Apple.',
+            '',
+            'Le premier lancement doit être vérifié sur le Mac utilisateur. Aucun accès à Supabase ni collecte pendant la construction.',
+            ''
+          ].join('\n'));
+          NODE
+      - name: Application à télécharger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Ludy-macOS-${{ matrix.label }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ludy-macos-${{ matrix.arch }}/*.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+      - name: Empreintes et relevés de vérification
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Ludy-macOS-${{ matrix.label }}-verification-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ludy-macos-${{ matrix.arch }}/*.json
+            ${{ runner.temp }}/ludy-macos-${{ matrix.arch }}/*.sha256
+            ${{ runner.temp }}/ludy-macos-${{ matrix.arch }}/*.txt
+            ${{ runner.temp }}/ludy-macos-${{ matrix.arch }}-verification.json
+          if-no-files-found: error
+          retention-days: 7

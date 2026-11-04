@@ -75,7 +75,17 @@ Le port 4173 doit être libre : fermer l'ancien staging local avant de lancer la
 
 ### Mac
 
-Utiliser le **kit de sources embarqué 0.2.0**, construit pour cette architecture. Sur le Mac, installer Node.js 22.12 minimum, extraire tout le ZIP, puis taper `sh ` dans Terminal et y glisser `Preparer Ludy Mac.command`. Le script vérifie les sources, installe les dépendances et affiche le chemin de `Ludy.app` à ouvrir. L'ancien kit 0.1.1 ne contient pas ce serveur. La construction se fait sur le Mac, avec les dépendances verrouillées, et produit une application de test signée localement. Une distribution générale macOS demande encore une signature Developer ID et une notarisation.
+Le workflow [Ludy macOS embarqué](../../.github/workflows/ludy-embedded-macos.yml) construit deux archives contenant directement **Ludy.app** : **Apple Silicon** (`arm64`) et **Intel** (`x64`). Il se déclenche après le push de ces fichiers sur la branche `staging`. Les collègues utilisant ces archives n’ont pas besoin de Node.js ni de construire l’application.
+
+La variable GitHub `LUDY_DESKTOP_PUBLIC_CONFIG` est configurée sur le dépôt avec l’adresse et la clé publique validées du Supabase de production. Le workflow refuse un autre projet et toute clé privilégiée. Il utilise uniquement les sources suivies et les dépendances verrouillées ; il n’exécute aucune migration ni collecte et ne reçoit aucun secret fournisseur.
+
+Chaque archive est construite sur un Mac de son architecture, signée ad hoc, réextraite et vérifiée avant publication dans les artifacts du workflow. Le contrôle indépendant vérifie les exécutables Mach-O, les permissions, les liens, les ressources et la signature. Il ne lance pas l’interface : le premier lancement et la connexion restent à vérifier sur un Mac pilote. Les artifacts sont conservés sept jours ; conserver une copie locale du ZIP livré et de sa somme SHA-256.
+
+Sur le Mac, ouvrir **À propos de ce Mac** pour choisir Apple Silicon lorsque la ligne « Puce » affiche Apple M1/M2/M3/etc., ou Intel lorsque la ligne « Processeur » indique Intel. Extraire le ZIP adapté, copier **Ludy.app** dans **Applications**, puis l’ouvrir et utiliser le compte Ludy habituel. Conserver la participation à la collecte désactivée sur les postes de consultation.
+
+Cette construction ne possède pas de certificat **Developer ID** ni de notarisation Apple. Si macOS refuse son premier lancement et si l’application provient bien de cette livraison vérifiée, suivre la procédure Apple propre à cette application dans **Réglages Système → Confidentialité et sécurité → Ouvrir quand même**. Ne pas désactiver Gatekeeper globalement ni supprimer les protections de quarantaine par commande. Un Mac administré peut refuser cette exception. Voir [les instructions Apple](https://support.apple.com/fr-fr/102445). Une distribution reconnue directement par Gatekeeper demande encore le certificat Developer ID et la notarisation.
+
+Le **kit de sources embarqué 0.2.0** reste disponible pour construire localement : installer Node.js 22.12 minimum sur le Mac, extraire le kit, puis taper `sh ` dans Terminal et y glisser `Preparer Ludy Mac.command`. L’ancien kit 0.1.1 ne contient pas le serveur embarqué.
 
 Depuis un checkout préparé sur le Mac, les commandes équivalentes sont :
 
