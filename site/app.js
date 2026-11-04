@@ -502,18 +502,20 @@ function shellHtml() {
 // Menu reconstruit seulement s'il change (utilisateur, rôle, volets visibles, agences, « Mes véhicules », thème, notifications) ;
 // sinon d'une page à l'autre : volet en surbrillance et contenu seulement (pastilles, collecte, défilement du menu gardés tels quels)
 let SHELL_KEY = '';
+async function doLogout() {
+  // pointage : fin de journée proposée avant la déconnexion
+  if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && await ask('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).then(null, () => { });   // pas de .catch sur la requête supabase
+  await sessEnd(); await sb.auth.signOut(); location.hash = '';
+}
 function shell() {
+  if (MOBILE) return mobShell();   // application Android : trois écrans (mobile.js)
   const page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'direct', key = shellHtml();
   if (key === SHELL_KEY && $('#app > .layout') && $('#page')) {
     const ag = $('#agsel'), mo = $('#mineon'); if (ag) ag.value = agFilter(); if (mo) mo.checked = mineOn();   // stockage bloqué : réglage réellement appliqué
     $('#page').innerHTML = '<div class="loading">Chargement…</div>';
   } else {
     SHELL_KEY = key; $('#app').innerHTML = shellHtml();
-    $('#logout').onclick = async () => {
-      // pointage : fin de journée proposée avant la déconnexion
-      if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && await ask('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).then(null, () => { });   // pas de .catch sur la requête supabase
-      await sessEnd(); await sb.auth.signOut(); location.hash = '';
-    };
+    $('#logout').onclick = doLogout;
     rhFootBind(); navBind();
     $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
     const ag = $('#agsel'); if (ag) ag.onchange = () => { try { localStorage.setItem('agence', ag.value); } catch (e) { } route(); };
@@ -1699,16 +1701,18 @@ async function route() {
   if (!(await rhGate(my))) return;   // pointage : date de naissance à l'ouverture de Ludy, pause en cours
   await mineLoad();   // planning : véhicules confiés pour le shift en cours
   if (my !== ROUTING) return;   // autre page demandée pendant le chargement
-  if (!canSee(pageOf())) { location.replace('#/' + firstAllowed()); return; }   // volet non autorisé à cet utilisateur
+  if (MOBILE) { if (!mobRoute()) return; }   // téléphone : encaissement du shift, courses privées, manifeste seulement
+  else if (!canSee(pageOf())) { location.replace('#/' + firstAllowed()); return; }   // volet non autorisé à cet utilisateur
   let page = shell();
   if (/^x-/.test(page)) { const id = page.slice(2); PAGES[page] = () => pageExt(id); }
   if (!PAGES[page] || (ADMIN_PAGES[page] && !isAdmin())) page = 'direct';
-  watchAlerts();
+  if (!MOBILE) watchAlerts();   // téléphone : pas de bandeaux d'alerte
   window.__rerender = null;
   try { await PAGES[page](); } catch (e) { if (my === ROUTING) $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
   if (my !== ROUTING) return;
-  S.timers.push(setInterval(health, 60000));
   sessPing();   // connexions : page affichée envoyée tout de suite (puis toutes les minutes)
+  if (MOBILE) return;
+  S.timers.push(setInterval(health, 60000));
   // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)
   S.timers.push(setInterval(async () => {
     const was = S.mine ? [...S.mine].sort().join() : '', k = S.mineKey; await mineLoad();
