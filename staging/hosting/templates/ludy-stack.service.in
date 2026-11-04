@@ -1,0 +1,27 @@
+[Unit]
+Description=Ludy staging - isolated Supabase test stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+Before=ludy-app.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User={{USER}}
+Group={{USER}}
+SupplementaryGroups=docker
+WorkingDirectory={{STAGING}}
+UMask=0077
+Environment=DOCKER_HOST=unix:///var/run/docker.sock
+UnsetEnvironment=DOCKER_CONTEXT
+EnvironmentFile={{STAGING}}/.local/hosting/auth.env
+ExecStartPre={{NODE}} {{STAGING}}/hosting/initialize.mjs --check
+ExecStart={{NODE}} {{STAGING}}/scripts/start.mjs --no-serve
+ExecStartPost={{NODE}} {{STAGING}}/hosting/preflight.mjs --stack
+ExecStop={{NODE}} {{STAGING}}/scripts/stop.mjs
+TimeoutStartSec=900
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

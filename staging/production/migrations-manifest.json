@@ -1,0 +1,1095 @@
+{
+  "format": "ludy-migration-source-manifest-v1",
+  "executionAllowed": false,
+  "purpose": "Source comparison only. These are staging sources, not production-ready SQL. Never run baseline, seeds, bootstrap or a concatenation of this list against production.",
+  "baseline": [
+    {
+      "version": "20261015000000",
+      "file": "20261015000000_schema.sql",
+      "sha256": "00b7d85fdfc4e5f29258a97db689cd334213d4cc393a9775ba357e7746f1ab5f"
+    },
+    {
+      "version": "20261015120000",
+      "file": "20261015120000_releases.sql",
+      "sha256": "064970f1269067c7d609329a371b0d2af885804d9d03fc9453881daca4e974b7"
+    },
+    {
+      "version": "20261016000000",
+      "file": "20261016000000_agences.sql",
+      "sha256": "be3b4ce896b1172caf81fe404c9743ff627e0d8bbdd7806f87f43a4d4d959f75"
+    },
+    {
+      "version": "20261017000000",
+      "file": "20261017000000_arrets_moteur.sql",
+      "sha256": "4df0c014fa1c092f326f1d5692c9f5d8eb4ca0a87697823476c98f55d127bd90"
+    },
+    {
+      "version": "20261018000000",
+      "file": "20261018000000_relais_direct.sql",
+      "sha256": "f34c0329c1f77fcf99897b160e59ae19980c4388fb031cc44c9672eadb2145e0"
+    },
+    {
+      "version": "20261019000000",
+      "file": "20261019000000_securite.sql",
+      "sha256": "eee6fbe96e035bf131078d65cbf272e6be286ee72b2bc9ea996520a54d925cfa"
+    },
+    {
+      "version": "20261020000000",
+      "file": "20261020000000_shifts.sql",
+      "sha256": "083ad72a86db2eff8836c94f8835b5b3a420df08b87786c2e103b8346a3e596c"
+    },
+    {
+      "version": "20261021000000",
+      "file": "20261021000000_comportement.sql",
+      "sha256": "0fbd7f28e7a594797d187cd772ebf880fc1b6cb9e39e4f03a8722154cd7956b6"
+    },
+    {
+      "version": "20261022000000",
+      "file": "20261022000000_vitesse.sql",
+      "sha256": "49bf11dbd38cfc15120d891a9801ab753a36768bfef3d47d2ab18d63d1a3344c"
+    },
+    {
+      "version": "20261023000000",
+      "file": "20261023000000_relecture.sql",
+      "sha256": "58b4d77beb6fc3efe4e9a94b7207e0054b1f262bcebc868fdc31555ad7492475"
+    },
+    {
+      "version": "20261024000000",
+      "file": "20261024000000_carte_carburant.sql",
+      "sha256": "4bef5d0d10b2eecd16e8e326c5e743b96e5318caa05ad0cfa5395281d15d9226"
+    },
+    {
+      "version": "20261025000000",
+      "file": "20261025000000_volets.sql",
+      "sha256": "a7e6587ba06d667da6a9db455526f054ba2c6459785696e6c6f5c14586206e39"
+    },
+    {
+      "version": "20261026000000",
+      "file": "20261026000000_shift_avance.sql",
+      "sha256": "f27f554c351fba530cffb3e8db20769cdb88a3fda89b8a989a57fb615f6081cc"
+    },
+    {
+      "version": "20261027000000",
+      "file": "20261027000000_manifestes.sql",
+      "sha256": "dc69748157895456e2121780325c52385bfa92f06ea9b1e4db3d8ff79d9d2b6c"
+    },
+    {
+      "version": "20261028000000",
+      "file": "20261028000000_limites.sql",
+      "sha256": "49e46600b6c5545b2087d6c275ffdd210f42c4c68a65ffb39971277a2e1b1e11"
+    },
+    {
+      "version": "20261029000000",
+      "file": "20261029000000_planning.sql",
+      "sha256": "ea391bf5fb88b9d8d517483915a60504bc605f3a3fdf450b787cc648b0dd5372"
+    },
+    {
+      "version": "20261030000000",
+      "file": "20261030000000_droits.sql",
+      "sha256": "f90a965ee0731762110039b5aa0917c61336ac307b13569662a2e42fc9cc4122"
+    },
+    {
+      "version": "20261031000000",
+      "file": "20261031000000_courses.sql",
+      "sha256": "1082f78130a43c47c21c3b7d546a0b145d8780af83872097f728b0d8ef2bbc19"
+    },
+    {
+      "version": "20261101000000",
+      "file": "20261101000000_connexions.sql",
+      "sha256": "910e748888fd4d991a25c03288939ab177ee5391e49b64eb1b1ac398bbfa04c4"
+    },
+    {
+      "version": "20261102000000",
+      "file": "20261102000000_devis_mail.sql",
+      "sha256": "d287295839e4bdf86c4e14a303073e6a4df58ecb25b118b32e45a2ade8cce054"
+    },
+    {
+      "version": "20261103000000",
+      "file": "20261103000000_caisse.sql",
+      "sha256": "24c202cca76250df046e2f21b7b41ab0b715d463e070d0588d6d3c8892f22523"
+    },
+    {
+      "version": "20261104000000",
+      "file": "20261104000000_caisse_classeur.sql",
+      "sha256": "c95be9b36ad3c73a7da6a5ebb449457f877027f40c64ef893f9847430edd10e0"
+    },
+    {
+      "version": "20261105000000",
+      "file": "20261105000000_chauffeurs_auto.sql",
+      "sha256": "0519e5ed9a4e6b7ddaac304ee08f51bdcef959c8ed5b9fb1d417efec3b37db5d"
+    },
+    {
+      "version": "20261106000000",
+      "file": "20261106000000_planning_chauffeurs.sql",
+      "sha256": "d3b60bbfb47ba5c1ae1de108e64c21c239444b9b9ef1a353f7ed9e793033e930"
+    },
+    {
+      "version": "20261107000000",
+      "file": "20261107000000_ex_chauffeurs.sql",
+      "sha256": "935cfba6a85a67cd222bd7d4b20d6499c3b65030c5115b53020225b7d0094071"
+    },
+    {
+      "version": "20261108000000",
+      "file": "20261108000000_planning_pdf.sql",
+      "sha256": "02b3dbfd45c079f4031ad3f58df6a5c19a65d3f00cd746b6e2be98f83a71c017"
+    },
+    {
+      "version": "20261109000000",
+      "file": "20261109000000_contrats_travail.sql",
+      "sha256": "273cc27beb961a62b8f85f30fdf68dc1b5a13db1abe67239f9e768e241aa1be7"
+    },
+    {
+      "version": "20261110000000",
+      "file": "20261110000000_rh.sql",
+      "sha256": "ab321c05c62393e525da43cdec944e8d5c276e55c1f4194e1dcc97898ad6e790"
+    },
+    {
+      "version": "20261111000000",
+      "file": "20261111000000_rh_acces.sql",
+      "sha256": "9ec71b924cec567cfa953641f6a36ef17fd5f26fd4f4d4858411c0b10efde7b4"
+    },
+    {
+      "version": "20261112000000",
+      "file": "20261112000000_pointage_alerte.sql",
+      "sha256": "610f8dcfe4dcbebf327095a5d98d4acb49921c7ef526d4f007a46a0ac53f75d8"
+    },
+    {
+      "version": "20261113000000",
+      "file": "20261113000000_relecture2.sql",
+      "sha256": "3d7a9b63eb48b7e1f5398c890e0b28e98b8f01bc0b2730fb4b6af7a33a639e5c"
+    },
+    {
+      "version": "20261114000000",
+      "file": "20261114000000_rh_drive.sql",
+      "sha256": "4c569f61bbe3e1527950ac973dd5138ebb10a187055923fbf645028b3c9ebec9"
+    },
+    {
+      "version": "20261115000000",
+      "file": "20261115000000_contrat_staff.sql",
+      "sha256": "7dc8140745b26d2120c6151f5f307c7ff09d4ae180d8a95690addc692f7db6b4"
+    },
+    {
+      "version": "20261116000000",
+      "file": "20261116000000_menu.sql",
+      "sha256": "226c1b001cf2d535e2c7a8a6feaef13a8d5f3d339f7c57b2762ac47caabbc3f0"
+    },
+    {
+      "version": "20261117000000",
+      "file": "20261117000000_grilles_villes.sql",
+      "sha256": "ce35cb6619a02528398f76b3a5d3850a55e0e2bbe29d619de129102e3c970b45"
+    },
+    {
+      "version": "20261118000000",
+      "file": "20261118000000_devis_validation.sql",
+      "sha256": "7b8803f33cecf3dd01abf04919dac86db03e016eea37f1fb6c8de570ef8b8cea"
+    },
+    {
+      "version": "20261119000000",
+      "file": "20261119000000_bolt.sql",
+      "sha256": "94f22bf25b549ac5d44435365f4e25dd9838b1d92785fbfb4778e88dc5c1e2ff"
+    }
+  ],
+  "candidates": [
+    {
+      "version": "20261120000000",
+      "file": "20261120000000_fleet_sources.sql",
+      "sha256": "4edf4f5574b470ba4bafb69cf7cf8fecc9fc26cb8d6801dee4e10862f86a495a",
+      "review": "Nouvelles tables fleet, données de configuration des quatre sources, RLS et droits service_role. Vérifier collision avec tout objet déjà déployé.",
+      "stagingGuardLines": [],
+      "alteredRelations": [
+        "public"
+      ],
+      "createdRelations": [
+        "fleet_alerts",
+        "fleet_drivers",
+        "fleet_identities",
+        "fleet_latest",
+        "fleet_observations",
+        "fleet_provider_vehicles",
+        "fleet_rides",
+        "fleet_settings",
+        "fleet_source_events",
+        "fleet_sources"
+      ],
+      "definedFunctions": [
+        "fleet_can_read"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261120010000",
+      "file": "20261120010000_fleet_identity_links.sql",
+      "sha256": "d91004beb3f280ded416f8cede517cf5bb1e2e58c01911a2cdc98db0fde49950",
+      "review": "Fonction de fusion des identités et observations ; écrit plusieurs tables fleet lors des appels et supprime le chauffeur fusionné.",
+      "stagingGuardLines": [],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "fleet_link_driver"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261121000000",
+      "file": "20261121000000_offline_motion.sql",
+      "sha256": "0da95e08658cc45348b8734844b222e99e66552b2c7ecb9751145c2800be4540",
+      "review": "Alertes de déplacement et remplacement de la fonction de fusion des chauffeurs.",
+      "stagingGuardLines": [],
+      "alteredRelations": [
+        "fleet_motion_alerts"
+      ],
+      "createdRelations": [
+        "fleet_motion_alerts"
+      ],
+      "definedFunctions": [
+        "fleet_link_driver"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261122000000",
+      "file": "20261122000000_automatic_links.sql",
+      "sha256": "fc4f0bde4c33d47cbcfdca7e7e454643446aa9521e999de0e990f798b56dda75",
+      "review": "Ajoute les preuves de rapprochement ; transforme les associations déjà présentes en associations manuelles protégées.",
+      "stagingGuardLines": [],
+      "alteredRelations": [
+        "fleet_drivers",
+        "fleet_link_audit"
+      ],
+      "createdRelations": [
+        "fleet_link_audit"
+      ],
+      "definedFunctions": [
+        "fleet_auto_link_driver",
+        "fleet_auto_link_vehicle",
+        "fleet_link_driver"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261123000000",
+      "file": "20261123000000_motion_checkpoints.sql",
+      "sha256": "ed2eb99b127aed07e01d9b801fba930636f4ecdcd300346046e2d47e7b0ba8f7",
+      "review": "État de suivi des mouvements ; la fonction remplace les points de contrôle concernés.",
+      "stagingGuardLines": [],
+      "alteredRelations": [
+        "fleet_motion_checkpoints"
+      ],
+      "createdRelations": [
+        "fleet_motion_checkpoints"
+      ],
+      "definedFunctions": [
+        "fleet_save_motion_checkpoints"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261124000000",
+      "file": "20261124000000_myclicar.sql",
+      "sha256": "bf2f412410d754d232971d1c048d5b958ab56cb6cc016cd7f6fa9256280e3426",
+      "review": "Synchronisation MyClicar ; la fonction écrit aussi public.contracts et recalcule les associations. Coordonner le collecteur existant.",
+      "stagingGuardLines": [
+        31
+      ],
+      "alteredRelations": [
+        "fleet_myclicar_contracts"
+      ],
+      "createdRelations": [
+        "fleet_myclicar_contracts"
+      ],
+      "definedFunctions": [
+        "fleet_auto_link_myclicar_vehicle",
+        "fleet_auto_link_vehicle",
+        "fleet_myclicar_plate",
+        "fleet_sync_myclicar"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261125000000",
+      "file": "20261125000000_name_spacing.sql",
+      "sha256": "7ba6da9c9f99f63cb3fa0493df744ec9f8850bfda51be83425fe79a9116d5b68",
+      "review": "Rapprochement de noms et preuves associées ; valider les ambiguïtés sans forcer les identités.",
+      "stagingGuardLines": [
+        11
+      ],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "fleet_auto_link_driver_spacing",
+        "fleet_spaced_name_key"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261126000000",
+      "file": "20261126000000_platform_vehicle_details.sql",
+      "sha256": "2d9361d8c0deb06580337b5d281f0f2ef7b8604a3802afee5a420fef2537434f",
+      "review": "Contrôle des observations de véhicule ; fonctions pouvant retirer des associations devenues périmées.",
+      "stagingGuardLines": [],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "fleet_auto_link_myclicar_vehicle",
+        "fleet_vehicle_observation_current"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261127000000",
+      "file": "20261127000000_automatic_vehicle_assignments.sql",
+      "sha256": "fbb8568199bea38347b6ddf82a021add78454637fab4b580c5d2878ca1461227",
+      "review": "Fonctions de réconciliation des affectations, retraits de preuves périmées et points de contrôle. Ordre des versions requis.",
+      "stagingGuardLines": [
+        56
+      ],
+      "alteredRelations": [
+        "fleet_contract_assignment_overrides"
+      ],
+      "createdRelations": [
+        "fleet_contract_assignment_overrides"
+      ],
+      "definedFunctions": [
+        "fleet_auto_link_myclicar_vehicle",
+        "fleet_auto_link_vehicle",
+        "fleet_current_vehicle_claims",
+        "fleet_link_driver_automatic",
+        "fleet_reconcile_vehicle_contracts"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261128000000",
+      "file": "20261128000000_disconnection_alerts.sql",
+      "sha256": "b3145d31cce4fc4330a1b9b7a33f32f525a2a5d2ba86e5d8eec1c234862c29fa",
+      "review": "Nouveaux paramètres et alertes ; ajoute un trigger BEFORE DELETE sur fleet_drivers pour préserver les alertes lors des fusions.",
+      "stagingGuardLines": [
+        67
+      ],
+      "alteredRelations": [
+        "fleet_disconnection_alerts",
+        "fleet_disconnection_checkpoints",
+        "fleet_settings"
+      ],
+      "createdRelations": [
+        "fleet_disconnection_alerts",
+        "fleet_disconnection_checkpoints"
+      ],
+      "definedFunctions": [
+        "fleet_commit_disconnections",
+        "fleet_preserve_disconnections_on_merge"
+      ],
+      "triggerNames": [
+        "fleet_preserve_disconnections_before_delete"
+      ],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261129000000",
+      "file": "20261129000000_operations_growth.sql",
+      "sha256": "cd874d843d86e870b980caa279f3b80126475fedf60bab54ed619b07a926f771",
+      "review": "Tables opérations/carburant/demande et configuration de sources événements. Plusieurs RPC et règles RLS ; conserver les collecteurs en pause.",
+      "stagingGuardLines": [
+        86,
+        106,
+        125
+      ],
+      "alteredRelations": [
+        "public"
+      ],
+      "createdRelations": [
+        "ops_demand_imports",
+        "ops_demand_rides",
+        "ops_event_reviews",
+        "ops_event_sources",
+        "ops_events",
+        "ops_fuel_checkpoints",
+        "ops_fuel_settings",
+        "ops_rush_rules"
+      ],
+      "definedFunctions": [
+        "ops_can_read_agency",
+        "ops_import_demand",
+        "ops_ingest_events",
+        "ops_review_event"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261130000000",
+      "file": "20261130000000_driver_portal.sql",
+      "sha256": "e147e4e85027b8e4c5d18f1d3e51769873ed20acdb5f87f2cc37744686173d3b",
+      "review": "Comptes et sessions du portail distincts d’Auth ; garde staging explicite, tables accessibles au service seulement.",
+      "stagingGuardLines": [
+        4
+      ],
+      "alteredRelations": [
+        "public"
+      ],
+      "createdRelations": [
+        "driver_notifications",
+        "driver_portal_accounts",
+        "driver_portal_sessions",
+        "driver_reports"
+      ],
+      "definedFunctions": [],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261201000000",
+      "file": "20261201000000_rotation_history.sql",
+      "sha256": "37bd9351f2c226ef9fc24fd1435be5a47ab56f4f0462a67dba926a666ebe7804",
+      "review": "Historique des contrats/rotations et état de synchronisation ; aucune copie de données de test.",
+      "stagingGuardLines": [
+        38
+      ],
+      "alteredRelations": [
+        "fleet_rotation_contracts",
+        "fleet_rotation_sync"
+      ],
+      "createdRelations": [
+        "fleet_rotation_contracts",
+        "fleet_rotation_sync"
+      ],
+      "definedFunctions": [
+        "fleet_sync_rotation_contracts"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261202000000",
+      "file": "20261202000000_uber_report_sync.sql",
+      "sha256": "43de6ee7016305af2098aa6ddca2cd92963c65c30b80a54e768b41c8965d4314",
+      "review": "Configuration rapports, journal d’import et fonctions de validation. État initial à contrôler avant activation fournisseur.",
+      "stagingGuardLines": [
+        33,
+        52
+      ],
+      "alteredRelations": [
+        "public"
+      ],
+      "createdRelations": [
+        "uber_report_import_log",
+        "uber_report_settings"
+      ],
+      "definedFunctions": [
+        "uber_report_commit",
+        "uber_report_configure"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261203000000",
+      "file": "20261203000000_event_sources.sql",
+      "sha256": "6a3c325af0b73b56ad1836d36541e430f4a386460150c0db7ddda0c28af6b206",
+      "review": "Ajoute des références de sources événements ; elles sont désactivées par manual_events plus loin dans le lot.",
+      "stagingGuardLines": [],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261204000000",
+      "file": "20261204000000_driver_sessions.sql",
+      "sha256": "c90cdb38ad519a867a6b670fbd907e097dddc049f5514e9a36650a830af129a9",
+      "review": "Sessions opaques du portail ; le bloc de révocation parcourt toutes les fonctions public. Revoir aussi les fonctions déjà en production.",
+      "stagingGuardLines": [
+        4,
+        13,
+        28
+      ],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "driver_portal_login",
+        "driver_portal_rotate"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261205000000",
+      "file": "20261205000000_report_date_default.sql",
+      "sha256": "313eda57e12d53ce748c5e19d265fa7bce9305eb45376daa611e1ea9f1fcb85b",
+      "review": "Change la valeur par défaut et certaines configurations existantes de dates de rapports sans import antérieur.",
+      "stagingGuardLines": [],
+      "alteredRelations": [
+        "uber_report_settings"
+      ],
+      "createdRelations": [],
+      "definedFunctions": [],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261206000000",
+      "file": "20261206000000_driver_performance.sql",
+      "sha256": "e8d18617d023e55fbcc89b578408fefb33010612671ccc43386ec1e4b89ff846",
+      "review": "Colonnes courses et fonction d’import des performances ; garde staging. Contrôler déduplication et droits par agence.",
+      "stagingGuardLines": [
+        3,
+        41
+      ],
+      "alteredRelations": [
+        "fleet_driver_performance_sync",
+        "fleet_rides"
+      ],
+      "createdRelations": [
+        "fleet_driver_performance_sync"
+      ],
+      "definedFunctions": [
+        "fleet_import_bolt_performance"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261207000000",
+      "file": "20261207000000_full_inventory.sql",
+      "sha256": "7f1d471ec9e8d7f591f8009ed331b528a5f6e64238cdd11ba7615270a56ff053",
+      "review": "Altère public.vehicles et met geotab_auto_link_disabled=true pour les véhicules sans boîtier. Les RPC écrivent agencies/parc/vehicles/drivers/contracts.",
+      "stagingGuardLines": [
+        43,
+        140
+      ],
+      "alteredRelations": [
+        "fleet_inventory_sync",
+        "fleet_myclicar_agencies",
+        "fleet_myclicar_contracts",
+        "fleet_myclicar_vehicles",
+        "vehicles"
+      ],
+      "createdRelations": [
+        "fleet_inventory_sync",
+        "fleet_myclicar_agencies",
+        "fleet_myclicar_vehicles"
+      ],
+      "definedFunctions": [
+        "fleet_sync_inventory",
+        "fleet_sync_myclicar"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261208000000",
+      "file": "20261208000000_parking.sql",
+      "sha256": "65146a56a6ab10b49919658dcc64f1b5bc0dcc86764bb28dbbc32e4bed72e7e2",
+      "review": "Tables zones et suivi ; ajoute un trigger de réinitialisation sur modification de zone. Garde staging et cohérence des événements.",
+      "stagingGuardLines": [
+        1,
+        34,
+        45
+      ],
+      "alteredRelations": [
+        "public"
+      ],
+      "createdRelations": [
+        "fleet_parking_events",
+        "fleet_parking_state",
+        "fleet_parking_zones"
+      ],
+      "definedFunctions": [
+        "fleet_commit_parking",
+        "fleet_parking_zone_reset"
+      ],
+      "triggerNames": [
+        "fleet_parking_zone_reset"
+      ],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261209000000",
+      "file": "20261209000000_uber_driver_reports.sql",
+      "sha256": "0fe9d05fdfdd077b2ff044f7208b890b17c9ddaaec360cc4fa24ff8986c5a72e",
+      "review": "Colonnes courses, synthèses et imports Uber ; garde staging, rôles, identités et périodes à valider.",
+      "stagingGuardLines": [
+        2,
+        56
+      ],
+      "alteredRelations": [
+        "fleet_driver_report_summaries",
+        "fleet_rides",
+        "uber_driver_report_imports"
+      ],
+      "createdRelations": [
+        "fleet_driver_report_summaries",
+        "uber_driver_report_imports"
+      ],
+      "definedFunctions": [
+        "uber_driver_report_commit",
+        "uber_report_driver"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261210000000",
+      "file": "20261210000000_inventory_current_bindings.sql",
+      "sha256": "5f821a72bebd851f70a06b56f3a4151aa3dd320fca2469d86e40ba3aa74b5d97",
+      "review": "Remplace la synchronisation inventaire ; bloc DO de réparation immédiate des agences vehicles/drivers/fleet_drivers et écriture params. Examiner les lignes affectées sur copie.",
+      "stagingGuardLines": [
+        14,
+        121
+      ],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "fleet_myclicar_agency_label",
+        "fleet_sync_inventory"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261211000000",
+      "file": "20261211000000_authorized_zones.sql",
+      "sha256": "84b7d22424bf05a24fefb9e6c09a690b9c30fae2c7089a77d56d00f55c96a5fa",
+      "review": "Modifie contraintes/type des zones et leur suivi ; une zone operating doit avoir une agence. Garde staging.",
+      "stagingGuardLines": [
+        1,
+        12
+      ],
+      "alteredRelations": [
+        "fleet_parking_zones"
+      ],
+      "createdRelations": [],
+      "definedFunctions": [
+        "fleet_commit_parking"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261212000000",
+      "file": "20261212000000_uber_report_collector.sql",
+      "sha256": "1644395b91c0af3144936011be6080a6753ca7690afae220df221160c781c1ff",
+      "review": "Ajoute le suivi de présence/état du collecteur Uber ; n’active pas à lui seul un navigateur.",
+      "stagingGuardLines": [],
+      "alteredRelations": [
+        "uber_report_settings"
+      ],
+      "createdRelations": [],
+      "definedFunctions": [],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261213000000",
+      "file": "20261213000000_manual_events.sql",
+      "sha256": "847cc84263489185fabe4ddfebbbf33403d2e292e15f82384cec0ba90a23c223",
+      "review": "DESTRUCTIF : supprime les événements non manuels et leurs revues, désactive leurs sources, impose une contrainte manual-only. Gardes staging aussi dans la RPC.",
+      "stagingGuardLines": [
+        3,
+        16
+      ],
+      "alteredRelations": [
+        "ops_events"
+      ],
+      "createdRelations": [],
+      "definedFunctions": [
+        "ops_mutate_manual_event"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261214000000",
+      "file": "20261214000000_historical_driver_references.sql",
+      "sha256": "bf8753b3f8c78d7a57f05ebb31cfc63509ee9580c5f7091d4e95c43149797a40",
+      "review": "Références historiques et réconciliation ; fonctions écrivant public.drivers et fusionnant historiques/performances. Revoir les corrections conservées.",
+      "stagingGuardLines": [
+        66,
+        110,
+        154
+      ],
+      "alteredRelations": [
+        "fleet_rotation_contracts"
+      ],
+      "createdRelations": [],
+      "definedFunctions": [
+        "fleet_auto_link_driver",
+        "fleet_auto_link_driver_spacing",
+        "fleet_link_driver_base",
+        "fleet_normalized_name",
+        "fleet_sync_rotation_contracts",
+        "refresh_drivers"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261215000000",
+      "file": "20261215000000_fuel_reference.sql",
+      "sha256": "6d3e771b421b4793192e786ac78882139ee602b3867c951378e8cdc871488587",
+      "review": "Altère public.vehicles ; fonction modifiant ref_l100 et sa preuve. Garde staging ; préserver les références manuelles.",
+      "stagingGuardLines": [
+        3,
+        20
+      ],
+      "alteredRelations": [
+        "ops_fuel_reference_runs",
+        "vehicles"
+      ],
+      "createdRelations": [
+        "ops_fuel_reference_runs"
+      ],
+      "definedFunctions": [
+        "ops_set_measured_fuel_reference"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261216000000",
+      "file": "20261216000000_confirmed_contract_identity.sql",
+      "sha256": "3a5a4707dd5e85ddd10d4acc29c079a4368585e03c9d348a1d880104626a2e15",
+      "review": "Renomme et remplace la réconciliation d’affectations ; preuve contractuelle requise, compatibilité des appels à vérifier.",
+      "stagingGuardLines": [],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "fleet_reconcile_vehicle_contracts"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261217000000",
+      "file": "20261217000000_uber_report_organization_label.sql",
+      "sha256": "dd356319fcc0213434e62a7a8154e8c0b9a8eb6e02be27c4a6eec1d1aa513774",
+      "review": "Remplace la signature de la RPC de configuration Uber ; déployer backend et schéma compatibles ensemble.",
+      "stagingGuardLines": [
+        13
+      ],
+      "alteredRelations": [
+        "uber_report_settings"
+      ],
+      "createdRelations": [],
+      "definedFunctions": [
+        "uber_report_configure"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261218000000",
+      "file": "20261218000000_parking_archive.sql",
+      "sha256": "bc2234031ecce8e6653d5d783edbf1373c09f34281b8ea5a325699bf402dc668",
+      "review": "Archivage des zones et référence à auth.users ; garde staging. Ne supprime pas les comptes Auth.",
+      "stagingGuardLines": [
+        1,
+        13
+      ],
+      "alteredRelations": [
+        "fleet_parking_zones"
+      ],
+      "createdRelations": [],
+      "definedFunctions": [
+        "fleet_archive_parking_zone"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261219000000",
+      "file": "20261219000000_confirmed_contract_return.sql",
+      "sha256": "80bc27bc4d40b438f7055849025ef932dfcc32d3cf14d2c4854ce548cd92dbfd",
+      "review": "Renomme/remplace la réconciliation, ajoute latest_conflict_at ; garde staging et ordre des wrappers obligatoire.",
+      "stagingGuardLines": [
+        3
+      ],
+      "alteredRelations": [
+        "fleet_contract_assignment_overrides"
+      ],
+      "createdRelations": [],
+      "definedFunctions": [
+        "fleet_reconcile_vehicle_contracts"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": true
+    },
+    {
+      "version": "20261220000000",
+      "file": "20261220000000_uber_csv_timezone.sql",
+      "sha256": "a0f28f157412c5bdf4a4d7da5f49ace8d1cebaa7a9aa03b1e1ab55189bb86494",
+      "review": "Remplace encore la signature de configuration Uber et ajoute le fuseau explicite ; anciennes configurations à valider.",
+      "stagingGuardLines": [
+        9
+      ],
+      "alteredRelations": [
+        "uber_report_settings"
+      ],
+      "createdRelations": [],
+      "definedFunctions": [
+        "uber_report_configure"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": false,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261221000000",
+      "file": "20261221000000_usage_morocco_calendar.sql",
+      "sha256": "5205e6a07ee0b062ca05dff67010a798a211afb8ff88c42993ee682c3046d701",
+      "review": "Remplace public.bump_usage et public.usage_stats déjà dans le socle : effet sur les consommateurs existants. Garde staging, vérifier la TZ PostgreSQL.",
+      "stagingGuardLines": [
+        6
+      ],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "bump_usage",
+        "usage_stats"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261222000000",
+      "file": "20261222000000_uber_report_identity_promotion.sql",
+      "sha256": "5b4ce19d572ceb6d595ae6d2641cf67010f740721f6bfffc43bfaf19736252b7",
+      "review": "Garde staging au déploiement et dans la fonction ; renomme/enveloppe la RPC d’import, promotion des identités provisoires et audit.",
+      "stagingGuardLines": [
+        4,
+        13,
+        70
+      ],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "uber_driver_report_commit",
+        "uber_report_promote_identities"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false
+    },
+    {
+      "version": "20261223000000",
+      "file": "20261223000000_revenue_realtime.sql",
+      "sha256": "8e3d10789fe012777f4dedd08ce8cc4fd317a9bbd6878ab7c86fdb9a6b63320d",
+      "review": "Garde staging. Crée revenue_refresh (agency_id bigint, version, touched_at), RLS admin/manager par agence ; zéro réservé aux écritures sans agence, admin seul. Ne publie que ce marqueur minimal, jamais les tables financières ni leurs clés. Fonction SECURITY DEFINER sans search_path accessible en écriture uniquement par neuf triggers de transition ; une mise à jour par agence et requête, scopes OLD/NEW ordonnés. Aucun DELETE ni FK cascade du marqueur ; aucun droit client en écriture. Contrôler contention par agence et notifications interagences. Retour arrière : désabonner le marqueur puis retirer les triggers avant sa fonction/table ; conserver les données financières.",
+      "stagingGuardLines": [
+        7
+      ],
+      "alteredRelations": [
+        "revenue_refresh"
+      ],
+      "createdRelations": [
+        "revenue_refresh"
+      ],
+      "definedFunctions": [
+        "revenue_refresh_after_statement"
+      ],
+      "triggerNames": [
+        "revenue_refresh_insert",
+        "revenue_refresh_update",
+        "revenue_refresh_delete"
+      ],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false,
+      "alteredPublications": [
+        "supabase_realtime"
+      ],
+      "publishedRelations": [
+        "revenue_refresh"
+      ]
+    },
+    {
+      "version": "20261224000000",
+      "file": "20261224000000_provider_earnings.sql",
+      "sha256": "7cf4635c68fdcd3d84f81065a0e85c6b9f0945bd5735112351651c365e3a03ad",
+      "review": "Garde staging au déploiement et dans RPC service_role seule. Deux tables de snapshots Earnings exacts par organisation/période/devise : flotte admin seulement ; lignes chauffeur manager de l’agence si UUID fournisseur confirmé et association Ludy/agence cohérente. Aucun rapprochement par nom. Rejeu identique dédupliqué ; capture périmée ignorée ; capture partielle ne remplace pas une complète. Remplace atomiquement seulement les lignes de la même fenêtre/version, conserve les autres périodes et les CSV/caisse historiques. Comptes par agence/chauffeur et mapping_complete certifiés transactionnellement. Actualise seulement revenue_refresh sur anciennes/nouvelles agences ; aucune publication des montants. Répéter les permissions, conflits, transferts et restauration de la version précédente si nécessaire.",
+      "stagingGuardLines": [
+        4,
+        95
+      ],
+      "alteredRelations": [],
+      "createdRelations": [
+        "provider_earnings_snapshots",
+        "provider_earnings_rows"
+      ],
+      "definedFunctions": [
+        "provider_earnings_amounts_valid",
+        "provider_earnings_commit"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": true,
+      "publishedRelations": []
+    },
+    {
+      "version": "20261225000000",
+      "file": "20261225000000_telemetry_continuity.sql",
+      "sha256": "29e435b0e72be0e249fe9f691a2a6103d9eb54a007ed6970e1e23de7e7cd9759",
+      "review": "Archive append-only Geotab/Texat : réception serveur séparée de la date de mesure, unités/provenance strictes et liaison actuelle boîtier/véhicule unique. RPC service_role seule ; Texat refusé tant que sa liaison confirmée manque. Versions conflictuelles et arrivées tardives conservées, doublons sémantiques dédupliqués sans réécrire la réception. RLS admin ou manager de l’agence actuelle du véhicule, agence à réception conservée sans prétendre un historique observé. Aucune publication Realtime, aucune écriture directe service/client ; trigger anti-update/delete. Réconciliation calculée ultérieurement depuis références immuables, sans total agrégé inventé.",
+      "stagingGuardLines": [
+        4,
+        52
+      ],
+      "alteredRelations": [],
+      "createdRelations": [
+        "telemetry_observations"
+      ],
+      "definedFunctions": [
+        "telemetry_archive_immutable",
+        "telemetry_archive_ingest"
+      ],
+      "triggerNames": [
+        "telemetry_archive_immutable"
+      ],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false,
+      "publishedRelations": []
+    },
+    {
+      "version": "20261226000000",
+      "file": "20261226000000_provider_earnings_semantics.sql",
+      "sha256": "10bbb7f62f1e44d5c8db51e674d25a3c9612df7cdd527cc946ce28758f6c167b",
+      "review": "Correction de signification du libellé Uber Net earnings : stocker reported_net_earnings_minor séparément de net_minor. Étend le validateur et la RPC atomique ; nouvelles ingestions exigent explicitement le quinzième champ, nullable. Les anciennes lignes à 14 champs restent valides mais toute valeur net historique non auditée bloque cette migration ; aucune réécriture automatique. Revoir les payloads antérieurs et redémarrer le serveur avec le normaliseur corrigé avant collecte.",
+      "stagingGuardLines": [
+        5,
+        46
+      ],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "provider_earnings_amounts_valid",
+        "provider_earnings_commit"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": true,
+      "publishedRelations": []
+    },
+    {
+      "version": "20261227000000",
+      "file": "20261227000000_provider_earnings_selection.sql",
+      "sha256": "5e4e7eada3922df8375deb558eb4cb39e327709f4aace367e23f30b68df9b536",
+      "review": "Lecture financière bornée : RPC STABLE SECURITY INVOKER sous RLS, rôle admin/manager et filtre agence contrôlés. Par organisation/devise, conserver la fenêtre exacte demandée et le dernier chevauchement complet, sinon le dernier partiel. Maximum 100 ids, erreur explicite sans troncature. Admin global lit les métadonnées de flotte ; manager et admin filtré lisent seulement les lignes autorisées. Index de métadonnées sans montants JSON. Aucun historique supprimé ou modifié, aucun nouveau droit de table, aucune publication. Le chargeur valide toujours révision, comptes et signification après sélection. Répétition avec 34 034 lignes fictives puis rollback.",
+      "stagingGuardLines": [
+        4
+      ],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "provider_earnings_select_windows"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false,
+      "publishedRelations": []
+    },
+    {
+      "version": "20261228000000",
+      "file": "20261228000000_provider_earnings_calculations.sql",
+      "sha256": "f1c30628811cf428b0e5519f3934d2fc9f17310dbda46df5589f75a8b8e67b59",
+      "review": "Décomposition financière Uber vérifiée et versionnée : taxes_minor distinct, preuves JSONB séparées sur flotte et chauffeurs. Brut = Fare + Tip + Promotion avant frais/Taxes Uber ; net = brut + Service Fee signée avant Taxes Uber ; revenus déclarés = net + Taxes signées, égalité exacte vérifiée par le normaliseur et la base. Aucun solde, versement ou ajustement inclus. Catégorie inconnue/incomplète interdit le calcul ; captures historiques non réécrites. RPC atomique conserve RLS, rattachements UUID prouvés, anti-écrasement partiel et marqueurs minimaux. Ancien contrat 15 champs accepté pendant mise à jour, aucun nouveau droit ni publication. Tests de falsification et RLS en transaction annulée.",
+      "stagingGuardLines": [
+        5,
+        86
+      ],
+      "alteredRelations": [
+        "provider_earnings_snapshots",
+        "provider_earnings_rows"
+      ],
+      "createdRelations": [],
+      "definedFunctions": [
+        "provider_earnings_amounts_valid",
+        "provider_earnings_provenance_valid",
+        "provider_earnings_commit"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": true,
+      "publishedRelations": []
+    },
+    {
+      "version": "20261229000000",
+      "file": "20261229000000_provider_earnings_proof_validation.sql",
+      "sha256": "13c4864156f1159c52beb0e843b683dd63206e1a6c23bce315e55faf7f85a8d0",
+      "review": "Durcissement du validateur de preuve : version JSON numérique1 et reason obligatoire pour unavailable ; toute preuve malformée rend false, jamais NULL. Aucun montant ni historique modifié ; mêmes droits, RLS et RPC. Deux falsifications supplémentaires vérifiées en rollback.",
+      "stagingGuardLines": [
+        4
+      ],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "provider_earnings_provenance_valid"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false,
+      "publishedRelations": []
+    },
+    {
+      "version": "20261231000000",
+      "file": "20261231000000_provider_earnings_reconciliation.sql",
+      "sha256": "2258810c227889ef3491a04e3fbf7c1186081e833655008bc297e872b3ca8592",
+      "review": "Rapprochement financier manuel administrateur, sur UUID fournisseur déjà prouvé et révision exacte. Choix explicite fiche/agence/preuve, attribution agence vide séparément confirmée ; conflits refusés. Réutilise fusion préservant historiques et audit existant, conserve modes/véhicules, ne réécrit aucun montant ni relevé. Trois identités sans UUID restent non attribuées, sans proposition persistée. Lecture/confirmation SQL revalident auth.uid et rôle ; aucune permission service_role. Tests transactionnels avec rollback avant application locale. Refuse aussi les contradictions UUID/agence sur les deux profils et les modes de véhicule divergents. 31 contrôles SQL rollback ; rôle NULL rejeté. Interface liée à une révision figée et invalidée par actualisation.",
+      "stagingGuardLines": [
+        4,
+        12,
+        46
+      ],
+      "alteredRelations": [],
+      "createdRelations": [],
+      "definedFunctions": [
+        "provider_earnings_reconciliation_queue",
+        "provider_earnings_reconcile"
+      ],
+      "triggerNames": [],
+      "anonymousBlocks": true,
+      "deletesIncludingFunctionBodies": false,
+      "publishedRelations": []
+    }
+  ]
+}

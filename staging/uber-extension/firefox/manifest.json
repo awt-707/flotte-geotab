@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Ludy · Uber Fleet local",
+  "version": "0.6.6",
+  "description": "Lit la Live Map et collecte les rapports d’activité depuis un onglet Uber Rapports séparé vers Ludy local.",
+  "permissions": ["activeTab", "scripting", "storage", "alarms"],
+  "host_permissions": ["http://127.0.0.1:4173/*"],
+  "optional_host_permissions": ["https://fleethub.uber.com/*"],
+  "background": {"scripts": ["protocol.js", "reports-reader.js", "reports-background.js", "background.js"]},
+  "action": {"default_title": "Ludy · Uber Fleet", "default_popup": "popup.html"},
+  "browser_specific_settings": {"gecko": {"id": "ludy-uber-local@ludy", "strict_min_version": "128.0", "data_collection_permissions": {"required": ["none"]}}},
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:4173"}
+}

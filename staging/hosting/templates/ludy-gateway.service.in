@@ -1,0 +1,25 @@
+[Unit]
+Description=Ludy staging - authenticated local HTTPS upstream
+Requires=ludy-app.service
+After=ludy-app.service
+PartOf=ludy-app.service
+
+[Service]
+Type=simple
+User={{USER}}
+Group={{USER}}
+WorkingDirectory={{STAGING}}
+UMask=0077
+Environment=NODE_ENV=production
+ExecStart={{NODE}} {{STAGING}}/scripts/host.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{STAGING}}/.local
+
+[Install]
+WantedBy=multi-user.target

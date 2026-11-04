@@ -1,0 +1,19 @@
+[Unit]
+Description=Ludy staging - window manager for operator login
+Requires=ludy-display.service
+After=ludy-display.service
+PartOf=ludy-display.service
+
+[Service]
+Type=simple
+User={{USER}}
+Group={{USER}}
+UMask=0077
+Environment=DISPLAY=:99
+Environment=XAUTHORITY={{STAGING}}/.local/hosting/Xauthority
+ExecStart=/usr/bin/openbox
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ludy · Uber</title><link rel="stylesheet" href="popup.css"></head>
+<body><header><span class="mark">L</span><div><h1>Ludy · Uber Fleet</h1><p>Staging local · v0.6.6</p></div></header>
+<div id="status" role="status" aria-live="polite">Chargement…</div><p id="last-read" class="muted"></p><p id="map-refresh" class="muted"></p><p id="coverage" class="muted" hidden></p>
+<form id="pair-form"><label for="token">Code d’association Ludy</label><input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="À copier depuis Connecteurs" required><button type="submit" class="secondary">Associer ce navigateur</button></form>
+<div class="actions"><button id="start">Démarrer la lecture</button><button id="stop" class="secondary">Arrêter</button></div>
+<label class="auto-resume"><input id="auto-resume" type="checkbox"> Reprendre automatiquement après fermeture de l’onglet ou du navigateur</label>
+<p class="hint">La liste des chauffeurs défile automatiquement pour lire les lignes suivantes, puis retrouve sa position initiale. Gardez la Live Map visible sur le second écran et retirez les filtres inutiles. Votre défilement ou un clic interrompt le parcours en cours.</p>
+<p class="hint">La reprise automatique demande l’autorisation du navigateur pour retrouver la flotte choisie. Cliquez une première fois sur Démarrer. Arrêter suspend toute reprise jusqu’au prochain démarrage.</p>
+<div class="legend"><span><i class="grey"></i>Disponible</span><span><i class="blue"></i>En course</span><span><i class="green"></i>En approche</span></div>
+<p class="muted">La date de lecture ne garantit pas la fraîcheur des données Uber. Destination : Ludy sur cet ordinateur.</p>
+<section class="reports-section"><h2>Rapports d’activité</h2><p id="reports-status" role="status">Configurez la flotte et les villes dans l’analyse Uber de Ludy.</p><ul id="reports-jobs" class="muted"></ul><div class="actions"><button id="reports-start" class="secondary">Activer les rapports</button><button id="reports-stop" class="secondary" disabled>Arrêter les rapports</button></div><p class="muted">Un onglet Rapports séparé sert aux courses, à l’activité et à la qualité des chauffeurs. Les lectures sont séquentielles ; un type indisponible ne bloque pas les autres. La Live Map est conservée. Une interface non reconnue reste à configurer.</p></section>
+<button id="forget" class="text-button">Effacer l’association</button><script src="popup.js"></script></body></html>

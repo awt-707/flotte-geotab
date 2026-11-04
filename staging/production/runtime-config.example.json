@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "environment": "production",
+  "projectRef": "REPLACE_WITH_PROJECT_REFERENCE",
+  "supabaseUrl": "https://REPLACE_WITH_PROJECT_REFERENCE.supabase.co",
+  "publicOrigin": "https://ludy.example.com",
+  "privateStateDir": "/var/lib/ludy-production",
+  "secrets": {
+    "publishableKeyEnv": "LUDY_PRODUCTION_SUPABASE_PUBLIC_KEY",
+    "serverKeyEnv": "LUDY_PRODUCTION_SUPABASE_SERVER_KEY"
+  },
+  "collectors": {
+    "bolt": false,
+    "geotab": false,
+    "myclicar": false,
+    "uberLive": false,
+    "uberReports": false
+  }
+}

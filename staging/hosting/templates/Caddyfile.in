@@ -1,0 +1,13 @@
+{
+	admin 127.0.0.1:2019
+}
+
+{{HOST}} {
+	encode zstd gzip
+	# HTTPS terminates here. Authentication and agency permissions stay in Ludy.
+	# Never proxy directly to 4173, Studio, PostgreSQL or the Supabase API.
+	reverse_proxy 127.0.0.1:4174 {
+		# Replace the client-supplied value. Only Caddy reaches the loopback gateway.
+		header_up X-Real-IP {remote_host}
+	}
+}

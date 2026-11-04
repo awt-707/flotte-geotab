@@ -1,0 +1,27 @@
+[Unit]
+Description=Ludy staging - visible Uber Live Map browser
+Requires=ludy-display.service ludy-app.service
+After=ludy-display.service ludy-app.service
+PartOf=ludy-display.service
+
+[Service]
+Type=simple
+User={{USER}}
+Group={{USER}}
+WorkingDirectory={{STAGING}}
+UMask=0077
+Environment=DISPLAY=:99
+Environment=XAUTHORITY={{STAGING}}/.local/hosting/Xauthority
+Environment=LUDY_LIVE_CHROMIUM={{CHROMIUM}}
+ExecStart={{NODE}} {{STAGING}}/hosting/uber-live.mjs
+Restart=on-failure
+RestartPreventExitStatus=78
+RestartSec=10
+TimeoutStopSec=30
+KillMode=control-group
+
+# Intentionally not enabled by the base installation. Log in manually, load
+# uber-extension/chromium via chrome://extensions, pair with local Ludy and start.
+# Requires private hosting/uber-live.json; never falls back to the Uber homepage.
+[Install]
+WantedBy=multi-user.target

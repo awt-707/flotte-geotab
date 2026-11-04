@@ -1,0 +1,25 @@
+[Unit]
+Description=Ludy staging - visible Uber report collector
+Requires=ludy-display.service ludy-app.service
+After=ludy-display.service ludy-app.service
+PartOf=ludy-display.service
+
+[Service]
+Type=simple
+User={{USER}}
+Group={{USER}}
+WorkingDirectory={{STAGING}}
+UMask=0077
+Environment=DISPLAY=:99
+Environment=XAUTHORITY={{STAGING}}/.local/hosting/Xauthority
+# Use the Chromium revision supplied by the pinned Playwright package.
+# A system Chromium override caused report-download crashes during staging tests.
+UnsetEnvironment=LUDY_REPORTS_CHROMIUM
+ExecStart={{NODE}} {{STAGING}}/scripts/uber-reports-browser.mjs
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=30
+
+# Separate browser profile; initial login/2FA is performed by an operator over SSH.
+[Install]
+WantedBy=multi-user.target

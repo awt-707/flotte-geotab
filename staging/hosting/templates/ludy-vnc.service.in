@@ -1,0 +1,19 @@
+[Unit]
+Description=Ludy staging - VNC over SSH only
+Requires=ludy-display.service
+After=ludy-display.service
+PartOf=ludy-display.service
+
+[Service]
+Type=simple
+User={{USER}}
+Group={{USER}}
+WorkingDirectory={{STAGING}}
+UMask=0077
+ExecStartPre={{NODE}} {{STAGING}}/hosting/desktop-auth.mjs --check-vnc
+ExecStart=/usr/bin/x11vnc -display :99 -auth {{STAGING}}/.local/hosting/Xauthority -rfbauth {{STAGING}}/.local/hosting/vnc.pass -listen 127.0.0.1 -localhost -rfbport 5999 -forever -shared -noxdamage
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

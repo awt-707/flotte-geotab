@@ -1,0 +1,242 @@
+// Outils communs : dates au fuseau du Maroc, plaques, nombres (mêmes règles que le moteur v6 du collecteur)
+const TZ = 'Africa/Casablanca', MIN = 60000, HOUR = 3600000, DAY = 86400000, HORS = 'HORS_CONTRAT';
+
+const fmtParts = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+/** Règles horaires publiées par le collecteur ([[instant ms, décalage min], ...]) : prioritaires sur la table du navigateur */
+let TZ_RULES = null;
+function setTzRules(v) { try { const r = typeof v === 'string' ? JSON.parse(v) : v; TZ_RULES = Array.isArray(r) && r.length ? r : null; } catch (e) { TZ_RULES = null; } }
+function ruleOff(ms) {
+  if (!TZ_RULES || ms < TZ_RULES[0][0]) return null;
+  let lo = 0, hi = TZ_RULES.length - 1; while (lo < hi) { const k = (lo + hi + 1) >> 1; if (TZ_RULES[k][0] <= ms) lo = k; else hi = k - 1; }
+  return TZ_RULES[lo][1];
+}
+function parts(d) {
+  if(typeof stagingLocalDateParts==='function')return stagingLocalDateParts(d);
+  const ms = new Date(d).getTime(), off = ruleOff(ms);
+  if (off !== null) { const x = new Date(ms + off * MIN), z = n => String(n).padStart(2, '0');
+    return { year: String(x.getUTCFullYear()), month: z(x.getUTCMonth() + 1), day: z(x.getUTCDate()), hour: z(x.getUTCHours()), minute: z(x.getUTCMinutes()), second: z(x.getUTCSeconds()) }; }
+  return partsIntl(d);
+}
+function partsIntl(d) { const o = {}; fmtParts.formatToParts(new Date(d)).forEach(p => { o[p.type] = p.value; }); return o; }
+function tzOffsetMin(d) { const p = parts(d); const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second); return Math.round((asUtc - Math.floor(new Date(d).getTime() / 1000) * 1000) / MIN); }
+function localToDate(y, mo, d, h, mi) {
+  if(globalThis.LudyMoroccoTime){const at=globalThis.LudyMoroccoTime.moroccoWallTime({year:y,month:mo,day:d,hour:h||0,minute:mi||0});return new Date(at===null?NaN:at);}
+  const g = new Date(Date.UTC(y, mo - 1, d, h || 0, mi || 0)); return new Date(g.getTime() - tzOffsetMin(g) * MIN);
+}
+function localDay(d) { const p = parts(d); return p.year + '-' + p.month + '-' + p.day; }
+function localHM(d) { const p = parts(d); return p.hour + ':' + p.minute; }
+function dayBounds(day) { const p = day.split('-').map(Number), n = new Date(Date.UTC(p[0], p[1] - 1, p[2] + 1));
+  return { start: localToDate(p[0], p[1], p[2], 0, 0), end: localToDate(n.getUTCFullYear(), n.getUTCMonth() + 1, n.getUTCDate(), 0, 0) }; }
+function addDays(day, n) { const p = day.split('-').map(Number); return new Date(Date.UTC(p[0], p[1] - 1, p[2] + n)).toISOString().slice(0, 10); }
+function mondayOf(day) { const p = day.split('-').map(Number), wd = new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay(); return addDays(day, -((wd + 6) % 7)); }
+function today() { return localDay(Date.now()); }
+function fmtDay(day) { if (!day) return ''; const p = String(day).slice(0, 10).split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
+function fmtDT(d) { if (!d) return ''; const p = parts(d); return p.day + '/' + p.month + ' ' + p.hour + ':' + p.minute; }
+function fmtDTY(d) { if (!d) return ''; const p = parts(d); return p.day + '/' + p.month + '/' + p.year + ' ' + p.hour + ':' + p.minute; }
+/** "05/10/2026 à 13h30", "05/10/2026 13:30", "2026-10-05 13:30", "05/10/2026" (heure du Maroc) */
+function parseLocalDT(v) {
+  if (v instanceof Date) return v;
+  const s = String(v == null ? '' : v).trim(); if (!s) return null;
+  // An explicit ISO offset already identifies an instant, including a repeated
+  // local hour. Do not reinterpret it as a wall clock in Morocco.
+  if(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})$/i.test(s)){
+    const [year,month,day]=s.slice(0,10).split('-').map(Number),calendar=new Date(Date.UTC(year,month-1,day));
+    if(calendar.getUTCFullYear()!==year||calendar.getUTCMonth()+1!==month||calendar.getUTCDate()!==day||Number(s.slice(11,13))>23)return null;
+    const date=new Date(s.replace(' ','T'));return Number.isFinite(date.getTime())?date:null;
+  }
+  const local=(...values)=>{const date=localToDate(...values);return Number.isFinite(date.getTime())?date:null;};
+  // ISO d'abord (« 2026-10-05 » contient « 26-10-05 », lu sinon comme le 26/10/2005)
+  let m = s.match(/(?<!\d)(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (m) return +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31 ? local(+m[1], +m[2], +m[3], +(m[4] || 0), +(m[5] || 0)) : null;
+  m = s.match(/(?<!\d)(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})(?!\d)(?:\D+?(\d{1,2})\s*[hH:]\s*(\d{2})?)?/);
+  if (m) { let y = +m[3]; if (y < 100) y += 2000; return +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31 ? local(y, +m[2], +m[1], +(m[4] || 0), +(m[5] || 0)) : null; }   // jour / mois (jamais mois / jour)
+  const d = new Date(s); return isNaN(d) ? null : d;
+}
+function deacc(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+function normTxt(s) { return deacc(s).toLowerCase().replace(/\s+/g, ' ').trim(); }
+/** Plaque normalisée : chiffres puis lettres. WW968193 et 968193WW donnent 968193WW. */
+function normPlate(s) { const t = String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, ''); return t.replace(/[^0-9]/g, '') + t.replace(/[^A-Z]/g, ''); }
+function isTempPlate(p) { const n = normPlate(p); return /WW$/.test(n) || /W18/.test(String(p).toUpperCase()) || /^W\d/.test(String(p).toUpperCase()); }
+function num(v, d) { const n = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.')); return isNaN(n) ? (d === undefined ? 0 : d) : n; }
+const nf0 = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }), nf1 = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+function f0(v) { return v === null || v === undefined || v === '' ? '' : nf0.format(v); }
+function f1(v) { return v === null || v === undefined || v === '' ? '' : nf1.format(v); }
+/** heures décimales -> "2h05" */
+function fH(h) { if (h === null || h === undefined || h === '') return ''; const m = Math.round(num(h) * 60); return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0'); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+/** Lien vers la carte OpenStreetMap (point marqué) */
+function mapLink(la, lo) { return la != null && lo != null && la !== '' && lo !== '' && isFinite(+la) && isFinite(+lo) ? osmUrl(+la, +lo) : ''; }
+function osmUrl(la, lo) { const a = (+la).toFixed(5), o = (+lo).toFixed(5); return 'https://www.openstreetmap.org/?mlat=' + a + '&mlon=' + o + '#map=17/' + a + '/' + o; }
+
+/** Plaque -> clé du véhicule (toutes les plaques d'un véhicule, y compris les changements saisis, renvoient à sa clé historique) */
+function buildCanonMap(vehicles, plateChanges) {
+  const m = {};
+  vehicles.forEach(v => {
+    if (!v.key) return; m[v.key] = v.key;
+    [v.plate].concat(String(v.other_plates || '').split(/[,;]\s*/)).map(x => String(x || '').trim()).filter(Boolean).forEach(p => { m[normPlate(p)] = v.key; });
+  });
+  plateChanges.forEach(r => {
+    const o = normPlate(r.old_plate), n = normPlate(r.new_plate); if (o.length < 4 || n.length < 4) return;
+    if (m[o] && !m[n]) m[n] = m[o]; else if (m[n] && !m[o]) m[o] = m[n];
+  });
+  return m;
+}
+const canonKey = (key, cm) => { key = String(key || ''); return cm[key] || key; };
+
+/** Lecture d'un extract de contrats (2D, en-têtes) : même logique que l'injection du Google Sheet */
+function parseContracts(rows, cm) {
+  if (!rows || rows.length < 2) throw new Error('Fichier vide.');
+  let hr = rows.findIndex(r => r.some(c => /num.*contrat/.test(normTxt(c)))); if (hr < 0) hr = 0;
+  const head = rows[hr].map(normTxt), col = re => head.findIndex(h => re.test(h));
+  const c = { num: col(/num.*contrat/), code: col(/code client/), nom: col(/nom du client|^client|chauffeur/), plate: col(/^immatriculation$/),
+    plateTmp: col(/immatriculation temp/), depEff: col(/depart effectif/), retEff: col(/retour effectif/), dep: col(/date de depart/),
+    ret: col(/date de retour/), statut: col(/statut/), origine: col(/origine/), tel: col(/telephone/), mail: col(/e-?mail/), comment: col(/commentaire/), model: col(/modele/) };
+  if (c.num < 0 || c.plate < 0) throw new Error('Colonnes « Numéro de contrat » ou « Immatriculation » introuvables.');
+  const g = (r, k) => c[k] >= 0 ? String(r[c[k]] == null ? '' : r[c[k]]).trim() : '';
+  const out = [], seen = {}; let read = 0, dup = 0, invalid = 0;
+  rows.slice(hr + 1).forEach(r => {
+    const numc = g(r, 'num'); if (!numc) return; read++;
+    if (seen[numc]) { dup++; return; } seen[numc] = 1;
+    const plate = (g(r, 'plate') || g(r, 'plateTmp')).toUpperCase().replace(/\s+/g, '');
+    const start = parseLocalDT(g(r, 'depEff')) || parseLocalDT(g(r, 'dep'));
+    if (!plate || !start) { invalid++; return; }
+    const statut = g(r, 'statut');
+    let end = parseLocalDT(g(r, 'retEff'));
+    if (!end && !/cours/i.test(statut)) { const d = parseLocalDT(g(r, 'ret')); if (d) end = new Date(dayBounds(localDay(d)).end.getTime() - 1); }
+    out.push({ num: numc, client_code: g(r, 'code') || ('N-' + normTxt(g(r, 'nom')).replace(/[^a-z]/g, '').slice(0, 12)), name: g(r, 'nom'), plate,
+      vehicle_key: canonKey(normPlate(plate), cm), model: g(r, 'model'), start_at: start.toISOString(), end_at: end ? end.toISOString() : null, status: statut,
+      origin: g(r, 'origine'), phone: g(r, 'tel').replace(/^'/, ''), email: g(r, 'mail'), comment: g(r, 'comment') });
+  });
+  return { rows: out, read, dup, invalid };
+}
+/** Nombre écrit à la française ou à l'anglaise : « 1 077,27 », « 1,077.27 », « 49.47 » */
+function numAny(v) {
+  if (typeof v === 'number') return v;
+  let t = String(v == null ? '' : v).replace(/[\s ]/g, ''); if (!t) return null;
+  const c = t.lastIndexOf(','), d = t.lastIndexOf('.');
+  t = c > d ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  const n = parseFloat(t); return isNaN(n) ? null : n;
+}
+/**
+ * Lecture de l'extract de la carte carburant (Afriquia : « Transaction_afripay… .xlsx ») : une ligne par ticket.
+ * Plaque = « Libellé 2 » (WW968194), sinon « Matricule » / « Libellé 1 » si c'est une plaque. Date de transaction = heure du Maroc.
+ */
+function parseFuelCard(rows, cm) {
+  if (!rows || rows.length < 2) throw new Error('Fichier vide.');
+  let hr = rows.findIndex(r => r.some(c => /^quantite/.test(normTxt(c)))); if (hr < 0) throw new Error('Colonne « Quantité » introuvable : est-ce bien l\'extract des transactions Afriquia ?');
+  const head = rows[hr].map(normTxt), col = (...res) => { for (const re of res) { const j = head.findIndex(h => re.test(h)); if (j >= 0) return j; } return -1; };
+  const c = { card: col(/^carte$/, /^n.*carte/), date: col(/date transaction/, /^date$/), p2: col(/libelle 2/), p1: col(/libelle 1/), mat: col(/^matricule/, /immatriculation/),
+    product: col(/^produit/), qty: col(/^quantite/), price: col(/prix/), ttc: col(/montant.*ttc/, /^montant/), station: col(/station/), ticket: col(/ticket/), mode: col(/mode/), invoice: col(/num.*facture/) };
+  if (c.date < 0) throw new Error('Colonne « Date Transaction » introuvable.');
+  const g = (r, k) => c[k] >= 0 ? String(r[c[k]] == null ? '' : r[c[k]]).replace(/\s+/g, ' ').trim() : '';
+  const isPlate = x => /\d{4,}/.test(x) && normPlate(x).length >= 6;
+  const out = [], seen = {}; let read = 0, dup = 0, invalid = 0;
+  rows.slice(hr + 1).forEach(r => {
+    if (!r.some(v => String(v).trim() !== '')) return; read++;
+    const at = parseLocalDT(g(r, 'date')), q = numAny(g(r, 'qty')), plate = [g(r, 'p2'), g(r, 'mat'), g(r, 'p1')].find(isPlate) || '';
+    if (!at || !(q > 0) || !plate) { invalid++; return; }
+    const id = [g(r, 'card') || plate, g(r, 'ticket'), localDay(at) + ' ' + localHM(at)].join('|');
+    if (seen[id]) { dup++; return; } seen[id] = 1;
+    out.push({ id, card: g(r, 'card'), vehicle_key: canonKey(normPlate(plate), cm), plate: plate.toUpperCase().replace(/\s+/g, ''), at: at.toISOString(), day: localDay(at),
+      product: g(r, 'product'), liters: q, unit_price: numAny(g(r, 'price')), amount_ttc: numAny(g(r, 'ttc')), station: g(r, 'station'), ticket: g(r, 'ticket'),
+      mode: g(r, 'mode'), invoice: g(r, 'invoice') });
+  });
+  return { rows: out, read, dup, invalid };
+}
+/** Signature d'un contrat : un contrat déjà importé identique est ignoré */
+function ctrSig(x) { return [x.client_code, x.name, x.vehicle_key, x.start_at ? new Date(x.start_at).getTime() : '', x.end_at ? new Date(x.end_at).getTime() : '', x.status || ''].join('|'); }
+
+// ---------- Agrégation des journées de travail (comme le tableau de bord du Google Sheet) ----------
+function emptyAgg() { return { km: 0, drive: 0, idle: 0, idleLong: 0, nLong: 0, fuel: 0, fuelKm: 0, fuelN: 0, idleFuel: 0, idleFuelN: 0, cost: 0, costN: 0,
+  idleCost: 0, idleCostN: 0, ctrH: 0, vmax: 0, limVmax: null, worst: null, evts: 0, pts: 0, fills: 0, fillL: 0, siph: 0, siphL: 0, kmHors: 0, trips: 0,
+  days: {}, ctr: {}, names: {}, plates: {}, srcs: {}, l100: null }; }
+function aggJournal(rows, keyFn, P) {
+  const o = {}, minKm = P.minFuelKm || 30;
+  rows.forEach(r => {
+    const k = keyFn(r), a = o[k] || (o[k] = Object.assign(emptyAgg(), { k }));
+    a.km += num(r.km); a.drive += num(r.drive_h); a.idle += num(r.idle_h); a.idleLong += num(r.long_idle_h); a.nLong += num(r.n_long_idle); a.ctrH += num(r.contract_h);
+    if (r.fuel_l !== null) { a.fuel += num(r.fuel_l); a.fuelKm += num(r.fuel_km); a.fuelN++; a.srcs[r.fuel_source] = 1; }
+    if (r.idle_fuel_l !== null) { a.idleFuel += num(r.idle_fuel_l); a.idleFuelN++; }
+    if (r.fuel_cost !== null) { a.cost += num(r.fuel_cost); a.costN++; }
+    if (r.idle_cost !== null) { a.idleCost += num(r.idle_cost); a.idleCostN++; }
+    if (num(r.vmax) > a.vmax) { a.vmax = num(r.vmax); a.limVmax = r.lim_at_vmax; }
+    if (r.worst_over !== null && (a.worst === null || num(r.worst_over) > a.worst)) a.worst = num(r.worst_over);
+    a.evts += num(r.n_events); a.pts += num(r.danger_pts); a.fills += num(r.n_fills); a.fillL += num(r.fill_l); a.siph += num(r.n_siphon); a.siphL += num(r.siphon_l);
+    a.kmHors += num(r.km_off_contract); a.trips += num(r.n_trips);
+    a.days[r.day] = 1; a.names[r.driver_name] = 1; a.plates[r.plate] = 1; if (r.contract_num) a.ctr[r.contract_num] = 1;
+  });
+  Object.values(o).forEach(a => { a.l100 = a.fuelKm >= minKm ? a.fuel / a.fuelKm * 100 : null; });
+  return o;
+}
+const NM = 'non mesuré';
+/**
+ * Shift d'une journée de travail : heure de début du contrat (Réglages : shiftDay, shiftNight, shiftAdvance). Un contrat pris
+ * jusqu'à shiftAdvance h avant le début d'un shift compte dans ce shift (demande d'Ahmed, 17/10) : avance 2 h = pris de 05:00 à
+ * 16:59 → jour, de 17:00 à 04:59 → nuit ; avance 0 = 07:00 → 18:59 jour. Sans contrat : '' (hors contrat).
+ */
+function shiftAdv(P) { return num((P || {}).shiftAdvance, 2); }
+function shiftOf(t, P) {
+  if (!t) return '';
+  const hm = localHM(t), d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19);
+  const h = ((+hm.slice(0, 2) + +hm.slice(3, 5) / 60 + shiftAdv(P)) % 24 + 24) % 24;
+  return (d < n ? h >= d && h < n : h >= d || h < n) ? 'Jour' : 'Nuit';
+}
+/**
+ * Shift auquel appartient un instant (alerte, événement) : jour de shiftDay h à shiftNight h, sinon nuit.
+ * Une nuit appartient au jour où elle commence : 02:00 le 17/10 = nuit du 16/10 → 17/10. { s: 'Jour' | 'Nuit', day: jour de début du shift }
+ */
+function shiftAt(t, P) {
+  if (!t) return null;
+  const hm = localHM(t), h = +hm.slice(0, 2) + +hm.slice(3, 5) / 60, d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19), day = localDay(t);
+  if (d < n ? h >= d && h < n : h >= d || h < n) return { s: 'Jour', day };
+  return { s: 'Nuit', day: h < d ? addDays(day, -1) : day };
+}
+/** Shift d'un contrat avec son jour : règle de shiftOf (heure de début du contrat) ; une nuit prise après minuit appartient à la veille */
+function shiftOfCtr(start, P) {
+  if (!start) return null;
+  // jour du shift : celui de l'heure de début avancée (pris à 23:30 avec 2 h d'avance = nuit du jour même ; à 04:00 = nuit de la veille)
+  const s = shiftOf(start, P), t = new Date(new Date(start).getTime() + shiftAdv(P) * HOUR), day = localDay(t), h = +localHM(t).slice(0, 2);
+  return { s, day: s === 'Nuit' && h < num((P || {}).shiftDay, 7) ? addDays(day, -1) : day };
+}
+/** Début (Date) du shift { s, day } : day à shiftDay h (jour) ou shiftNight h (nuit), heure du Maroc */
+function shiftStart(x, P) {
+  const p = x.day.split('-').map(Number);
+  return localToDate(p[0], p[1], p[2], x.s === 'Jour' ? num((P || {}).shiftDay, 7) : num((P || {}).shiftNight, 19), 0);
+}
+/** « Jour du 16/10 » / « Nuit du 16/10 → 17/10 » */
+function shiftDayName(x) {
+  if (!x) return '';
+  const f = d => d.slice(8, 10) + '/' + d.slice(5, 7);
+  return x.s === 'Jour' ? 'Jour du ' + f(x.day) : 'Nuit du ' + f(x.day) + ' → ' + f(addDays(x.day, 1));
+}
+/**
+ * Fin effective des contrats d'un même véhicule (même règle que le collecteur, contractIndex_) : un contrat sans date de fin
+ * (jamais clôturé dans l'extract) s'arrête au début du contrat suivant du véhicule s'il a déjà commencé ; sinon il reste ouvert.
+ * Ajoute à chaque contrat _end (ms, null = ouvert) et _next (n° du contrat qui l'a remplacé). Retourne la liste triée par début.
+ */
+function ctrEffEnds(list, now) {
+  const l = list.slice().sort((a, b) => new Date(a.start_at) - new Date(b.start_at)), lim = (now || Date.now()) + HOUR;
+  l.forEach((c, i) => { const nx = l[i + 1], ns = nx ? new Date(nx.start_at).getTime() : Infinity;
+    c._next = !c.end_at && ns < lim ? nx.num : ''; c._end = c.end_at ? new Date(c.end_at).getTime() : c._next ? ns : null; });
+  return l;
+}
+const SHIFTS = ['Jour', 'Nuit', ''];
+function shiftName(s, P) {
+  const z = h => String(num(h)).padStart(2, '0') + ':00', d = num((P || {}).shiftDay, 7), n = num((P || {}).shiftNight, 19);
+  return s === 'Jour' ? 'Shift jour (' + z(d) + ' → ' + z(n) + ')' : s === 'Nuit' ? 'Shift nuit (' + z(n) + ' → ' + z(d) + ')' : 'Hors contrat';
+}
+function scoreOf(a, P) { return a.pts / Math.max(a.km, P.kmMin || 20) * 100; }
+function levelOf(score, P) { return score >= P.scoreR ? 'Dangereux' : score >= P.scoreO ? 'Élevé' : score >= P.scoreY ? 'Modéré' : 'Faible'; }
+function fuelVal(a) { return a.fuelN ? f1(a.fuel) : NM; }
+function l100Val(a) { return a.l100 !== null ? f1(a.l100) : (a.fuelN ? 'km insuffisants' : NM); }
+function srcTxt(a) { const s = Object.keys(a.srcs); return s.length ? (s.length > 1 ? 'Mixte' : s[0]) : 'Non mesuré'; }
+
+/** Dernière limite de la route connue à l'instant t ([[ms, km/h]] triés ; Geotab : -1 ou 0 = limite inconnue) */
+function limitAt(road, t) { let v = null; for (const p of road || []) { if (p[0] > t) break; v = p[1] > 0 ? p[1] : null; } return v; }
+/** Pire dépassement de relevés de vitesse [[ms, km/h]] : vitesse moins limite de la route à l'instant du relevé (null sans limite connue) */
+function worstOver(spd, road) {
+  let w = null;
+  (spd || []).forEach(p => { const l = limitAt(road, p[0]); if (l && (!w || p[1] - l > w.over)) w = { t: p[0], v: p[1], lim: l, over: p[1] - l }; });
+  return w;
+}
+if (typeof module !== 'undefined') module.exports = { limitAt, worstOver, shiftStart, ctrEffEnds, shiftOf, shiftAt, shiftOfCtr, shiftDayName, shiftName, setTzRules, localDay, localHM, dayBounds, addDays, parseLocalDT, normPlate, buildCanonMap, canonKey, parseContracts, parseFuelCard, numAny, ctrSig, aggJournal, scoreOf, levelOf, tzOffsetMin, localToDate };
