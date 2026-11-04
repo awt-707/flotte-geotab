@@ -39,7 +39,8 @@ test('Android : Ludy.apk et android.json (version, empreinte du certificat) envo
     assert.deepStrictEqual(seen.map(s => s.m + ' ' + s.u + ' ' + s.type), ['POST /storage/v1/object/app/Ludy.apk application/vnd.android.package-archive', 'POST /storage/v1/object/app/android.json application/json']);
     assert.ok(seen.every(s => s.key === 'sb_secret_-faux' && s.upsert === 'true'));
     const j = JSON.parse(seen[1].body.toString());
-    assert.deepStrictEqual([j.version, j.versionCode, j.sha256], ['1.0', 1, sha]);
+    const gv = fs.readFileSync(path.join(__dirname, '..', 'android', 'app', 'build.gradle'), 'utf8');
+    assert.deepStrictEqual([j.version, j.versionCode, j.sha256], [gv.match(/versionName '([^']+)'/)[1], +gv.match(/versionCode (\d+)/)[1], sha]);
   } finally { srv.close(); }
 });
 
@@ -77,4 +78,16 @@ test('Android : lien site ↔ application (assetlinks.json) pour le paquet et un
   assert.strictEqual(a[0].target.package_name, g.match(/applicationId '([^']+)'/)[1]);
   assert.ok(a[0].target.sha256_cert_fingerprints.every(f => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f)));
   assert.deepStrictEqual(a[0].relation, ['delegate_permission/common.handle_all_urls']);
+});
+
+test('Android 1.1 : vue web de l\'application (sans Chrome), liens externes, fichiers à joindre, PDF enregistrés', () => {
+  const a = p => fs.readFileSync(path.join(__dirname, '..', 'android', p), 'utf8');
+  const java = a('app/src/main/java/com/ludy/flotte/MainActivity.java'), man = a('app/src/main/AndroidManifest.xml'), g = a('app/build.gradle');
+  assert.match(java, /HOME = "https:\/\/ludy-flotte\.pages\.dev\/"/);
+  assert.match(java, /onShowFileChooser/, 'justificatifs, reçus, fiches : choix d\'un fichier');
+  assert.match(java, /url\.startsWith\("blob:"\)/, 'PDF créés par le site enregistrés');
+  assert.match(java, /HOST\.equals\(u\.getHost\(\)\)/, 'liens hors du site ouverts par le téléphone');
+  assert.match(man, /android:name="\.MainActivity" android:exported="true"/);
+  assert.doesNotMatch(g, /androidbrowserhelper/, 'plus de dépendance à Chrome');
+  assert.ok(+g.match(/versionCode (\d+)/)[1] >= 2);
 });
