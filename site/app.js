@@ -1398,6 +1398,51 @@ function reportPdf(rep) {
 // ---------- Réglages : alerte de dépassement de vitesse (seuil par limite de route) ----------
 const SPEED_LIMITS = [20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
 /** Expéditeur des e-mails aux clients (devis, manifestes) : paramètres mailName / mailReplyTo / mailFrom (enregistrés comme les autres paramètres) */
+/**
+ * Réglages > Intégrations > Bolt (04/11/2026, demande d'Ahmed) : identifiants de l'API Bolt Fleet saisis dans Ludy et gardés dans la
+ * base (integration_set) ; le secret n'est jamais renvoyé au site (seulement « enregistré le … ») ; « Tester la connexion » = demande
+ * bolt_test traitée par le collecteur (jeton, sociétés, courses des dernières 24 h).
+ */
+async function boltSettingsLoad() {
+  const box = $('#boltbox'); if (!box) return;
+  const { data, error } = await sb.rpc('integration_status');
+  if (!$('#boltbox')) return;
+  if (error) { box.innerHTML = msg(/integration_status|function|schema cache/i.test(error.message) ? 'Exécutez d\'abord le SQL <b>20261123000000_integrations.sql</b> dans Supabase > SQL Editor.' : esc(error.message), 'warn'); return; }
+  const st = {}; (data || []).forEach(r => { st[r.name] = r; });
+  const when = k => st[k] ? '<span class="small ok">enregistré le ' + esc(fmtDTY(st[k].updated_at)) + '</span>' : '<span class="small">non enregistré</span>';
+  box.innerHTML = `<div class="panel"><div class="mfrow">
+      <label>Identifiant client (Client ID) <input id="bolid" size="26" autocomplete="off" value="${esc((st.bolt_client_id || {}).shown || '')}"> ${when('bolt_client_id')}</label>
+      <label>Secret client (Client Secret) <input id="bolsec" type="password" size="30" autocomplete="new-password" placeholder="${st.bolt_client_secret ? '•••••••• (laisser vide pour garder)' : 'coller le secret'}"> ${when('bolt_client_secret')}</label>
+      <label>N° de société Bolt <input id="bolco" size="12" inputmode="numeric" value="${esc((st.bolt_company_id || {}).shown || '')}" placeholder="392246"> ${when('bolt_company_id')}</label></div>
+    <p><button id="bolsave">Enregistrer</button> <button class="ghost" id="boltest">Tester la connexion Bolt</button> ${st.bolt_client_secret ? '<button class="ghost small" id="boldel">Effacer le secret</button>' : ''}</p><div id="bolres"></div></div>`;
+  const say = (h, k) => { $('#bolres').innerHTML = msg(h, k); };
+  $('#bolsave').onclick = async () => {
+    try {
+      const sets = [['bolt_client_id', $('#bolid').value.trim()], ['bolt_company_id', $('#bolco').value.trim()]];
+      if ($('#bolsec').value.trim()) sets.push(['bolt_client_secret', $('#bolsec').value.trim()]);
+      for (const [k, v] of sets) { const r = await sb.rpc('integration_set', { p_name: k, p_value: v }); if (r.error) throw r.error; }
+      $('#bolsec').value = ''; await boltSettingsLoad(); say('Identifiants Bolt enregistrés (le secret n\'est plus affiché).', 'ok');
+    } catch (e) { say(esc(e.message || e), 'err'); }
+  };
+  if ($('#boldel')) $('#boldel').onclick = async () => { if (!await ask('Effacer le secret Bolt de Ludy ?')) return; const r = await sb.rpc('integration_set', { p_name: 'bolt_client_secret', p_value: '' }); if (r.error) say(esc(r.error.message), 'err'); else boltSettingsLoad(); };
+  $('#boltest').onclick = async () => {
+    const b = $('#boltest'); b.disabled = true; say('Test demandé : résultat au prochain passage du collecteur (5 min au plus)…', 'info');
+    try {
+      const id = await job('bolt_test');
+      for (let i = 0; i < 80; i++) {
+        await new Promise(r => setTimeout(r, 5000)); if (!$('#bolres')) return;
+        const { data: j } = await sb.from('jobs').select('done_at,result').eq('id', id).maybeSingle();
+        if (j && j.done_at) { say(esc(j.result || ''), /NOT_AUTHORIZED|refus|manquant|Erreur|\[\d+/.test(j.result || '') ? 'warn' : 'ok'); b.disabled = false; return; }
+      }
+      say('Pas encore de réponse du collecteur : le résultat apparaîtra dans Réglages > Demandes.', 'warn');
+    } catch (e) { say(esc(e.message || e), 'err'); }
+    b.disabled = false;
+  };
+}
+function boltSettingsHtml() {
+  return `<h2>Intégrations · Bolt Fleet</h2><div class="sub">Identifiants de l'API Bolt (portail Bolt Fleet &gt; identifiants API). Gardés dans la base de Ludy, lus seulement par le collecteur : le secret n'est jamais réaffiché. N° de société = le nombre dans l'adresse du portail (fleets.bolt.eu/<b>392246</b>/…).</div>
+    <div id="boltbox"><div class="loading">Chargement…</div></div>`;
+}
 function mailSettingsHtml(params) {
   const P = k => params.find(p => p.key === k), has = P('mailName') && P('mailReplyTo') && P('mailFrom');
   const inp = (k, ph, size) => `<input class="ped" data-k="${k}" value="${esc((P(k) || {}).value || '')}" placeholder="${esc(ph)}" size="${size}"${has ? '' : ' disabled'}>`;
@@ -1529,6 +1574,7 @@ async function pageReglages() {
     ${speedSettingsHtml(params)}
     ${extSettingsHtml(params)}
     ${mailSettingsHtml(params)}
+    ${boltSettingsHtml()}
     <h2>Alertes par e-mail</h2><div class="sub">Chaque nouvelle alerte (veille et jour même) est envoyée une seule fois aux destinataires concernés, dans les minutes qui suivent son calcul par le collecteur.</div>
     <div class="panel row"><label>Email <input id="reml" type="email" size="22" placeholder="chef@clicar.fr"></label><label>Nom <input id="rnom" size="14"></label>
       <label>Agence <select id="rag">${agOptions('', 'Toutes')}</select></label><label>Gravité minimum <select id="rsev">${SEVS.map(x => `<option ${x === 'Haute' ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
@@ -1571,6 +1617,7 @@ async function pageReglages() {
     $('#upgbox').scrollIntoView({ block: 'nearest' });
   }; });
   document.querySelectorAll('.urole').forEach(s => { s.onchange = async () => { const { error } = await sb.from('profiles').update({ role: s.value }).eq('user_id', s.dataset.u); if (error) alert(error.message); else s.classList.add('saved'); }; });
+  boltSettingsLoad();
   document.querySelectorAll('.ped').forEach(i => { i.onchange = async () => { const { error } = await sb.from('params').update({ value: i.value }).eq('key', i.dataset.k); if (error) alert(error.message); else { i.classList.add('saved'); S.P = null; S.ctrShift = {}; await loadRef(); } }; });   // horaires des shifts changés : shift des contrats recalculé
   document.querySelectorAll('.red_').forEach(i => { i.onchange = async () => { const { error } = await sb.from('rules').update({ weight: num(i.value) }).eq('id', i.dataset.k); if (error) alert(error.message); else { i.classList.add('saved'); await job('recompute', addDays(today(), -31)).catch(e => alert('Recalcul non demandé : ' + e.message)); } }; });
   const done = t => { $('#actres').innerHTML = msg(t + ' Le collecteur s\'en charge dans 5 minutes maximum (suivi ci-dessous).', 'ok'); };
