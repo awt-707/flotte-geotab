@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import {initializePrivateRoot,privateModeValid,syncPrivateDirectory,ensurePrivateDirectory,readPrivateJson,writePrivateJson,WINDOWS_PRIVATE_ACL_SCRIPT} from '../server/private-files.mjs';
+import {initializePrivateRoot,privateModeValid,syncPrivateDirectory,ensurePrivateDirectory,readPrivateJson,writePrivateJson,WINDOWS_PRIVATE_ACL_SCRIPT,windowsPowerShellEnvironment} from '../server/private-files.mjs';
+
+test('Windows PowerShell child resets inherited module paths case-insensitively without changing its parent',()=>{
+  const inherited={Path:'C:\\Windows\\System32',SystemRoot:'C:\\Windows',PSModulePath:'C:\\Program Files\\PowerShell\\7\\Modules',pSmOdUlEpAtH:'C:\\PS7',LUDY_PRIVATE_DIRECTORY:'C:\\Users\\Example\\private'};
+  const before={...inherited},child=windowsPowerShellEnvironment(inherited);
+  assert.deepEqual(child,{Path:inherited.Path,SystemRoot:inherited.SystemRoot,LUDY_PRIVATE_DIRECTORY:inherited.LUDY_PRIVATE_DIRECTORY});
+  assert.deepEqual(inherited,before);
+});
 
 test('POSIX private files retain strict modes, atomic replacement and symlink rejection',async t=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'ludy-private-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));

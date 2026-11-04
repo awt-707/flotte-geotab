@@ -7,6 +7,12 @@ import {randomUUID} from 'node:crypto';
 
 const execute=promisify(execFile),windowsRoots=new Set();
 const denied=()=>Object.assign(Error('Répertoire privé Ludy indisponible.'),{code:'PRIVATE_STORAGE_UNAVAILABLE'});
+// PowerShell 7 -> Node -> Windows PowerShell 5.1 otherwise inherits PS7 module
+// paths, so Set-Acl may resolve to an incompatible Security module. Let the
+// Windows PowerShell child construct its own defaults; don't modify the parent.
+export function windowsPowerShellEnvironment(environment=process.env){
+  return Object.fromEntries(Object.entries(environment).filter(([key])=>key.toLowerCase()!=='psmodulepath'));
+}
 // Fixed script: the filesystem path is passed as a single environment value,
 // never interpolated into PowerShell code. Replace the root ACL, don't merely
 // remove inherited entries while retaining older explicit permissions.
@@ -37,7 +43,7 @@ export async function initializePrivateRoot(directory,{platform=process.platform
   const info=await files.lstat(root),canonical=await files.realpath(root);
   if(!info.isDirectory()||info.isSymbolicLink()||(platform==='win32'?windowsPath(canonical)!==windowsPath(root):canonical!==root))throw denied();
   if(platform==='win32') {
-    try{await run('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-Command',WINDOWS_PRIVATE_ACL_SCRIPT],{env:{...process.env,LUDY_PRIVATE_DIRECTORY:root},windowsHide:true,timeout:20000,maxBuffer:8192});}
+    try{await run('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-Command',WINDOWS_PRIVATE_ACL_SCRIPT],{env:{...windowsPowerShellEnvironment(),LUDY_PRIVATE_DIRECTORY:root},windowsHide:true,timeout:20000,maxBuffer:8192});}
     catch{throw denied();}
     windowsRoots.add(windowsPath(root));
   } else {await files.chmod(root,0o700);if(((await files.lstat(root)).mode&0o777)!==0o700)throw denied();}
