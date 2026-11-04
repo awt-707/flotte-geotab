@@ -65,7 +65,7 @@ test('application Android : trois écrans seulement, encaissement du shift et d\
     await page.waitForSelector('#qkgo');
     assert.ok(await noHScroll(page), 'formulaire de course sans défilement horizontal');
     await page.selectOption('#qkveh', '968199WW');
-    const loc = d => new Date(d.getTime() + 3600000).toISOString().slice(0, 16), dep = new Date(Date.now() + 3 * 3600000);   // heure du Maroc (UTC+1)
+    const loc = d => new Date(d.getTime() + 3600000).toISOString().slice(0, 16), dep = new Date(Date.now() + 26 * 3600000);   // heure du Maroc (UTC+1) ; course du lendemain : à encaisser dès sa création
     await page.fill('#qkdep', loc(dep)); await page.dispatchEvent('#qkdep', 'change');
     await page.fill('#qkend', loc(new Date(dep.getTime() + 2 * 3600000)));
     await page.fill('#qkfrom', 'Hôtel Test, Casablanca'); await page.fill('#qkto', 'Aéroport Mohammed V, Casablanca');
