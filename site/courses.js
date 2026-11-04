@@ -231,11 +231,23 @@ function crsG() {
 function crsGridName(G) { return (G && (G._name || G.origin)) || 'Casablanca'; }
 function crsCats() { return (CR.grid && CR.grid.cats) || []; }
 function crsCatName(id) { const c = crsCats().find(x => x.id === id); return c ? c.model + ' (' + c.label + ')' : (id || ''); }
+/**
+ * Santa Fe (demande d'Ahmed, 03/11/2026 : 4x4 Luxe, 6 passagers, même tarif que le Staria) : grille sans la catégorie SANTAFE
+ * (migration 20261120000000_santa_fe.sql pas encore exécutée) = catégorie ajoutée et prix du Staria recopiés, comme la migration ;
+ * enregistrés dans la base au prochain enregistrement de la grille par l'administrateur.
+ */
+function crsGridSantaFe(g) {
+  if (!g || !Array.isArray(g.cats) || g.cats.some(c => c.id === 'SANTAFE') || !g.cats.some(c => c.id === 'STARIA')) return g;
+  const x = Object.assign({}, g, { cats: g.cats.concat([{ id: 'SANTAFE', label: '4x4 Luxe — 6 passagers', model: 'Hyundai Santa Fe', seats: 6 }]) });
+  ['hourly', 'half', 'day', 'kmExtra', 'wait15'].forEach(k => { if (g[k] && typeof g[k] === 'object' && !Array.isArray(g[k]) && 'STARIA' in g[k]) x[k] = Object.assign({}, g[k], { SANTAFE: g[k].STARIA }); });
+  ['airport', 'intercity'].forEach(k => { if (Array.isArray(g[k])) x[k] = g[k].map(r => r && 'STARIA' in r && !('SANTAFE' in r) ? Object.assign({}, r, { SANTAFE: r.STARIA }) : r); });
+  return x;
+}
 async function crsLoadGrid() {
   const r = await sb.from('pricing_grid').select('*').order('id');
   if (r.error) { CR.gridErr = r.error.message; CR.grid = null; CR.grids = []; return; }
   CR.gridErr = '';
-  CR.grids = (r.data || []).map(x => Object.assign({}, x.data, { _id: x.id, _name: x.name || (x.data && x.data.origin) || (x.id === 1 ? 'Casablanca' : 'Grille ' + x.id), _agency: x.agency_id || null, _at: x.updated_at }));
+  CR.grids = (r.data || []).map(x => Object.assign({}, crsGridSantaFe(x.data || {}), { _id: x.id, _name: x.name || (x.data && x.data.origin) || (x.id === 1 ? 'Casablanca' : 'Grille ' + x.id), _agency: x.agency_id || null, _at: x.updated_at }));
   CR.grid = CR.grids.find(g => g._id === 1) || CR.grids[0] || null;
 }
 function crsTabs(t) {
@@ -976,4 +988,4 @@ function crsActualPdf(m, f, p, r) {
   doc.save('Km-horaires-' + (m.number || 'mission') + '.pdf');
 }
 
-if (typeof module !== 'undefined') module.exports = { CRS_KINDS, crsDays, crsHoursDay, crsAmplitude, crsBase, crsLevel, crsValidation, crsMissing, crsPrice, crsActual, crsSeatsOk, crsModelIs, crsMoney, crsSpan, crsOrigin, crsAirport };
+if (typeof module !== 'undefined') module.exports = { CRS_KINDS, crsDays, crsHoursDay, crsAmplitude, crsBase, crsLevel, crsValidation, crsMissing, crsPrice, crsActual, crsSeatsOk, crsModelIs, crsMoney, crsSpan, crsOrigin, crsAirport, crsGridSantaFe };

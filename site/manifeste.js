@@ -5,7 +5,7 @@
 const MANIF_BG = { bg1: 'manifeste/resident-1.jpg', bg2: 'manifeste/resident-2.jpg', bg3: 'manifeste/non-resident.jpg' };
 const MANIF_PRESTA = ['Transfert', 'Transfert aéroport', 'Circuit', 'Mise à disposition'];
 const MANIF_NATURES = ['Transfert', 'Excursion', 'Tourisme', 'Affaires', 'Mise à disposition'];
-const MANIF_SEATS = { staria: 9, sonata: 4 };   // places autorisées par modèle quand le parc ne les donne pas
+const MANIF_SEATS = { staria: 9, sonata: 4, 'santa fe': 6, santafe: 6 };   // Santa Fe : 6 places (Ahmed, 03/11/2026)   // places autorisées par modèle quand le parc ne les donne pas
 const MANIF_LINK_DAYS = 7;                      // validité du lien du PDF dans les messages
 const MANIF_PLACES = ['Aéroport Mohammed V, Casablanca', 'Aéroport Marrakech Menara', 'Aéroport Rabat-Salé', 'Aéroport Tanger Ibn Battouta',
   'Aéroport Fès-Saïss', 'Aéroport Agadir Al Massira', 'Gare Casa-Port, Casablanca', 'Gare Casa-Voyageurs, Casablanca',
