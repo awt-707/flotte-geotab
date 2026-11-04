@@ -155,7 +155,7 @@ public class MainActivity extends Activity {
       runOnUiThread(() -> {
         try {
           String n = name == null || name.isEmpty() ? "document.pdf" : name.replaceAll("[\\\\/:*?\"<>|]+", "_");
-          share(Base64.decode(b64, Base64.DEFAULT), n, mime == null || mime.isEmpty() ? "application/pdf" : mime, text, phone);
+          shareFile(Base64.decode(b64, Base64.DEFAULT), n, mime == null || mime.isEmpty() ? "application/pdf" : mime, text, phone);
         } catch (Exception e) { Toast.makeText(MainActivity.this, "Partage impossible : " + e.getMessage(), Toast.LENGTH_LONG).show(); }
       });
     }
@@ -188,7 +188,7 @@ public class MainActivity extends Activity {
   }
 
   /** Fichier partagé : copié dans le cache de l'application (dossier share, servi par FilesProvider), puis envoyé à WhatsApp */
-  void share(byte[] bytes, String name, String mime, String text, String phone) throws Exception {
+  void shareFile(byte[] bytes, String name, String mime, String text, String phone) throws Exception {
     File dir = new File(getCacheDir(), "share");
     dir.mkdirs();
     File[] old = dir.listFiles();
