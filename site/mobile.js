@@ -164,14 +164,126 @@ function cshTabShiftM() {
   };
 }
 
+// ---------- Courses privées sur le téléphone : créer la course (manifeste et devis faits tout de suite), l'encaisser à l'arrivée ----------
+const MOB = { q: null, done: null };
+/** PDF envoyé dans WhatsApp au numéro donné : fichier joint par l'application Android 1.2 (LudyAndroid.share), sinon message avec le lien du PDF */
+async function mobSharePdf(blob, name, phone, text, link) {
+  const wa = typeof manifWa === 'function' ? manifWa(phone) : '';
+  if (window.LudyAndroid && typeof window.LudyAndroid.share === 'function') {
+    const b64 = await new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = () => ko(r.error); r.readAsDataURL(blob); });
+    window.LudyAndroid.share(b64, name, 'application/pdf', text, wa);
+    return 'fichier';
+  }
+  const u = 'https://wa.me/' + (wa || '') + '?text=' + encodeURIComponent(text + (link && text.indexOf(link) < 0 ? '\n' + link : ''));
+  if (!openOut(u)) window.open(u, '_blank', 'noopener');
+  return 'lien';
+}
+function mobDownload(blob, name) {
+  window.__ludyDlName = name;   // nom du fichier enregistré par l'application Android
+  const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 8000);
+}
 async function cshTabCoursesM(p) {
-  const my = ROUTING, pct0 = cshN(S.P.cashCommissionPct === undefined ? 10 : S.P.cashCommissionPct);
+  const my = ROUTING, mode = qs().get('c') === 'enc' ? 'enc' : 'new';
   const { todo } = await cshCoursesTodo(p);
   if (my !== ROUTING) return;
+  const seg = `<div class="mseg" role="group" aria-label="Courses">${[['new', 'Nouvelle course'], ['enc', 'À encaisser' + (todo.length ? ' (' + todo.length + ')' : '')]].map(x => `<a href="#/caisse?t=courses${x[0] === 'enc' ? '&c=enc' : ''}" class="${x[0] === mode ? 'on' : ''}">${x[1]}</a>`).join('')}</div>`;
+  if (mode === 'enc') return cshCoursesEncM(p, todo, seg);
+  if (!CR.grids.length) await crsLoadGrid();
+  const err = await mfEnsure();
+  if (my !== ROUTING) return;
+  if (typeof addrSetPlaces === 'function') addrSetPlaces(MANIF_PLACES);
+  const vs = vehPick(), dep0 = mfNowLocal();
+  const q = MOB.q = MOB.q || { veh: '', dep: dep0, end: crsLocalDT(new Date((parseLocalDT(dep0) || new Date()).getTime() + 2 * HOUR)), type: 'Non résident', pax: 1 };
+  const G1 = crsGridDefault(), gs = (CR.grids.length ? CR.grids : [CR.grid || {}]).slice().sort((a, b) => (b === G1) - (a === G1));
+  const rows = gs.map(g => [crsGridName(g), [].concat((g.airport || []).map(r => [(g._id || 1) + '|A|' + r.dest, 'A' + crsAirport(g).slice(1) + ' ↔ ' + r.dest]))
+    .concat((g.intercity || []).map(r => [(g._id || 1) + '|I|' + r.dest, crsOrigin(g) + ' → ' + r.dest]))]);
+  const opt = r => `<option value="${esc(r[0])}" ${r[0] === q.grid ? 'selected' : ''}>${esc(r[1])}</option>`;
+  const v = (k, d) => esc(q[k] == null ? (d || '') : q[k]);
+  const D = MOB.done;
+  const doneCard = D ? `<div class="mcard done paid" id="mobdone"><div class="mch"><div class="mwho2"><b>Course ${esc(D.m.number || '')} créée</b><span>${esc(D.status)} · ${esc((D.vv || {}).plate || '')} · ${esc(fmtDT(D.a))} → ${esc(fmtDT(D.b))}</span><span>${esc(D.f.client)}</span></div>
+      <div class="mdecl"><span>TTC (TVA ${esc(D.p.vat)} %)</span><b>${cshMoney(D.p.total)}</b></div></div>
+      ${D.mf && D.mf.r ? '' : `<div class="msg warn">${esc(D.mf ? D.mf.warn || D.mf.err || '' : 'Manifeste non créé')}</div>`}
+      ${D.quote && D.quote.err ? `<div class="msg warn">Devis non mis en ligne : ${esc(D.quote.err)}</div>` : ''}
+      <div class="mact">${D.mf && D.mf.r ? `<button type="button" class="mbtn" id="mobmfwa">Manifeste PDF → WhatsApp du chauffeur</button>` : ''}
+        ${D.quote ? `<button type="button" class="mbtn" id="mobqwa">Devis PDF → WhatsApp du client</button>` : ''}
+        <div class="mg2">${D.mf && D.mf.r ? '<button type="button" class="ghost" id="mobmfdl">Manifeste PDF</button>' : '<span></span>'}${D.quote ? '<button type="button" class="ghost" id="mobqdl">Devis PDF</button>' : ''}</div>
+        <button type="button" class="ghost mbtn" id="mobnew">Nouvelle course</button></div>
+      <div class="small">Encaissement à l'arrivée du chauffeur : onglet « À encaisser ».</div><div class="small" id="mobshr"></div></div>` : '';
+  cshBody(seg + doneCard + (err ? msg('Manifestes pas encore installés dans la base : ' + esc(err), 'err') : '') + (!err && MF.cfg && !MF.cfg.stamp ? msg('Cachet de l\'entreprise manquant : manifeste impossible (à ajouter depuis l\'ordinateur, Manifestes &gt; Réglages).', 'warn') : '') + (D ? '' : `
+    <div class="mcard mform"><h3>Course</h3>
+      <label>Véhicule <select id="qkveh"><option value="">Choisir…</option>${vs.map(x => `<option value="${esc(x.key)}" ${x.key === q.veh ? 'selected' : ''}>${esc(x.plate)}${x.model ? ' · ' + esc(x.model) : ''}</option>`).join('')}</select></label>
+      <label>Départ le <input type="datetime-local" id="qkdep" value="${v('dep')}"></label><label>Fin prévue <input type="datetime-local" id="qkend" value="${v('end')}"></label>
+      <label>Adresse de départ <input id="qkfrom" data-addr value="${v('from')}" placeholder="Hôtel, adresse, aéroport…"></label>
+      <label>Adresse d'arrivée <input id="qkto" data-addr value="${v('to')}" placeholder="Hôtel, adresse, aéroport…"></label>
+      <div class="mg2"><label>Chauffeur <input id="qkdrv" list="qkdrvl" value="${v('drv')}" placeholder="Contrat en cours" autocomplete="off"></label><label>Tél. chauffeur <input id="qktel" type="tel" value="${v('tel')}" placeholder="06…"></label></div>
+      <datalist id="qkdrvl">${Object.keys(S.drv || {}).filter(c => c !== HORS).map(c => `<option value="${esc(S.drv[c])}"></option>`).join('')}</datalist><div id="qkdinfo" class="small"></div>
+      <label>Tarif de la grille (option) <select id="qkgrid"><option value="">—</option>${rows.length > 1 ? rows.map(g => `<optgroup label="Départ ${esc(g[0])}">${g[1].map(opt).join('')}</optgroup>`).join('') : rows.map(g => g[1].map(opt).join('')).join('')}</select></label>
+      <label>Prix convenu (MAD TTC, TVA ${esc(crsN((G1 || {}).vat) || 10)} % incluse) <input type="number" inputmode="decimal" min="0" id="qkprice" value="${v('price')}"></label><div id="qkpinfo" class="small"></div></div>
+    <div class="mcard mform"><h3>Client</h3>
+      <label>Nom et prénom <input id="qkcli" value="${v('client')}"></label>
+      <label>Téléphone (WhatsApp du devis) <input id="qkcph" type="tel" value="${v('cphone')}" placeholder="06… ou +33…"></label>
+      <div class="mseg" role="group" aria-label="Type de client">${['Résident', 'Non résident'].map(t => `<a href="#" data-qkt="${t}" class="${q.type === t ? 'on' : ''}">${t}</a>`).join('')}</div>
+      ${q.type === 'Résident' ? `<label>N° CIN ou passeport <input id="qkcin" value="${v('cin')}"></label>` : ''}
+      <div class="mg2"><label>Passagers <input type="number" inputmode="numeric" min="1" id="qkpax" value="${v('pax', 1)}"></label><label>N° de vol / remarque <input id="qkobs" value="${v('obs')}"></label></div>
+      ${q.type === 'Résident' ? `<label>Autres passagers (un par ligne) <textarea id="qknames" rows="3">${v('names')}</textarea></label>` : ''}
+      <button type="button" class="mbtn" id="qkgo">Créer la course</button><div id="qkres"></div>
+      <div class="small">Crée la course (véhicule bloqué), le manifeste et le devis PDF. L'encaissement se fait à l'arrivée du chauffeur.</div></div>`));
+  if (D) return mobDoneBind(p);
+  const rd = () => { ['veh', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph' }[k] || k)); if (e) q[k] = e.value; });
+    q.gridRef = q.grid && $('#qkgrid').selectedOptions[0] ? $('#qkgrid').selectedOptions[0].textContent : ''; return q; };
+  const gridPrice = () => { rd(); const vv = vehOf(q.veh), cat = crsCatOf(vv), [gid, t, dest] = String(q.grid || '').split('|'), g = crsGridOf(gid), row = ((t === 'A' ? g.airport : g.intercity) || []).find(r => r.dest === dest);
+    const pr = row && cat ? crsN(row[cat]) : 0, info = $('#qkpinfo');
+    if (row && pr) { $('#qkprice').value = q.price = pr; info.textContent = 'Prix de la grille ' + crsGridName(g) + ' pour ' + crsCatName(cat) + ' : ' + crsMoney(pr) + ' (modifiable).'; }
+    else info.textContent = q.grid ? (cat ? 'Pas de prix dans la grille pour ce véhicule.' : 'Choisir le véhicule pour le prix de la grille.') : ''; };
+  const drvAuto = async () => { rd(); const el = $('#qkdinfo'), t = parseLocalDT(q.dep); if (!q.veh || !t) { el.textContent = ''; return; }
+    const key = q.veh + '|' + q.dep; MOB.drvKey = key; el.textContent = 'Recherche du contrat…';
+    const c = await mfContractAt(q.veh, t.getTime()).catch(() => null); if (MOB.drvKey !== key || !$('#qkdrv')) return;
+    if (c) { if (!q.drvManual) { $('#qkdrv').value = q.drv = c.name || ''; $('#qktel').value = q.tel = c.phone || ''; } el.textContent = 'Contrat ' + c.num + ' : ' + (c.name || c.code) + (c.phone ? ' · ' + c.phone : ''); }
+    else el.innerHTML = '<b>Aucun contrat</b> sur ce véhicule à cette heure : choisir le chauffeur.'; };
+  $('#qkveh').onchange = () => { q.drvManual = false; drvAuto(); if (q.grid) gridPrice(); };
+  $('#qkdep').onchange = () => { const old = q.dep; rd(); const a = parseLocalDT(old), b = parseLocalDT(q.end), n = parseLocalDT(q.dep);
+    if (n && a && b && b > a) { q.end = crsLocalDT(new Date(n.getTime() + (b - a))); $('#qkend').value = q.end; } drvAuto(); };
+  $('#qkdrv').oninput = $('#qktel').oninput = () => { q.drvManual = true; };
+  $('#qkdrv').onchange = () => { rd(); mfDriverFill({ chauffeur: q.drv }).then(st => { if (st.chauffeurTel && !$('#qktel').value) $('#qktel').value = q.tel = st.chauffeurTel; }); };
+  $('#qkgrid').onchange = gridPrice;
+  document.querySelectorAll('[data-qkt]').forEach(b => b.onclick = e => { e.preventDefault(); rd(); q.type = b.dataset.qkt; cshTabCoursesM(p); });
+  $('#qkgo').onclick = async () => {
+    rd(); const res = $('#qkres'), btn = $('#qkgo');
+    if (!manifWa(q.cphone) && !await ask('Téléphone du client absent ou invalide : le devis ne pourra pas partir sur son WhatsApp. Créer la course quand même ?')) return;
+    btn.disabled = true; btn.textContent = 'Création…'; res.innerHTML = '';
+    try {
+      const o = await crsQuickCreate(q);
+      res.innerHTML = msg('Course créée, manifeste et devis en cours…');
+      o.mf = await crsMfCreate(o.m, o.f, true);
+      try { o.quote = await crsQuoteSave(o.m, o.f, o.p, o.G); } catch (e) { o.quote = null; o.quoteErr = e.message || String(e); }
+      MOB.done = o; MOB.q = null;
+      cshTabCoursesM(p);
+    } catch (e) { btn.disabled = false; btn.textContent = 'Créer la course'; res.innerHTML = msg(e.bad ? esc(e.message) : 'Course non créée : ' + esc(e.message || e), 'err'); }
+  };
+  if (q.veh && !q.drv) drvAuto();
+}
+/** Course créée : manifeste au chauffeur, devis au client, sur WhatsApp en PDF */
+function mobDoneBind(p) {
+  const D = MOB.done, out = $('#mobshr'), say = t => { if (out) out.textContent = t; };
+  const go = async (fn) => { try { const how = await fn(); if (how === 'lien') say('WhatsApp ouvert avec le lien du PDF (installer l\'application Android 1.2 pour envoyer le fichier lui-même).'); } catch (e) { alert('Partage impossible : ' + (e.message || e)); } };
+  const mf = D.mf && D.mf.r;
+  if ($('#mobmfwa')) $('#mobmfwa').onclick = () => go(() => mobSharePdf(mf.blob, mf.name, D.f.driverPhone || mf.d.chauffeurTel, manifText(mf.d, mf.link), mf.link));
+  if ($('#mobmfdl')) $('#mobmfdl').onclick = () => mobDownload(mf.blob, mf.name);
+  if ($('#mobqwa')) $('#mobqwa').onclick = () => go(async () => {
+    let link = null; if (D.quote.path) { const r = await sb.storage.from('devis').createSignedUrl(D.quote.path, 7 * 86400, { download: true }); if (!r.error) link = r.data.signedUrl; }
+    CR.f = D.f; CR.cur = D.m;
+    return mobSharePdf(D.quote.blob, D.quote.name, D.f.phone, 'Bonjour ' + D.f.client + ',\n' + crsQuoteText(D.p) + (link ? '\nDevis PDF : ' + link : ''), link);
+  });
+  if ($('#mobqdl')) $('#mobqdl').onclick = () => mobDownload(D.quote.blob, D.quote.name);
+  $('#mobnew').onclick = () => { MOB.done = null; cshTabCoursesM(p); };
+}
+/** À encaisser : courses Ludy de l'agence pas encore encaissées, encaissement à l'arrivée du chauffeur */
+function cshCoursesEncM(p, todo, seg) {
+  const pct0 = cshN(S.P.cashCommissionPct === undefined ? 10 : S.P.cashCommissionPct);
   const sel = CS.selMission ? todo.find(m => m.id === CS.selMission) || null : null, f = (sel && sel.data && sel.data.f) || {};
   const recent = CS.moves.filter(m => m.caisse === 'courses' && m.kind === 'course' && cshLive(m)).sort((a, b) => String(b.day).localeCompare(String(a.day)) || b.id - a.id);
   const encToday = recent.filter(m => m.day === today()).reduce((t, m) => t + cshN(m.amount), 0);
-  const form = `<div class="mcard mform" id="cshcform"><h3>${sel ? 'Encaisser la course ' + esc(sel.number || '') : 'Encaisser une course'}</h3>
+  const form = `<div class="mcard mform" id="cshcform"><h3>${sel ? 'Encaisser la course ' + esc(sel.number || '') : 'Encaisser une course hors Ludy'}</h3>
     ${sel ? `<div class="small">${esc(fmtDT(sel.start_at))} · ${esc(sel.client_name || '')}${sel.vehicle_key ? ' · ' + esc(mobPlate(sel.vehicle_key)) : ''} · <button type="button" class="mlink" id="ccclr">autre course</button></div>` : ''}
     <label>Chauffeur <input id="ccw" list="cshdrv" autocomplete="off" value="${esc(sel ? sel.driver_name || '' : '')}" placeholder="Nom du chauffeur"></label>
     <div class="mg2"><label>Montant de la course ${mobNum('id="cca"', 'MAD', sel && sel.total_ttc != null ? sel.total_ttc : '')}</label><label>Remis en caisse ${mobNum('id="ccr"', 'MAD')}</label></div>
@@ -181,18 +293,18 @@ async function cshTabCoursesM(p) {
       <div class="mg2"><label>Prime chauffeur (%) <input id="ccp" type="number" inputmode="decimal" min="0" step="0.5" value="${esc(pct0)}"></label><label>Date <input id="ccd" type="date" value="${today()}"></label></div>
       <label>Commentaire <input id="ccm"></label></details>
     <button type="button" class="mbtn" id="ccsave">Encaisser</button></div>`;
-  cshBody(`<div class="msum"><div><b class="${todo.length ? 'red' : ''}">${todo.length}</b><span>course${todo.length > 1 ? 's' : ''} à encaisser</span></div><div><b>${cshMoney(encToday)}</b><span>encaissé aujourd'hui</span></div></div>
+  cshBody(seg + `<div class="msum"><div><b class="${todo.length ? 'red' : ''}">${todo.length}</b><span>course${todo.length > 1 ? 's' : ''} à encaisser</span></div><div><b>${cshMoney(encToday)}</b><span>encaissé aujourd'hui</span></div></div>
     ${sel ? form : ''}
     ${todo.length ? '<h3 class="mh">Courses Ludy à encaisser</h3>' + todo.map(m => `<div class="mcard mcrs${sel && sel.id === m.id ? ' on' : ''}"><div class="mch"><div class="mwho2"><b>${esc(m.client_name || m.number || '')}</b><span>${esc(m.number || '')} · ${esc(fmtDT(m.start_at))}${m.driver_name ? ' · ' + esc(m.driver_name) : ''}</span></div>
-      <div class="mdecl"><span>${esc(m.status)}</span><b>${m.total_ttc == null ? '—' : cshMoney(m.total_ttc)}</b></div></div>${sel && sel.id === m.id ? '' : `<button type="button" class="mbtn" data-cshms="${m.id}">Encaisser</button>`}</div>`).join('') : ''}
-    ${sel ? '' : form}
+      <div class="mdecl"><span>${esc(m.status)}</span><b>${m.total_ttc == null ? '—' : cshMoney(m.total_ttc)}</b></div></div>${sel && sel.id === m.id ? '' : `<button type="button" class="mbtn" data-cshms="${m.id}">Encaisser</button>`}</div>`).join('') : '<div class="mempty"><b>Aucune course à encaisser</b><p>Les courses créées apparaissent ici jusqu\'à leur encaissement.</p></div>'}
+    ${sel ? '' : '<details class="mmore"><summary>Course hors Ludy</summary>' + form + '</details>'}
     ${recent.length ? '<h3 class="mh">Derniers encaissements (7 jours)</h3>' + recent.slice(0, 30).map(m => `<div class="mcard mline"><div class="mch"><div class="mwho2"><b>${esc(m.driver_code ? cshDrvName(m.driver_code) : m.driver_name || '')}</b><span>${esc(fmtDay(m.day))}${m.label ? ' · ' + esc(m.label) : ''}</span></div>
       <div class="mdecl"><span>Prime ${cshMoney(m.prime)}</span><b>${cshMoney(m.amount)}</b></div></div>${cshCanFix(m) ? `<button type="button" class="mlink" data-cshx="${m.id}">Annuler</button>` : ''}</div>`).join('') : ''}`);
   const calc = () => { const c = cshCourse(cshVal('cca'), cshVal('ccp'), cshVal('ccr') === '' ? cshVal('cca') : cshVal('ccr'));
     $('#cccalc').innerHTML = cshVal('cca') === '' ? '' : `Prime ${cshMoney(c.prime)} · gardée par le chauffeur ${cshMoney(c.paid)} · reste à lui payer ${cshSignedTxt(c.reste)}`; };
   ['cca', 'ccp', 'ccr'].forEach(id => { $('#' + id).oninput = calc; }); calc();
-  document.querySelectorAll('[data-cshms]').forEach(b => { b.onclick = () => { CS.selMission = +b.dataset.cshms; cshTabCoursesM(p).then(() => { const x = $('#cshcform'); if (x && x.scrollIntoView) x.scrollIntoView({ block: 'start' }); }); }; });
-  if ($('#ccclr')) $('#ccclr').onclick = () => { CS.selMission = null; cshTabCoursesM(p); };
+  document.querySelectorAll('[data-cshms]').forEach(b => { b.onclick = () => { CS.selMission = +b.dataset.cshms; cshCoursesEncM(p, todo, seg); const x = $('#cshcform'); if (x && x.scrollIntoView) x.scrollIntoView({ block: 'start' }); }; });
+  if ($('#ccclr')) $('#ccclr').onclick = () => { CS.selMission = null; cshCoursesEncM(p, todo, seg); };
   document.querySelectorAll('[data-cshx]').forEach(b => { b.onclick = () => cshCancel(+b.dataset.cshx); });
   $('#ccsave').onclick = async () => {
     const b = $('#ccsave'); b.disabled = true;

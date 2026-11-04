@@ -20,8 +20,12 @@ test('application Android : trois écrans seulement, encaissement du shift et d\
     insert into drivers (code, name) values ('C1', 'ALPHA Test');
     insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at) values ('K1', 'C1', 'ALPHA Test', 'WW968199', '968199WW', '${start}', '${end}');
     insert into missions (client_name, kind, total_ttc, needs_validation, level, status, driver_name, vehicle_key, start_at, number)
-      values ('Client Test', 'Transfert aéroport', 450, false, 'Standard', 'Terminée', 'ALPHA Test', '968199WW', now() - interval '1 day', 'DEV-2026-0001');`);
+      values ('Client Test', 'Transfert aéroport', 450, false, 'Standard', 'Terminée', 'ALPHA Test', '968199WW', now() - interval '1 day', 'DEV-2026-0001');
+    insert into parc (plate, model, seats, agrement) values ('WW968199', 'STARIA', 7, 'TT/1/2026');
+    update manifest_config set stamp = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';`);
   const srv = await startSite(), { br, page, errors } = await openBrowser(PHONE);
+  // application Android 1.2 : PDF envoyés dans WhatsApp par l'application (LudyAndroid.share)
+  await page.context().addInitScript(() => { window.__shared = []; window.LudyAndroid = { share: (b64, name, mime, text, phone) => window.__shared.push({ n: b64.length, name, mime, text, phone }), save: () => { } }; });
   try {
     // ouverture : premier écran, trois boutons en bas, aucun menu du site complet
     await loginPhone(page, '#/tableau');
@@ -50,18 +54,43 @@ test('application Android : trois écrans seulement, encaissement du shift et d\
     await page.fill('#uiin', '40'); await page.click('#uiok');
     await page.waitForSelector('.mcard.done.paid');
     assert.match(await page.innerText('.mcard.done'), /Encaissé\s*300 MAD/);
-    // courses privées : course Ludy à encaisser
+    // courses privées : d'abord créer la course (manifeste et devis faits tout de suite), encaissement à l'arrivée du chauffeur
     await page.click('.mtabs a[data-mt="courses"]');
+    await page.waitForSelector('#qkgo');
+    assert.ok(await noHScroll(page), 'formulaire de course sans défilement horizontal');
+    await page.selectOption('#qkveh', '968199WW');
+    const loc = d => new Date(d.getTime() + 3600000).toISOString().slice(0, 16), dep = new Date(Date.now() + 3 * 3600000);   // heure du Maroc (UTC+1)
+    await page.fill('#qkdep', loc(dep)); await page.dispatchEvent('#qkdep', 'change');
+    await page.fill('#qkend', loc(new Date(dep.getTime() + 2 * 3600000)));
+    await page.fill('#qkfrom', 'Hôtel Test, Casablanca'); await page.fill('#qkto', 'Aéroport Mohammed V, Casablanca');
+    await page.fill('#qkdrv', 'ALPHA Test'); await page.fill('#qktel', '0611223344');
+    await page.fill('#qkprice', '550'); await page.fill('#qkcli', 'John Smith'); await page.fill('#qkcph', '+33 6 12 34 56 78');
+    await page.click('#qkgo');
+    await page.waitForSelector('#mobdone', { timeout: 30000 });
+    assert.match(await page.innerText('#mobdone'), /Course DEV-\d{4}-\d{4} créée[\s\S]*Confirmée[\s\S]*John Smith[\s\S]*TVA 10 %[\s\S]*550 MAD/);
+    const m = JSON.parse(env.psql("select row_to_json(x) from (select id, status, total_ttc, data from missions where client_name = 'John Smith') x"));
+    assert.deepStrictEqual([m.status, m.total_ttc, !!(m.data.manifest && m.data.manifest.id), !!(m.data.quote && m.data.quote.path)], ['Confirmée', 550, true, true], 'course, manifeste et devis enregistrés');
+    assert.strictEqual(env.psql('select count(*) from cash_moves where mission_id = ' + m.id), '0', 'pas encaissée à la création');
+    // manifeste au chauffeur, devis au client : fichiers PDF envoyés dans WhatsApp
+    await page.click('#mobmfwa'); await page.click('#mobqwa');
+    await page.waitForFunction(() => window.__shared.length === 2);
+    const sh = await page.evaluate(() => window.__shared);
+    assert.deepStrictEqual(sh.map(x => [x.mime, x.phone, /\.pdf$/.test(x.name), x.n > 1000]), [['application/pdf', '212611223344', true, true], ['application/pdf', '33612345678', true, true]]);
+    assert.match(sh[0].name, /^Manifeste/); assert.match(sh[1].name, /^Devis-DEV-/);
+    assert.match(sh[1].text, /Bonjour John Smith[\s\S]*Total : 550 MAD TTC/);
+    // à l'arrivée du chauffeur : onglet À encaisser (la course créée et l'ancienne)
+    await page.click('#mobnew'); await page.waitForSelector('#qkgo');
+    await page.click('.mseg a[href*="c=enc"]');
     await page.waitForSelector('[data-cshms]');
-    assert.match(await page.innerText('#page'), /1\s*course à encaisser[\s\S]*Client Test[\s\S]*450 MAD/);
-    await page.click('[data-cshms]');
+    assert.match(await page.innerText('#page'), /2\s*courses à encaisser[\s\S]*John Smith[\s\S]*Client Test[\s\S]*450 MAD/);
+    await page.click('.mcrs:has-text("Client Test") [data-cshms]');
     await page.waitForFunction(() => /Encaisser la course DEV-2026-0001/.test((document.querySelector('#cshcform') || {}).innerText || ''));
     assert.strictEqual(await page.inputValue('#ccw'), 'ALPHA Test');
     assert.strictEqual(await page.inputValue('#cca'), '450');
     await page.fill('#ccr', '405');
     assert.match(await page.innerText('#cccalc'), /Prime 45 MAD · gardée par le chauffeur 45 MAD/);
     await page.click('#ccsave');
-    await page.waitForFunction(() => /0\s*course à encaisser/.test(document.querySelector('#page').innerText));
+    await page.waitForFunction(() => /1\s*course à encaisser/.test(document.querySelector('#page').innerText));
     assert.strictEqual(env.psql("select amount || '|' || course_amount || '|' || prime || '|' || prime_paid from cash_moves where caisse = 'courses'"), '405.00|450.00|45.00|45.00');
     assert.ok(await noHScroll(page));
     // manifeste : formulaire sur une colonne, sans défilement horizontal, sans les réglages
