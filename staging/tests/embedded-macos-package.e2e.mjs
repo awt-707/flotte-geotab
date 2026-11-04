@@ -80,7 +80,7 @@ export async function verifyRuntime(runtime) {
 export async function verifyClient(resources,release) {
   // Reads ASAR data with the build tool; no packaged JavaScript is executed.
   const {listPackage,extractFile}=await import(pathToFileURL(requireDesktop.resolve('@electron/asar')).href);
-  const archive=path.join(resources,'app.asar'),allowed=new Set(['assets','assets/icon.png','assets/icon.ico','assets/icon.icns','package.json','embedded.json','embedded-main.cjs','embedded-config.cjs','embedded-supervisor.cjs']);
+  const archive=path.join(resources,'app.asar'),allowed=new Set(['assets','assets/icon.png','assets/icon.ico','assets/icon.icns','package.json','embedded.json','embedded-main.cjs','embedded-config.cjs','embedded-supervisor.cjs','embedded-permanent.cjs']);
   const listed=listPackage(archive).map(file=>file.replace(/^\//,''));assert.equal(new Set(listed).size,listed.length);
   for(const file of listed)assert.ok(allowed.has(file),'Unexpected packaged client entry');
   for(const file of allowed)assert.ok(listed.includes(file),'Missing packaged client entry: '+file);

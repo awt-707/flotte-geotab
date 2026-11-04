@@ -13,7 +13,7 @@ try{
   const page=await app.firstWindow({timeout:40000});page.on('pageerror',e=>errors.push(e.message));
   await page.getByRole('heading',{name:'Bienvenue sur Ludy'}).waitFor({timeout:20000});
   assert.equal(page.url(),'http://127.0.0.1:4173/');
-  assert.deepEqual(await page.evaluate(()=>({node:typeof require,bridge:typeof window.ludyClient,desktop:window.FLOTTE_CONFIG.DESKTOP_PRODUCTION,worker:typeof window.desktopWorkerSessionChanged})),{node:'undefined',bridge:'undefined',desktop:true,worker:'function'});
+  assert.deepEqual(await page.evaluate(()=>({node:typeof require,bridge:typeof window.ludyClient,desktop:window.FLOTTE_CONFIG.DESKTOP_PRODUCTION,worker:typeof window.desktopWorkerSessionChanged,authRefresh:typeof window.createDesktopAuthRefresh})),{node:'undefined',bridge:'undefined',desktop:true,worker:'function',authRefresh:'function'});
   const health=await page.evaluate(()=>fetch('/health').then(r=>r.json()));assert.equal(health.environment,'production');assert.match(health.instanceId,/^[a-f0-9-]{36}$/);
   const processes=await app.evaluate(({app,BrowserWindow})=>({stateDir:app.getPath('userData'),utility:app.getAppMetrics().some(x=>x.type==='Utility'),safe:BrowserWindow.getAllWindows().every(w=>{const p=w.webContents.getLastWebPreferences();return p.sandbox&&p.contextIsolation&&!p.nodeIntegration;})}));
   assert.ok(processes.stateDir.startsWith(directory+path.sep));assert.equal(processes.utility,true);assert.equal(processes.safe,true);

@@ -22,6 +22,18 @@ La livraison précédente 0.2.0 et son [relevé](../.local/releases/embedded-des
 
 ## Première mise en service avec les services existants
 
+### Poste Windows permanent (0.2.3)
+
+La version 0.2.3 ajoute le menu natif **Ludy → Mode poste permanent**. Ce mode est désactivé par défaut. Après activation, Ludy démarre à l’ouverture de la session Windows, sa fenêtre se ferme vers l’icône près de l’horloge et la veille automatique est empêchée tant que Ludy tourne. L’écran peut s’éteindre. **Quitter Ludy** arrête toujours l’application et ses collecteurs. Garder le dossier contenant `Ludy.exe` à un emplacement stable ; ouvrir une nouvelle version met à jour le chemin de démarrage.
+
+Le renouvellement de la connexion Ludy reste actif en arrière-plan dans l’application de production. Une déconnexion, une révocation du compte ou une session fournisseur expirée demande toujours une reconnexion. Aucun mot de passe Windows ni jeton de renouvellement supplémentaire n’est enregistré par ce mode.
+
+Sur le PC fixe : se connecter avec un compte administrateur Ludy, configurer et vérifier les fournisseurs, puis laisser **Application → Participer à la collecte** activé. Sur les postes des collègues, laisser cette participation désactivée : ils consultent les données partagées sans configurer les fournisseurs.
+
+Ce mode ne crée pas de session Windows après un redémarrage. Il faut ouvrir la session du compte de collecte ; Ludy se lancera ensuite. Uber LiveMap demande en plus un onglet visible et une session Uber valide. Le navigateur des rapports Uber utilise sa propre connexion. Vérifier les nouvelles dates de collecte après fermeture de la fenêtre Ludy, verrouillage de Windows et déconnexion de l’outil de contrôle à distance. L’accès distant au PC ne prouve pas à lui seul la continuité des fournisseurs.
+
+La construction du paquet et les tests automatisés sont distincts de la mise en service sur le PC fixe : ne déclarer ce poste opérationnel qu’après ces vérifications. **Geotab desktop reste désactivé** pendant cette installation ; les services Apps Script existants restent actifs.
+
 Le paquet [Windows à transmettre aux collègues](../.local/livraison-collegues/Ludy-Windows-0.2.2.zip) est accompagné des [instructions d’installation](../.local/livraison-collegues/INSTALLER-LUDY-0.2.2.txt). Il contient exactement la version vérifiée ci-dessus. Installer et vérifier d’abord un poste Windows pilote ; conserver la participation désactivée chez les collègues qui consultent seulement. Ils utilisent leurs comptes Ludy existants et n’ont pas besoin des identifiants fournisseurs.
 
 **Conserver Apps Script et laisser Geotab desktop désactivé lors de cette première mise en service.** Les autres connecteurs desktop peuvent être configurés sur le poste administrateur désigné. Le bail desktop arbitre les nouvelles applications ; il ne bloque pas les écritures de l’ancien collecteur Apps Script.

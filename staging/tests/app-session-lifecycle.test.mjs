@@ -39,10 +39,10 @@ test('reference tables commit together only for the current session',async()=>{
  assert.deepEqual(JSON.parse(JSON.stringify(f.S.P)),{});assert.equal(f.S.agencies.length,0);
 });
 
-function authFixture(){
+function authFixture({desktopAuthRefresh=null,desktopWorkerSessionChanged}={}){
  const initial=deferred(),timers=[],password=deferred(),calls={routes:0,updates:0},S={session:session('first'),sessionRevision:1,profile:{role:'admin'},P:{},veh:{old:{}},vehList:[{key:'old'}],rules:{old:{}},drv:{old:'driver'},agencies:[{id:1}],agName:{1:'old'}};
  let callback;
- const context=vm.createContext({S,LIVE:{},SHELL_KEY:'old',sb:{auth:{onAuthStateChange:fn=>{callback=fn;},getSession:()=>initial.promise,updateUser:async()=>{calls.updates++;return {};}}},cacheUser(){},sessReset(){},$:()=>null,route:()=>{calls.routes++;},setTimeout:fn=>{timers.push(fn);},askText:()=>password.promise,alert(){}});
+ const context=vm.createContext({S,LIVE:{},SHELL_KEY:'old',desktopAuthRefresh,desktopWorkerSessionChanged,sb:{auth:{onAuthStateChange:fn=>{callback=fn;},getSession:()=>initial.promise,updateUser:async()=>{calls.updates++;return {};}}},cacheUser(){},sessReset(){},$:()=>null,route:()=>{calls.routes++;},setTimeout:fn=>{timers.push(fn);},askText:()=>password.promise,alert(){}});
  vm.runInContext(authCode,context);return {S,initial,timers,password,calls,event:(event,value)=>callback(event,value)};
 }
 test('a delayed initial session cannot restore a session after logout',async()=>{
@@ -51,6 +51,13 @@ test('a delayed initial session cannot restore a session after logout',async()=>
 });
 test('initial signed-out auth event still renders the login screen',async()=>{
  const f=authFixture();f.S.session=null;f.event('INITIAL_SESSION',null);f.initial.resolve({data:{session:null}});await settle();assert.equal(f.calls.routes,1);
+});
+test('desktop Auth initialization, rotation and logout reach both refresh control and the existing worker bridge',async()=>{
+ const refresh=[],worker=[];
+ const f=authFixture({desktopAuthRefresh:{sessionChanged:async value=>{refresh.push(value?.access_token??null);}},desktopWorkerSessionChanged:value=>{worker.push(value?.access_token??null);}});
+ f.initial.resolve({data:{session:{...session('first'),access_token:'synthetic-initial'}}});await settle();
+ f.event('TOKEN_REFRESHED',{...session('first'),access_token:'synthetic-rotated'});f.event('SIGNED_OUT',null);await settle();
+ assert.deepEqual(refresh,['synthetic-initial','synthetic-rotated',null]);assert.deepEqual(worker,refresh);assert.equal(f.S.session,null);
 });
 test('password recovery releases the auth callback and ignores a changed session',async()=>{
  const f=authFixture();assert.equal(f.event('PASSWORD_RECOVERY',session('first')),undefined);

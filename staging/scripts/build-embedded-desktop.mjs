@@ -10,10 +10,10 @@ import {TARGETS,electronZip,assertBuildHost,macLocalSignOptions} from './build-d
 const require=createRequire(import.meta.url);
 const {validateEmbeddedConfig,readEmbeddedConfig}=require('../desktop/embedded-config.cjs');
 const requireDesktop=createRequire(path.join(STAGING_ROOT,'desktop/package.json'));
-export const EMBEDDED_CLIENT_FILES=Object.freeze(['embedded-main.cjs','embedded-config.cjs','embedded-supervisor.cjs','assets/icon.png','assets/icon.ico','assets/icon.icns']);
+export const EMBEDDED_CLIENT_FILES=Object.freeze(['embedded-main.cjs','embedded-config.cjs','embedded-supervisor.cjs','embedded-permanent.cjs','assets/icon.png','assets/icon.ico','assets/icon.icns']);
 export const EMBEDDED_EXTENSION_FILES=Object.freeze(['uber-extension/ludy-uber-chromium.zip','uber-extension/ludy-uber-firefox.zip','uber-extension/reports-reader.js','uber-extension/earnings-reader.js']);
 export const EMBEDDED_SITE_FILES=Object.freeze([
-  'uber-extension.html',
+  'uber-extension.html','desktop-auth.js',
   '_headers','adresses.js','app.js','cache.js','caisse.js','caisse_calc.js','chauffeur.css','chauffeur.html','chauffeur.js','community.css','community.js','config.js','connexions.js','contrat.js','contrat_modele.js','contrat_pdf.js','courses.js','demand.css','demand.js','desktop-worker.js','dialog.js','direct.js','disconnections.css','disconnections.js','driver-performance.css','driver-performance.js','favicon.png','fleet.js',
   'fonts/NotoSansArabic-Bold.ttf','fonts/NotoSansArabic-Regular.ttf','fonts/OFL.txt','index.html','lib.js','logo-ludy-sombre.png','logo-ludy.png','manifeste.js','manifeste/non-resident.jpg','manifeste/resident-1.jpg','manifeste/resident-2.jpg','map-vehicle-appearance.js','map-zones.css','map-zones.js','menu.js','operations.css','operations.js','opportunities.css','opportunities.js','pager.js','pages2.js','parking.css','parking.js','pickup-reference.js','plan.js','plan_calc.js','planning.js','provider-earnings-calculation.js','provider-earnings-data.js','provider-earnings-ui.css','provider-earnings-ui.js','provider-reconciliation-page.js','provider-reconciliation-ui.js','report.js','revenue-data.js','revenue-metrics.js','revenue.css','revenue.js','rh.js','rh_calc.js','rotations.css','rotations.js','spreadsheet-guard.js','spreadsheet-worker.js','spreadsheet.js','style.css','timezone.js','uber-reports.css','uber-reports.js','workspace.css','workspace.js','zone-notifications.js'
 ]);

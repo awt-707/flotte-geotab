@@ -13,6 +13,7 @@ if (!DESKTOP_DATABASE && (!CFG.STAGING || (!LOCAL_DATABASE && !SHARED_DATABASE))
 if (DESKTOP_DATABASE) document.title = 'Ludy · Fleet workspace';
 const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, storageKey: DESKTOP_DATABASE ? CFG.AUTH_STORAGE_KEY : 'ludy-staging-auth' }, global: { fetch: cacheFetch(() => CACHE) } });   // écriture = lectures gardées oubliées (site/cache.js)
 const S = { session: null, sessionRevision: 0, profile: null, P: null, veh: null, vehList: [], rules: null, drv: null, timers: [], channel: null, agencies: [], agName: {}, alertCh: null };
+const desktopAuthRefresh = DESKTOP_DATABASE ? window.createDesktopAuthRefresh(sb.auth, { enabled: true }) : null;
 const $ = sel => document.querySelector(sel);
 const ROLE_TXT = { admin: 'Administrateur', manager: 'Gestionnaire', viewer: 'Lecture seule', rh: 'Ressources humaines', pending: 'En attente' };
 const canEdit = () => S.profile && ['admin', 'manager'].includes(S.profile.role);
@@ -1686,6 +1687,7 @@ sb.auth.onAuthStateChange((ev, session) => {
     Object.assign(LIVE, { rows: [], pos: {}, at: 0, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {}, drv: {}, drvAt: 0, motion: {}, motionHistory: [], motionWatches: [], motionCoverage: null, localPrimedUser: null, localSource: null, sel: '' });
   }
   S.session = session;
+  if (desktopAuthRefresh) void desktopAuthRefresh.sessionChanged(session).catch(() => {});
   if (typeof desktopWorkerSessionChanged === 'function') void desktopWorkerSessionChanged(session);
   if (changed || ev === 'INITIAL_SESSION' || ev === 'SIGNED_OUT') route();
 });
@@ -1693,6 +1695,7 @@ const authInitialRevision = AUTH_EVENT_REVISION;
 sb.auth.getSession().then(({ data }) => {
   if (AUTH_EVENT_REVISION !== authInitialRevision) return;
   cacheUser(data.session); S.sessionRevision++; S.session = data.session;
+  if (desktopAuthRefresh) void desktopAuthRefresh.sessionChanged(data.session).catch(() => {});
   if (typeof desktopWorkerSessionChanged === 'function') void desktopWorkerSessionChanged(data.session);
   route();
 }).catch(() => { if (AUTH_EVENT_REVISION === authInitialRevision) $('#app').textContent = 'Connexion locale indisponible. Rechargez la page.'; });
