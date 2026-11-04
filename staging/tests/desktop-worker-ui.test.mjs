@@ -9,6 +9,7 @@ const config={DESKTOP_PRODUCTION:true,STAGING:false,ENVIRONMENT:'production',SUP
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
 const response=value=>({ok:true,status:200,json:async()=>value});
+const rejected=(status,error)=>({ok:false,status,json:async()=>({error})});
 const session=(id='first',token='synthetic-token-'+id)=>({user:{id},access_token:token});
 function fixture({cfg=config,fetchFn}={}){
   const calls=[],timers=new Map(),label={textContent:''},button={},uberButton={},uberLabel={},window={FLOTTE_CONFIG:cfg};let counter=0;
@@ -69,4 +70,55 @@ test('Uber opens only from a participating administrator on the elected computer
   assert.equal(f.uberButton.disabled,true);await f.uberButton.onclick();assert.equal(f.calls.length,2);
   state='leader';await f.desktopWorkerSessionChanged(session('first','refreshed'));assert.equal(f.uberButton.disabled,false);
   await f.uberButton.onclick();assert.equal(f.calls.at(-2).url,'/api/desktop/uber/open');assert.match(f.uberLabel.textContent,/connexion requise/);
+});
+test('a new disabled desktop explains activation according to the account role',async()=>{
+  const f=fixture({fetchFn:url=>response(url.endsWith('/status')?{participationEnabled:false,coordinator:{state:'paused'}}:{ok:true})});
+  await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:true});
+  assert.match(f.label.textContent,/Collecte désactivée/);assert.match(f.label.textContent,/Cliquez sur « Participer à la collecte »/);
+  assert.equal(f.button.hidden,false);assert.equal(f.button.disabled,false);assert.equal(f.uberButton.disabled,true);
+  f.desktopWorkerMount({admin:false});assert.match(f.label.textContent,/Un administrateur doit activer/);assert.equal(f.button.hidden,true);
+  assert.equal(f.calls.length,2,'Mounting never silently activates collection');
+});
+test('coordination errors are visible even when collection is disabled and never expose arbitrary status text',async()=>{
+  let error='Coordination non disponible : vérifier les migrations de production.';
+  const f=fixture({fetchFn:url=>response(url.endsWith('/status')?{participationEnabled:false,coordinator:{state:'paused'},error}:{ok:true})});
+  await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:true});
+  assert.match(f.label.textContent,/vérifier la mise à jour de la base Ludy/);
+  assert.doesNotMatch(f.label.textContent,/Cliquez sur/);
+  error='Bearer secret-token https://user:password@example.invalid/?apikey=secret';
+  await f.desktopWorkerSessionChanged(session('first','refreshed'));
+  assert.match(f.label.textContent,/demande une vérification/);assert.doesNotMatch(f.label.textContent,/secret|password|apikey|example\.invalid|Bearer/);
+});
+test('a rejected participation request explains the backend failure without adding a second poll',async()=>{
+  const f=fixture({fetchFn:url=>url.endsWith('/participation')?rejected(503,'Coordination Supabase indisponible.'):response(url.endsWith('/status')?{participationEnabled:false,coordinator:{state:'paused'}}:{ok:true})});
+  await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:true});await f.button.onclick();
+  assert.match(f.label.textContent,/Participation inchangée/);assert.match(f.label.textContent,/Vérifiez Internet/);
+  assert.equal(f.timers.size,1);assert.equal(f.button.disabled,false);
+  assert.equal(f.calls.filter(c=>c.url.endsWith('/participation')).length,1);
+});
+test('an Uber connection warning does not hide the active collection state',async()=>{
+  const f=fixture({fetchFn:url=>response(url.endsWith('/status')?{participationEnabled:true,coordinator:{state:'leader'},error:'Connectez Uber sur ce poste pour reprendre ses rapports.'}:{ok:true})});
+  await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:true});
+  assert.match(f.label.textContent,/^Collecte active sur ce poste · Uber demande une connexion/);assert.equal(f.uberButton.disabled,false);
+});
+test('expired authentication shows a reconnect action and never displays response secrets',async()=>{
+  const f=fixture({fetchFn:()=>rejected(401,'upstream secret-session-token')});
+  await f.desktopWorkerSessionChanged(session());
+  assert.match(f.label.textContent,/session Ludy a expiré/);assert.match(f.label.textContent,/reconnectez-vous/);
+  assert.doesNotMatch(f.label.textContent,/secret|synthetic-token/);assert.equal(f.calls.length,1);assert.equal(f.timers.size,0);
+});
+test('a failed status request keeps the actionable error and disables controls',async()=>{
+  const f=fixture({fetchFn:url=>url.endsWith('/status')?rejected(403,'Accès administrateur requis.'):response({ok:true})});
+  await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:true});
+  assert.match(f.label.textContent,/compte administrateur/);assert.equal(f.button.disabled,true);assert.equal(f.uberButton.disabled,true);assert.equal(f.timers.size,1);
+});
+test('unknown server and thrown transport errors never echo secret details',async()=>{
+  let networkFailure=false;
+  const f=fixture({fetchFn:url=>{
+    if(url.endsWith('/participation')){if(networkFailure)throw Error('Bearer network-secret');return rejected(502,'token=server-secret');}
+    return response(url.endsWith('/status')?{participationEnabled:false,coordinator:{state:'paused'}}:{ok:true});
+  }});
+  await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:true});await f.button.onclick();
+  assert.match(f.label.textContent,/fermez et rouvrez Ludy/);assert.doesNotMatch(f.label.textContent,/secret|token=/);
+  networkFailure=true;await f.button.onclick();assert.match(f.label.textContent,/Vérifiez Internet/);assert.doesNotMatch(f.label.textContent,/Bearer|secret/);assert.equal(f.timers.size,1);
 });

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Installer l’extension Uber Fleet · Ludy</title>
+  <style>
+    body{margin:0;background:#f5f6f8;color:#172731;font:16px/1.6 system-ui,sans-serif}
+    main{max-width:760px;margin:36px auto;padding:0 24px}
+    section{background:white;border:1px solid #dce3e7;border-radius:12px;padding:24px;margin:20px 0}
+    h1,h2{line-height:1.25}h2{margin-top:0}a{color:#095c4e}li{margin:10px 0}
+    .download{display:inline-block;background:#095c4e;color:white;padding:12px 18px;border-radius:7px;text-decoration:none}
+    code{overflow-wrap:anywhere}p:last-child{margin-bottom:0}
+  </style>
+</head>
+<body><main>
+  <a href="/#/connecteurs">← Retour aux connecteurs</a>
+  <h1>Installer l’extension Uber Fleet</h1>
+  <p>L’extension lit les chauffeurs affichés sur votre carte Uber Fleet et les transmet à Ludy sur cet ordinateur. Gardez Ludy ouvert pendant son utilisation.</p>
+  <section>
+    <h2>Chrome ou Microsoft Edge</h2>
+    <a class="download" href="/uber-extension/ludy-uber-chromium.zip" download="ludy-uber-chromium.zip">Télécharger l’extension Chrome / Edge</a>
+    <ol>
+      <li>Enregistrez le ZIP, puis extrayez-le dans un dossier que vous conserverez.</li>
+      <li>Dans Chrome, saisissez <code>chrome://extensions</code> dans la barre d’adresse. Dans Edge, utilisez <code>edge://extensions</code>.</li>
+      <li>Activez le <strong>Mode développeur</strong>, puis cliquez sur <strong>Charger l’extension non empaquetée</strong>.</li>
+      <li>Sélectionnez le dossier extrait contenant le fichier <code>manifest.json</code>.</li>
+    </ol>
+  </section>
+  <section>
+    <h2>Associer votre écran Uber</h2>
+    <ol>
+      <li>Dans Ludy, connectez-vous avec le compte administrateur du poste de collecte et activez <strong>Participer à la collecte</strong>. Attendez <strong>Collecte active sur ce poste</strong>.</li>
+      <li>Dans <strong>Connecteurs → Uber Fleet</strong>, cliquez sur <strong>Associer mon écran Uber</strong> et copiez le code.</li>
+      <li>Ouvrez la Live Map Uber Fleet dans Chrome ou Edge. Dans l’extension Ludy, collez le code, puis cliquez sur <strong>Associer</strong> et <strong>Démarrer</strong>.</li>
+    </ol>
+    <p>Gardez la carte ouverte et la liste des chauffeurs sans filtre restrictif. L’option « Reprendre automatiquement » facilite la reprise ; une session Uber expirée demande une nouvelle connexion.</p>
+  </section>
+  <section>
+    <h2>Rapports Uber</h2>
+    <p>Pour les rapports automatiques, utilisez <strong>Connecter Uber</strong> dans Ludy puis renseignez la flotte dans <strong>Rapports automatiques</strong>. Le navigateur dédié s’ouvre sur ce poste ; connectez-vous à Uber et gardez-le ouvert. La Live Map et les rapports utilisent des sessions distinctes.</p>
+    <p>Si vous utilisez ce navigateur pour les rapports, arrêtez la collecte des rapports dans l’extension et conservez sa lecture de la Live Map.</p>
+  </section>
+</main></body></html>

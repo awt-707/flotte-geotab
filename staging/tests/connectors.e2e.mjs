@@ -38,6 +38,7 @@ try {
     if(method==='POST')mutations.push(path);
     if(path==='disconnections'&&method==='GET')return route.fulfill({json:{at:at(),enabled:false,policy:'any',duty_mode:'contract',coverage:{expected_drivers:0},warnings:[],alerts:[]}});
     if(path==='overview')return route.fulfill({json:{sources:[bolt,geotab,uber,myclicar],drivers:[],alerts:[],settings:{offline_threshold_s:300,enabled:true}}});
+    if(path==='bolt/config'&&method==='GET')return route.fulfill({json:{configured:true}});
     if(path==='geotab/live')return route.fulfill({json:{source:{status:geotab.status},vehicles:[],events:[],telemetry:{},motion_alerts:[],motion_coverage:{linked_drivers:2,unassigned_drivers:1}}});
     if(path==='validation/status')return route.fulfill({json:{status:'not_started',interval_s:60,duration_h:24}});
     if(path==='geotab/status')return route.fulfill({json:geotab});

@@ -46,6 +46,7 @@ export function createDesktopHttpServer({config,runtimeRoot,instanceId=randomUUI
   const modules=fs.realpathSync(path.join(runtimeRoot,'node_modules'));
   const csp="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; font-src 'self' data:; connect-src 'self' "+cfg.SUPABASE_URL+' '+cfg.SUPABASE_URL.replace('https:','wss:')+" https://photon.komoot.io; frame-src 'self' blob:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
   function staticFile(urlPath) {
+    if (urlPath === '/uber-extension' || urlPath === '/uber-extension/') return contained(siteRoot,path.join(siteRoot,'uber-extension.html'));
     if (VENDORS.has(urlPath)) return contained(modules,path.join(modules,VENDORS.get(urlPath)));
     if (/^\/vendor\/images\/[a-zA-Z0-9@._-]+\.png$/.test(urlPath)) return contained(modules,path.join(modules,'leaflet/dist/images',path.basename(urlPath)));
     if (/^\/vendor\/files\/barlow(?:-semi-condensed)?-[a-z0-9-]+\.woff2?$/.test(urlPath)) {

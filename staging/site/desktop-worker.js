@@ -7,15 +7,44 @@
   const current=version=>version===revision;
   function stopPoll(){clearTimeout(timer);timer=null;requestController?.abort();requestController=null;}
   function participation(){return status?.participationEnabled ?? status?.participation?.enabled ?? status?.enabled ?? false;}
+  function collectionInstruction(){
+    if(!admin)return 'Un administrateur doit activer la collecte sur un poste pour actualiser les connecteurs.';
+    if(status?.coordinator?.state==='follower')return 'Un autre poste assure la collecte. Utilisez ce poste pour piloter les connecteurs ; celui-ci prendra le relais lorsque la collecte sera disponible.';
+    return 'Cliquez sur « Participer à la collecte » pour activer les connecteurs sur cet ordinateur.';
+  }
+  // Only our known messages are translated. Never render arbitrary provider,
+  // database or network error text, which can contain credentials or URLs.
+  function safeReason(value){
+    const messages={
+      'Coordination non disponible : vérifier les migrations de production.':'Collecte indisponible : demandez à l’administrateur de vérifier la mise à jour de la base Ludy.',
+      'Coordination Supabase indisponible.':'Coordination indisponible. Vérifiez Internet, puis réessayez ; si le problème persiste, contactez l’administrateur.',
+      'Un connecteur demande une vérification.':'Un connecteur demande une vérification. Ouvrez « Connecteurs » pour contrôler son état.',
+      'Connectez Uber sur ce poste pour reprendre ses rapports.':'Uber demande une connexion. Utilisez « Connecter Uber » sur le poste qui collecte.',
+      'Connexion Ludy requise.':'Reconnectez-vous à Ludy pour accéder aux connecteurs.',
+      'Session Ludy expirée.':'Votre session Ludy a expiré. Déconnectez-vous, puis reconnectez-vous.',
+      'Session Ludy expirée ou invalide.':'Votre session Ludy a expiré ou n’est plus valide. Déconnectez-vous, puis reconnectez-vous.',
+      'Session remplacée.':'La session du poste a changé. Reconnectez-vous à Ludy.',
+      'Session du poste remplacée.':'La session du poste a changé. Reconnectez-vous à Ludy.',
+      'Administrateur requis.':'Connectez-vous avec un compte administrateur pour piloter la collecte.',
+      'Accès administrateur requis.':'Connectez-vous avec un compte administrateur pour piloter la collecte.'
+    };
+    if(typeof value!=='string')return '';
+    if(['Cette action demande la collecte active sur ce poste.','Activez la collecte sur ce poste avant de connecter Uber.','Collecte suspendue.'].includes(value))return collectionInstruction();
+    if(value==='La collecte appartient à un autre poste.')return 'Un autre poste assure la collecte. Utilisez ce poste pour piloter les connecteurs.';
+    return Object.hasOwn(messages,value)?messages[value]:'';
+  }
+  const errorMessage=(error,fallback)=>error?.desktopMessage||fallback;
   function label(){
     if(!token)return 'Connectez-vous pour accéder aux données partagées.';
     if(message)return message;
     const state=status?.coordinator?.state ?? status?.state ?? status?.phase;
+    if(status?.error)return (state==='leader'||state==='collecting'?'Collecte active sur ce poste · ':'')+(safeReason(status.error)||'La collecte demande une vérification. Ouvrez « Connecteurs » ou contactez l’administrateur.');
     if(state==='leader'||state==='collecting')return 'Collecte active sur ce poste';
     if(state==='follower')return 'Données partagées · un autre poste collecte';
-    if(state==='paused'||!participation())return 'Données partagées · collecte suspendue sur ce poste';
+    if(state==='error'||state==='unavailable')return 'Collecte indisponible. Vérifiez Internet ; une nouvelle tentative est automatique. Les données partagées restent consultables.';
+    if(!participation())return 'Collecte désactivée sur ce poste. '+collectionInstruction();
+    if(state==='paused')return 'Collecte suspendue sur ce poste. Gardez Ludy ouvert et vérifiez la participation de cet ordinateur.';
     if(state==='waiting'||state==='acquiring')return 'Participation active · attente de la collecte';
-    if(state==='error'||state==='unavailable')return 'Collecte indisponible · données partagées consultables';
     return 'Données partagées · vérification de la collecte';
   }
   function paint(){
@@ -37,7 +66,11 @@
   async function request(route,{method='GET',accessToken=token,body,signal}={}){
     const response=await fetch('/api/desktop/'+route,{method,headers:{...(accessToken?{Authorization:'Bearer '+accessToken}:{}),...(method==='GET'?{}:{'Content-Type':'application/json'})},
       ...(method==='GET'?{}:{body:JSON.stringify(body??{})}),credentials:'same-origin',redirect:'error',cache:'no-store',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(10000)]):AbortSignal.timeout(10000)});
-    if(!response.ok)throw Error('Poste indisponible.');
+    if(!response.ok){
+      const result=await response.json().catch(()=>null);
+      const fallback=response.status===401?'Votre session Ludy a expiré. Déconnectez-vous, puis reconnectez-vous.':response.status===403?'Action non autorisée. Vérifiez votre compte administrateur.':response.status===409?collectionInstruction():response.status>=500?'Le poste ne répond pas correctement. Vérifiez Internet, puis fermez et rouvrez Ludy si le problème persiste.':'Action refusée. Réessayez ; si le problème persiste, contactez l’administrateur.';
+      throw Object.assign(Error('Requête du poste refusée.'),{desktopMessage:safeReason(result?.error)||fallback});
+    }
     return response.status===204?null:response.json();
   }
   async function poll(version){
@@ -47,7 +80,7 @@
       const result=await request('status',{signal:controller.signal});
       if(!current(version))return;
       status=result?.status && typeof result.status==='object'?result.status:result;message='';
-    } catch {if(current(version)){status=null;message='État du poste indisponible · nouvelle vérification en cours';}}
+    } catch(error) {if(current(version)){status=null;message=errorMessage(error,'État du poste indisponible · nouvelle vérification en cours');}}
     finally {
       if(requestController===controller)requestController=null;
       if(current(version)&&token){paint();timer=setTimeout(()=>{timer=null;void poll(version);},5000);}
@@ -57,14 +90,14 @@
     if(!enabled||!admin||!token||busy||!status)return;
     const version=revision;busy=true;paint();stopPoll();
     try {await request('participation',{method:'POST',body:{enabled:!participation()}});if(current(version))await poll(version);}
-    catch {if(current(version)){message='Participation inchangée : réessayez.';timer=setTimeout(()=>{timer=null;void poll(version);},5000);}}
+    catch(error) {if(current(version)){message='Participation inchangée. '+errorMessage(error,'Vérifiez Internet, puis réessayez.');timer=setTimeout(()=>{timer=null;void poll(version);},5000);}}
     finally {if(current(version)){busy=false;paint();}}
   }
   async function openUber(){
     if(!enabled||!admin||!token||busy||status?.coordinator?.state!=='leader')return;
     const version=revision;busy=true;paint();stopPoll();
     try {await request('uber/open',{method:'POST'});if(current(version))await poll(version);}
-    catch {if(current(version)){message='Ouverture d’Uber indisponible. Vérifiez la participation de ce poste.';timer=setTimeout(()=>{timer=null;void poll(version);},5000);}}
+    catch(error) {if(current(version)){message=errorMessage(error,'Ouverture d’Uber indisponible. Vérifiez la participation de ce poste.');timer=setTimeout(()=>{timer=null;void poll(version);},5000);}}
     finally {if(current(version)){busy=false;paint();}}
   }
   function sessionChanged(session){
@@ -81,7 +114,7 @@
         if(next)await request('session',{method:'POST',accessToken:next});
         else await request('logout',{method:'POST',accessToken:previous});
         if(current(version)&&next)await poll(version);
-      } catch {if(current(version)){message=next?'Connexion du poste indisponible. Reconnectez-vous.':'';paint();}}
+      } catch(error) {if(current(version)){message=next?errorMessage(error,'Connexion du poste indisponible. Reconnectez-vous.'):'';paint();}}
     });
     return queue;
   }

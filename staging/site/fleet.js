@@ -74,6 +74,12 @@ function fleetConnectorAutomation(source, fallbackInterval) {
   const next = state.next ? `${state.retrying ? 'Nouvel essai' : 'Prochaine lecture'} : ${fmtHMS(state.next)}` : state.active ? 'Lecture en cours ou en préparation' : 'Aucune lecture programmée';
   return `<div class="connector-automation ${state.tone}" data-state="${state.retrying ? 'retrying' : state.active ? 'active' : 'paused'}"><div><b>${esc(state.label)}</b><span>${esc(next)}</span></div><p>${esc(state.detail)}</p>${source?.last_error && state.active ? `<p class="connector-error">${esc(source.last_error)}</p>` : ''}${state.active ? `<small>Cadence cible : ${state.interval} s · les délais du fournisseur peuvent la ralentir.</small>` : ''}</div>`;
 }
+function fleetBoltActivationFeedback(result) {
+  if (result?.ignored || result?.polling === false) return { tone: 'warn', message: 'Le suivi Bolt n’est pas actif. Vérifiez l’état de collecte de ce poste.' };
+  if (result?.retrying === true) return { tone: 'warn', message: 'Lecture Bolt impossible pour le moment. Une nouvelle tentative automatique est prévue. Consultez le message du connecteur.' };
+  if (result?.ok !== true) return { tone: 'warn', message: 'Le suivi Bolt n’a pas pu démarrer. Vérifiez le message du connecteur.' };
+  return { tone: 'ok', message: 'Suivi automatique activé. Les lectures reprennent après une coupure ou un redémarrage.' };
+}
 function fleetConnectorSurveillance(sources = [], coverage = LIVE.motionCoverage) {
   const states = ['uber', 'bolt', 'geotab'].map(id => { const source = sources.find(s => s.id === id) || {}, [label, tone] = fleetSourceState(source); return `<span class="source-status ${tone}"><i></i>${FLEET_PROVIDERS[id]} · ${esc(label)}</span>`; }).join('');
   const linked = Number(coverage?.linked_drivers), missing = Number(coverage?.unassigned_drivers);
@@ -478,10 +484,12 @@ function setupTeksatConnector(my) {
 
 async function pageConnecteurs() {
   if (!isAdmin()) { $('#page').innerHTML = msg('Cette page est réservée aux administrateurs.', 'warn'); return; }
-  const my = ROUTING; let alertSettings = {}, reading = false, boltBusy = false, connectorSources = [];
+  const my = ROUTING; let alertSettings = {}, reading = false, boltBusy = false, boltConfigBusy = false, boltLocalConfigured = null, boltConfigError = null, connectorSources = [];
   $('#page').innerHTML = `<div class="fleet-page"><div class="fleet-heading"><div><div class="eyebrow">ADMINISTRATION</div><h1>Vos sources, au même endroit<span>.</span></h1><p>Activez le suivi une fois. Ludy reprend automatiquement les lectures après une coupure.</p></div><a class="button-link secondary" href="#/cockpit">Retour à la flotte ${workspaceIcon('arrow')}</a></div><div id="connect-status" role="status"></div><div class="connector-grid">
     <section class="connector-card"><div class="connector-title"><span class="source-logo uber">U</span><div><h2>Uber Fleet</h2><span class="connector-kind">Lecture du portail · Deuxième écran</span></div><span id="uber-health"></span></div><p>Gardez la carte Uber Fleet ouverte sur votre deuxième écran. L’extension fait défiler la liste pour lire aussi les chauffeurs au-delà des premières lignes. Gardez la liste sans recherche ni filtre restrictif ; le parcours respecte les filtres affichés.</p><ol><li>Installez l’extension locale <a href="/uber-extension/" target="_blank" rel="noopener">Ludy — Uber Fleet</a>.</li><li>Générez un code d’association et collez-le dans l’extension.</li><li>Dans Uber Fleet, démarrez la lecture et laissez la page ouverte.</li></ol><p>Dans l’extension 0.5.1, activez « Reprendre automatiquement » pour retrouver la lecture après fermeture de l’onglet ou du navigateur. L’autorisation Uber est facultative ; sans elle, cliquez de nouveau sur Démarrer. L’extension ne reconnecte pas votre session Uber.</p><div class="uber-legend">${fleetPill({status:'available'})}${fleetPill({status:'on_trip'})}${fleetPill({status:'to_pickup'})}</div><div id="uber-summary" class="connector-read-summary" role="status"></div><button id="uber-pair">Associer mon écran Uber ${workspaceIcon('arrow')}</button><div id="uber-pair-result" aria-live="polite"></div></section>
-    <section class="connector-card"><div class="connector-title"><span class="source-logo bolt">${workspaceIcon('bolt')}</span><div><h2>Bolt</h2><span class="connector-kind">Fleet API v2 · Lecture des données</span></div><span id="bolt-health"></span></div><p>Retrouvez les chauffeurs et leurs états directement depuis votre compte Bolt Fleet.</p><div class="connector-detail"><span>Authentification</span><b>Connexion sécurisée côté serveur</b><span>Données</span><b>Chauffeurs, véhicules et activité</b><span>Dernière lecture</span><b id="bolt-last">Pas encore synchronisé</b></div><div id="bolt-coverage" class="connector-read-summary"></div><div id="bolt-automation" role="status"></div><button id="bolt-refresh">Activer le suivi automatique ${workspaceIcon('refresh')}</button><button id="bolt-stop" class="ghost" hidden>Mettre en pause</button><div id="bolt-result" aria-live="polite"></div></section>
+    <section class="connector-card"><div class="connector-title"><span class="source-logo bolt">${workspaceIcon('bolt')}</span><div><h2>Bolt</h2><span class="connector-kind">Fleet API v2 · Lecture des données</span></div><span id="bolt-health"></span></div><p>Retrouvez les chauffeurs et leurs états directement depuis votre compte Bolt Fleet.</p><div class="connector-detail"><span>Authentification</span><b>Accès privés sur ce poste</b><span>Données</span><b>Chauffeurs, véhicules et activité</b><span>Dernière lecture</span><b id="bolt-last">Pas encore synchronisé</b></div>
+      <p id="bolt-config-state" role="status">Vérification des accès enregistrés sur ce poste…</p><form id="bolt-config" class="myclicar-form" method="post" autocomplete="off"><label>Identifiant client Bolt<input id="bolt-client-id" name="clientId" required maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false"></label><label>Secret client Bolt<input id="bolt-client-secret" name="clientSecret" type="password" required maxlength="4096" autocomplete="off" aria-describedby="bolt-config-help"></label><button id="bolt-config-save" type="submit">Enregistrer les accès sur ce poste</button></form><p id="bolt-config-help" class="connector-footnote">Renseignez les deux accès de l’API Bolt Fleet pour préparer cet ordinateur. L’enregistrement ne vérifie pas encore leur validité et ne démarre aucune lecture. Les accès enregistrés ne sont jamais réaffichés ; renseignez-les de nouveau pour les remplacer.</p><div id="bolt-config-result" role="status" aria-live="polite"></div>
+      <div id="bolt-coverage" class="connector-read-summary"></div><div id="bolt-automation" role="status"></div><button id="bolt-refresh">Activer le suivi automatique ${workspaceIcon('refresh')}</button><button id="bolt-stop" class="ghost" hidden>Mettre en pause</button><div id="bolt-result" aria-live="polite"></div></section>
     <section class="connector-card geotab-connector"><div class="connector-title"><span class="source-logo geotab">G</span><div><h2>Geotab</h2><span class="connector-kind">Positions, contact, consommation et conduite</span></div><span id="geotab-health" class="source-status mute">À connecter</span></div>
       <p>Connectez le compte MyGeotab dédié au staging, puis associez les boîtiers aux véhicules Ludy. Les positions visent une lecture toutes les 2 secondes, les événements de conduite toutes les 10 secondes et les compteurs toutes les 30 secondes. La cadence s’adapte au nombre de véhicules et aux réponses Geotab.</p>
       <form id="geotab-connect" class="geotab-form" autocomplete="off"><label>Base MyGeotab<input id="geotab-database" name="database" value="clicar" required maxlength="128" autocapitalize="none" spellcheck="false"></label><label>Identifiant MyGeotab<input id="geotab-user" name="username" required maxlength="256" autocomplete="off" autocapitalize="none" spellcheck="false"></label><label>Mot de passe MyGeotab<input id="geotab-password" name="password" type="password" required maxlength="1024" autocomplete="new-password"></label><button type="submit">Tester et enregistrer</button></form>
@@ -512,20 +520,25 @@ async function pageConnecteurs() {
   if (typeof disconnectionsPaintSettings === 'function') disconnectionsPaintSettings();
   const renderBolt = () => {
     if (my !== ROUTING) return;
-    const source = connectorSources.find(s => s.id === 'bolt') || {}, state = fleetConnectorState(source);
-    $('#bolt-health').innerHTML = `<span class="source-status ${state.tone}"><i></i>${esc(state.label)}</span>`;
+    const source = connectorSources.find(s => s.id === 'bolt') || {}, state = fleetConnectorState(source), remote = source.collectionRemote === true;
+    $('#bolt-health').innerHTML = `<span class="source-status ${remote ? 'mute' : state.tone}"><i></i>${esc(remote ? 'Données partagées' : state.label)}</span>`;
     $('#bolt-last').textContent = source.last_success_at ? fmtDTY(source.last_success_at) : 'Pas encore synchronisé';
-    $('#bolt-automation').innerHTML = fleetConnectorAutomation(source, 60);
+    $('#bolt-automation').innerHTML = remote ? '<div class="connector-automation mute" data-state="shared"><div><b>Collecte inactive sur ce poste</b></div><p>Les données Bolt affichées sont partagées. Elles ne confirment pas les accès Bolt de cet ordinateur.</p><p>Pour démarrer ou mettre en pause Bolt, ce poste doit avoir la collecte active.</p><a href="#/application">Vérifier la participation de ce poste</a></div>' : fleetConnectorAutomation(source, 60);
     const coverage = source.coverage || {};
     $('#bolt-coverage').textContent = `${coverage.drivers ?? '—'} chauffeur(s) · ${coverage.vehicles ?? '—'} véhicule(s) · ${coverage.companies ?? '—'} société(s) accessibles à la clé Bolt.${coverage.complete === true ? ' Pagination complète vérifiée.' : ''}`;
-    $('#bolt-stop').hidden = !state.active; $('#bolt-stop').disabled = boltBusy;
-    $('#bolt-refresh').hidden = state.active; $('#bolt-refresh').disabled = boltBusy || !state.configured;
+    $('#bolt-stop').hidden = remote || !state.active; $('#bolt-stop').disabled = boltBusy || boltConfigBusy || remote;
+    $('#bolt-refresh').hidden = !remote && state.active; $('#bolt-refresh').disabled = boltBusy || boltConfigBusy || remote || boltLocalConfigured !== true || !state.configured;
+    const localActive = !remote && state.active;
+    $('#bolt-config-state').textContent = localActive ? 'Mettez le suivi Bolt en pause avant de modifier les accès de ce poste.' : boltConfigError || (boltLocalConfigured === true ? 'Accès Bolt enregistrés sur ce poste.' : boltLocalConfigured === false ? 'Aucun accès Bolt enregistré sur ce poste.' : 'Vérification des accès enregistrés sur ce poste…');
+    for (const id of ['bolt-client-id', 'bolt-client-secret', 'bolt-config-save']) $('#' + id).disabled = boltBusy || boltConfigBusy || localActive;
   };
   const health = () => {
     if (reading) return reading;
     reading = (async () => {
       try {
-        const data = await fleetApi('overview'); if (my !== ROUTING) return;
+        const [data, configuration] = await Promise.all([fleetApi('overview'), fleetApi('bolt/config').catch(error => ({ error: error.message }))]); if (my !== ROUTING) return;
+        boltLocalConfigured = typeof configuration?.configured === 'boolean' ? configuration.configured : null;
+        boltConfigError = boltLocalConfigured === null ? configuration?.error || 'État des accès Bolt indisponible. Réessayez.' : null;
         $('#connect-status').innerHTML = ''; connectorSources = data.sources || []; alertSettings = data.settings || {};
         if (!$('#fleet-alert-settings').dataset.loaded) { $('#fleet-alert-minutes').value = Math.round((alertSettings.offline_threshold_s || 300) / 60); $('#fleet-alert-enabled').checked = alertSettings.enabled !== false; $('#fleet-alert-settings').dataset.loaded = '1'; }
         const uber = connectorSources.find(s => s.id === 'uber'), [label, cls] = fleetSourceState(uber);
@@ -547,9 +560,28 @@ async function pageConnecteurs() {
     } catch (e) { if (my === ROUTING) $('#uber-pair-result').innerHTML = msg(e.message, 'err'); }
     finally { if (my === ROUTING) button.disabled = false; }
   };
+  $('#bolt-config').onsubmit = async event => {
+    event.preventDefault();
+    if (boltBusy || boltConfigBusy) return;
+    const source = connectorSources.find(s => s.id === 'bolt') || {};
+    if (source.collectionRemote !== true && fleetConnectorState(source).active) return;
+    const idInput = $('#bolt-client-id'), secretInput = $('#bolt-client-secret');
+    const clientId = idInput.value.trim(), clientSecret = secretInput.value;
+    if (!clientId || !clientSecret) { $('#bolt-config-result').innerHTML = msg('Renseignez l’identifiant et le secret client Bolt.', 'warn'); return; }
+    boltConfigBusy = true; renderBolt(); $('#bolt-config-result').innerHTML = '<p class="sub">Enregistrement des accès sur ce poste…</p>';
+    try {
+      const result = await fleetApi('bolt/config', { clientId, clientSecret });
+      if (result.configured !== true) throw new Error('Enregistrement des accès Bolt non confirmé.');
+      if (my !== ROUTING) return;
+      $('#bolt-config-result').innerHTML = msg('Accès enregistrés sur ce poste. Leur validité sera vérifiée au démarrage du suivi. Vérifiez la participation de ce poste, puis activez le suivi Bolt.', 'ok');
+    } catch (error) { if (my === ROUTING) $('#bolt-config-result').innerHTML = msg(esc(error.message), 'err'); }
+    finally { idInput.value = ''; secretInput.value = ''; boltConfigBusy = false; if (my === ROUTING) { await health(); renderBolt(); } }
+  };
   $('#bolt-refresh').onclick = async () => {
-    if (boltBusy) return; boltBusy = true; renderBolt(); $('#bolt-result').innerHTML = '<p class="sub">Activation du suivi automatique…</p>';
-    try { const result = await fleetApi('bolt/start', {}); if (my !== ROUTING) return; $('#bolt-result').innerHTML = msg(esc(result.message || 'Suivi automatique activé. Les lectures reprennent après une coupure ou un redémarrage.'), 'ok'); }
+    const source = connectorSources.find(s => s.id === 'bolt') || {};
+    if (boltBusy || boltConfigBusy || source.collectionRemote === true || boltLocalConfigured !== true || !fleetConnectorState(source).configured) return;
+    boltBusy = true; renderBolt(); $('#bolt-result').innerHTML = '<p class="sub">Activation du suivi automatique…</p>';
+    try { const result = await fleetApi('bolt/start', {}); if (my !== ROUTING) return; const feedback = fleetBoltActivationFeedback(result); $('#bolt-result').innerHTML = msg(esc(feedback.message), feedback.tone); }
     catch (e) { if (my === ROUTING) $('#bolt-result').innerHTML = msg(esc(e.message), 'err'); }
     finally { boltBusy = false; if (my === ROUTING) { await health(); renderBolt(); } }
   };
@@ -560,7 +592,8 @@ async function pageConnecteurs() {
     finally { if (my === ROUTING) button.disabled = false; }
   };
   $('#bolt-stop').onclick = async () => {
-    if (boltBusy) return; boltBusy = true; renderBolt();
+    if (boltBusy || boltConfigBusy || connectorSources.find(s => s.id === 'bolt')?.collectionRemote === true) return;
+    boltBusy = true; renderBolt();
     try { await fleetApi('bolt/stop', {}); if (my === ROUTING) $('#bolt-result').innerHTML = msg('Suivi Bolt en pause. Cette pause reste conservée au redémarrage.', 'ok'); }
     catch (e) { if (my === ROUTING) $('#bolt-result').innerHTML = msg(esc(e.message), 'err'); }
     finally { boltBusy = false; if (my === ROUTING) { await health(); renderBolt(); } }

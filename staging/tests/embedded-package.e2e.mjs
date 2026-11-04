@@ -22,8 +22,21 @@ try{
   assert.equal(await page.evaluate(()=>fetch('/api/desktop/logout',{method:'POST',headers:{'Content-Type':'text/plain'},body:'{}'}).then(r=>r.status)),403);
   const assets=await page.evaluate(async()=>Promise.all([...document.scripts].filter(s=>s.src).map(async s=>[new URL(s.src).pathname,(await fetch(s.src)).status])));
   assert.ok(assets.length>10);assert.ok(assets.every(([,status])=>status===200));
+  await page.goto('http://127.0.0.1:4173/uber-extension/');
+  await page.getByRole('heading',{name:'Installer l’extension Uber Fleet',exact:true}).waitFor();
+  await app.evaluate(({BrowserWindow})=>{
+    globalThis.extensionDownload=null;
+    BrowserWindow.getAllWindows()[0].webContents.session.once('will-download',(event,item)=>{
+      globalThis.extensionDownload={filename:item.getFilename(),options:item.getSaveDialogOptions(),bytes:item.getTotalBytes()};event.preventDefault();
+    });
+  });
+  await page.getByRole('link',{name:'Télécharger l’extension Chrome / Edge'}).click();
+  let download=null;
+  for(let attempt=0;attempt<50&&!download;attempt++){download=await app.evaluate(()=>globalThis.extensionDownload);if(!download)await new Promise(resolve=>setTimeout(resolve,100));}
+  assert.equal(download?.filename,'ludy-uber-chromium.zip');
+  assert.equal(download.options.defaultPath,'ludy-uber-chromium.zip');assert.ok(download.bytes>1000);
   assert.deepEqual(errors,[]);
   await app.close();app=null;
   await assert.rejects(fetch('http://127.0.0.1:4173/health',{signal:AbortSignal.timeout(1000)}));
-  console.log(JSON.stringify({ok:true,checks:12,packaged:true,embeddedServer:true,productionRequests:0,network:'isolated-loopback',projectRef:health.projectRef}));
+  console.log(JSON.stringify({ok:true,checks:16,packaged:true,embeddedServer:true,extensionDownload:true,productionRequests:0,network:'isolated-loopback',projectRef:health.projectRef}));
 }finally{await app?.close();await rm(directory,{recursive:true,force:true});}

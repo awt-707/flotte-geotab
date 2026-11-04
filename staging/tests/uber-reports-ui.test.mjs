@@ -27,4 +27,8 @@ test('report settings require an explicit CSV timezone, show the actual Moroccan
  await page.evaluate(()=>{CFG.SHARED_STAGING=true;return pageUberReports();});
  assert.equal(await page.locator('#uber-reports-timezone').isDisabled(),true);assert.equal(await page.getByRole('button',{name:'Enregistrer',exact:true}).isDisabled(),true);
  assert.match(await page.locator('.uber-reports-local').innerText(),/serveur de staging/);assert.deepEqual(errors,[]);
+ await page.evaluate(()=>{CFG.SHARED_STAGING=false;CFG.DESKTOP_PRODUCTION=true;return pageUberReports();});
+ assert.match(await page.locator('.uber-reports-local').innerText(),/Connecter Uber/);
+ assert.doesNotMatch(await page.locator('.uber-reports-local').innerText(),/npm|terminal|staging\/\.local/);
+ assert.equal(await page.locator('.uber-reports-local a').getAttribute('href'),'#/application');
 });

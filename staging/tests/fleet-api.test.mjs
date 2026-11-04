@@ -3,6 +3,37 @@ import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { createFleetApi } from '../server/fleet.mjs';
 import { sourceKey } from '../server/fleet-domain.mjs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import {initializePrivateRoot} from '../server/private-files.mjs';
+import {readBoltCredentials} from '../server/bolt.mjs';
+
+test('standby Bolt configuration is local, administrator-only and never starts collection or returns secrets',async t=>{
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ludy-bolt-http-')));await initializePrivateRoot(root);t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const {tables,fetchFn,requests}=mockLocal(),file=path.join(root,'bolt.env');let resets=0,reads=0;
+ class NoNetworkBolt{resetCredentials(){resets++;}snapshot(){reads++;throw Error('Provider must not run during configuration');}}
+ const handler=createFleetApi({supabaseUrl:'http://127.0.0.1:57421',serviceKey:'service',anonKey:'anon',fetchFn,boltEnvPath:file,sharedCollection:true,Bolt:NoNetworkBolt});t.after(()=>handler.close());
+ assert.deepEqual(await callApi(handler,'bolt/config'),{code:200,value:{configured:false}});
+ assert.equal((await callApi(handler,'bolt/config',undefined,'invalid')).code,401);
+ const credentials={clientId:'synthetic-id',clientSecret:'synthetic-secret'};
+ tables.profiles[0].role='viewer';assert.equal((await callApi(handler,'bolt/config',credentials)).code,403);assert.equal((await callApi(handler,'bolt/config')).code,403);assert.equal(await readBoltCredentials(file),null);
+ tables.profiles[0].role='admin';assert.deepEqual(await callApi(handler,'bolt/config',credentials),{code:200,value:{configured:true}});assert.deepEqual(await readBoltCredentials(file),credentials);
+ assert.deepEqual(await callApi(handler,'bolt/config'),{code:200,value:{configured:true}});
+ assert.equal((await callApi(handler,'bolt/config',{...credentials,clientSecret:'invalid\nvalue'})).code,400);assert.deepEqual(await readBoltCredentials(file),credentials);
+ assert.equal(resets,1);assert.equal(reads,0);assert.ok(requests.every(r=>r.method==='GET'&&r.table==='profiles'),'configuration never writes shared business data');
+});
+
+test('Bolt configuration cannot change credentials while local collection is running',async t=>{
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ludy-bolt-http-')));await initializePrivateRoot(root);t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const {fetchFn}=mockLocal(),file=path.join(root,'bolt.env');let reads=0;
+ class EmptyBolt{resetCredentials(){}async snapshot(){reads++;return {rows:[],vehicles:[],companies:[],at:new Date().toISOString()};}}
+ const handler=createFleetApi({supabaseUrl:'http://127.0.0.1:57421',serviceKey:'service',anonKey:'anon',fetchFn,boltEnvPath:file,Bolt:EmptyBolt,setTimer:()=>({unref(){}}),clearTimer(){}});t.after(()=>handler.close());
+ const credentials={clientId:'synthetic-id',clientSecret:'synthetic-secret'};assert.equal((await callApi(handler,'bolt/config',credentials)).code,200);
+ assert.equal((await callApi(handler,'bolt/start',{})).code,200);assert.equal(reads,1);
+ assert.equal((await callApi(handler,'bolt/config',{...credentials,clientSecret:'replacement'})).code,409);assert.deepEqual(await readBoltCredentials(file),credentials);
+ assert.equal((await callApi(handler,'bolt/stop',{})).code,200);assert.equal((await callApi(handler,'bolt/config',{...credentials,clientSecret:'replacement'})).code,200);assert.equal(reads,1);
+});
 
 test('Live Map preserves a report-certified provider UUID under its original provisional source key',async()=>{
  const {tables,fetchFn,requests}=mockLocal();let at=Date.parse('2026-11-03T00:00:00Z');

@@ -2,7 +2,7 @@ import {sharedGeotabLive} from './shared-geotab.mjs';
 import {resolveBackendTarget} from './database-target.mjs';
 import { createUberPairing } from './uber-pairing.mjs';
 import { createConnectorState } from './connector-state.mjs';
-import { BoltClient, readBoltCredentials } from './bolt.mjs';
+import { BoltClient, readBoltCredentials, saveBoltCredentials } from './bolt.mjs';
 import {retryDeadline,retryTimerDelay} from './provider-retry.mjs';
 import { createGeotabService } from './geotab-service.mjs';
 import { createMyclicarService } from './myclicar-service.mjs';
@@ -372,6 +372,16 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
       }
       if(u.pathname==='/api/fleet/pair' && req.method==='POST'){reply(res,200,await pairs.issue(auth.user.id));return true;}
       if(u.pathname==='/api/fleet/pair/revoke'&&req.method==='POST'){await pairs.revokeUser(auth.user.id);await serial(()=>health('uber','paused',{last_error:'Liaison révoquée par un administrateur.'}));reply(res,200,{ok:true});return true;}
+      if(u.pathname==='/api/fleet/bolt/config'){
+        if(auth.profile.role!=='admin')throw httpError(403,'Administrateur local requis');
+        if(req.method==='GET'){reply(res,200,{configured:!!await readBoltCredentials(boltEnvPath)});return true;}
+        if(req.method==='POST'){
+          if(boltPolling||boltBusy||!sharedCollection&&automation.enabled('bolt'))throw httpError(409,'Arrêtez le suivi Bolt sur ce poste avant de modifier ses accès.');
+          await saveBoltCredentials(boltEnvPath,await bodyJson(req));bolt.resetCredentials?.();boltNext=0;boltFailures=0;
+          reply(res,200,{configured:true});return true;
+        }
+        throw httpError(405,'Méthode non autorisée');
+      }
       if(u.pathname==='/api/fleet/bolt/refresh' && req.method==='POST'){reply(res,200,await refreshBolt());return true;}
       if(u.pathname==='/api/fleet/bolt/start' && req.method==='POST'){
         reply(res,200,{...await connectorIntent('bolt',true),...automationState('bolt')});return true;

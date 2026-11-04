@@ -1,6 +1,6 @@
 # Déployer Ludy avec les collecteurs dans les applications
 
-Chaque application Ludy 0.2.0 contient son serveur local. Les postes utilisent le même Supabase de production et les comptes Ludy existants. Un seul poste administrateur participant détient le bail de collecte ; les autres consultent les données partagées et peuvent prendre le relais. Il faut laisser au moins un poste préparé, connecté et éveillé pour poursuivre la collecte.
+Chaque application Ludy 0.2.1 contient son serveur local. Les postes utilisent le même Supabase de production et les comptes Ludy existants. Un seul poste administrateur participant détient le bail de collecte ; les autres consultent les données partagées et peuvent prendre le relais. Il faut laisser au moins un poste préparé, connecté et éveillé pour poursuivre la collecte.
 
 Cette architecture ne demande pas de VM. Elle conserve les données, Auth, Storage et les services Apps Script existants. Le serveur embarqué écoute seulement `127.0.0.1:4173`. Les applications contiennent la configuration publique Supabase ; aucune clé `service_role` n'est installée sur les postes.
 
@@ -8,21 +8,21 @@ Cette architecture ne demande pas de VM. Elle conserve les données, Auth, Stora
 
 Le [relevé de déploiement](../.local/production/deployment-2026-11-04.json) conserve les contrôles et les empreintes. Une sauvegarde physique du 4 novembre à 06:47:42 UTC est visible dans le tableau de bord fourni par l’utilisateur ; aucune restauration réelle n’a été effectuée. Les services existants sont restés actifs pendant le lot atomique, avec une attente de verrou limitée à cinq secondes. Les collecteurs desktop ne sont pas encore configurés, et le premier lancement Windows reste à vérifier. **Ne pas rejouer le lot de promotion sur ce projet.**
 
-Les paquets Windows/Linux et le kit Mac sont dans `staging/.local/releases/embedded-desktop/`.
+La version **0.2.1** rétablit la page de téléchargement de l’extension Uber et ajoute le formulaire des accès API Bolt sur chaque poste. Elle distingue la configuration locale des données partagées et affiche les échecs de lecture sans faux succès. La mise à jour conserve le profil utilisateur existant et ne demande aucune nouvelle migration.
 
-Paquets finaux de cette préparation (les anciennes archives du dossier sont conservées) :
-
-| Cible | Fichier vérifié |
+| Cible | Paquet à installer |
 | --- | --- |
-| Windows x64 | [Ludy 0.2.0 — Windows](../.local/releases/embedded-desktop/Ludy-0.2.0-Windows-x64-1793784419875-0d17aaf8.zip) |
-| Linux x64 | [Ludy 0.2.0 — Linux](../.local/releases/embedded-desktop/Ludy-0.2.0-Linux-x64-1793784417639-28fa4e9a.zip) |
-| Mac | [Kit source 0.2.0 — test natif](../.local/releases/embedded-desktop/Ludy-0.2.0-Mac-Sources-TEST-LOCAL-1793784334307-4f90fb3a.zip) |
+| Windows x64 | [Ludy Windows 0.2.1](../.local/livraison-collegues/Ludy-Windows-0.2.1.zip) |
+| Mac Apple Silicon | [Ludy Mac Apple Silicon 0.2.1](../.local/livraison-collegues/Ludy-Mac-Apple-Silicon-0.2.1.zip) |
+| Mac Intel | [Ludy Mac Intel 0.2.1](../.local/livraison-collegues/Ludy-Mac-Intel-0.2.1.zip) |
 
-Les empreintes et résultats sont réunis dans [le relevé de livraison](../.local/releases/embedded-desktop/delivery-2026-11-04.json). **1 400 tests de régression passent** ; le paquet Linux passe aussi 12 contrôles réels de démarrage, ressources, isolation et arrêt, sans réseau. Les trois archives ont été vérifiées ; Windows et Mac n’ont pas encore leur recette native de cette version.
+Les archives Mac sont produites par le workflow [Ludy macOS et contrôle Windows](../../.github/workflows/ludy-embedded-macos.yml), sur leurs architectures natives, avec contrôle de signature ad hoc et réextraction du ZIP. Le même workflow vérifie sur Windows la sauvegarde et la relecture des accès Bolt, ainsi que les permissions réelles du fichier. Les lancements graphiques et les connexions fournisseurs doivent encore être vérifiés sur les postes destinataires. Aucune connexion fournisseur réelle n’est effectuée par ces tests.
+
+La livraison précédente 0.2.0 et son [relevé](../.local/releases/embedded-desktop/delivery-2026-11-04.json) sont conservés dans `staging/.local/releases/embedded-desktop/`. Les 1 400 tests de cette livraison restent le socle de régression ; le correctif 0.2.1 ajoute des vérifications ciblées des connecteurs, du stockage privé et du téléchargement depuis le paquet réel.
 
 ## Première mise en service avec les services existants
 
-Le paquet [Windows à transmettre aux collègues](../.local/livraison-collegues/Ludy-Windows-0.2.0.zip) est accompagné des [instructions d’installation](../.local/livraison-collegues/INSTALLER-LUDY.txt). Il contient exactement la version vérifiée ci-dessus. Installer et vérifier d’abord un poste Windows pilote ; conserver la participation désactivée chez les collègues qui consultent seulement. Ils utilisent leurs comptes Ludy existants et n’ont pas besoin des identifiants fournisseurs.
+Le paquet [Windows à transmettre aux collègues](../.local/livraison-collegues/Ludy-Windows-0.2.1.zip) est accompagné des [instructions d’installation](../.local/livraison-collegues/INSTALLER-LUDY.txt). Il contient exactement la version vérifiée ci-dessus. Installer et vérifier d’abord un poste Windows pilote ; conserver la participation désactivée chez les collègues qui consultent seulement. Ils utilisent leurs comptes Ludy existants et n’ont pas besoin des identifiants fournisseurs.
 
 **Conserver Apps Script et laisser Geotab desktop désactivé lors de cette première mise en service.** Les autres connecteurs desktop peuvent être configurés sur le poste administrateur désigné. Le bail desktop arbitre les nouvelles applications ; il ne bloque pas les écritures de l’ancien collecteur Apps Script.
 
@@ -65,11 +65,11 @@ Pour une future évolution, exporter un nouvel inventaire avec `migrations-inven
 
 ### Windows
 
-Extraire **tout** le ZIP `Ludy-0.2.0-Windows-x64-….zip` dans un dossier utilisateur, puis lancer `Ludy.exe`. Garder les DLL et le dossier `resources` à côté de l'exécutable. Node.js, Docker et Supabase local ne sont pas nécessaires sur le PC utilisateur. Le paquet n'est pas signé ; la recette native Windows de ce nouveau serveur embarqué reste à effectuer.
+Fermer Ludy, extraire **tout** le ZIP `Ludy-Windows-0.2.1.zip` dans un nouveau dossier utilisateur, puis lancer `Ludy.exe`. Garder les DLL et le dossier `resources` à côté de l'exécutable. Node.js, Docker et Supabase local ne sont pas nécessaires sur le PC utilisateur. Le paquet n'est pas signé ; la recette native Windows de ce nouveau serveur embarqué reste à effectuer.
 
 ### Linux
 
-Extraire tout le ZIP `Ludy-0.2.0-Linux-x64-….zip` et lancer `Ludy`. Le démarrage du vrai paquet, sa connexion au serveur embarqué et son arrêt sont testés dans un réseau isolé. Cette recette ne se connecte pas à Supabase de production.
+Extraire tout le ZIP `Ludy-0.2.1-Linux-x64-….zip` et lancer `Ludy`. Le démarrage du vrai paquet, sa connexion au serveur embarqué et son arrêt sont testés dans un réseau isolé. Cette recette ne se connecte pas à Supabase de production.
 
 Le port 4173 doit être libre : fermer l'ancien staging local avant de lancer la nouvelle application. Ludy refuse de remplacer un service déjà présent sur ce port.
 
@@ -107,7 +107,7 @@ node staging/scripts/build-embedded-mac-kit.mjs
 
 Chaque ZIP possède un fichier `.sha256`. Depuis leur dossier, `sha256sum -c nom.zip.sha256` vérifie Linux et `shasum -a 256 -c nom.zip.sha256` vérifie macOS ; sous Windows, comparer `Get-FileHash .\nom.zip -Algorithm SHA256` au fichier fourni.
 
-La configuration ne contient que `environment`, `projectRef`, `supabaseUrl` et `publishableKey`. Le builder exige l'URL canonique du projet et refuse une clé privilégiée. La compilation Mac et son exécution native restent à vérifier sur un Mac.
+La configuration ne contient que `environment`, `projectRef`, `supabaseUrl` et `publishableKey`. Le builder exige l'URL canonique du projet et refuse une clé privilégiée. La construction Mac et le contrôle de son archive sont exécutés en CI ; son premier lancement et ses parcours métier restent à vérifier sur le Mac utilisateur.
 
 ## 3. Préparer les postes qui pourront collecter
 
@@ -128,7 +128,7 @@ Les configurations d'un utilisateur sont dans `users/<UUID Auth Ludy>/` sous ce 
 Pour chaque poste de collecte :
 
 - **MyClicar** : renseigner ses accès dans Connecteurs, activer la source et vérifier son état et ses associations. **Geotab desktop reste désactivé lors de la première mise en service décrite plus haut** ; son activation attend la délégation des écritures depuis Apps Script.
-- **Bolt** : dans le dossier `users/<UUID Auth Ludy>/`, créer `bolt.env` avec deux lignes `BOLT_CLIENT_ID=…` et `BOLT_CLIENT_SECRET=…`, puis relancer Ludy et vérifier la connexion et les véhicules suivis. Utiliser un fichier texte UTF-8 ; sous Linux/macOS, donner le mode `600` à ce fichier. Conserver les permissions privées héritées sous Windows.
+- **Bolt (0.2.1)** : ouvrir **Connecteurs → Bolt**, renseigner l’identifiant client et le secret de l’API Bolt Fleet, puis **Enregistrer les accès sur ce poste**. Cet enregistrement local ne vérifie pas encore les accès et ne démarre pas la collecte. Dans **Application**, activer la participation et attendre **Collecte active sur ce poste**, puis activer le suivi Bolt. Vérifier la date de dernière lecture et les véhicules suivis ; un échec avec reprise automatique reste affiché comme avertissement. Les anciens fichiers `bolt.env` restent lisibles et les accès ne sont jamais intégrés aux ZIP.
 - **Uber Reports/Earnings** : configurer la flotte, puis utiliser **Connecter Uber** dans Application. Un navigateur dédié s'ouvre ; la connexion et les validations Uber se font normalement. L'application télécharge son navigateur au premier besoin. Connecter aussi les postes de secours individuellement. Laisser désactivé l’ancien collecteur Rapports de l’extension lorsque ce navigateur dédié est utilisé.
 - **Uber LiveMap** : installer et associer l'extension locale à ce poste, ouvrir la bonne flotte dans un onglet visible et conserver une session Uber valide. Le navigateur dédié aux rapports ne remplace pas cette vue LiveMap. Lorsqu’une transmission est refusée parce que le poste attend le bail, l’extension suspend ses lectures et rafraîchissements automatiques. Elle vérifie le statut local une fois par minute et reprend lorsque ce poste devient actif. La page Uber peut conserver son propre fonctionnement indépendant de l’extension. Après une déconnexion Ludy qui invalide l’association, associer de nouveau l’extension. L’option de reprise automatique concerne la réouverture de son onglet ; elle ne remplace pas une connexion Uber expirée.
 - **Teksat** : configurer `texat.json` avec les propriétés `TEXAT_SOCIETE`, `TEXAT_EMAIL` et `TEXAT_PASSWORD`, ainsi que `texat-scope.json` avec la filiale et l’empreinte du compte et les preuves d’association validées dans `texat-mapping-evidence.json`. Ne pas inventer ces preuves pour activer la source. La conservation des positions brutes est disponible ; le basculement normalisé automatique attend encore les preuves de fuseau, GPS et compteurs décrites dans [le contrat Teksat](../docs/texat-integration.md).
@@ -160,7 +160,7 @@ Le workflow GitHub actuel publie le dossier racine `site/`, Apps Script et la fo
 - Le suivi Geotab récent, ses capteurs et événements sont partagés par Supabase. Les vues de détail, historique et rapport qui interrogent Geotab directement demandent encore le poste qui collecte.
 - Le portail chauffeur accessible depuis un téléphone demande un hébergement public et son propre accès authentifié. Le serveur sur `127.0.0.1` ne le publie pas sur Internet. L'administration des comptes chauffeurs reste disponible dans Ludy.
 - La collecte exige un administrateur Ludy connecté et un poste éveillé. Elle ne devient pas un service indépendant de la session de l'application.
-- Windows et macOS demandent encore leur recette native du serveur embarqué. Le diagnostic Windows 0.1.1 déjà reçu concernait l'ancien conteneur hors connexion.
+- Windows et macOS demandent encore leur recette graphique et métier sur les postes utilisateurs. Le diagnostic Windows 0.1.1 déjà reçu concernait l'ancien conteneur hors connexion.
 - Les montants financiers conservent leurs preuves, leurs devises et leur couverture. Les prix observés par les API Bolt ne deviennent pas des relevés comptables, et le total Uber Earnings n'est pas assimilé au net après commissions.
 
 ## Vérifications et retour arrière

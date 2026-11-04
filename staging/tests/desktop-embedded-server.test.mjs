@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
-import {mkdtemp,mkdir,writeFile,symlink,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,symlink,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -67,6 +67,27 @@ test('desktop session and participation mutations require the exact origin and J
   assert.equal((await f.request('/api/desktop/status',{headers:{'Sec-Fetch-Site':'cross-site'}})).status,403);
   assert.equal((await f.request('/api/desktop/session',{...base,headers:{...base.headers,Origin:origin,'Content-Type':'application/json'}})).status,200);
   assert.deepEqual(f.calls,['/api/desktop/session']);
+});
+test('the connector installation link serves its guide and downloads the bundled extension',async t=>{
+  const f=await fixture(t);
+  const guide=await readFile(new URL('../site/uber-extension.html',import.meta.url),'utf8');
+  await writeFile(path.join(f.root,'site/uber-extension.html'),guide);
+  await mkdir(path.join(f.root,'uber-extension'));
+  const archive='PK\x03\x04SYNTHETIC_EXTENSION';
+  await writeFile(path.join(f.root,'uber-extension/ludy-uber-chromium.zip'),archive);
+  for(const route of ['/uber-extension/','/uber-extension']){
+    const page=await f.request(route);
+    assert.equal(page.status,200);assert.match(page.headers['content-type'],/^text\/html/);
+    assert.match(page.body,/href="\/uber-extension\/ludy-uber-chromium.zip" download=/);
+  }
+  const zip=await f.request('/uber-extension/ludy-uber-chromium.zip');
+  assert.equal(zip.status,200);assert.equal(zip.headers['content-type'],'application/zip');
+  assert.match(zip.headers['content-disposition'],/attachment; filename="ludy-uber-chromium.zip"/);
+  assert.equal(zip.body,archive);
+  const head=await f.request('/uber-extension/ludy-uber-chromium.zip',{method:'HEAD'});
+  assert.equal(head.status,200);assert.equal(head.body,'');
+  assert.equal(Number(head.headers['content-length']),Buffer.byteLength(archive));
+  assert.deepEqual(f.calls,[]);
 });
 test('invalid or privileged production configuration is refused before serving',()=>{
   const jwt=claims=>['header',Buffer.from(JSON.stringify(claims)).toString('base64url'),'signature'].join('.');

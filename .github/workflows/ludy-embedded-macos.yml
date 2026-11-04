@@ -1,4 +1,4 @@
-name: Ludy macOS embarqué
+name: Ludy macOS et contrôle Windows
 
 on:
   push:
@@ -16,6 +16,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-connectors:
+    name: Accès Bolt sur Windows
+    if: github.repository == 'awt-707/flotte-geotab' && github.ref == 'refs/heads/staging'
+    runs-on: windows-2022
+    timeout-minutes: 10
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Installer les dépendances verrouillées
+        run: npm ci --prefix staging --ignore-scripts --no-audit --no-fund
+      - name: Vérifier le stockage privé Bolt sur Windows
+        run: node --test staging/tests/windows-bolt-credentials.test.mjs staging/tests/windows-connectors.test.mjs staging/tests/bolt-connectors-ui.test.mjs staging/tests/desktop-worker-ui.test.mjs
   build:
     name: macOS ${{ matrix.label }}
     if: github.repository == 'awt-707/flotte-geotab' && github.ref == 'refs/heads/staging'

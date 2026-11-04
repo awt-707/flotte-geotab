@@ -1,5 +1,8 @@
-import {privateModeValid} from './private-files.mjs';
-import { readFile, stat } from 'node:fs/promises';
+import {privateModeValid,ensurePrivateDirectory,syncPrivateDirectory} from './private-files.mjs';
+import { constants } from 'node:fs';
+import { lstat, open, realpath, rename, rm } from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { boltState, validTime } from './fleet-domain.mjs';
 import {retryAfterSeconds,retryDeadline} from './provider-retry.mjs';
 import {boltFinancialCapabilities} from './bolt-finance.mjs';
@@ -54,31 +57,72 @@ function vehicleDetails(vehicle,catalogue){
     model:resolvedModel?[resolvedMake,resolvedModel].filter(Boolean).join(' ').slice(0,260):null,
     model_origin:resolvedModel?(model&&(!resolvedMake||make)?'vehicle_payload':'vehicle_inventory'):null};
 }
-export async function readBoltCredentials(path) {
-  if(!path) return null;
+const CREDENTIAL_BYTES=32768;
+export function validateBoltCredentials(input){
+  if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['clientId','clientSecret'].includes(k)))throw new BoltError('Identifiants API Bolt requis',400);
+  const clientId=typeof input.clientId==='string'?input.clientId.trim():'',clientSecret=input.clientSecret;
+  if(!clientId||clientId.length>512||/[\x00-\x1f\x7f]/.test(clientId))throw new BoltError('Identifiant client Bolt invalide',400);
+  if(typeof clientSecret!=='string'||!clientSecret.length||clientSecret.length>4096||/[\x00-\x1f\x7f]/.test(clientSecret))throw new BoltError('Secret client Bolt invalide',400);
+  return {clientId,clientSecret};
+}
+async function privateBoltFile(filename){
+  const info=await lstat(filename);
+  if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1||!privateModeValid(info,0o600,filename)||info.size>CREDENTIAL_BYTES)throw new BoltError('Fichier Bolt privé requis',409);
+  const normalize=value=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value);
+  if(normalize(await realpath(filename))!==normalize(filename))throw new BoltError('Fichier Bolt privé requis',409);
+  return info;
+}
+export async function readBoltCredentials(filename) {
+  if(!filename) return null;
+  let file;
   try {
-    const info=await stat(path);if(!privateModeValid(info,info.mode&0o700,path))throw new Error('Permissions Bolt : fichier réservé au propriétaire requis');
-    const env={};for(const line of (await readFile(path,'utf8')).split(/\r?\n/)){const m=line.match(/^([A-Z_]+)=(.*)$/);if(m)env[m[1]]=m[2].trim().replace(/^(['"])(.*)\1$/,'$2');}
+    await privateBoltFile(filename);file=await open(filename,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+    const info=await file.stat();if(!info.isFile()||info.nlink!==1||!privateModeValid(info,0o600,filename)||info.size>CREDENTIAL_BYTES)throw new Error();
+    const bytes=Buffer.alloc(CREDENTIAL_BYTES+1);let count=0;
+    while(count<bytes.length){const {bytesRead}=await file.read(bytes,count,bytes.length-count,null);if(!bytesRead)break;count+=bytesRead;}
+    if(count>CREDENTIAL_BYTES)throw new Error();
+    const env={};for(const line of bytes.subarray(0,count).toString('utf8').split(/\r?\n/)){
+      const m=line.match(/^(BOLT_CLIENT_ID|BOLT_CLIENT_SECRET)=(.*)$/);if(!m)continue;
+      const raw=m[2].trim();env[m[1]]=raw.startsWith('"')?JSON.parse(raw):raw.replace(/^'(.*)'$/,'$1');
+    }
     const clientId=env.BOLT_CLIENT_ID, clientSecret=env.BOLT_CLIENT_SECRET;
-    return clientId && clientSecret ? {clientId,clientSecret} : null;
-  } catch(e) { if(e.code==='ENOENT')return null;throw e; }
+    return clientId&&clientSecret?validateBoltCredentials({clientId,clientSecret}):null;
+  } catch(e) {if(e.code==='ENOENT')return null;throw new BoltError('Lecture des identifiants Bolt locaux impossible',409);}
+  finally{await file?.close();}
+}
+export async function saveBoltCredentials(filename,input){
+  const value=validateBoltCredentials(input);
+  if(typeof filename!=='string'||!path.isAbsolute(filename))throw new BoltError('Stockage Bolt local non configuré',409);
+  const directory=path.dirname(filename),temporary=path.join(directory,'.bolt-'+randomUUID()+'.tmp');let file;
+  try{
+    await ensurePrivateDirectory(directory);
+    try{await privateBoltFile(filename);}catch(error){if(error.code!=='ENOENT')throw error;}
+    file=await open(temporary,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
+    await file.writeFile('BOLT_CLIENT_ID='+JSON.stringify(value.clientId)+'\nBOLT_CLIENT_SECRET='+JSON.stringify(value.clientSecret)+'\n');
+    await file.sync();await file.close();file=null;
+    await rename(temporary,filename);await syncPrivateDirectory(directory);
+  }catch{throw new BoltError('Enregistrement privé des identifiants Bolt impossible',409);}
+  finally{await file?.close();await rm(temporary,{force:true}).catch(()=>{});}
 }
 export class BoltError extends Error {
   constructor(message,code=502,retryAfter=60){super(message);this.status=code;this.retryAfter=retryAfter;}
 }
 export class BoltClient {
-  constructor({credentials,fetchFn=fetch,now=Date.now}){this.credentials=credentials;this.fetch=fetchFn;this.now=now;this.token=null;this.tokenUntil=0;this.tokenPromise=null;this.blockedUntil=0;}
+  constructor({credentials,fetchFn=fetch,now=Date.now}){this.credentials=credentials;this.fetch=fetchFn;this.now=now;this.token=null;this.tokenUntil=0;this.tokenPromise=null;this.blockedUntil=0;this.credentialRevision=0;}
+  resetCredentials(){this.credentialRevision++;this.token=null;this.tokenUntil=0;this.blockedUntil=0;}
   financialCapabilities(){return boltFinancialCapabilities();}
   quota(response){const error=quotaError(response,this.now());this.blockedUntil=Math.max(this.blockedUntil,retryDeadline(this.now(),error.retryAfter));return error;}
   async accessToken(force=false,deadline=performance.now()+20000){
     if(this.now()<this.blockedUntil)throw new BoltError('Quota Bolt atteint : nouvel essai différé',429,Math.max(1,Math.ceil((this.blockedUntil-this.now())/1000)));
     if(!force && this.token && this.now()<this.tokenUntil)return this.token;
     if(this.tokenPromise)return this.tokenPromise;
+    const revision=this.credentialRevision;
     this.tokenPromise=(async()=>{
       const creds=await this.credentials();if(!creds)throw new BoltError('Identifiants Bolt non configurés',409);
       const res=await this.fetch(TOKEN_URL,{method:'POST',redirect:'error',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:creds.clientId,client_secret:creds.clientSecret,grant_type:'client_credentials',scope:'fleet-integration:api'}).toString(),signal:timeout(20000,deadline)});
       if(res.status===429){await res.body?.cancel().catch(()=>{});throw this.quota(res);}
       const data=await res.json().catch(()=>null);
+      if(revision!==this.credentialRevision)throw new BoltError('Identifiants Bolt modifiés : relancez la lecture',409);
       if(!res.ok || !data?.access_token)throw new BoltError('Authentification Bolt refusée (HTTP '+res.status+')',502);
       this.token=data.access_token;this.tokenUntil=this.now()+Math.max(10,Number(data.expires_in || 600)-60)*1000;return this.token;
     })().finally(()=>{this.tokenPromise=null;});return this.tokenPromise;

@@ -30,6 +30,9 @@ export async function withDesktopAdminRequest(req,user,work){
 export function requiresCollector(req){
   if(req.method==='OPTIONS'||['GET','HEAD'].includes(req.method))return false;
   const p=new URL(req.url,'http://127.0.0.1:4173').pathname;
+  // Preparing this computer's credentials never starts collection or writes to
+  // Supabase. The fleet handler still checks the authenticated admin role.
+  if(req.method==='POST'&&p==='/api/fleet/bolt/config')return false;
   return /^\/api\/fleet\/(?:geotab|myclicar|bolt)\//.test(p)||p==='/api/fleet/uber/ingest'||p==='/api/fleet/drivers/match'||p==='/api/fleet/pair/revoke'||p==='/api/fleet/validation/start'||
     p==='/api/operations/fuel/calibrate'||p.startsWith('/api/uber-reports/browser/')||p.startsWith('/api/uber-reports/bridge/')||p==='/api/provider-earnings/uber'||p.startsWith('/api/driver-performance/');
 }
