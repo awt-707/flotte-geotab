@@ -44,3 +44,12 @@ test('Windows ACL failure and redirected root never authorize private-file mode 
   assert.equal(privateModeValid({mode:0o666},0o600,directory+'\\token.json',{platform:'win32'}),false);
   await assert.rejects(initializePrivateRoot(directory,{platform:'win32',files:{...files,realpath:async()=>'C:\\outside'},run:async()=>assert.fail('must reject redirect first')}));
 });
+
+test('failed Windows revalidation revokes a previously authorized private root',async()=>{
+  const directory='C:\\Users\\Tester\\AppData\\Roaming\\Ludy\\revalidation-test';
+  const files={mkdir:async()=>{},lstat:async()=>({isDirectory:()=>true,isSymbolicLink:()=>false}),realpath:async()=>directory};
+  await initializePrivateRoot(directory,{platform:'win32',files,run:async()=>{}});
+  assert.equal(privateModeValid({mode:0o666},0o600,directory+'\\token.json',{platform:'win32'}),true);
+  await assert.rejects(initializePrivateRoot(directory,{platform:'win32',files,run:async()=>{throw Error('ACL could not be verified');}}),{code:'PRIVATE_STORAGE_UNAVAILABLE'});
+  assert.equal(privateModeValid({mode:0o666},0o600,directory+'\\token.json',{platform:'win32'}),false);
+});

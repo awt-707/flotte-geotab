@@ -14,20 +14,44 @@ export function windowsPowerShellEnvironment(environment=process.env){
   return Object.fromEntries(Object.entries(environment).filter(([key])=>key.toLowerCase()!=='psmodulepath'));
 }
 // Fixed script: the filesystem path is passed as a single environment value,
-// never interpolated into PowerShell code. Replace the root ACL, don't merely
-// remove inherited entries while retaining older explicit permissions.
+// never interpolated into PowerShell code. Rewriting an already protected
+// Chromium profile can require SeSecurityPrivilege under a limited Windows
+// token. Verify its exact owner/DACL first, then change only a nonconforming
+// root and verify the result. A failed check never authorizes private files.
 export const WINDOWS_PRIVATE_ACL_SCRIPT=`$ErrorActionPreference = 'Stop'
 $directory = $env:LUDY_PRIVATE_DIRECTORY
-$acl = New-Object System.Security.AccessControl.DirectorySecurity
-$acl.SetAccessRuleProtection($true, $false)
 $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 $system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+function Test-LudyPrivateAcl([System.Security.AccessControl.DirectorySecurity]$candidate) {
+  if (-not $candidate.AreAccessRulesProtected -or -not $candidate.AreAccessRulesCanonical) { return $false }
+  if ($candidate.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $owner.Value) { return $false }
+  $rules = @($candidate.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+  if ($rules.Count -ne 2) { return $false }
+  $expectedInheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
+  $seen = @{}
+  foreach ($rule in $rules) {
+    $sid = $rule.IdentityReference.Value
+    if (($sid -ne $owner.Value -and $sid -ne $system.Value) -or $seen.ContainsKey($sid)) { return $false }
+    if ($rule.IsInherited -or $rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+        $rule.FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl -or
+        $rule.InheritanceFlags -ne $expectedInheritance -or
+        $rule.PropagationFlags -ne [System.Security.AccessControl.PropagationFlags]::None) { return $false }
+    $seen[$sid] = $true
+  }
+  return $seen.ContainsKey($owner.Value) -and $seen.ContainsKey($system.Value)
+}
+if (Test-LudyPrivateAcl (Get-Acl -LiteralPath $directory)) { exit 0 }
+$acl = New-Object System.Security.AccessControl.DirectorySecurity
+$acl.SetAccessRuleProtection($true, $false)
 foreach ($identity in @($owner, $system)) {
   $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
   $acl.AddAccessRule($rule)
 }
 $acl.SetOwner($owner)
 Set-Acl -LiteralPath $directory -AclObject $acl
+if (-not (Test-LudyPrivateAcl (Get-Acl -LiteralPath $directory))) {
+  throw 'Private directory permissions could not be verified.'
+}
 `;
 const windowsPath=value=>path.win32.resolve(value).toLowerCase();
 function inWindowsRoot(filename){
@@ -39,6 +63,7 @@ export async function initializePrivateRoot(directory,{platform=process.platform
   const paths=platform==='win32'?path.win32:path;
   if(typeof directory!=='string'||!paths.isAbsolute(directory)||paths.resolve(directory)===paths.parse(directory).root)throw denied();
   const root=paths.resolve(directory);
+  if(platform==='win32')windowsRoots.delete(windowsPath(root));
   await files.mkdir(root,{recursive:true,mode:0o700});
   const info=await files.lstat(root),canonical=await files.realpath(root);
   if(!info.isDirectory()||info.isSymbolicLink()||(platform==='win32'?windowsPath(canonical)!==windowsPath(root):canonical!==root))throw denied();

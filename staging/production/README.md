@@ -24,6 +24,8 @@ La livraison précédente 0.2.0 et son [relevé](../.local/releases/embedded-des
 
 ### Poste Windows permanent (0.2.3)
 
+Pour un profil Windows existant, utiliser **0.2.4 ou plus récent** : 0.2.3 peut échouer au démarrage en tentant de réappliquer les permissions déjà correctes du dossier privé. La correction vérifie strictement ces permissions et évite cette réécriture lorsqu’elles sont conformes. Ludy continue de fonctionner sous la session Windows normale, sans demander de lancement administrateur.
+
 La version 0.2.3 ajoute le menu natif **Ludy → Mode poste permanent**. Ce mode est désactivé par défaut. Après activation, Ludy démarre à l’ouverture de la session Windows, sa fenêtre se ferme vers l’icône près de l’horloge et la veille automatique est empêchée tant que Ludy tourne. L’écran peut s’éteindre. **Quitter Ludy** arrête toujours l’application et ses collecteurs. Garder le dossier contenant `Ludy.exe` à un emplacement stable ; ouvrir une nouvelle version met à jour le chemin de démarrage.
 
 Le renouvellement de la connexion Ludy reste actif en arrière-plan dans l’application de production. Une déconnexion, une révocation du compte ou une session fournisseur expirée demande toujours une reconnexion. Aucun mot de passe Windows ni jeton de renouvellement supplémentaire n’est enregistré par ce mode.
