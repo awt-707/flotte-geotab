@@ -207,7 +207,8 @@ function mobDownload(blob, name) {
 }
 async function cshTabCoursesM(p) {
   const my = ROUTING, mode = qs().get('c') === 'enc' ? 'enc' : 'new';
-  const { todo } = await cshCoursesTodo(p);
+  // courses à encaisser : aussi celles créées pour les jours suivants (course du soir pour après minuit, réservation)
+  const { todo } = await cshCoursesTodo({ from: p.from, to: addDays(today(), 60) });
   if (my !== ROUTING) return;
   const seg = `<div class="mseg" role="group" aria-label="Courses">${[['new', 'Nouvelle course'], ['enc', 'À encaisser' + (todo.length ? ' (' + todo.length + ')' : '')]].map(x => `<a href="#/caisse?t=courses${x[0] === 'enc' ? '&c=enc' : ''}" class="${x[0] === mode ? 'on' : ''}">${x[1]}</a>`).join('')}</div>`;
   if (mode === 'enc') return cshCoursesEncM(p, todo, seg);
