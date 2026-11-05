@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Readable} from 'node:stream';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,realpath,rm} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {createWebServices} from '../web-runtime/services.mjs';
@@ -10,7 +10,7 @@ const config={environment:'production',projectRef:'abcdefghijklmnopqrst',supabas
 const admin='11111111-1111-4111-8111-111111111111',manager='22222222-2222-4222-8222-222222222222',viewer='33333333-3333-4333-8333-333333333333';
 const jwt=id=>Buffer.from('{}').toString('base64url')+'.'+Buffer.from(JSON.stringify({sub:id,role:'authenticated',exp:2000000000})).toString('base64url')+'.signature';
 async function fixture(t,{factories={},maxStacks}={}){
- const stateDir=await mkdtemp(path.join(os.tmpdir(),'ludy-web-services-'));t.after(()=>rm(stateDir,{recursive:true,force:true}));
+ const stateDir=await realpath(await mkdtemp(path.join(os.tmpdir(),'ludy-web-services-')));t.after(()=>rm(stateDir,{recursive:true,force:true}));
  const calls=[],roles=new Map([[admin,'admin'],[manager,'manager'],[viewer,'viewer']]);
  const fetchFn=async(input,options={})=>{
   const url=new URL(input),headers=new Headers(options.headers),token=headers.get('authorization')?.slice(7),userId=JSON.parse(Buffer.from(token.split('.')[1],'base64url')).sub;

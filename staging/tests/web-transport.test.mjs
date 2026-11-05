@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,realpath,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {createWebTransport} from '../web-runtime/transport.mjs';
@@ -10,7 +10,7 @@ const config={environment:'production',projectRef:'abcdefghijklmnopqrst',supabas
 const ids={a:'11111111-1111-4111-8111-111111111111',b:'22222222-2222-4222-8222-222222222222',manager:'33333333-3333-4333-8333-333333333333',viewer:'44444444-4444-4444-8444-444444444444'};
 const jwt=(id,exp=2000000000)=>Buffer.from('{}').toString('base64url')+'.'+Buffer.from(JSON.stringify({sub:id,role:'authenticated',exp})).toString('base64url')+'.signature';
 async function setup(t){
- const directory=await mkdtemp(path.join(os.tmpdir(),'ludy-web-transport-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+ const directory=await realpath(await mkdtemp(path.join(os.tmpdir(),'ludy-web-transport-')));t.after(()=>rm(directory,{recursive:true,force:true}));
  const calls=[],roles=new Map([[ids.a,'admin'],[ids.b,'admin'],[ids.manager,'manager'],[ids.viewer,'viewer']]);let before=async()=>{};
  const fetchFn=async(input,options={})=>{
   const url=new URL(input),headers=new Headers(options.headers),token=headers.get('authorization')?.slice(7),userId=JSON.parse(Buffer.from(token.split('.')[1],'base64url')).sub;
