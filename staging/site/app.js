@@ -669,6 +669,10 @@ function healthPaint() {
   if (CFG.GEOTAB_LOCAL) {
     const el = $('#health'), h = S.geotabHealth; if (!el) return;
     const status = h && h.uid === S.session?.user?.id ? h.source : null;
+    if (h?.unavailable && h.uid === S.session?.user?.id) {
+      el.className = 'health warn'; el.title = 'Dernière vérification Geotab impossible. Nouvelle vérification automatique.';
+      el.textContent = 'Geotab : état indisponible'; return;
+    }
     el.className = 'health ' + (status?.status === 'healthy' ? 'ok' : status?.status === 'error' ? 'warn' : '');
     el.title = CFG.DESKTOP_PRODUCTION ? 'Positions Geotab partagées' : 'Positions Geotab dans le staging local';
     el.textContent = 'Geotab : ' + (!status ? 'voir Connecteurs' : !status.configured ? 'non connecté' : !status.polling ? 'en pause' : status.status === 'healthy' ? 'suivi actif' : 'lecture interrompue');
@@ -683,7 +687,10 @@ function healthPaint() {
 async function health() {
   if (CFG.GEOTAB_LOCAL) {
     const uid = S.session?.user?.id; if (!uid) return;
-    try { const data = await fleetApi('geotab/live'); if (S.session?.user?.id === uid) { S.geotabHealth = { uid, source: data.source }; healthPaint(); } } catch { }
+    const revision = S.sessionRevision, request = S.geotabHealthRequest = {};
+    const current = () => S.session?.user?.id === uid && S.sessionRevision === revision && S.geotabHealthRequest === request;
+    try { const data = await fleetApi('geotab/live'); if (current()) { S.geotabHealth = { uid, source: data.source }; healthPaint(); } }
+    catch { if (current()) { S.geotabHealth = { uid, source: null, unavailable: true }; healthPaint(); } }
     return;
   }
   if (CFG.GEOTAB_ENABLED === false) { healthPaint(); return; }
@@ -1682,7 +1689,7 @@ sb.auth.onAuthStateChange((ev, session) => {
     const tb = $('#toasts'); if (tb) tb.remove();   // bandeaux d'alerte du compte précédent
     sessReset();   // connexions : nouvelle session, pastille des connectés oubliée (jamais montrée à un autre compte)
     S.profile = null; S.P = null; S.veh = null; S.vehList = []; S.rules = null; S.drv = null; S.agencies = []; S.agName = {}; S.rhMe = undefined; S.rhMeAt = 0; S.rhAlertN = 0; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
-    S.health = null; S.nbal = null; S.nbcrs = null; SHELL_KEY = '';   // bas du menu : collecte et pastille Alertes oubliées, menu reconstruit
+    S.health = null; S.geotabHealth = null; S.geotabHealthRequest = null; S.nbal = null; S.nbcrs = null; SHELL_KEY = '';   // bas du menu : collecte et pastille Alertes oubliées, menu reconstruit
     if (typeof opsClearNotifications === 'function') opsClearNotifications();
     Object.assign(LIVE, { rows: [], pos: {}, at: 0, trails: {}, ctr: [], alerts: [], seen: {}, primed: false, fast: {}, over: {}, drv: {}, drvAt: 0, motion: {}, motionHistory: [], motionWatches: [], motionCoverage: null, localPrimedUser: null, localSource: null, sel: '' });
   }

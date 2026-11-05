@@ -69,7 +69,7 @@
     if(!response.ok){
       const result=await response.json().catch(()=>null);
       const fallback=response.status===401?'Votre session Ludy a expiré. Déconnectez-vous, puis reconnectez-vous.':response.status===403?'Action non autorisée. Vérifiez votre compte administrateur.':response.status===409?collectionInstruction():response.status>=500?'Le poste ne répond pas correctement. Vérifiez Internet, puis fermez et rouvrez Ludy si le problème persiste.':'Action refusée. Réessayez ; si le problème persiste, contactez l’administrateur.';
-      throw Object.assign(Error('Requête du poste refusée.'),{desktopMessage:safeReason(result?.error)||fallback});
+      throw Object.assign(Error('Requête du poste refusée.'),{status:response.status,desktopMessage:safeReason(result?.error)||fallback});
     }
     return response.status===204?null:response.json();
   }
@@ -100,21 +100,43 @@
     catch(error) {if(current(version)){message=errorMessage(error,'Ouverture d’Uber indisponible. Vérifiez la participation de ce poste.');timer=setTimeout(()=>{timer=null;void poll(version);},5000);}}
     finally {if(current(version)){busy=false;paint();}}
   }
+  async function bindSession(version,accessToken,attempt=0){
+    if(!current(version)||token!==accessToken)return;
+    const controller=new AbortController();requestController=controller;
+    try {
+      await request('session',{method:'POST',accessToken,signal:controller.signal});
+      if(current(version)&&token===accessToken)await poll(version);
+    } catch(error) {
+      if(!current(version)||token!==accessToken)return;
+      const retryable=!Number.isInteger(error?.status)||error.status===408||error.status===429||error.status>=500;
+      message=retryable?'Connexion du poste indisponible · nouvelle tentative automatique. Vérifiez Internet.':errorMessage(error,'Connexion du poste refusée. Reconnectez-vous.');
+      paint();
+      if(retryable){
+        // One bounded-backoff retry, outside the queue so a logout never waits
+        // for it. Every attempt belongs to this exact in-memory session.
+        timer=setTimeout(()=>{
+          if(!current(version)||token!==accessToken)return;
+          timer=null;
+          queue=queue.catch(()=>{}).then(()=>bindSession(version,accessToken,attempt+1));
+        },Math.min(30000,2000*2**Math.min(attempt,4)));
+      }
+    } finally {if(requestController===controller)requestController=null;}
+  }
   function sessionChanged(session){
     if(!enabled)return Promise.resolve();
     const next=typeof session?.access_token==='string'&&session?.user?.id?session.access_token:null;
-    if(observed&&next===token)return queue;
+    const nextUser=next?session.user.id:null;
+    if(observed&&next===token&&nextUser===userId)return queue;
     observed=true;const previous=token,version=++revision;token=next;status=null;busy=false;
-    if(userId!==session?.user?.id)admin=false;userId=next?session.user.id:null;
+    if(userId!==nextUser)admin=false;userId=nextUser;
     message=next?'Connexion du poste…':'';stopPoll();paint();
     // Serialise transitions: an earlier login response cannot restore a signed-out UI.
     queue=queue.catch(()=>{}).then(async()=>{
       if(!current(version))return;
+      if(next)return bindSession(version,next);
       try {
-        if(next)await request('session',{method:'POST',accessToken:next});
-        else await request('logout',{method:'POST',accessToken:previous});
-        if(current(version)&&next)await poll(version);
-      } catch(error) {if(current(version)){message=next?errorMessage(error,'Connexion du poste indisponible. Reconnectez-vous.'):'';paint();}}
+        await request('logout',{method:'POST',accessToken:previous});
+      } catch {if(current(version)){message='';paint();}}
     });
     return queue;
   }

@@ -8,6 +8,7 @@ const reads=source.slice(source.indexOf('const PK ='),source.indexOf('// -------
 const references=source.slice(source.indexOf('async function loadRef('),source.indexOf('// ---------- Agences'));
 const authCode=source.slice(source.indexOf('let AUTH_EVENT_REVISION ='));
 const routeCode=source.slice(source.indexOf('async function route()'),source.indexOf("window.addEventListener('hashchange'"));
+const healthCode=source.slice(source.indexOf('function healthPaint()'),source.indexOf('// ---------- EN DIRECT'));
 const session=id=>({user:{id,email:id+'@example.invalid'}});
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
@@ -40,7 +41,7 @@ test('reference tables commit together only for the current session',async()=>{
 });
 
 function authFixture({desktopAuthRefresh=null,desktopWorkerSessionChanged}={}){
- const initial=deferred(),timers=[],password=deferred(),calls={routes:0,updates:0},S={session:session('first'),sessionRevision:1,profile:{role:'admin'},P:{},veh:{old:{}},vehList:[{key:'old'}],rules:{old:{}},drv:{old:'driver'},agencies:[{id:1}],agName:{1:'old'}};
+ const initial=deferred(),timers=[],password=deferred(),calls={routes:0,updates:0},S={session:session('first'),sessionRevision:1,profile:{role:'admin'},P:{},veh:{old:{}},vehList:[{key:'old'}],rules:{old:{}},drv:{old:'driver'},agencies:[{id:1}],agName:{1:'old'},geotabHealth:{uid:'first',source:{status:'healthy'}},geotabHealthRequest:{}};
  let callback;
  const context=vm.createContext({S,LIVE:{},SHELL_KEY:'old',desktopAuthRefresh,desktopWorkerSessionChanged,sb:{auth:{onAuthStateChange:fn=>{callback=fn;},getSession:()=>initial.promise,updateUser:async()=>{calls.updates++;return {};}}},cacheUser(){},sessReset(){},$:()=>null,route:()=>{calls.routes++;},setTimeout:fn=>{timers.push(fn);},askText:()=>password.promise,alert(){}});
  vm.runInContext(authCode,context);return {S,initial,timers,password,calls,event:(event,value)=>callback(event,value)};
@@ -48,6 +49,7 @@ function authFixture({desktopAuthRefresh=null,desktopWorkerSessionChanged}={}){
 test('a delayed initial session cannot restore a session after logout',async()=>{
  const f=authFixture();f.event('SIGNED_OUT',null);f.initial.resolve({data:{session:session('first')}});await settle();
  assert.equal(f.S.session,null);assert.equal(f.calls.routes,1);assert.equal(f.S.veh,null);assert.equal(f.S.vehList.length,0);assert.equal(f.S.agencies.length,0);assert.equal(f.S.profile,null);
+ assert.equal(f.S.geotabHealth,null);assert.equal(f.S.geotabHealthRequest,null);
 });
 test('initial signed-out auth event still renders the login screen',async()=>{
  const f=authFixture();f.S.session=null;f.event('INITIAL_SESSION',null);f.initial.resolve({data:{session:null}});await settle();assert.equal(f.calls.routes,1);
@@ -81,5 +83,37 @@ test('the staging access page keeps testers on the local or shared test origin',
   vm.runInContext(code,c);await c.pageApplication();assert.ok(node.innerHTML.includes(origin));
   assert.match(node.innerHTML,/navigateur/);assert.doesNotMatch(node.innerHTML,/\.exe|\.dmg|github\.com/);
   assert.ok(node.innerHTML.includes(shared?'code de partage':'cet ordinateur'));
+ }
+});
+
+function healthFixture(){
+ const pending=[],label={},S={session:session('first'),sessionRevision:1};
+ const context=vm.createContext({S,CFG:{GEOTAB_LOCAL:true,DESKTOP_PRODUCTION:true},$:()=>label,fleetApi:path=>{assert.equal(path,'geotab/live');const d=deferred();pending.push(d);return d.promise;}});
+ vm.runInContext(healthCode,context);return {S,pending,label,health:context.health};
+}
+const healthySource={configured:true,polling:true,status:'healthy'};
+test('a failed local Geotab check replaces the healthy label and a later success restores it',async()=>{
+ const f=healthFixture(),initial=f.health();f.pending[0].resolve({source:healthySource});await initial;
+ assert.equal(f.label.textContent,'Geotab : suivi actif');assert.equal(f.label.className,'health ok');
+ const failed=f.health();f.pending[1].reject(Error('Bearer secret-token'));await failed;
+ assert.equal(f.label.textContent,'Geotab : état indisponible');assert.equal(f.label.className,'health warn');assert.match(f.label.title,/Nouvelle vérification automatique/);
+ assert.doesNotMatch(f.label.textContent+f.label.title,/secret|Bearer/);assert.equal(f.S.geotabHealth.source,null);
+ const recovered=f.health();f.pending[2].resolve({source:healthySource});await recovered;
+ assert.equal(f.label.textContent,'Geotab : suivi actif');assert.equal(f.label.className,'health ok');
+});
+test('local Geotab checks discard stale successes and failures after session changes',async()=>{
+ for(const sameUser of [false,true])for(const fails of [false,true]){
+  const f=healthFixture(),old=f.health();f.S.session=session(sameUser?'first':'second');f.S.sessionRevision++;
+  if(fails)f.pending[0].reject(Error('old failure'));else f.pending[0].resolve({source:healthySource});
+  await old;assert.equal(f.S.geotabHealth,undefined);assert.equal(f.label.textContent,undefined);
+ }
+});
+test('an older Geotab request cannot overwrite a newer health result',async()=>{
+ for(const failsLate of [false,true]){
+  const f=healthFixture(),old=f.health(),latest=f.health();
+  if(failsLate)f.pending[1].resolve({source:healthySource});else f.pending[1].reject(Error('current failure'));
+  await latest;const expected=f.label.textContent;
+  if(failsLate)f.pending[0].reject(Error('old failure'));else f.pending[0].resolve({source:healthySource});
+  await old;assert.equal(f.label.textContent,expected);
  }
 });

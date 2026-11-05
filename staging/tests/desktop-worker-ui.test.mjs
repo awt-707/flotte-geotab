@@ -7,17 +7,21 @@ const source=readFileSync(new URL('../site/desktop-worker.js',import.meta.url),'
 const app=readFileSync(new URL('../site/app.js',import.meta.url),'utf8');
 const config={DESKTOP_PRODUCTION:true,STAGING:false,ENVIRONMENT:'production',SUPABASE_PROJECT_REF:'abcdefghijklmnopqrst',SUPABASE_URL:'https://abcdefghijklmnopqrst.supabase.co',AUTH_STORAGE_KEY:'ludy-production-abcdefghijklmnopqrst-auth'};
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
-const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
+const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const response=value=>({ok:true,status:200,json:async()=>value});
 const rejected=(status,error)=>({ok:false,status,json:async()=>({error})});
 const session=(id='first',token='synthetic-token-'+id)=>({user:{id},access_token:token});
 function fixture({cfg=config,fetchFn}={}){
-  const calls=[],timers=new Map(),label={textContent:''},button={},uberButton={},uberLabel={},window={FLOTTE_CONFIG:cfg};let counter=0;
+  const calls=[],timers=new Map(),delays=new Map(),label={textContent:''},button={},uberButton={},uberLabel={},window={FLOTTE_CONFIG:cfg};let counter=0;
   const context=vm.createContext({window,location:{origin:'http://127.0.0.1:4173'},document:{querySelectorAll:selector=>selector.includes('toggle')?[button]:selector.includes('uber-open')?[uberButton]:selector.includes('uber-status')?[uberLabel]:[label]},AbortController,AbortSignal,
-    setTimeout(fn){timers.set(++counter,fn);return counter;},clearTimeout(id){timers.delete(id);},
+    setTimeout(fn,delay){timers.set(++counter,fn);delays.set(counter,delay);return counter;},clearTimeout(id){timers.delete(id);delays.delete(id);},
     localStorage:{setItem(){throw Error('Token must not be persisted');}},
     fetch:async(url,options)=>{calls.push({url,options});return fetchFn?fetchFn(url,options):response(url.endsWith('/status')?{participationEnabled:true,coordinator:{state:'leader'}}:{ok:true});}});
-  vm.runInContext(source,context);return {calls,timers,label,button,uberButton,uberLabel,...window};
+  async function runTimer(){
+    assert.equal(timers.size,1,'exactly one retry or status poll is scheduled');
+    const [id,fn]=timers.entries().next().value,delay=delays.get(id);timers.delete(id);delays.delete(id);fn();await settle();return delay;
+  }
+  vm.runInContext(source,context);return {calls,timers,delays,runTimer,label,button,uberButton,uberLabel,...window};
 }
 test('staging keeps the desktop bridge entirely inactive',async()=>{
   const f=fixture({cfg:{STAGING:true,ENVIRONMENT:'staging'}});
@@ -106,6 +110,95 @@ test('expired authentication shows a reconnect action and never displays respons
   await f.desktopWorkerSessionChanged(session());
   assert.match(f.label.textContent,/session Ludy a expiré/);assert.match(f.label.textContent,/reconnectez-vous/);
   assert.doesNotMatch(f.label.textContent,/secret|synthetic-token/);assert.equal(f.calls.length,1);assert.equal(f.timers.size,0);
+});
+test('transient binding failures recover automatically using only the current user token',async()=>{
+  for(const failure of [408,429,500,503,'network','timeout']){
+    let attempts=0;
+    const f=fixture({fetchFn:url=>{
+      if(url.endsWith('/session')&&attempts++===0){
+        if(typeof failure==='number')return rejected(failure,'Bearer server-secret');
+        throw Object.assign(Error('Bearer network-secret'),{name:failure==='timeout'?'TimeoutError':'TypeError'});
+      }
+      return response(url.endsWith('/status')?{participationEnabled:true,coordinator:{state:'leader'}}:{ok:true});
+    }});
+    await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:true});
+    assert.match(f.label.textContent,/nouvelle tentative automatique/);assert.doesNotMatch(f.label.textContent,/Bearer|secret|synthetic-token/);
+    assert.equal(f.button.disabled,true);assert.equal(f.calls.length,1);
+    assert.equal(await f.runTimer(),2000);
+    assert.deepEqual(f.calls.map(c=>c.url),['/api/desktop/session','/api/desktop/session','/api/desktop/status']);
+    for(const call of f.calls)assert.equal(call.options.headers.Authorization,'Bearer synthetic-token-first');
+    assert.equal(f.label.textContent,'Collecte active sur ce poste');assert.equal(f.button.disabled,false);
+    assert.equal(f.timers.size,1);assert.equal([...f.delays.values()][0],5000);
+  }
+});
+test('binding retries back off to a capped delay without duplicate events multiplying requests',async()=>{
+  const f=fixture({fetchFn:()=>rejected(503,'temporary failure')});
+  await f.desktopWorkerSessionChanged(session());
+  for(const expected of [2000,4000,8000,16000,30000,30000,30000]){
+    const before=f.calls.length,timer=[...f.timers.keys()][0];
+    await f.desktopWorkerSessionChanged(session());await f.desktopWorkerSessionChanged(session());
+    assert.equal(f.calls.length,before);assert.equal([...f.timers.keys()][0],timer);
+    assert.equal(await f.runTimer(),expected);assert.equal(f.calls.length,before+1);
+  }
+  assert.equal(f.timers.size,1);assert.ok(f.calls.every(c=>c.url.endsWith('/session')));
+});
+test('authentication and other permanent binding rejections do not retry',async()=>{
+  for(const code of [400,401,403,409]){
+    const f=fixture({fetchFn:()=>rejected(code,'secret-session-token')});
+    await f.desktopWorkerSessionChanged(session());await f.desktopWorkerSessionChanged(session());
+    assert.equal(f.calls.length,1);assert.equal(f.timers.size,0);assert.doesNotMatch(f.label.textContent,/secret|synthetic-token/);
+  }
+});
+test('logout cancels pending binding retries and ignores an already queued old timer',async()=>{
+  const f=fixture({fetchFn:url=>url.endsWith('/session')?rejected(503,'temporary'):response({ok:true})});
+  await f.desktopWorkerSessionChanged(session());const staleRetry=[...f.timers.values()][0];
+  await f.desktopWorkerSessionChanged(null);staleRetry();await settle();
+  assert.deepEqual(f.calls.map(c=>c.url),['/api/desktop/session','/api/desktop/logout']);
+  assert.equal(f.timers.size,0);assert.match(f.label.textContent,/Connectez-vous/);
+});
+test('token refresh replaces a pending binding retry and resets its backoff',async()=>{
+  const f=fixture({fetchFn:()=>rejected(503,'temporary')});
+  await f.desktopWorkerSessionChanged(session());await f.runTimer();
+  const staleRetry=[...f.timers.values()][0];
+  await f.desktopWorkerSessionChanged(session('first','synthetic-rotated'));
+  assert.equal(f.timers.size,1);assert.equal([...f.delays.values()][0],2000);
+  const timer=[...f.timers.keys()][0];staleRetry();await settle();
+  assert.equal(f.calls.length,3);assert.equal([...f.timers.keys()][0],timer);
+  await f.runTimer();assert.equal(f.calls.at(-1).options.headers.Authorization,'Bearer synthetic-rotated');
+});
+test('account changes invalidate pending binding retries even if the caller supplies the same token',async()=>{
+  let failing=true;
+  const f=fixture({fetchFn:url=>url.endsWith('/session')&&failing?rejected(503,'temporary'):response(url.endsWith('/status')?{participationEnabled:true,coordinator:{state:'leader'}}:{ok:true})});
+  await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:true});
+  const staleRetry=[...f.timers.values()][0];failing=false;
+  await f.desktopWorkerSessionChanged(session('second','synthetic-token-first'));staleRetry();await settle();
+  assert.deepEqual(f.calls.map(c=>c.url),['/api/desktop/session','/api/desktop/session','/api/desktop/status']);
+  assert.equal(f.button.hidden,true);assert.equal(f.timers.size,1);assert.equal([...f.delays.values()][0],5000);
+});
+test('logout during an in-flight retry aborts it and neither late success nor failure revives collection',async()=>{
+  for(const failsLate of [false,true]){
+    const pending=deferred();let attempts=0;
+    const f=fixture({fetchFn:url=>url.endsWith('/session')?(attempts++===0?rejected(503,'temporary'):pending.promise):response({ok:true})});
+    await f.desktopWorkerSessionChanged(session());await f.runTimer();
+    const retrySignal=f.calls.at(-1).options.signal,logout=f.desktopWorkerSessionChanged(null);
+    assert.equal(retrySignal.aborted,true);
+    if(failsLate)pending.reject(Error('old network failure'));else pending.resolve(response({ok:true}));
+    await logout;
+    assert.deepEqual(f.calls.map(c=>c.url),['/api/desktop/session','/api/desktop/session','/api/desktop/logout']);
+    assert.equal(f.timers.size,0);assert.match(f.label.textContent,/Connectez-vous/);
+  }
+});
+test('a token refresh during an in-flight retry never polls with the obsolete token',async()=>{
+  const pending=deferred();let attempts=0;
+  const f=fixture({fetchFn:url=>{
+    if(url.endsWith('/session')){attempts++;if(attempts===1)return rejected(503,'temporary');if(attempts===2)return pending.promise;}
+    return response(url.endsWith('/status')?{participationEnabled:true,coordinator:{state:'leader'}}:{ok:true});
+  }});
+  await f.desktopWorkerSessionChanged(session());await f.runTimer();
+  const refresh=f.desktopWorkerSessionChanged(session('first','synthetic-rotated'));
+  pending.resolve(response({ok:true}));await refresh;
+  assert.equal(f.calls.filter(c=>c.url.endsWith('/status')).length,1);
+  assert.equal(f.calls.at(-1).options.headers.Authorization,'Bearer synthetic-rotated');assert.equal(f.timers.size,1);
 });
 test('a failed status request keeps the actionable error and disables controls',async()=>{
   const f=fixture({fetchFn:url=>url.endsWith('/status')?rejected(403,'Accès administrateur requis.'):response({ok:true})});

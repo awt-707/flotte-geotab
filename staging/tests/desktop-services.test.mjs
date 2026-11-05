@@ -10,10 +10,13 @@ import {createFleetApi} from '../server/fleet.mjs';
 const config={environment:'production',projectRef:'abcdefghijklmnopqrst',supabaseUrl:'https://abcdefghijklmnopqrst.supabase.co',publishableKey:'sb_publishable_abcdefghijklmnopqrst'};
 const id='10000000-0000-4000-8000-000000000001';
 const token=(uid=id)=>['e30',Buffer.from(JSON.stringify({sub:uid,role:'authenticated',exp:Math.floor(Date.now()/1000)+3600})).toString('base64url'),'signature'].join('.');
-async function setup(t,{role='admin',stackFactory,browserFactory=null}={}){
+async function setup(t,{role='admin',stackFactory,browserFactory=null,authenticationFailure=null}={}){
   const directory=await mkdtemp(path.join(os.tmpdir(),'ludy-desktop-services-'));let lease=false,fence=0;const requests=[],stacks=[];
   const fetchFn=async(url,opts={})=>{
     requests.push({url,opts});
+    if(authenticationFailure&&(authenticationFailure.endpoint==='auth'?url.endsWith('/auth/v1/user'):url.includes('/rest/v1/profiles?'))){
+      return Response.json({error:'private upstream detail '+token()},{status:authenticationFailure.status});
+    }
     if(url.endsWith('/auth/v1/user'))return Response.json({id});
     if(url.includes('/rest/v1/profiles?'))return Response.json([{role}]);
     const name=url.split('/').at(-1),args=JSON.parse(opts.body);
@@ -32,6 +35,18 @@ async function setup(t,{role='admin',stackFactory,browserFactory=null}={}){
   };
   return {services,call,directory,requests,stacks};
 }
+test('the desktop session HTTP handler preserves retryable upstream failures and terminal refusals without leaking details',async t=>{
+  for(const [endpoint,status,expected] of [['auth',408,503],['profile',429,503],['auth',503,503],['profile',502,503],['auth',401,401],['profile',403,403]]){
+    await t.test(`${endpoint} ${status}`,async t=>{
+      const {services,call,stacks}=await setup(t,{authenticationFailure:{endpoint,status}});
+      const result=await call('session');
+      assert.equal(result.status,expected);
+      assert.deepEqual(result.data,{error:expected===503?'Vérification de la session Ludy momentanément indisponible.':expected===403?'Accès Ludy refusé.':'Session Ludy expirée ou invalide.'});
+      assert.equal(services.status().role,null);assert.equal(stacks.length,0);
+      assert.ok(!JSON.stringify(result.data).includes(token()));
+    });
+  }
+});
 test('sign-in creates only a reader, explicit participation starts one isolated collector, logout stops it',async t=>{
   const {services,call,stacks,directory}=await setup(t);
   await services.setSession(token());assert.equal(services.status().participationEnabled,false);assert.equal(stacks.length,1);assert.equal(stacks[0].started,false);
