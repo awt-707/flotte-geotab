@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const config=window.FLOTTE_CONFIG || {};
-  const enabled=config.DESKTOP_PRODUCTION===true && config.STAGING===false && config.ENVIRONMENT==='production' && location.origin==='http://127.0.0.1:4173';
+  const enabled=config.WEB_PRODUCTION!==true && config.DESKTOP_PRODUCTION===true && config.STAGING===false && config.ENVIRONMENT==='production' && location.origin==='http://127.0.0.1:4173';
   let token=null,userId=null,revision=0,queue=Promise.resolve(),timer=null,requestController=null,status=null,admin=false,busy=false,message='Connexion au poste…',observed=false;
   const current=version=>version===revision;
   function stopPoll(){clearTimeout(timer);timer=null;requestController?.abort();requestController=null;}

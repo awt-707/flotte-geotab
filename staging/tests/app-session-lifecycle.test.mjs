@@ -43,7 +43,7 @@ test('reference tables commit together only for the current session',async()=>{
 function authFixture({desktopAuthRefresh=null,desktopWorkerSessionChanged}={}){
  const initial=deferred(),timers=[],password=deferred(),calls={routes:0,updates:0},S={session:session('first'),sessionRevision:1,profile:{role:'admin'},P:{},veh:{old:{}},vehList:[{key:'old'}],rules:{old:{}},drv:{old:'driver'},agencies:[{id:1}],agName:{1:'old'},geotabHealth:{uid:'first',source:{status:'healthy'}},geotabHealthRequest:{}};
  let callback;
- const context=vm.createContext({S,LIVE:{},SHELL_KEY:'old',desktopAuthRefresh,desktopWorkerSessionChanged,sb:{auth:{onAuthStateChange:fn=>{callback=fn;},getSession:()=>initial.promise,updateUser:async()=>{calls.updates++;return {};}}},cacheUser(){},sessReset(){},$:()=>null,route:()=>{calls.routes++;},setTimeout:fn=>{timers.push(fn);},askText:()=>password.promise,alert(){}});
+ const context=vm.createContext({CFG:{DESKTOP_PRODUCTION:true},S,LIVE:{},SHELL_KEY:'old',desktopAuthRefresh,desktopWorkerSessionChanged,sb:{auth:{onAuthStateChange:fn=>{callback=fn;},getSession:()=>initial.promise,updateUser:async()=>{calls.updates++;return {};}}},cacheUser(){},sessReset(){},$:()=>null,route:()=>{calls.routes++;},setTimeout:fn=>{timers.push(fn);},askText:()=>password.promise,alert(){}});
  vm.runInContext(authCode,context);return {S,initial,timers,password,calls,event:(event,value)=>callback(event,value)};
 }
 test('a delayed initial session cannot restore a session after logout',async()=>{

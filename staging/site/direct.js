@@ -9,7 +9,7 @@
 // Rien n'est estimé : une valeur que Geotab ne fournit pas est « non mesuré ».
 // =============================================================================
 let MAP = null;
-const LIVE_SEC = window.FLOTTE_CONFIG?.GEOTAB_LOCAL && !window.FLOTTE_CONFIG?.DESKTOP_PRODUCTION ? 2 : 5, DRV_SEC = 30, TRAIL_MAX = 240;
+const LIVE_SEC = window.FLOTTE_CONFIG?.GEOTAB_LOCAL && !window.FLOTTE_CONFIG?.DESKTOP_PRODUCTION && !window.FLOTTE_CONFIG?.WEB_PRODUCTION ? 2 : 5, DRV_SEC = 30, TRAIL_MAX = 240;
 // Économie des appels (quota de l'offre Supabase) : sans souris ni clavier depuis LIVE_IDLE_MIN minutes, positions toutes les minutes
 // et chauffeurs toutes les 5 minutes ; la moindre activité relance aussitôt le rythme normal.
 const LIVE_IDLE_MIN = 10, LIVE_IDLE_SEC = 60, DRV_IDLE_SEC = 300;
@@ -43,7 +43,7 @@ const ST_CLS = s => STATE_CLS[s] || 'mute';
 async function relay(params) {
   if (CFG.GEOTAB_LOCAL) {
     if (params?.mode === 'detail') return fleetApi('geotab/detail?' + new URLSearchParams({ key: params.key, from: params.from, to: params.to || params.from }));
-    if (params && Object.keys(params).length) throw new Error('Cette vue utilise les observations enregistrées dans le staging.');
+    if (params && Object.keys(params).length) throw new Error(CFG.WEB_PRODUCTION ? 'Cette vue utilise les observations partagées par le poste collecteur.' : 'Cette vue utilise les observations enregistrées dans le staging.');
     return fleetApi('geotab/live');
   }
   if (CFG.GEOTAB_ENABLED === false) throw new Error('Geotab non connecté au staging');
@@ -284,7 +284,7 @@ function kpisHtml(rows) {
     ...(rows.some(r => r.no_ctr === 'depasse') ? [['Contrats dépassés (extract à injecter)', rows.filter(r => r.no_ctr === 'depasse').length, 'warn']] : []), ['Alertes (30 min)', LIVE.alerts.filter(a => inAgency()(a.vehicle_key)).length, LIVE.alerts.length ? 'high' : '']]);
 }
 function vcardsHtml(rows) {
-  if (!rows.length) return '<div class="empty">' + (CFG.GEOTAB_LOCAL ? 'Aucune position reçue. Associez les véhicules puis démarrez le suivi dans Connecteurs.' : 'Aucun véhicule actif') + '</div>';
+  if (!rows.length) return '<div class="empty">' + (CFG.GEOTAB_LOCAL ? CFG.WEB_PRODUCTION ? 'Aucune position reçue du poste collecteur. Consultez l’état des sources dans Connecteurs.' : 'Aucune position reçue. Associez les véhicules puis démarrez le suivi dans Connecteurs.' : 'Aucun véhicule actif') + '</div>';
   return rows.map(r => `<button type="button" class="vcard st-${ST_CLS(r.state)}${r.crs ? ' crs' : ''}${LIVE.fast[r.vehicle_key] || LIVE.motion[r.vehicle_key] ? ' fast' : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
     <span class="vc-l1">${plate(r.plate)}<span class="vc-model">${esc(r.model || '')}</span><span class="vc-spd">${r.state === 'En route' ? f0(r.speed) + '<small> km/h</small>' : ''}</span></span>
     <span class="vc-l2"><span class="vc-st"><span class="sdot"></span>${esc(r.state || 'État inconnu')}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</span>${consoGauge(r)}</span>
@@ -367,6 +367,15 @@ function localVehicleTelemetryHtml(rows) {
   ], items) + '<p class="small">Consommation calculée avec les différences des compteurs kilométriques et carburant Geotab. Une donnée absente reste non mesurée. Les compteurs du jour ne sont pas attribués au seul chauffeur actuellement affiché.</p>';
 }
 function liveStatusTxt() {
+  if (CFG.WEB_PRODUCTION) {
+    const source = LIVE.localSource;
+    if (LIVE.err) return 'Lecture des positions partagées indisponible. Les dernières positions restent datées.';
+    if (!source) return 'Lecture des positions partagées…';
+    const at = Date.parse(source.last_success_at), last = Number.isFinite(at) ? ' Dernière collecte : ' + esc(fmtHMS(source.last_success_at)) + '.' : ' Aucune position reçue pour le moment.';
+    if (['paused', 'stopped'].includes(source.status)) return 'Collecte Geotab centrale en pause.' + last;
+    if (source.status !== 'healthy' || !Number.isFinite(at) || Date.now() - at > localGeotabStaleMs(source)) return 'Collecte Geotab centrale en attente ou à vérifier.' + last;
+    return '<span class="livedot" aria-hidden="true"></span>Positions partagées · consultation toutes les ' + LIVE_SEC + ' s.' + last;
+  }
   if (CFG.GEOTAB_LOCAL) {
     const source = LIVE.localSource;
     if (LIVE.err) return 'Lecture locale indisponible : ' + esc(LIVE.err) + '. Les dernières positions ne sont pas considérées comme actuelles.';

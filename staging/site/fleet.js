@@ -1,4 +1,4 @@
-// Pilotage multi-source du staging. Les observations viennent exclusivement du serveur local.
+// Lectures partagées et pilotage des connecteurs sur les environnements autorisés.
 const FLEET_STATES = {
   available: ['Disponible', 'available'], on_trip: ['En course', 'on-trip'], to_pickup: ['Vers le client', 'to-pickup'],
   offline: ['Hors ligne', 'offline'], unknown: ['Non observé', 'unknown'], on_break: ['En pause', 'on-break']
@@ -175,7 +175,7 @@ function fleetHasState(d, state, provider) { return (provider ? [provider] : ['u
 function fleetSourceCards(sources) {
   return Object.entries(FLEET_PROVIDERS).map(([id, label]) => {
     const source = (sources || []).find(s => (s.id || s.provider) === id), [txt, cls] = fleetSourceState(source);
-    return `<a class="source-card" href="${isAdmin() ? '#/connecteurs' : '#/cockpit'}"><span class="source-logo ${id}">${id === 'bolt' ? workspaceIcon('bolt') : id === 'uber' ? 'U' : id === 'geotab' ? 'G' : 'C'}</span><span class="source-copy"><b>${label}</b><small>${esc(source && source.last_success_at ? fleetAgo(source.last_success_at) : id === 'uber' ? 'Lecture sur le second écran' : id === 'bolt' ? 'Connexion API sécurisée' : 'Source indépendante')}</small></span><span class="source-status ${cls}"><i></i>${txt}</span></a>`;
+    return `<a class="source-card" href="${isAdmin() || CFG.WEB_PRODUCTION ? '#/connecteurs' : '#/cockpit'}"><span class="source-logo ${id}">${id === 'bolt' ? workspaceIcon('bolt') : id === 'uber' ? 'U' : id === 'geotab' ? 'G' : 'C'}</span><span class="source-copy"><b>${label}</b><small>${esc(source && source.last_success_at ? fleetAgo(source.last_success_at) : CFG.WEB_PRODUCTION ? 'En attente du poste collecteur' : id === 'uber' ? 'Lecture sur le second écran' : id === 'bolt' ? 'Connexion API sécurisée' : 'Source indépendante')}</small></span><span class="source-status ${cls}"><i></i>${txt}</span></a>`;
   }).join('');
 }
 function fleetEmpty(title, text, action) {
@@ -513,7 +513,36 @@ function setupTeksatConnector(my) {
   return load;
 }
 
+async function pageWebConnecteurs() {
+  if (!['admin', 'manager', 'viewer'].includes(S.profile?.role)) { $('#page').innerHTML = msg('Cette page n’est pas accessible à votre compte.', 'warn'); return; }
+  const my = ROUTING, owner = S.session?.user?.id, revision = S.sessionRevision;
+  const current = () => my === ROUTING && owner === S.session?.user?.id && revision === S.sessionRevision;
+  let reading = false;
+  $('#page').innerHTML = `<div class="fleet-page"><div class="fleet-heading"><div><div class="eyebrow">DONNÉES PARTAGÉES</div><h1>Vos sources, au même endroit<span>.</span></h1><p>La collecte est assurée par le PC fixe. Chaque compte consulte les données selon ses droits.</p></div><a class="button-link secondary" href="#/cockpit">Retour à la flotte ${workspaceIcon('arrow')}</a></div><div class="panel"><p>Les accès aux fournisseurs et les commandes de collecte se gèrent sur le poste collecteur. Fermer Ludy dans ce navigateur n’interrompt pas les lectures.</p>${isAdmin() ? '<p><a href="#/uber-rapports">Réglages métier et rapports Uber</a></p>' : ''}<button class="ghost" id="web-connectors-refresh">Actualiser l’état</button></div><div id="connect-status" role="status"></div><div class="connector-grid" id="web-connectors-sources"></div></div>`;
+  const load = async () => {
+    if (reading || document.hidden || !current()) return;
+    reading = true;
+    try {
+      const data = await fleetApi('health');
+      if (!current()) return;
+      $('#web-connectors-sources').innerHTML = Object.entries({ ...FLEET_PROVIDERS, texat: 'Teksat' }).map(([id, label]) => {
+        const source = data.sources?.find(item => item.id === id), at = Date.parse(source?.last_success_at), staleAfter = Number(source?.stale_after_s);
+        const stale = Number.isFinite(at) && staleAfter > 0 && Date.now() - at > staleAfter * 1000;
+        const [state, tone] = !source || !Number.isFinite(at) && source.status === 'unconnected' ? ['En attente de données', 'mute'] : fleetSourceState(stale ? { status: 'stale' } : source);
+        return `<section class="connector-card"><div class="connector-title"><span class="source-logo ${id}">${id === 'bolt' ? workspaceIcon('bolt') : label[0]}</span><div><h2>${label}</h2><span class="connector-kind">Collecte centrale · Données partagées</span></div><span class="source-status ${tone}">${state}</span></div><p>${Number.isFinite(at) ? 'Dernière lecture : ' + esc(fmtDT(source.last_success_at)) : 'Aucune lecture reçue.'}</p>${stale ? '<p class="warn">La dernière lecture est ancienne. Le poste collecteur doit être vérifié.</p>' : tone === 'warn' ? '<p class="warn">Cette source demande une vérification sur le poste collecteur.</p>' : ''}</section>`;
+      }).join('');
+      $('#connect-status').textContent = 'État actualisé. Les dates affichées indiquent la fraîcheur de chaque source.';
+    } catch (error) {
+      if (current() && error?.name !== 'AbortError') $('#connect-status').innerHTML = msg('État des sources indisponible. Les dernières données affichées sont conservées ; réessayez.', 'warn');
+    } finally { reading = false; }
+  };
+  $('#web-connectors-refresh').onclick = load;
+  await load();
+  if (current()) S.timers.push(setInterval(load, 30000));
+}
+
 async function pageConnecteurs() {
+  if (CFG.WEB_PRODUCTION) return pageWebConnecteurs();
   if (!isAdmin()) { $('#page').innerHTML = msg('Cette page est réservée aux administrateurs.', 'warn'); return; }
   const my = ROUTING; let alertSettings = {}, reading = false, boltBusy = false, boltConfigBusy = false, boltLocalConfigured = null, boltConfigError = null, connectorSources = [];
   $('#page').innerHTML = `<div class="fleet-page"><div class="fleet-heading"><div><div class="eyebrow">ADMINISTRATION</div><h1>Vos sources, au même endroit<span>.</span></h1><p>Activez le suivi une fois. Ludy reprend automatiquement les lectures après une coupure.</p></div><a class="button-link secondary" href="#/cockpit">Retour à la flotte ${workspaceIcon('arrow')}</a></div><div id="connect-status" role="status"></div><div class="connector-grid">

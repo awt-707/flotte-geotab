@@ -804,7 +804,7 @@ function rhGateView() {
   const inp = $('#rhgb');
   inp.focus();
   inp.addEventListener('input', e => { if (e.inputType && /^delete/.test(e.inputType)) return; const dg = inp.value.replace(/\D/g, '').slice(0, 8); if (/^\d+$/.test(inp.value.replace(/\//g, ''))) inp.value = dg.slice(0, 2) + (dg.length > 2 ? '/' + dg.slice(2, 4) : '') + (dg.length > 4 ? '/' + dg.slice(4) : ''); });
-  $('#rhglo').onclick = async () => { await sessEnd(); await sb.auth.signOut(); location.hash = ''; };
+  $('#rhglo').onclick = async () => { await sessEnd(); await sb.auth.signOut(CFG.WEB_PRODUCTION ? { scope: 'local' } : undefined); location.hash = ''; };
   $('#rhgf').onsubmit = async ev => {
     ev.preventDefault();
     const d = ctrParseDate(inp.value), out = $('#rhgr');

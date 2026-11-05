@@ -74,7 +74,7 @@ test('an intentionally cancelled sidebar read preserves the last known source',a
 
 test('cockpit schedules persisted alerts and lightweight health without reading GPS snapshots',async()=>{
  const f=fixture(),timers=[];
- Object.assign(f.context,{LIVE:{},processLocalLive(){},SITE_NEW:false,pageOf:()=> 'cockpit',extHide(){},loadRef:async()=>{},rhGate:async()=>true,mineLoad:async()=>{},canSee:()=>true,shell:()=> 'cockpit',PAGES:{cockpit:async()=>{}},ADMIN_PAGES:{},watchAlerts(){},sessPing(){},window:{},clearInterval(){},setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length;}});
+ Object.assign(f.context,{LIVE:{},processLocalLive(){},SITE_NEW:false,pageOf:()=> 'cockpit',extHide(){},loadRef:async()=>{},rhGate:async()=>true,mineLoad:async()=>{},canSee:()=>true,shell:()=> 'cockpit',PAGES:{cockpit:async()=>{}},ADMIN_PAGES:{},pageNeedsAdmin:()=>false,watchAlerts(){},sessPing(){},window:{},clearInterval(){},setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length;}});
  f.context.S.profile={role:'admin'};f.context.document.getElementById=()=>null;vm.runInContext(route,f.context);await f.run('route()');
  assert.deepEqual(timers.map(timer=>timer.ms),[15000,60000,60000]);assert.equal(f.calls.length,1);assert.equal(f.calls[0].url,'/api/fleet/alerts');f.calls[0].resolve({source:{status:'healthy'},events:[],motion_alerts:[]});
  const status=timers[1].fn();assert.equal(f.calls.length,2);assert.equal(f.calls[1].url,'/api/fleet/health');f.calls[1].resolve({sources:[]});await status;

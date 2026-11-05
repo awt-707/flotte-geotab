@@ -1,4 +1,45 @@
-# Déployer Ludy avec les collecteurs dans les applications
+# Déployer Ludy
+
+## Site web et PC collecteur
+
+La version web **0.1.0** reprend l’interface et les données de Ludy. Chaque navigateur ouvre sa session Supabase personnelle avec les droits de son agence. Le PC fixe conserve l’application et les connexions aux fournisseurs. Le site affiche leur état et les observations partagées ; il ne crée aucun collecteur, ne démarre aucun navigateur Uber et n’utilise aucune session du PC fixe pour les collègues.
+
+Le serveur web écoute uniquement **127.0.0.1:4180**. Il est indépendant du serveur de l’application, qui reste sur **127.0.0.1:4173**. Un reverse proxy HTTPS doit conserver le Host public configuré. L’adresse HTTPS est contrôlée strictement ; les en-têtes `X-Forwarded-*` et les identités Tailscale ne remplacent jamais le JWT Ludy. Chaque requête vérifie l’utilisateur et son rôle courant. Les observateurs techniques des administrateurs sont distincts, désactivés et ne prennent aucun bail de collecte.
+
+Les lectures métier, les éditions manuelles et les réglages centraux autorisés restent disponibles. La connexion aux fournisseurs, les imports directs Geotab, les commandes de navigateur Uber et les synchronisations fournisseur se font sur le PC collecteur. Le portail chauffeur à code personnel n’est pas publié par ce serveur web staff. Les accès RH conservent leurs pages et leurs règles existantes.
+
+La migration additive [`fleet-source-health.sql`](fleet-source-health.sql) a été appliquée le 5 novembre au projet de production existant. Les contrôles SQL des rôles administrateur, gestionnaire et consultation ont réussi : ils peuvent lire un résumé borné de santé, sans accès supplémentaire à la table brute réservée aux administrateurs. Il n’est pas nécessaire de rejouer les migrations historiques pour installer le site.
+
+### Construire et démarrer le site
+
+Depuis la racine du dépôt :
+
+```bash
+node staging/scripts/build-web.mjs --check
+node staging/scripts/build-web.mjs --out /chemin/neuf/Ludy-Web-0.1.0
+```
+
+Le constructeur copie une liste fermée de sources, suit leurs imports, installe les dépendances verrouillées sans scripts npm, vérifie les imports du runtime et produit `build-manifest.json` avec les empreintes SHA-256. Il refuse de remplacer une livraison existante. Il ne copie ni configuration opérateur, ni session, ni identifiants fournisseur, ni clé privilégiée. Le paquet fonctionne avec Node.js ; le binaire Node est fourni séparément.
+
+Créer hors du paquet un JSON contenant exactement `environment` (`production`), `projectRef`, `supabaseUrl`, `publishableKey` (clé publique uniquement) et `webOrigin` (origine HTTPS exacte, sans slash final). Conserver un dossier d’état propre au site, hors du programme et des profils de l’application. Puis, depuis le paquet :
+
+```bash
+node web-runtime/main.mjs --config /chemin/web-public.json --state-dir /chemin/etat-web-prive
+```
+
+La route locale `http://127.0.0.1:4180/health` permet de vérifier le processus sans ouvrir une session. Les pages et les API utilisent l’origine HTTPS configurée. Pour un serveur Linux/VPS, lancer cette commande dans un service système dédié et placer le reverse proxy HTTPS devant le port local. La base reste le Supabase existant.
+
+### Démarrage automatique sur le PC Windows
+
+Exécuter `web-runtime/windows/install.ps1` depuis un PowerShell élevé **sous le compte Windows qui possédera le site**. Fournir les chemins absolus `-RuntimeRoot`, `-NodePath`, `-ConfigPath`, `-StateDir`, l’empreinte officielle `-NodeSha256` et l’empreinte du manifeste de livraison `-ManifestSha256`.
+
+L’installateur vérifie les fichiers, prépare les permissions du dossier privé, refuse un port 4180 occupé ou une tâche existante et crée `LudyWeb-0.1.0`. Cette tâche utilise le compte Windows courant avec un jeton limité et le mode S4U, sans mot de passe enregistré, au démarrage du PC. Le contrôle vérifie le serveur et le processus qui possède le port. En cas d’échec, seule la nouvelle tâche est retirée. Le journal privé `web-service.log` contient les démarrages et codes de sortie, sans sorties brutes des services. L’exécution native de cette installation et la reprise après redémarrage restent à vérifier sur le PC cible.
+
+Pour un accès privé, [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) peut publier le port 4180 en HTTPS dans le réseau Tailscale. Les collègues doivent alors avoir accès à ce réseau. Un accès public nécessite un proxy ou tunnel public configuré pour ce serveur web, ou un hébergement VPS avec une adresse HTTPS ; le serveur desktop 4173 reste local.
+
+Le PC doit rester allumé, connecté et sans mise en veille. Le démarrage automatique du site ne remplace pas la session interactive nécessaire aux collecteurs et à Uber ; la collecte continue dépend de cette session et de la validité des accès fournisseur. Une installation terminée ne constitue pas une validation de fonctionnement sur 24 heures.
+
+## Historique des applications et migrations initiales
 
 Chaque application Ludy 0.2.4 contient son serveur local. Les postes utilisent le même Supabase de production et les comptes Ludy existants. Un seul poste administrateur participant détient le bail de collecte ; les autres consultent les données partagées et peuvent prendre le relais. Il faut laisser au moins un poste préparé, connecté et éveillé pour poursuivre la collecte.
 

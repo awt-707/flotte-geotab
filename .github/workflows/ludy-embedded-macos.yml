@@ -100,6 +100,33 @@ jobs:
           staging/tests/uber-extension.test.mjs
           staging/tests/uber-durability.test.mjs
           staging/tests/uber-sweep-protocol.test.mjs
+          staging/tests/web-server.test.mjs
+          staging/tests/web-services.test.mjs
+          staging/tests/web-transport.test.mjs
+          staging/tests/web-production-ui.test.mjs
+          staging/tests/web-browser-smoke.test.mjs
+          staging/tests/web-build.test.mjs
+          staging/tests/web-install.test.mjs
+      - name: Vérifier les scripts du service web Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in @('staging/web-runtime/windows/install.ps1', 'staging/web-runtime/windows/start-web.ps1')) {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) $file), [ref]$tokens, [ref]$parseErrors) > $null
+            if ($parseErrors.Count) { throw $parseErrors[0] }
+          }
+      - name: Construire le serveur web portable
+        run: node staging/scripts/build-web.mjs
+      - name: Archiver le serveur web vérifié
+        shell: pwsh
+        run: Compress-Archive -Path staging/.local/releases/web/Ludy-Web-0.1.0 -DestinationPath staging/.local/releases/web/Ludy-Web-0.1.0.zip
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludy-web-runtime-0.1.0
+          path: staging/.local/releases/web/Ludy-Web-0.1.0.zip
+          retention-days: 14
   build:
     name: macOS ${{ matrix.label }}
     if: github.repository == 'awt-707/flotte-geotab' && github.ref == 'refs/heads/staging'

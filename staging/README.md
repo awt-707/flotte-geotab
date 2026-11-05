@@ -1,6 +1,6 @@
 # Ludy — staging local
 
-**Applications avec serveur embarqué :** l’architecture retenue pour la production est maintenant décrite dans [le guide de déploiement 0.2.0](production/README.md). Chaque poste utilise le Supabase existant et participe à une collecte coordonnée. Les instructions ci-dessous restent celles du staging local ; la rubrique des applications 0.1.1 et du serveur séparé est historique.
+**Production :** le [guide de déploiement](production/README.md) décrit le site web avec sessions personnelles et le PC fixe qui centralise les connecteurs. Le serveur web utilise le Supabase existant et écoute sur un port distinct de l’application du PC. Les instructions ci-dessous restent celles du staging local ; la rubrique des applications 0.1.1 et du serveur séparé est historique.
 
 Cette copie fonctionne avec son propre Supabase local : PostgreSQL, Auth, Storage et Realtime. Les fichiers de production restent dans les dossiers d'origine. Aucun projet Supabase cloud n'est nécessaire.
 

@@ -2,16 +2,20 @@
 const CFG = window.FLOTTE_CONFIG || {};
 const LOCAL_DATABASE = /^http:\/\/(127\.0\.0\.1|localhost):57421$/.test(CFG.SUPABASE_URL || '');
 const SHARED_DATABASE = CFG.SHARED_STAGING === true && location.protocol === 'https:' && CFG.SUPABASE_URL === location.origin + '/supabase';
-const DESKTOP_DATABASE = CFG.DESKTOP_PRODUCTION === true && CFG.STAGING === false && CFG.ENVIRONMENT === 'production' &&
+const WEB_DATABASE = CFG.WEB_PRODUCTION === true && CFG.DESKTOP_PRODUCTION === false && CFG.STAGING === false && CFG.ENVIRONMENT === 'production' &&
+  location.protocol === 'https:' && CFG.WEB_ORIGIN === location.origin && /^https:\/\/[^/?#@]+$/.test(CFG.WEB_ORIGIN || '') &&
+  /^[a-z0-9]{20}$/.test(CFG.SUPABASE_PROJECT_REF || '') && CFG.SUPABASE_URL === 'https://' + CFG.SUPABASE_PROJECT_REF + '.supabase.co' &&
+  CFG.AUTH_STORAGE_KEY === 'ludy-web-production-' + CFG.SUPABASE_PROJECT_REF + '-auth';
+const DESKTOP_DATABASE = CFG.WEB_PRODUCTION !== true && CFG.DESKTOP_PRODUCTION === true && CFG.STAGING === false && CFG.ENVIRONMENT === 'production' &&
   location.origin === 'http://127.0.0.1:4173' && /^[a-z0-9]{20}$/.test(CFG.SUPABASE_PROJECT_REF || '') &&
   CFG.SUPABASE_URL === 'https://' + CFG.SUPABASE_PROJECT_REF + '.supabase.co' &&
   CFG.AUTH_STORAGE_KEY === 'ludy-production-' + CFG.SUPABASE_PROJECT_REF + '-auth';
-if (!DESKTOP_DATABASE && (!CFG.STAGING || (!LOCAL_DATABASE && !SHARED_DATABASE))) {
-  document.getElementById('app').textContent = 'Staging non configuré. Lancez le serveur local avec npm --prefix staging start.';
+if (!WEB_DATABASE && !DESKTOP_DATABASE && (CFG.WEB_PRODUCTION === true || !CFG.STAGING || (!LOCAL_DATABASE && !SHARED_DATABASE))) {
+  document.getElementById('app').textContent = CFG.WEB_PRODUCTION ? 'Configuration de Ludy web indisponible. Contactez l’administrateur.' : 'Staging non configuré. Lancez le serveur local avec npm --prefix staging start.';
   throw new Error('Ce staging refuse toute connexion à une base distante.');
 }
-if (DESKTOP_DATABASE) document.title = 'Ludy · Fleet workspace';
-const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, storageKey: DESKTOP_DATABASE ? CFG.AUTH_STORAGE_KEY : 'ludy-staging-auth' }, global: { fetch: cacheFetch(() => CACHE) } });   // écriture = lectures gardées oubliées (site/cache.js)
+if (WEB_DATABASE || DESKTOP_DATABASE) document.title = 'Ludy · Fleet workspace';
+const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, storageKey: WEB_DATABASE || DESKTOP_DATABASE ? CFG.AUTH_STORAGE_KEY : 'ludy-staging-auth' }, global: { fetch: cacheFetch(() => CACHE) } });   // écriture = lectures gardées oubliées (site/cache.js)
 const S = { session: null, sessionRevision: 0, profile: null, P: null, veh: null, vehList: [], rules: null, drv: null, timers: [], channel: null, agencies: [], agName: {}, alertCh: null };
 const desktopAuthRefresh = DESKTOP_DATABASE ? window.createDesktopAuthRefresh(sb.auth, { enabled: true }) : null;
 const $ = sel => document.querySelector(sel);
@@ -108,7 +112,7 @@ async function loadRef(force) {
   S.agencies = ags; S.agName = {}; ags.forEach(a => { S.agName[a.id] = a.name; });
   S.P = Object.assign({}, PARAM_DEFAULTS); params.forEach(p => { if (p.value !== null && p.value !== '') S.P[p.key] = isNaN(+p.value) ? p.value : +p.value; });
   // Heures à l'heure réelle du Maroc publiée par le collecteur (même règle partout, quelle que soit la table des fuseaux du navigateur)
-  setTzRules((CFG.STAGING || CFG.DESKTOP_PRODUCTION) && typeof STAGING_TZ_RULES !== 'undefined' ? STAGING_TZ_RULES : S.P.tzRules);
+  setTzRules((CFG.STAGING || CFG.DESKTOP_PRODUCTION || CFG.WEB_PRODUCTION) && typeof STAGING_TZ_RULES !== 'undefined' ? STAGING_TZ_RULES : S.P.tzRules);
   S.vehList = veh; S.veh = {}; veh.forEach(v => { S.veh[v.key] = v; });
   S.rules = {}; rules.forEach(r => { r.name_geotab = r.name; r.name = rptRuleFr(r.name); S.rules[r.id] = r; });   // noms des règles en français partout
   S.drv = { [HORS]: 'Hors contrat' }; drv.forEach(d => { S.drv[d.code] = d.name; });
@@ -311,9 +315,13 @@ window.addEventListener('resize', () => { if (/^x-/.test(pageOf())) extPlace().c
 function pageOf() { return (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'cockpit'; }
 const APP_DL = { mac: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.dmg', win: CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy-setup.exe' };
 async function pageApplication() {
+  if (CFG.WEB_PRODUCTION) {
+    $('#page').innerHTML = `<div class="head"><h1>Ludy dans votre navigateur</h1><div class="sub">Votre espace de travail et les données partagées de votre flotte.</div></div><div class="panel"><h2>Votre compte personnel</h2><p>Vos droits et vos agences s’appliquent à chaque page. La déconnexion ferme votre session dans ce navigateur, sans déconnecter vos collègues ni arrêter la collecte.</p><h2>Collecte centralisée</h2><p>Le poste collecteur alimente les positions, les activités et les rapports. Vous pouvez fermer cette page sans interrompre cette collecte.</p><p>Les rapports déjà importés restent consultables. Une nouvelle lecture chez un fournisseur ou la reconnexion d’un connecteur se fait depuis le poste collecteur.</p><p><a class="btn" href="#/cockpit">Ouvrir la vue d’ensemble</a></p></div>`;
+    return;
+  }
   if (CFG.DESKTOP_PRODUCTION) {
     $('#page').innerHTML = '<div class="head"><h1>Ludy sur cet ordinateur</h1><div class="sub">Vos comptes et vos données sont partagés entre les postes.</div></div><div class="panel"><h2>Collecte des données</h2><p>Les postes connectés coordonnent la collecte. Un poste prend le relais lorsqu’il peut se connecter aux sources nécessaires. Gardez au moins un poste participant ouvert pour recevoir de nouvelles données.</p><p>Les données déjà enregistrées restent dans Supabase. Les comptes, les droits et les données sont ceux de la production.</p>' + (typeof desktopWorkerHtml === 'function' ? desktopWorkerHtml() : '') + '</div>';
-    if (typeof desktopWorkerMount === 'function') desktopWorkerMount({admin:isAdmin()});
+    if (!CFG.WEB_PRODUCTION && typeof desktopWorkerMount === 'function') desktopWorkerMount({admin:isAdmin()});
     return;
   }
   if (CFG.STAGING) {
@@ -340,14 +348,15 @@ async function pageApplication() {
 // ---------- Volets visibles par utilisateur (Réglages > Utilisateurs) : profiles.pages = liste des volets, vide = tous ----------
 // Le menu ne montre que les volets choisis ; les données restent limitées par agence dans la base.
 const ALWAYS_PAGES = { vehicule: 1, chauffeur: 1, application: 1, moi: 1, menu: 1 };   // fiches ouvertes depuis les autres volets, page de téléchargement
-function allPages() { return NAV.filter(n => !ADMIN_PAGES[n[0]]).map(n => [n[0], n[1]]).concat(extSites().map(x => ['x-' + x.id, x.name + ' (application)'])); }
+function allPages() { return NAV.filter(n => !pageNeedsAdmin(n[0])).map(n => [n[0], n[1]]).concat(extSites().map(x => ['x-' + x.id, x.name + ' (application)'])); }
+function pageNeedsAdmin(page) { return !!ADMIN_PAGES[page] && !(CFG.WEB_PRODUCTION && page === 'connecteurs'); }
 function canSee(page) {
   if (page === 'chiffre-affaires' && !canEdit()) return false;
   if (isRH()) return !!RH_ONLY[page];
   if (isAdmin() || ALWAYS_PAGES[page] || !S.profile || !Array.isArray(S.profile.pages)) return true;
   return S.profile.pages.includes(page === 'travail' ? 'rh' : page);   // contrats de travail : dans le dossier Ressources humaines
 }
-function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k] && canSee(k)); return p || 'application'; }
+function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !pageNeedsAdmin(k) && canSee(k)); return p || 'application'; }
 
 // ---------- Mise en page ----------
 const NAV = [['cockpit', 'Vue d’ensemble'], ['direct', 'Carte en direct'], ['parkings', 'Parc et zones'], ['performance-chauffeur', 'Performance chauffeur'], ['uber-rapports', 'Collecte des rapports Uber'], ['demande', 'Analyse des courses Uber'], ['pauses-rush', 'Pauses et rush'], ['rotations', 'Rotations des véhicules'], ['communaute', 'Signalements chauffeurs'], ['evenements', 'Événements'], ['eco-conduite', 'Notifications consommation'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
@@ -391,7 +400,7 @@ async function menuSave(m) {
 }
 /** Entrées du menu (volets visibles) : { id, label, html, leaves: [{ id, href, label, group }] } */
 function navEntries() {
-  const vis = NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (['caisse', 'chiffre-affaires'].includes(n[0]) ? canEdit() : n[0] !== 'rh' || rhCan()) && canSee(n[0])), done = {}, out = [];
+  const vis = NAV.filter(n => (!pageNeedsAdmin(n[0]) || isAdmin()) && (['caisse', 'chiffre-affaires'].includes(n[0]) ? canEdit() : n[0] !== 'rh' || rhCan()) && canSee(n[0])), done = {}, out = [];
   const fav = new Set(menuCfg().fav);
   // étoile dessinée par la feuille de style (le texte du volet reste son seul nom)
   const star = id => `<span class="navstar${fav.has(id) ? ' on' : ''}" data-fav="${esc(id)}" role="button" title="${fav.has(id) ? 'Retirer des favoris' : 'Ajouter aux favoris'}"></span>`;
@@ -502,16 +511,16 @@ function navMark(page) {
 function shellHtml() {
   return `<div class="layout">
   <aside class="side" id="workspace-nav">
-    ${BRAND}<div class="workspace-edition"><span class="edition-dot"></span> ${CFG.DESKTOP_PRODUCTION ? 'Production · données partagées' : CFG.SHARED_STAGING ? 'Staging partagé' : 'Staging local'}</div>
+    ${BRAND}<div class="workspace-edition"><span class="edition-dot"></span> ${(CFG.DESKTOP_PRODUCTION || CFG.WEB_PRODUCTION) ? 'Production · données partagées' : CFG.SHARED_STAGING ? 'Staging partagé' : 'Staging local'}</div>
     <nav aria-label="Pages">${navHtml()}</nav>
     <div class="foot">${CFG.DESKTOP_PRODUCTION && typeof desktopWorkerHtml === 'function' ? desktopWorkerHtml() : ''}${rhFoot()}${mineFoot()}${agencyPickerRows(S.agencies, agFilter()).length > 1 ? `<label class="agsel">Agence <select id="agsel">${agOptions(agFilter(), S.agencies.length ? 'Toutes' : undefined, agencyPickerRows(S.agencies, agFilter()))}</select></label>` : ''}
-      ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}${isRH() ? '' : '<span id="health" class="health">Collecte…</span>'}${isAdmin() ? '<a id="onl" class="onl" href="#/connexions" hidden title="Qui est connecté en ce moment"></a>' : ''}${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">'+(CFG.STAGING?'Accès au staging':'Application Mac / Windows')+'</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
+      ${'Notification' in window && Notification.permission === 'default' ? '<button class="ghost" id="notifon">Activer les notifications</button>' : ''}${isRH() ? '' : '<span id="health" class="health">Collecte…</span>'}${isAdmin() ? '<a id="onl" class="onl" href="#/connexions" hidden title="Qui est connecté en ce moment"></a>' : ''}${window.LUDY_APP ? '' : '<a class="dlapp" href="#/application">'+(CFG.WEB_PRODUCTION?'Accès web Ludy':CFG.STAGING?'Accès au staging':'Application Mac / Windows')+'</a>'}<span class="who" title="${esc(S.profile.email || '')}">${esc(S.profile.email || '')}</span><span class="role">${ROLE_TXT[S.profile.role]}</span><label class="agsel">Thème <select id="themesel">${THEMES.map(x => `<option value="${x[0]}" ${x[0] === themeGet() ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label><button class="ghost" id="logout">Déconnexion</button></div>
   </aside>
   <button id="workspace-backdrop" class="workspace-backdrop" aria-label="Fermer la navigation" hidden></button>
   <div class="workspace"><header class="workspace-bar">
     <button class="icon-button mobile-toggle" id="workspace-toggle" aria-label="Ouvrir la navigation" aria-controls="workspace-nav" aria-expanded="false">${workspaceIcon('menu')}</button>
     <div class="workspace-breadcrumb"><span id="workspace-section">Pilotage</span><span class="breadcrumb-slash">/</span><strong id="workspace-title">Vue d’ensemble</strong></div>
-    <div class="workspace-actions"><button class="workspace-search" id="workspace-search">${workspaceIcon('search')}<span>Accès rapide</span><kbd>Ctrl K</kbd></button><span class="workspace-local"><i></i> ${CFG.DESKTOP_PRODUCTION ? 'PRODUCTION' : 'STAGING'}</span><span class="workspace-avatar" title="${esc(S.profile.email || '')}">${esc((S.profile.email || 'L').slice(0, 1).toUpperCase())}</span></div>
+    <div class="workspace-actions"><button class="workspace-search" id="workspace-search">${workspaceIcon('search')}<span>Accès rapide</span><kbd>Ctrl K</kbd></button><span class="workspace-local"><i></i> ${(CFG.DESKTOP_PRODUCTION || CFG.WEB_PRODUCTION) ? 'PRODUCTION' : 'STAGING'}</span><span class="workspace-avatar" title="${esc(S.profile.email || '')}">${esc((S.profile.email || 'L').slice(0, 1).toUpperCase())}</span></div>
   </header><main id="page"><div class="loading">Chargement…</div></main></div></div>`;
 }
 // Menu reconstruit seulement s'il change (utilisateur, rôle, volets visibles, agences, « Mes véhicules », thème, notifications) ;
@@ -527,7 +536,7 @@ function shell() {
     $('#logout').onclick = async () => {
       // pointage : fin de journée proposée avant la déconnexion
       if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && await ask('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).then(null, () => { });   // pas de .catch sur la requête supabase
-      await sessEnd(); await sb.auth.signOut(); location.hash = '';
+      await sessEnd(); await sb.auth.signOut(CFG.WEB_PRODUCTION ? { scope: 'local' } : undefined); location.hash = '';
     };
     rhFootBind(); navBind();
     $('#themesel').onchange = e => { try { localStorage.setItem('theme', e.target.value); } catch (x) { } themeApply(e.target.value); };
@@ -536,7 +545,7 @@ function shell() {
     const nb = $('#notifon'); if (nb) nb.onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } nb.remove(); };
   }
   navMark(page); workspaceMount(page);
-  if (typeof desktopWorkerMount === 'function') desktopWorkerMount({admin:isAdmin()});
+  if (!CFG.WEB_PRODUCTION && typeof desktopWorkerMount === 'function') desktopWorkerMount({admin:isAdmin()});
   // derniers états connus redessinés tout de suite (menu neuf), relus ensuite en arrière-plan
   sessBadgePaint(); healthPaint(); nbalPaint(); rhBadgePaint(); crsBadgePaint(); health(); openAlerts(); crsBadgeLoad(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
   const on = $('.side nav a.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });
@@ -579,7 +588,7 @@ function onNewAlert(a) {
     <div class="small">${esc(String(a.detail || '').replace(/https:\/\/maps\.google\.com\/\?q=\S+/g, '').slice(0, 160))}</div><a href="${a.link || '#/alertes?jour=' + esc(a.day) + '&plaque=' + encodeURIComponent(a.plate || '')}">${a.link ? 'Voir le véhicule' : 'Voir l\'alerte'}</a>`;
   t.querySelector('.x').onclick = () => t.remove();
   box.prepend(t);
-  if ((CFG.STAGING || CFG.DESKTOP_PRODUCTION) && typeof opsTrackAlertToast === 'function') opsTrackAlertToast(t, a, box);
+  if ((CFG.STAGING || CFG.DESKTOP_PRODUCTION || CFG.WEB_PRODUCTION) && typeof opsTrackAlertToast === 'function') opsTrackAlertToast(t, a, box);
   else { while (box.children.length > 5) box.lastChild.remove(); if (a.severity !== 'Critique') setTimeout(() => t.remove(), 30000); }
   openAlerts();
   // fenêtre cachée, ou volet externe (Uber, Clicar…) affiché par-dessus les bandeaux : notification du système
@@ -674,7 +683,7 @@ function healthPaint() {
       el.textContent = 'Geotab : état indisponible'; return;
     }
     el.className = 'health ' + (status?.status === 'healthy' ? 'ok' : status?.status === 'error' ? 'warn' : '');
-    el.title = CFG.DESKTOP_PRODUCTION ? 'Positions Geotab partagées' : 'Positions Geotab dans le staging local';
+    el.title = (CFG.DESKTOP_PRODUCTION || CFG.WEB_PRODUCTION) ? 'Positions Geotab partagées' : 'Positions Geotab dans le staging local';
     el.textContent = 'Geotab : ' + (!status ? 'voir Connecteurs' : ['unconnected', 'not_configured'].includes(status.status) ? 'non connecté' : ['paused', 'stopped'].includes(status.status) ? 'en pause' : status.status === 'healthy' ? 'suivi actif' : 'lecture interrompue');
     return;
   }
@@ -685,7 +694,7 @@ function healthPaint() {
   el.title = 'Dernière collecte Geotab'; el.textContent = m === null ? 'Collecte : jamais' : 'Collecte : il y a ' + (m < 1 ? 'moins d\'1 min' : m < 120 ? m + ' min' : Math.round(m / 60) + ' h');
 }
 async function health() {
-  if (document.hidden) return;
+  if (document.hidden || CFG.WEB_PRODUCTION && S.profile?.role === 'rh') return;
   if (CFG.GEOTAB_LOCAL) {
     const uid = S.session?.user?.id; if (!uid) return;
     const previous = S.geotabHealth;
@@ -1571,12 +1580,12 @@ async function pageReglages() {
 
 // ---------- Connexion ----------
 function loginView(info) {
-  $('#app').innerHTML = `<div class="stage-login"><section class="login-story"><div class="login-wordmark">LUDY<span>FLEET WORKSPACE</span></div><div><span class="login-eyebrow">UN SEUL ESPACE. TOUTE VOTRE FLOTTE.</span><h1>Chaque journée,<br>une vision plus claire.</h1><p>Les chauffeurs, les véhicules et les opérations réunis dans un espace pensé pour votre quotidien.</p><div class="login-platforms"><span>Uber Fleet</span><span>Bolt</span><span>Geotab</span><span>MyClicar</span></div></div><span class="login-note">${CFG.DESKTOP_PRODUCTION ? 'Production · Données partagées' : (CFG.SHARED_STAGING ? 'Environnement de test partagé' : 'Environnement de staging local') + ' · Base indépendante'}</span></section>
-    <section class="login-form-wrap"><div class="lbox">${BRAND_LIGHT}<span class="login-kicker">VOTRE ESPACE DE TRAVAIL</span><h2>Bienvenue sur Ludy</h2><p class="sub">${CFG.DESKTOP_PRODUCTION ? 'Connectez-vous avec votre compte Ludy.' : 'Connectez-vous à votre espace de staging.'}</p>
+  $('#app').innerHTML = `<div class="stage-login"><section class="login-story"><div class="login-wordmark">LUDY<span>FLEET WORKSPACE</span></div><div><span class="login-eyebrow">UN SEUL ESPACE. TOUTE VOTRE FLOTTE.</span><h1>Chaque journée,<br>une vision plus claire.</h1><p>Les chauffeurs, les véhicules et les opérations réunis dans un espace pensé pour votre quotidien.</p><div class="login-platforms"><span>Uber Fleet</span><span>Bolt</span><span>Geotab</span><span>MyClicar</span></div></div><span class="login-note">${(CFG.DESKTOP_PRODUCTION || CFG.WEB_PRODUCTION) ? 'Production · Données partagées' : (CFG.SHARED_STAGING ? 'Environnement de test partagé' : 'Environnement de staging local') + ' · Base indépendante'}</span></section>
+    <section class="login-form-wrap"><div class="lbox">${BRAND_LIGHT}<span class="login-kicker">VOTRE ESPACE DE TRAVAIL</span><h2>Bienvenue sur Ludy</h2><p class="sub">${(CFG.DESKTOP_PRODUCTION || CFG.WEB_PRODUCTION) ? 'Connectez-vous avec votre compte Ludy.' : 'Connectez-vous à votre espace de staging.'}</p>
     <form id="lf"><label>Adresse e-mail<input type="email" id="le" required autocomplete="username" placeholder="vous@entreprise.fr"></label>
-    <label>Mot de passe<input type="password" id="lp" required autocomplete="current-password" ${CFG.DESKTOP_PRODUCTION ? '' : 'minlength="12"'} placeholder="Votre mot de passe"></label>
+    <label>Mot de passe<input type="password" id="lp" required autocomplete="current-password" ${(CFG.DESKTOP_PRODUCTION || CFG.WEB_PRODUCTION) ? '' : 'minlength="12"'} placeholder="Votre mot de passe"></label>
     <button type="submit">Ouvrir mon espace ${workspaceIcon('arrow')}</button>
-    <div class="lrow"><span>${CFG.DESKTOP_PRODUCTION ? 'Compte personnel' : CFG.SHARED_STAGING ? 'Compte de test personnel' : 'Compte de staging local'}</span><a href="#" id="lsignup" hidden>Créer un compte</a><a href="#" id="lforgot">Mot de passe oublié</a></div></form><div id="lmsg" role="status">${info || ''}</div><p class="login-isolation">${CFG.DESKTOP_PRODUCTION ? 'Vos accès habituels et vos droits d’agence s’appliquent sur ce poste.' : 'Les comptes de production sont séparés de cet environnement.'}</p></div></section></div>`;
+    <div class="lrow"><span>${(CFG.DESKTOP_PRODUCTION || CFG.WEB_PRODUCTION) ? 'Compte personnel' : CFG.SHARED_STAGING ? 'Compte de test personnel' : 'Compte de staging local'}</span><a href="#" id="lsignup" hidden>Créer un compte</a><a href="#" id="lforgot">Mot de passe oublié</a></div></form><div id="lmsg" role="status">${info || ''}</div><p class="login-isolation">${CFG.WEB_PRODUCTION ? 'Vos droits d’agence s’appliquent à votre session personnelle.' : CFG.DESKTOP_PRODUCTION ? 'Vos accès habituels et vos droits d’agence s’appliquent sur ce poste.' : 'Les comptes de production sont séparés de cet environnement.'}</p></div></section></div>`;
   const out = t => { $('#lmsg').innerHTML = t; };
   $('#lf').onsubmit = async e => { e.preventDefault(); out(''); const { error } = await sb.auth.signInWithPassword({ email: $('#le').value, password: $('#lp').value });
     if (error) out(msg(/Invalid login/.test(error.message) ? 'Email ou mot de passe incorrect.' : /confirm/i.test(error.message) ? 'Confirmez d\'abord votre email (lien reçu par mail).' : esc(error.message), 'err')); };
@@ -1585,13 +1594,13 @@ function loginView(info) {
     if (error) out(msg(esc(error.message), 'err')); else out(msg(data.session ? 'Compte créé.' : 'Compte créé : cliquez sur le lien reçu par email pour le confirmer, puis connectez-vous.', 'ok')); };
   $('#lforgot').onclick = async e => { e.preventDefault(); if (CFG.DESKTOP_PRODUCTION) { out(msg('Utilisez la récupération de compte depuis le site Ludy habituel, puis reconnectez-vous ici.', 'info')); return; } if (CFG.SHARED_STAGING) { out(msg('Demandez un nouvel accès à la personne qui vous a invité à tester Ludy.', 'info')); return; } if (!$('#le').value) { out(msg('Saisissez votre email puis cliquez « Mot de passe oublié ».', 'warn')); return; }
     const { error } = await sb.auth.resetPasswordForEmail($('#le').value, { redirectTo: location.origin + location.pathname });
-    out(error ? msg(esc(error.message), 'err') : msg('Lien de réinitialisation disponible dans la <a href="http://127.0.0.1:57424" target="_blank" rel="noopener">boîte de test locale</a>.', 'ok')); };
+    out(error ? msg(esc(error.message), 'err') : msg(CFG.WEB_PRODUCTION ? 'Si ce compte existe, un lien de réinitialisation sera envoyé à votre adresse e-mail.' : 'Lien de réinitialisation disponible dans la <a href="http://127.0.0.1:57424" target="_blank" rel="noopener">boîte de test locale</a>.', 'ok')); };
 }
 function pendingView() {
   $('#app').innerHTML = `<div class="login"><div class="lbox">${BRAND_LIGHT}
     ${msg('Votre compte (' + esc(S.profile ? S.profile.email : '') + ') est créé. Il doit être validé par l\'administrateur avant de voir les données.', 'warn')}
     <button id="lout" class="ghost">Déconnexion</button></div></div>`;
-  $('#lout').onclick = () => sb.auth.signOut();
+  $('#lout').onclick = () => sb.auth.signOut(CFG.WEB_PRODUCTION ? { scope: 'local' } : undefined);
 }
 
 // ---------- Navigation ----------
@@ -1638,11 +1647,13 @@ async function route() {
   if (!canSee(pageOf())) { location.replace('#/' + firstAllowed()); return; }   // volet non autorisé à cet utilisateur
   let page = shell();
   if (/^x-/.test(page)) { const id = page.slice(2); PAGES[page] = () => pageExt(id); }
-  if (!PAGES[page] || (ADMIN_PAGES[page] && !isAdmin())) page = 'cockpit';
-  watchAlerts();
-  if (typeof disconnectionsStart === 'function') disconnectionsStart(my);
-  if (typeof demandWatchRush === 'function') demandWatchRush(my);
-  if (typeof zoneNotificationsStart === 'function') zoneNotificationsStart(my);
+  if (!PAGES[page] || (pageNeedsAdmin(page) && !isAdmin())) page = 'cockpit';
+  if (!(CFG.WEB_PRODUCTION && S.profile?.role === 'rh')) {
+    watchAlerts();
+    if (typeof disconnectionsStart === 'function') disconnectionsStart(my);
+    if (typeof demandWatchRush === 'function') demandWatchRush(my);
+    if (typeof zoneNotificationsStart === 'function') zoneNotificationsStart(my);
+  }
   window.__rerender = null;
   try { await PAGES[page](); } catch (e) { if (my === ROUTING) $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
   if (my !== ROUTING) return;
@@ -1700,7 +1711,7 @@ sb.auth.onAuthStateChange((ev, session) => {
   }
   S.session = session;
   if (desktopAuthRefresh) void desktopAuthRefresh.sessionChanged(session).catch(() => {});
-  if (typeof desktopWorkerSessionChanged === 'function') void desktopWorkerSessionChanged(session);
+  if (!CFG.WEB_PRODUCTION && typeof desktopWorkerSessionChanged === 'function') void desktopWorkerSessionChanged(session);
   if (changed || ev === 'INITIAL_SESSION' || ev === 'SIGNED_OUT') route();
 });
 const authInitialRevision = AUTH_EVENT_REVISION;
@@ -1708,6 +1719,6 @@ sb.auth.getSession().then(({ data }) => {
   if (AUTH_EVENT_REVISION !== authInitialRevision) return;
   cacheUser(data.session); S.sessionRevision++; S.session = data.session;
   if (desktopAuthRefresh) void desktopAuthRefresh.sessionChanged(data.session).catch(() => {});
-  if (typeof desktopWorkerSessionChanged === 'function') void desktopWorkerSessionChanged(data.session);
+  if (!CFG.WEB_PRODUCTION && typeof desktopWorkerSessionChanged === 'function') void desktopWorkerSessionChanged(data.session);
   route();
-}).catch(() => { if (AUTH_EVENT_REVISION === authInitialRevision) $('#app').textContent = 'Connexion locale indisponible. Rechargez la page.'; });
+}).catch(() => { if (AUTH_EVENT_REVISION === authInitialRevision) $('#app').textContent = (CFG.WEB_PRODUCTION ? 'Connexion indisponible. Rechargez la page.' : 'Connexion locale indisponible. Rechargez la page.'); });
