@@ -175,7 +175,7 @@ Identifier séparément les lectures Geotab encore déclenchées par l'ancien si
 
 ### Délégation Geotab ciblée — procédure préparée, exécution à confirmer
 
-La [migration de protection](../supabase/migrations/20261105001135_ludy_geotab_writer_delegation.sql) installe deux déclencheurs **désactivés**, sur `vehicles` et `live_status`. Leur installation seule ne transfère aucune écriture. Les fichiers ci-dessous décrivent l’opération prévue ; ils ne constituent pas un reçu de bascule.
+La [migration de protection](../supabase/migrations/20261105001650_ludy_geotab_writer_delegation.sql) installe deux déclencheurs **désactivés**, sur `vehicles` et `live_status`. Leur installation seule ne transfère aucune écriture. Les fichiers ci-dessous décrivent l’opération prévue ; ils ne constituent pas un reçu de bascule.
 
 1. Laisser Geotab arrêté dans Ludy. Installer la migration dans une transaction, puis vérifier la présence des deux déclencheurs et leur état désactivé. Ne pas rejouer une installation déjà enregistrée. Préparer et vérifier les accès Geotab, le catalogue et les associations sur le PC fixe, sans lancer la collecte.
 2. Exécuter entièrement [activate-geotab-desktop.sql](activate-geotab-desktop.sql). La transaction active les deux déclencheurs après verrouillage de `vehicles`, puis `live_status` ; elle limite l’attente de verrou à cinq secondes et l’instruction à vingt secondes. Une erreur ne doit pas être contournée : attendre un succès confirmé et vérifier que les deux protections sont actives avant de démarrer Geotab.
