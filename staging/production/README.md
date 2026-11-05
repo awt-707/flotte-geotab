@@ -101,9 +101,16 @@ La variable GitHub `LUDY_DESKTOP_PUBLIC_CONFIG` est configurée sur le dépôt a
 
 Chaque archive est construite sur un Mac de son architecture, signée ad hoc, réextraite et vérifiée avant publication dans les artifacts du workflow. Le contrôle indépendant vérifie les exécutables Mach-O, les permissions, les liens, les ressources et la signature. Il ne lance pas l’interface : le premier lancement et la connexion restent à vérifier sur un Mac pilote. Les artifacts sont conservés sept jours ; conserver une copie locale du ZIP livré et de sa somme SHA-256.
 
-Sur le Mac, ouvrir **À propos de ce Mac** pour choisir Apple Silicon lorsque la ligne « Puce » affiche Apple M1/M2/M3/etc., ou Intel lorsque la ligne « Processeur » indique Intel. Extraire le ZIP adapté, copier **Ludy.app** dans **Applications**, puis l’ouvrir et utiliser le compte Ludy habituel. Conserver la participation à la collecte désactivée sur les postes de consultation.
+Sur le Mac, ouvrir **À propos de ce Mac** pour choisir Apple Silicon lorsque la ligne « Puce » affiche Apple M1/M2/M3/etc., ou Intel lorsque la ligne « Processeur » indique Intel. Quitter l’ancienne application et déplacer son éventuelle copie dans Téléchargements avant d’extraire le nouveau ZIP : le chemin de lancement doit désigner la nouvelle **Ludy.app**. Utiliser le compte Ludy habituel et conserver la participation à la collecte désactivée sur les postes de consultation.
 
-Cette construction ne possède pas de certificat **Developer ID** ni de notarisation Apple. Si macOS refuse son premier lancement et si l’application provient bien de cette livraison vérifiée, suivre la procédure Apple propre à cette application dans **Réglages Système → Confidentialité et sécurité → Ouvrir quand même**. Ne pas désactiver Gatekeeper globalement ni supprimer les protections de quarantaine par commande. Un Mac administré peut refuser cette exception. Voir [les instructions Apple](https://support.apple.com/fr-fr/102445). Une distribution reconnue directement par Gatekeeper demande encore le certificat Developer ID et la notarisation.
+Cette construction ne possède pas de certificat **Developer ID** ni de notarisation Apple. Pour la livraison vérifiée extraite dans Téléchargements, le lancement demandé utilise uniquement cette copie :
+
+```sh
+xattr -cr ~/Downloads/Ludy.app
+open ~/Downloads/Ludy.app
+```
+
+La première commande supprime les attributs étendus de cette application ; la seconde la lance. L’alternative graphique est **Réglages Système → Confidentialité et sécurité → Ouvrir quand même**. Un Mac administré peut refuser cette exception. Voir [les instructions Apple](https://support.apple.com/fr-fr/102445). Une distribution reconnue directement par Gatekeeper demande encore le certificat Developer ID et la notarisation.
 
 Le **kit de sources embarqué 0.2.0** reste disponible pour construire localement : installer Node.js 22.12 minimum sur le Mac, extraire le kit, puis taper `sh ` dans Terminal et y glisser `Preparer Ludy Mac.command`. L’ancien kit 0.1.1 ne contient pas le serveur embarqué.
 
@@ -130,6 +137,8 @@ Chaque ZIP possède un fichier `.sha256`. Depuis leur dossier, `sha256sum -c nom
 La configuration ne contient que `environment`, `projectRef`, `supabaseUrl` et `publishableKey`. Le builder exige l'URL canonique du projet et refuse une clé privilégiée. La construction Mac et le contrôle de son archive sont exécutés en CI ; son premier lancement et ses parcours métier restent à vérifier sur le Mac utilisateur.
 
 ## 3. Préparer les postes qui pourront collecter
+
+**Prérequis de la version 0.2.8 :** appliquer une seule fois [fleet-source-health.sql](fleet-source-health.sql) dans une transaction sur la base cible avant d’installer les nouveaux clients. Ce complément expose aux profils validés uniquement l’état technique des quatre sources. Il ne modifie ni les lignes métier, ni les politiques et permissions de `fleet_sources` ; les anciens collecteurs restent compatibles. Un schéma ou une fonction déjà présents font échouer l’installation pour permettre leur inspection. Les contrôles locaux des rôles et de compatibilité s’exécutent avec `node staging/tests/fleet-source-health.integration.mjs` et annulent leurs données de test. Le fonctionnement réel avec plusieurs utilisateurs reste à vérifier après déploiement.
 
 Se connecter avec son compte **Ludy de production**. Les comptes du staging ne sont pas transférés. La participation est désactivée au premier lancement ; seuls les administrateurs peuvent l'activer dans **Application → Participer à la collecte**. Les autres utilisateurs consultent les données selon leurs droits et agences.
 

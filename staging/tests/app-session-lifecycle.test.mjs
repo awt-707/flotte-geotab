@@ -87,33 +87,33 @@ test('the staging access page keeps testers on the local or shared test origin',
 });
 
 function healthFixture(){
- const pending=[],label={},S={session:session('first'),sessionRevision:1};
- const context=vm.createContext({S,CFG:{GEOTAB_LOCAL:true,DESKTOP_PRODUCTION:true},$:()=>label,fleetApi:path=>{assert.equal(path,'geotab/live');const d=deferred();pending.push(d);return d.promise;}});
- vm.runInContext(healthCode,context);return {S,pending,label,health:context.health};
+ const pending=[],label={},S={session:session('first'),sessionRevision:1};let now=100000;
+ const context=vm.createContext({S,Date:{now:()=>now},document:{hidden:false},CFG:{GEOTAB_LOCAL:true,DESKTOP_PRODUCTION:true},$:()=>label,fleetApi:path=>{assert.equal(path,'health');const d=deferred();pending.push(d);return d.promise;}});
+ vm.runInContext(healthCode,context);return {S,pending,label,advance:()=>{now+=30000;},health:context.health};
 }
-const healthySource={configured:true,polling:true,status:'healthy'};
+const healthySource={id:'geotab',configured:true,polling:true,status:'healthy'};
 test('a failed local Geotab check replaces the healthy label and a later success restores it',async()=>{
- const f=healthFixture(),initial=f.health();f.pending[0].resolve({source:healthySource});await initial;
+ const f=healthFixture(),initial=f.health();f.pending[0].resolve({sources:[healthySource]});await initial;
  assert.equal(f.label.textContent,'Geotab : suivi actif');assert.equal(f.label.className,'health ok');
- const failed=f.health();f.pending[1].reject(Error('Bearer secret-token'));await failed;
+ f.advance();const failed=f.health();f.pending[1].reject(Error('Bearer secret-token'));await failed;
  assert.equal(f.label.textContent,'Geotab : état indisponible');assert.equal(f.label.className,'health warn');assert.match(f.label.title,/Nouvelle vérification automatique/);
- assert.doesNotMatch(f.label.textContent+f.label.title,/secret|Bearer/);assert.equal(f.S.geotabHealth.source,null);
- const recovered=f.health();f.pending[2].resolve({source:healthySource});await recovered;
+ assert.doesNotMatch(f.label.textContent+f.label.title,/secret|Bearer/);assert.equal(f.S.geotabHealth.source,healthySource);
+ f.advance();const recovered=f.health();f.pending[2].resolve({sources:[healthySource]});await recovered;
  assert.equal(f.label.textContent,'Geotab : suivi actif');assert.equal(f.label.className,'health ok');
 });
 test('local Geotab checks discard stale successes and failures after session changes',async()=>{
  for(const sameUser of [false,true])for(const fails of [false,true]){
   const f=healthFixture(),old=f.health();f.S.session=session(sameUser?'first':'second');f.S.sessionRevision++;
-  if(fails)f.pending[0].reject(Error('old failure'));else f.pending[0].resolve({source:healthySource});
+  if(fails)f.pending[0].reject(Error('old failure'));else f.pending[0].resolve({sources:[healthySource]});
   await old;assert.equal(f.S.geotabHealth,undefined);assert.equal(f.label.textContent,undefined);
  }
 });
 test('an older Geotab request cannot overwrite a newer health result',async()=>{
  for(const failsLate of [false,true]){
   const f=healthFixture(),old=f.health(),latest=f.health();
-  if(failsLate)f.pending[1].resolve({source:healthySource});else f.pending[1].reject(Error('current failure'));
+  if(failsLate)f.pending[1].resolve({sources:[healthySource]});else f.pending[1].reject(Error('current failure'));
   await latest;const expected=f.label.textContent;
-  if(failsLate)f.pending[0].reject(Error('old failure'));else f.pending[0].resolve({source:healthySource});
+  if(failsLate)f.pending[0].reject(Error('old failure'));else f.pending[0].resolve({sources:[healthySource]});
   await old;assert.equal(f.label.textContent,expected);
  }
 });

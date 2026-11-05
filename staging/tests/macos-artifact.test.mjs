@@ -70,7 +70,7 @@ test('packaging verifies a real ZIP roundtrip with links and publishes complete 
   const bundle=JSON.parse(await fs.readFile(result.bundleManifestFile,'utf8'));assert.equal(bundle.format,'ludy-macos-app-bundle-v1');assert.deepEqual(bundle.entries,await inventoryMacApp(f.app));
   assert.equal(calls.filter(x=>x.name==='/usr/bin/codesign'&&x.args[0]==='--verify').length,2);
   assert.deepEqual(calls.find(x=>x.name==='/usr/bin/ditto').args.slice(0,4),['-c','-k','--keepParent','--norsrc']);
-  const readme=await fs.readFile(result.readmeFile,'utf8');assert.match(readme,/copiez Ludy.app dans Applications/);assert.match(readme,/pas signée Developer ID/);assert.doesNotMatch(readme,/xattr|spctl|sudo|no-sandbox/);
+  const readme=await fs.readFile(result.readmeFile,'utf8');assert.match(readme,/xattr -cr ~\/Downloads\/Ludy\.app\nopen ~\/Downloads\/Ludy\.app/);assert.match(readme,/pas signée Developer ID/);assert.doesNotMatch(readme,/spctl|sudo|no-sandbox/);
 });
 test('lost permissions or altered payload after extraction prevents publication',async t=>{
   for(const kind of ['permissions','bytes'])await t.test(kind,async t=>{

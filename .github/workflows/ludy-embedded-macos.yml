@@ -76,7 +76,30 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_ENV, 'LUDY_TEST_CHROMIUM=' + chromium.executablePath() + '\n');
           NODE
       - name: Vérifier les connecteurs et le mode permanent sur Windows
-        run: node --test staging/tests/windows-bolt-credentials.test.mjs staging/tests/windows-connectors.test.mjs staging/tests/bolt-connectors-ui.test.mjs staging/tests/desktop-worker-ui.test.mjs staging/tests/desktop-auth.test.mjs staging/tests/desktop-session.test.mjs staging/tests/desktop-coordination.test.mjs staging/tests/app-session-lifecycle.test.mjs staging/tests/embedded-permanent.test.mjs staging/tests/fleet-batching.test.mjs staging/tests/fleet-api.test.mjs staging/tests/driver-matching.test.mjs staging/tests/uber-extension.test.mjs staging/tests/uber-durability.test.mjs staging/tests/uber-sweep-protocol.test.mjs
+        run: >-
+          node --test
+          staging/tests/windows-bolt-credentials.test.mjs
+          staging/tests/windows-connectors.test.mjs
+          staging/tests/bolt-connectors-ui.test.mjs
+          staging/tests/desktop-worker-ui.test.mjs
+          staging/tests/desktop-auth.test.mjs
+          staging/tests/desktop-session.test.mjs
+          staging/tests/desktop-coordination.test.mjs
+          staging/tests/desktop-services.test.mjs
+          staging/tests/app-session-lifecycle.test.mjs
+          staging/tests/embedded-permanent.test.mjs
+          staging/tests/fleet-batching.test.mjs
+          staging/tests/fleet-api.test.mjs
+          staging/tests/fleet-observer-reads.test.mjs
+          staging/tests/fleet-read-lifecycle.test.mjs
+          staging/tests/shared-connectors-ui.test.mjs
+          staging/tests/fleet-sharing-ui.test.mjs
+          staging/tests/direct-lifecycle.test.mjs
+          staging/tests/operations-overview-lifecycle.test.mjs
+          staging/tests/driver-matching.test.mjs
+          staging/tests/uber-extension.test.mjs
+          staging/tests/uber-durability.test.mjs
+          staging/tests/uber-sweep-protocol.test.mjs
   build:
     name: macOS ${{ matrix.label }}
     if: github.repository == 'awt-707/flotte-geotab' && github.ref == 'refs/heads/staging'

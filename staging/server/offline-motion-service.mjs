@@ -181,13 +181,13 @@ export function createOfflineMotionService({db, list, upsert, patch, now = Date.
     const copy=positions.map(p=>p&&({...p})), geo={...geotab};
     return serialize(()=>performUpdate(copy,geo));
   }
-  async function read(token) {
+  async function read(token,{vehicles:sharedVehicles}={}) {
     if (typeof token !== 'string' || !token) throw new Error('Session locale requise pour les alertes de déplacement.');
     const at=now();
     const [sourceRows,driverRows,vehicleRows,latestRows,alertRows,identityRows,interruptions,contracts,disconnections] = await Promise.all([
       list('fleet_sources',{select:SOURCE_FIELDS}),
       list('fleet_drivers',{select:DRIVER_FIELDS},token),
-      list('vehicles',{select:'key,plate,other_plates,geotab_id'},token),
+      sharedVehicles||list('vehicles',{select:'key,plate,other_plates,geotab_id'},token),
       list('fleet_latest',{select:LATEST_FIELDS},token),
       db(TABLE,{params:{select:ALERT_FIELDS,order:'opened_at.desc,id',limit:'500'},token}),
       list('fleet_identities',{select:'id,driver_id,source'},token),
@@ -240,5 +240,30 @@ export function createOfflineMotionService({db, list, upsert, patch, now = Date.
     for(const id of tracking)eligible.add(id);
     return {alerts,watches,coverage:{linked_drivers:linked.length,unassigned_drivers:eligible.size-linked.length,tracking:tracking.size,conflicting_vehicles:conflicts.size,total_drivers:driverRows.length,eligible_drivers:eligible.size,ignored_profiles:driverRows.length-eligible.size}};
   }
-  return {update,read};
+  async function readPublished(token,{vehicles:sharedVehicles,sources:sharedSources}={}) {
+    if(typeof token!=='string'||!token)throw new Error('Session locale requise pour les alertes de déplacement.');
+    const at=now(),[sourceRows,driverRows,vehicleRows,latestRows,identityRows,alertRows]=await Promise.all([
+      sharedSources||list('fleet_sources',{select:SOURCE_FIELDS}),list('fleet_drivers',{select:DRIVER_FIELDS},token),
+      sharedVehicles||list('vehicles',{select:'key,plate,other_plates,geotab_id'},token),list('fleet_latest',{select:LATEST_FIELDS},token),
+      list('fleet_identities',{select:'id,driver_id,source'},token),db(TABLE,{params:{select:ALERT_FIELDS,order:'opened_at.desc,id',limit:'500'},token})
+    ]);
+    const sources=new Map(sourceRows.map(row=>[row.id,row])),drivers=new Map(driverRows.map(row=>[row.id,row])),vehicles=new Map(vehicleRows.map(row=>[row.key,row]));
+    const latest=new Map(latestRows.map(row=>[row.identity_id,row])),activities=activitiesFor(latestRows,identityRows,sourceRows,at),counts=assignmentCounts(driverRows);
+    for(const key of conflictingVehicleAssignments({drivers:driverRows,latest:latestRows,sources:sourceRows,vehicles:vehicleRows,now:at}))counts.set(key,2);
+    const alerts=(alertRows||[]).filter(alert=>drivers.has(alert.driver_id)&&vehicles.has(alert.vehicle_key)).map(alert=>{
+      const driver=drivers.get(alert.driver_id),row=latest.get(alert.identity_id),activity=activities.get(alert.driver_id);
+      let status=alert.status;
+      if(status!=='resolved'){
+        if(activity?.status==='online')status='resolved';
+        else if(status!=='open'||activity?.status!=='offline'||!sourceFresh(sources.get('geotab'),at)||!sourceFresh(sources.get(alert.source),at)||
+          !row||row.driver_id!==alert.driver_id||row.source!==alert.source||row.status!=='offline'||stamp(row.offline_since)!==stamp(alert.observed_since)||
+          driver.vehicle_key!==alert.vehicle_key||!assignmentCurrent(driver,at,sources)||counts.get(alert.vehicle_key)!==1)status='suspended';
+      }
+      return {...alert,status,key:alert.vehicle_key,plate:vehicles.get(alert.vehicle_key).plate,driver_name:driver.name,at:alert.opened_at,ign_on:alert.evidence?.ign_on??null};
+    });
+    // Private checkpoints belong to the collector. Observer desktops display
+    // persisted incidents and never reconstruct its in-memory distance state.
+    return {alerts,watches:[],coverage:null};
+  }
+  return {update,read,readPublished};
 }

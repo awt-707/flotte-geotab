@@ -137,6 +137,31 @@ export function createDisconnectionService({list, db, now = Date.now, setTimer =
         driver_name:permitted.get(row.driver_id).name, vehicle_key:vehicles.has(row.vehicle_key)?row.vehicle_key:null,
         plate:vehicles.get(row.vehicle_key)?.plate || null, status:alertStatus(row,ctx)}))};
   }
+  async function readPublished(token,{sources:sharedSources}={}) {
+    if(typeof token!=='string'||!token)throw new Error('Session requise pour les déconnexions.');
+    const at=now(),[drivers,vehicles,sources,latest,identities,settings,records]=await Promise.all([
+      list('fleet_drivers',{select:'id,name,ludy_driver_code,vehicle_key'},token),list('vehicles',{select:'key,plate'},token),
+      sharedSources||list('fleet_sources',{select:'id,status,last_success_at,stale_after_s'}),list('fleet_latest',{select:LIVE_FIELDS},token),
+      list('fleet_identities',{select:'id,driver_id,source'},token),db('fleet_settings',{params:{id:'eq.1'},token}),
+      db(ALERTS,{params:{order:'disconnected_at.desc,id',limit:'500'},token})
+    ]);
+    const config=settings?.[0]||{},enabled=config.disconnection_enabled===true,policy=config.disconnection_policy==='all'?'all':'any',mode=config.duty_mode==='shift'?'shift':'contract';
+    const permitted=new Map(drivers.map(row=>[row.id,row])),visibleVehicles=new Map(vehicles.map(row=>[row.key,row])),sourceMap=new Map(sources.map(row=>[row.id,row]));
+    const latestMap=new Map(latest.map(row=>[row.identity_id,row])),fresh=source=>source?.status==='healthy'&&Number.isFinite(Date.parse(source.last_success_at))&&at-Date.parse(source.last_success_at)>=-5000&&at-Date.parse(source.last_success_at)<=Number(source.stale_after_s)*1000;
+    const alerts=(records||[]).filter(alert=>permitted.has(alert.driver_id)).map(alert=>{
+      const row=latestMap.get(alert.identity_id),current=driverPlatformActivity({driverId:alert.driver_id,latest,identities,sources,now:at});
+      let status=alert.status;
+      if(status!=='resolved'){
+        const connected=driverPlatformActivity({driverId:alert.driver_id,latest:latest.filter(item=>Date.parse(item.observed_at)>=Date.parse(alert.disconnected_at)),identities,sources,now:at});
+        if(connected.status==='online'||Date.parse(alert.evidence?.duty?.ends_at)<=at)status='resolved';
+        else if(status!=='open'||!enabled||alert.evidence?.policy!==policy||row?.driver_id!==alert.driver_id||row?.source!==alert.source||!currentPlatformObservation(row,sourceMap.get(alert.source),at)||row?.status!=='offline'||
+          !(Date.parse(row?.observed_at)>=Date.parse(alert.disconnected_at))||Date.parse(row?.offline_since)>Date.parse(alert.disconnected_at)||!Number.isFinite(Date.parse(row?.offline_since))||current.status==='online'||policy==='all'&&current.status!=='offline'||
+          mode==='contract'&&!fresh(sourceMap.get('myclicar')))status='suspended';
+      }
+      return {...alert,status,driver_name:permitted.get(alert.driver_id).name,vehicle_key:visibleVehicles.has(alert.vehicle_key)?alert.vehicle_key:null,plate:visibleVehicles.get(alert.vehicle_key)?.plate||null};
+    });
+    return {at:stamp(at),enabled,policy,duty_mode:mode,collectionRemote:true,coverage:{expected_drivers:null,source_fresh:mode!=='contract'||fresh(sourceMap.get('myclicar'))},warnings:[],alerts};
+  }
   function schedule() {
     if (closed || !running) return;
     timer = setTimer(async()=>{timer=null;try{await serialize(()=>reconcile());}catch{}finally{schedule();}},5000);
@@ -148,5 +173,5 @@ export function createDisconnectionService({list, db, now = Date.now, setTimer =
     try{await serialize(()=>reconcile());}catch{}finally{schedule();}
   }
   function close() {closed=true;running=false;clearTimer(timer);timer=null;}
-  return {reconcile,read,start,close,get error(){return lastError;}};
+  return {reconcile,read,readPublished,start,close,get error(){return lastError;}};
 }

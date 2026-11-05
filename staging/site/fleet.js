@@ -4,42 +4,63 @@ const FLEET_STATES = {
   offline: ['Hors ligne', 'offline'], unknown: ['Non observé', 'unknown'], on_break: ['En pause', 'on-break']
 };
 const FLEET_PROVIDERS = { uber: 'Uber Fleet', bolt: 'Bolt', geotab: 'Geotab', myclicar: 'MyClicar' };
-async function fleetApi(path, body) {
-  const token = S.session && S.session.access_token;
-  if (!token) throw new Error('Reconnectez-vous pour consulter votre flotte.');
-  const r = await fetch('/api/fleet/' + path, {
-    method: body === undefined ? 'GET' : 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(/^(bolt|geotab|myclicar|texat)\//.test(path) ? 120000 : 20000), cache: 'no-store'
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || data.message || 'Lecture impossible (' + r.status + ').');
-  return data;
+const FLEET_READS = new Map();
+function fleetReadScope() {
+  return { token: S.session?.access_token, user: S.session?.user?.id, revision: S.sessionRevision, route: typeof ROUTING === 'undefined' ? null : ROUTING };
 }
-// Shared local snapshots keep critical alerts visible throughout Ludy. No provider request is made by this timer.
-function startLocalFleetAlerts(my) {
-  const user = S.session?.user?.id;
-  if (!user || !CFG.GEOTAB_LOCAL) return;
+function fleetSameReadScope(a, b) { return a.token === b.token && a.user === b.user && a.revision === b.revision && a.route === b.route; }
+function fleetCancelReads() {
+  for (const request of FLEET_READS.values()) request.controller.abort();
+  FLEET_READS.clear();
+}
+async function fleetApi(path, body) {
+  const scope = fleetReadScope(), reading = body === undefined;
+  for (const [key, request] of FLEET_READS) if (!fleetSameReadScope(request.scope, scope)) { request.controller.abort(); FLEET_READS.delete(key); }
+  if (!scope.token) throw new Error('Reconnectez-vous pour consulter votre flotte.');
+  if (reading && FLEET_READS.has(path)) return FLEET_READS.get(path).promise;
+  const controller = reading ? new AbortController() : null;
+  // Snapshot/status reads must not block a view for the provider action's two-minute deadline.
+  const provider = /^(bolt|geotab|myclicar|texat)\//.test(path), snapshot = /\/(live|status|config)(\?|$)/.test(path);
+  const timeout = AbortSignal.timeout(provider && (!reading || !snapshot) ? 120000 : 20000);
+  const signal = controller ? AbortSignal.any([controller.signal, timeout]) : timeout;
+  const request = { scope, controller, promise: null };
+  request.promise = (async () => {
+    const r = await fetch('/api/fleet/' + path, {
+      method: reading ? 'GET' : 'POST', headers: { Authorization: 'Bearer ' + scope.token, 'Content-Type': 'application/json' },
+      body: reading ? undefined : JSON.stringify(body), signal, cache: 'no-store'
+    });
+    const data = await r.json().catch(() => ({}));
+    if (signal.aborted) throw signal.reason;
+    if (reading && (controller.signal.aborted || !fleetSameReadScope(scope, fleetReadScope()))) throw Object.assign(new Error('Lecture remplacée.'), { name: 'AbortError' });
+    if (!r.ok) throw new Error(data.error || data.message || 'Lecture impossible (' + r.status + ').');
+    return data;
+  })().finally(() => { if (FLEET_READS.get(path) === request) FLEET_READS.delete(path); });
+  if (reading) FLEET_READS.set(path, request);
+  return request.promise;
+}
+// The cockpit and alert centre need persisted incidents, not a full GPS snapshot.
+function startFleetAlerts(my) {
+  const owner = S.session?.user?.id, revision = S.sessionRevision;
+  if (!owner || !CFG.GEOTAB_LOCAL || !['cockpit', 'alertes'].includes(pageOf())) return;
   let busy = false;
+  const current = () => my === ROUTING && owner === S.session?.user?.id && revision === S.sessionRevision;
   const read = async () => {
-    if (busy || LIVE.busy || document.hidden || my !== ROUTING || S.session?.user?.id !== user || pageOf() === 'direct') return;
+    if (busy || document.hidden || !current()) return;
     busy = true;
     try {
-      const snapshot = await fleetApi('geotab/live');
-      if (my !== ROUTING || S.session?.user?.id !== user) return;
-      LIVE.localSource = snapshot.source || {}; LIVE.drv = snapshot.telemetry || {}; LIVE.motionCoverage = snapshot.motion_coverage || null;
+      const snapshot = await fleetApi('alerts');
+      if (!current()) return;
+      LIVE.localSource = snapshot.source || {};
+      // This endpoint does not measure GPS positions, telemetry or coverage.
       processLocalLive(snapshot);
-      if (typeof operationsSnapshot === 'function') operationsSnapshot(snapshot);
-      const coverage = document.getElementById('fleet-motion-status'); if (coverage) { if (typeof opsMotionCoverage === 'function') opsHTML('fleet-motion-status', opsMotionCoverage()); else coverage.innerHTML = localMotionCoverageHtml(); }
-    } catch {
-      if (my !== ROUTING || S.session?.user?.id !== user) return;
-      LIVE.localSource = { ...(LIVE.localSource || {}), status: 'error', motion_error: 'Surveillance des déplacements interrompue : le serveur local ne répond pas.' };
+    } catch (error) {
+      if (!current() || error?.name === 'AbortError') return;
+      LIVE.localSource = { ...(LIVE.localSource || {}), status: 'error', motion_error: 'Suivi des signalements interrompu. Les incidents conservés restent datés.' };
       suspendLocalMotionDisplay();
-      if (typeof operationsSnapshot === 'function') operationsSnapshot();
-      const coverage = document.getElementById('fleet-motion-status'); if (coverage) { if (typeof opsMotionCoverage === 'function') opsHTML('fleet-motion-status', opsMotionCoverage()); else coverage.innerHTML = localMotionCoverageHtml(); }
-    }
-    finally { busy = false; }
+    } finally { busy = false; }
+    if (current() && typeof operationsSnapshot === 'function') operationsSnapshot();
   };
-  read(); S.timers.push(setInterval(read, 2000));
+  void read(); S.timers.push(setInterval(read, 15000));
 }
 function fleetAgo(at) {
   const ms = Date.parse(at); if (!Number.isFinite(ms)) return 'Aucune lecture';
@@ -63,6 +84,11 @@ function fleetConnectorState(source = {}, fallbackInterval = 60) {
   const retrying = active && (source.retrying === true || ['error', 'degraded', 'stale', 'disconnected', 'reconnect'].includes(source.status));
   const interval = Number(source.interval_s) > 0 ? Number(source.interval_s) : fallbackInterval;
   const next = active && Number.isFinite(Date.parse(source.next_attempt_at)) ? source.next_attempt_at : null;
+  if (source.collectionRemote === true) {
+    const [label, tone] = fleetSourceState(source);
+    return { active, automatic, configured, retrying, interval, next: null, remote: true, label: 'Données partagées · ' + label, tone,
+      detail: 'La collecte est pilotée sur le poste central. Cet ordinateur consulte les données partagées.' };
+  }
   let label = !configured ? 'À connecter' : !active ? 'En pause' : retrying ? 'Reconnexion automatique' : source.polling ? 'Suivi actif' : 'Démarrage automatique';
   let tone = !configured || !active ? 'mute' : retrying ? 'warn' : 'ok';
   let detail = !configured ? 'Configurez les accès pour activer le suivi.' : !active ? 'Pause conservée au redémarrage. Reprenez le suivi quand vous le souhaitez.' : automatic ? 'Reprise automatique après une coupure ou un redémarrage de Ludy.' : 'Suivi actif pour cette session.';
@@ -71,6 +97,7 @@ function fleetConnectorState(source = {}, fallbackInterval = 60) {
 }
 function fleetConnectorAutomation(source, fallbackInterval) {
   const state = fleetConnectorState(source, fallbackInterval);
+  if (state.remote) return `<div class="connector-automation ${state.tone}" data-state="shared"><div><b>${esc(state.label)}</b></div><p>${esc(state.detail)}</p><p>Dernière lecture : ${esc(source.last_success_at ? fmtDTY(source.last_success_at) : 'aucune')}.</p>${source.last_error ? `<p class="connector-error">${esc(source.last_error)}</p>` : ''}</div>`;
   const next = state.next ? `${state.retrying ? 'Nouvel essai' : 'Prochaine lecture'} : ${fmtHMS(state.next)}` : state.active ? 'Lecture en cours ou en préparation' : 'Aucune lecture programmée';
   return `<div class="connector-automation ${state.tone}" data-state="${state.retrying ? 'retrying' : state.active ? 'active' : 'paused'}"><div><b>${esc(state.label)}</b><span>${esc(next)}</span></div><p>${esc(state.detail)}</p>${source?.last_error && state.active ? `<p class="connector-error">${esc(source.last_error)}</p>` : ''}${state.active ? `<small>Cadence cible : ${state.interval} s · les délais du fournisseur peuvent la ralentir.</small>` : ''}</div>`;
 }
@@ -256,19 +283,21 @@ function setupMyclicarConnector(my) {
   const result = (text, type = 'ok') => { if (present()) $('#myclicar-result').innerHTML = msg(esc(text), type); };
   const controls = () => {
     if (!present()) return;
-    $('#myclicar-connect button').disabled = busy;
+    const remote = current?.collectionRemote === true;
+    $('#myclicar-connect button').disabled = busy || remote;
+    for (const id of ['myclicar-email', 'myclicar-http-user', 'myclicar-password', 'myclicar-http-password']) $('#' + id).disabled = busy || remote;
     const active = current?.auto_resume === true || current?.polling === true;
-    $('#myclicar-start').hidden = active;
-    $('#myclicar-start').disabled = busy || !current?.configured;
-    $('#myclicar-stop').hidden = !active;
-    $('#myclicar-stop').disabled = busy;
+    $('#myclicar-start').hidden = remote || active;
+    $('#myclicar-start').disabled = busy || remote || !current?.configured;
+    $('#myclicar-stop').hidden = remote || !active;
+    $('#myclicar-stop').disabled = busy || remote;
     $('#myclicar-password').required = !current?.configured;
     $('#myclicar-http-password').required = !current?.httpConfigured;
   };
   const render = data => {
     if (!present()) return;
     // Only public status fields are retained; password fields are never populated from a response.
-    current = { configured: data.configured, httpConfigured: data.httpConfigured, polling: data.polling, auto_resume: data.auto_resume };
+    current = { configured: data.configured, httpConfigured: data.httpConfigured, polling: data.polling, auto_resume: data.auto_resume, collectionRemote: data.collectionRemote };
     const state = fleetConnectorState(data, 60), coverage = data.coverage || {};
     $('#myclicar-health').className = 'source-status ' + state.tone;
     $('#myclicar-health').textContent = state.label;
@@ -295,7 +324,7 @@ function setupMyclicarConnector(my) {
     finally { loading = false; }
   };
   const mutate = async (route, body, success) => {
-    if (!present() || busy) return;
+    if (!present() || busy || current?.collectionRemote === true) return;
     busy = true; revision++; controls(); result(route === 'myclicar/connect' ? 'Vérification des accès MyClicar…' : 'Mise à jour du suivi…', 'info');
     try {
       const data = await fleetApi(route, body);
@@ -307,7 +336,7 @@ function setupMyclicarConnector(my) {
     }
   };
   $('#myclicar-connect').onsubmit = async event => {
-    event.preventDefault(); if (!present() || busy) return;
+    event.preventDefault(); if (!present() || busy || current?.collectionRemote === true) return;
     const body = { email: $('#myclicar-email').value.trim(), httpUsername: $('#myclicar-http-user').value.trim() };
     if ($('#myclicar-password').value) body.password = $('#myclicar-password').value;
     if ($('#myclicar-http-password').value) body.httpPassword = $('#myclicar-http-password').value;
@@ -327,13 +356,15 @@ function setupGeotabConnector(my) {
   const result = (text, type = 'ok') => { if (present()) $('#geotab-result').innerHTML = msg(esc(text), type); };
   const controls = () => {
     if (!present()) return;
-    $('#geotab-connect button').disabled = busy;
-    $('#geotab-devices').disabled = busy || !current?.configured;
+    const remote = current?.collectionRemote === true;
+    $('#geotab-connect button').disabled = busy || remote;
+    for (const id of ['geotab-database', 'geotab-user', 'geotab-password']) $('#' + id).disabled = busy || remote;
+    $('#geotab-devices').disabled = busy || remote || !current?.configured;
     const active = current?.auto_resume === true || current?.polling === true;
-    $('#geotab-start').hidden = active;
-    $('#geotab-start').disabled = busy || !current?.configured || !(current.vehicles || []).some(v => v.geotab_id);
-    $('#geotab-stop').hidden = !active; $('#geotab-stop').disabled = busy;
-    document.querySelectorAll('.geotab-link-form button,.geotab-link-form select,.geotab-link-form input').forEach(el => { el.disabled = busy; });
+    $('#geotab-start').hidden = remote || active;
+    $('#geotab-start').disabled = busy || remote || !current?.configured || !(current.vehicles || []).some(v => v.geotab_id);
+    $('#geotab-stop').hidden = remote || !active; $('#geotab-stop').disabled = busy || remote;
+    document.querySelectorAll('.geotab-link-form button,.geotab-link-form select,.geotab-link-form input').forEach(el => { el.disabled = busy || remote; });
   };
   const render = data => {
     current = data;
@@ -342,20 +373,20 @@ function setupGeotabConnector(my) {
     $('#geotab-health').textContent = state.label;
     const vehicles = data.vehicles || [], devices = data.devices || [], linked = vehicles.filter(v => v.geotab_id).length;
     const interval = Number.isFinite(Number(data.interval_s)) && Number(data.interval_s) >= 2 ? Number(data.interval_s) : 2;
-    $('#geotab-summary').textContent = data.configured ? `${linked} véhicule${linked === 1 ? '' : 's'} associé${linked === 1 ? '' : 's'} sur ${vehicles.length} · ${devices.length} boîtiers accessibles. Dernière lecture : ${data.last_success_at ? fmtHMS(data.last_success_at) : 'aucune'}.` : 'En attente des accès MyGeotab.';
+    $('#geotab-summary').textContent = data.collectionRemote ? `Positions partagées par le poste central. Dernière lecture : ${data.last_success_at ? fmtHMS(data.last_success_at) : 'aucune'}.` : data.configured ? `${linked} véhicule${linked === 1 ? '' : 's'} associé${linked === 1 ? '' : 's'} sur ${vehicles.length} · ${devices.length} boîtiers accessibles. Dernière lecture : ${data.last_success_at ? fmtHMS(data.last_success_at) : 'aucune'}.` : 'En attente des accès MyGeotab.';
     $('#geotab-automation').innerHTML = fleetConnectorAutomation(data, interval);
     if (!$('#geotab-connect').dataset.loaded) {
       if (data.database) $('#geotab-database').value = data.database;
       if (data.userName) $('#geotab-user').value = data.userName;
       $('#geotab-connect').dataset.loaded = '1';
     }
-    const signature = JSON.stringify([data.configured, vehicles, devices]);
+    const signature = JSON.stringify([data.configured, data.collectionRemote, vehicles, devices]);
     if (signature !== mappingSignature && !busy) {
       mappingSignature = signature;
       const linkedIds = new Set(vehicles.map(v => v.geotab_id).filter(Boolean));
       const deviceById = new Map(devices.map(device => [device.id, device]));
       const searchable = devices.map(device => ({ device, text: normTxt([device.plate, device.name, device.id].join(' ')), plate: normalizedPlate(device.plate) }));
-      $('#geotab-links').innerHTML = !data.configured ? '<p>Connectez MyGeotab pour afficher les boîtiers accessibles.</p>' : !vehicles.length ? '<p>Aucun véhicule Ludy disponible.</p>' : vehicles.map((vehicle, index) => {
+      $('#geotab-links').innerHTML = data.collectionRemote ? '<p>Les associations des véhicules et boîtiers sont gérées sur le poste de collecte.</p>' : !data.configured ? '<p>Connectez MyGeotab pour afficher les boîtiers accessibles.</p>' : !vehicles.length ? '<p>Aucun véhicule Ludy disponible.</p>' : vehicles.map((vehicle, index) => {
         const matches = devices.filter(d => normalizedPlate(vehicle.plate) && normalizedPlate(d.plate) === normalizedPlate(vehicle.plate) && !linkedIds.has(d.id));
         const suggested = !vehicle.geotab_id && matches.length === 1 ? matches[0].id : '';
         const saved = vehicle.geotab_id || '', previous = mappingDrafts.get(vehicle.key);
@@ -401,7 +432,7 @@ function setupGeotabConnector(my) {
     finally { loading = false; }
   };
   const mutate = async (route, body, success) => {
-    if (busy) return;
+    if (busy || current?.collectionRemote === true) return;
     busy = true; controls(); result('Lecture en cours…', 'info');
     try { await fleetApi(route, body); result(success); }
     catch (e) { result(e.message, 'err'); }
@@ -411,7 +442,7 @@ function setupGeotabConnector(my) {
     }
   };
   $('#geotab-connect').onsubmit = async event => {
-    event.preventDefault(); if (busy) return;
+    event.preventDefault(); if (busy || current?.collectionRemote === true) return;
     const body = { database: $('#geotab-database').value.trim(), userName: $('#geotab-user').value.trim(), password: $('#geotab-password').value };
     $('#geotab-password').value = '';
     await mutate('geotab/connect', body, current?.auto_resume ? 'Accès vérifiés. Le suivi reprend automatiquement avec les nouveaux accès.' : 'Accès vérifiés et enregistrés. Associez les véhicules, puis activez le suivi automatique.');

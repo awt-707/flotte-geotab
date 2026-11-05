@@ -13,7 +13,8 @@ const rejected=(status,error)=>({ok:false,status,json:async()=>({error})});
 const session=(id='first',token='synthetic-token-'+id)=>({user:{id},access_token:token});
 function fixture({cfg=config,fetchFn}={}){
   const calls=[],timers=new Map(),delays=new Map(),label={textContent:''},button={},uberButton={},uberLabel={},window={FLOTTE_CONFIG:cfg};let counter=0;
-  const context=vm.createContext({window,location:{origin:'http://127.0.0.1:4173'},document:{querySelectorAll:selector=>selector.includes('toggle')?[button]:selector.includes('uber-open')?[uberButton]:selector.includes('uber-status')?[uberLabel]:[label]},AbortController,AbortSignal,
+  const document={hidden:false,querySelectorAll:selector=>selector.includes('toggle')?[button]:selector.includes('uber-open')?[uberButton]:selector.includes('uber-status')?[uberLabel]:[label]};
+  const context=vm.createContext({window,location:{origin:'http://127.0.0.1:4173'},document,AbortController,AbortSignal,
     setTimeout(fn,delay){timers.set(++counter,fn);delays.set(counter,delay);return counter;},clearTimeout(id){timers.delete(id);delays.delete(id);},
     localStorage:{setItem(){throw Error('Token must not be persisted');}},
     fetch:async(url,options)=>{calls.push({url,options});return fetchFn?fetchFn(url,options):response(url.endsWith('/status')?{participationEnabled:true,coordinator:{state:'leader'}}:{ok:true});}});
@@ -21,12 +22,27 @@ function fixture({cfg=config,fetchFn}={}){
     assert.equal(timers.size,1,'exactly one retry or status poll is scheduled');
     const [id,fn]=timers.entries().next().value,delay=delays.get(id);timers.delete(id);delays.delete(id);fn();await settle();return delay;
   }
-  vm.runInContext(source,context);return {calls,timers,delays,runTimer,label,button,uberButton,uberLabel,...window};
+  vm.runInContext(source,context);return {calls,timers,delays,runTimer,label,button,uberButton,uberLabel,document,...window};
 }
 test('staging keeps the desktop bridge entirely inactive',async()=>{
   const f=fixture({cfg:{STAGING:true,ENVIRONMENT:'staging'}});
   await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:true});
   assert.deepEqual(f.calls,[]);assert.equal(f.desktopWorkerHtml(),'');assert.equal(f.timers.size,0);
+});
+test('hidden desktop windows keep the session binding but pause status polling',async()=>{
+ const f=fixture();f.document.hidden=true;await f.desktopWorkerSessionChanged(session());
+ assert.deepEqual(f.calls.map(call=>call.url),['/api/desktop/session']);
+ await f.runTimer();await f.runTimer();assert.equal(f.calls.length,1);assert.equal(f.timers.size,1);
+ f.document.hidden=false;await f.runTimer();assert.equal(f.calls.at(-1).url,'/api/desktop/status');assert.equal(f.label.textContent,'Collecte active sur ce poste');assert.equal(f.timers.size,1);
+});
+test('an action cancels a pending status read without replacing state or creating another poll',async()=>{
+ const pending=deferred(),action=deferred();let statuses=0;
+ const f=fixture({fetchFn:url=>url.endsWith('/status')?(++statuses===2?pending.promise:response({participationEnabled:statuses>2,coordinator:{state:statuses>2?'leader':'paused'}})):url.endsWith('/participation')?action.promise:response({ok:true})});
+ await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:true});await f.runTimer();const staleSignal=f.calls.at(-1).options.signal;
+ const toggle=f.button.onclick();assert.equal(staleSignal.aborted,true);
+ pending.resolve(response({participationEnabled:true,coordinator:{state:'follower'}}));await settle();
+ assert.equal(f.timers.size,0);assert.doesNotMatch(f.label.textContent,/autre poste|indisponible/);
+ action.resolve(response({ok:true}));await toggle;assert.equal(f.label.textContent,'Collecte active sur ce poste');assert.equal(f.timers.size,1);assert.equal(statuses,3);
 });
 test('user access tokens are sent in headers and only admins can toggle participation',async()=>{
   const f=fixture();await f.desktopWorkerSessionChanged(session());f.desktopWorkerMount({admin:false});

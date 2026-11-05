@@ -32,7 +32,7 @@ export async function createDesktopServices({config,stateDir,runtimeRoot,onStatu
   const session=createDesktopSession({config,fetchFn,onExpired:()=>{void logout();}});
   const status=()=>({environment:'production',projectRef:config.projectRef,role:session.current()?.role||null,
     participationEnabled:context?.preferences.enabled||false,coordinator:coordinator?.status()||{state:suspended?'paused':'signed_out'},
-    uber:browser?.status()||{state:'stopped'},error:lastError});
+    uber:browser?.status()||{state:'stopped'},error:coordinator?.status().state==='unavailable'?'Coordination Supabase momentanément indisponible.':lastError});
   const publish=()=>onStatus(status());
   function dropStack(){
     ++stackRevision;
@@ -100,10 +100,16 @@ export async function createDesktopServices({config,stateDir,runtimeRoot,onStatu
       const rpc=createDesktopRpc({config,fetchFn,getSession:()=>{const s=session.current();return ticket===epoch&&s?.userId===verified.userId?s:null;}});
       context={userId:verified.userId,directory,preferencesPath,preferences,rpc,lastSession:verified};
       await save(preferencesPath,preferences);
-      coordinator=coordinatorFactory({rpc,deviceId:preferences.deviceId,getSession:session.current,onLeader:lease=>replaceStack(lease.fence),onLost:dropStack,onStatus:publish});
+      coordinator=coordinatorFactory({rpc,deviceId:preferences.deviceId,getSession:session.current,onLeader:lease=>replaceStack(lease.fence),onLost:dropStack,onStatus:publish,
+        onRegistered:async enabled=>{
+          if(ticket!==epoch||context?.userId!==verified.userId)return;
+          if(preferences.enabled!==enabled){preferences.enabled=enabled;await save(preferencesPath,preferences);}
+          lastError=null;publish();
+        }});
       lastError=null;
       if(verified.role==='admin'){
-        try{await coordinator.register(preferences.enabled&&!suspended);}catch{lastError='Coordination non disponible : vérifier les migrations de production.';}
+        if(suspended)await coordinator.pause();
+        try{await coordinator.restore(preferences.enabled);}catch{lastError='Coordination Supabase momentanément indisponible.';}
       }
       if(!stack)await replaceStack();publish();return status();
     });

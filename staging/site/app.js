@@ -675,7 +675,7 @@ function healthPaint() {
     }
     el.className = 'health ' + (status?.status === 'healthy' ? 'ok' : status?.status === 'error' ? 'warn' : '');
     el.title = CFG.DESKTOP_PRODUCTION ? 'Positions Geotab partagées' : 'Positions Geotab dans le staging local';
-    el.textContent = 'Geotab : ' + (!status ? 'voir Connecteurs' : !status.configured ? 'non connecté' : !status.polling ? 'en pause' : status.status === 'healthy' ? 'suivi actif' : 'lecture interrompue');
+    el.textContent = 'Geotab : ' + (!status ? 'voir Connecteurs' : ['unconnected', 'not_configured'].includes(status.status) ? 'non connecté' : ['paused', 'stopped'].includes(status.status) ? 'en pause' : status.status === 'healthy' ? 'suivi actif' : 'lecture interrompue');
     return;
   }
   if (CFG.GEOTAB_ENABLED === false) { const el = $('#health'); if (el) { el.className = 'health'; el.title = 'Source non configurée dans cet environnement'; el.textContent = 'Geotab : non connecté'; } return; }
@@ -685,12 +685,15 @@ function healthPaint() {
   el.title = 'Dernière collecte Geotab'; el.textContent = m === null ? 'Collecte : jamais' : 'Collecte : il y a ' + (m < 1 ? 'moins d\'1 min' : m < 120 ? m + ' min' : Math.round(m / 60) + ' h');
 }
 async function health() {
+  if (document.hidden) return;
   if (CFG.GEOTAB_LOCAL) {
     const uid = S.session?.user?.id; if (!uid) return;
+    const previous = S.geotabHealth;
+    if (previous?.uid === uid && previous.revision === S.sessionRevision && Date.now() - previous.at < 30000) { healthPaint(); return; }
     const revision = S.sessionRevision, request = S.geotabHealthRequest = {};
     const current = () => S.session?.user?.id === uid && S.sessionRevision === revision && S.geotabHealthRequest === request;
-    try { const data = await fleetApi('geotab/live'); if (current()) { S.geotabHealth = { uid, source: data.source }; healthPaint(); } }
-    catch { if (current()) { S.geotabHealth = { uid, source: null, unavailable: true }; healthPaint(); } }
+    try { const data = await fleetApi('health'); if (current()) { S.geotabHealth = { uid, revision, at: Date.now(), source: data.sources?.find(source => source.id === 'geotab') }; healthPaint(); } }
+    catch (error) { if (current() && error?.name !== 'AbortError') { S.geotabHealth = { uid, revision, at: Date.now(), source: previous?.uid === uid ? previous.source : null, unavailable: true }; healthPaint(); } }
     return;
   }
   if (CFG.GEOTAB_ENABLED === false) { healthPaint(); return; }
@@ -1598,6 +1601,7 @@ const PAGES = { parkings: pageParking, 'performance-chauffeur': pageDriverPerfor
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
+  if (typeof fleetCancelReads === 'function') fleetCancelReads();
   if (typeof demandCleanup === 'function') demandCleanup();
   if (typeof growthCleanup === 'function') growthCleanup();
   if (typeof rotationsCleanup === 'function') rotationsCleanup();
@@ -1643,7 +1647,7 @@ async function route() {
   try { await PAGES[page](); } catch (e) { if (my === ROUTING) $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
   if (my !== ROUTING) return;
   if (typeof disconnectionsPaint === 'function') disconnectionsPaint();
-  if (CFG.GEOTAB_LOCAL && page !== 'direct') startLocalFleetAlerts(my);
+  if (CFG.GEOTAB_LOCAL && ['cockpit', 'alertes'].includes(page)) startFleetAlerts(my);
   S.timers.push(setInterval(health, 60000));
   sessPing();   // connexions : page affichée envoyée tout de suite (puis toutes les minutes)
   // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)
@@ -1657,7 +1661,7 @@ async function route() {
     S.timers.push(setInterval(() => liveDrvTick(my), DRV_SEC * 1000));
     S.timers.push(setInterval(liveClock, 1000));
     S.timers.push(setInterval(() => { if (!document.hidden && my === ROUTING) pageDirect(true).catch(() => { }); }, 60000));
-    // The local map already polls its shared snapshot every two seconds. Avoid
+    // The map already polls its snapshot. Avoid
     // reloading all contracts for every position write in this faster mode.
     if (!CFG.GEOTAB_LOCAL) S.channel = sb.channel('live').on('postgres_changes', { event: '*', schema: 'public', table: 'live_status' }, () => { clearTimeout(window.__lt); window.__lt = setTimeout(() => { if (my === ROUTING) pageDirect(true).catch(() => { }); }, 3000); }).subscribe();
   }
@@ -1684,6 +1688,7 @@ sb.auth.onAuthStateChange((ev, session) => {
   const changed = (S.session && S.session.user.id) !== (session && session.user.id);
   if (changed) {   // autre utilisateur : rien de ce qui a été lu pour le précédent n'est gardé (droits par agence, planning)
     S.sessionRevision++;
+    if (typeof fleetCancelReads === 'function') fleetCancelReads();
     if (S.alertCh) { sb.removeChannel(S.alertCh); S.alertCh = null; }
     if (typeof disconnectionsReset === 'function') disconnectionsReset();
     const tb = $('#toasts'); if (tb) tb.remove();   // bandeaux d'alerte du compte précédent

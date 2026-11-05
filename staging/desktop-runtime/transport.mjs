@@ -1,13 +1,27 @@
 import {randomBytes} from 'node:crypto';
 import {isAdministrativeOperation,isManagerOperation} from './admin-context.mjs';
 const failure=(message='La collecte appartient à un autre poste.',status=409)=>Object.assign(Error(message),{status});
+const networkErrors=new Set(['ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ENOTFOUND','EAI_AGAIN','ETIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_SOCKET']);
+export function isTransientDesktopError(error){
+  if([401,403].includes(error?.status)||['42501','55000','DESKTOP_LEASE_INVALID'].includes(error?.code))return false;
+  return [408,429,502,503,504].includes(error?.status)||error?.code==='57014'||error?.name==='TimeoutError'||error?.code==='DESKTOP_NETWORK_UNAVAILABLE';
+}
 export function createDesktopRpc({config,getSession,fetchFn=fetch}){
   return async(name,args,{signal}={})=>{
     const session=getSession();if(!session)throw failure('Connexion Ludy requise.',401);
-    const response=await fetchFn(config.supabaseUrl+'/rest/v1/rpc/'+name,{method:'POST',redirect:'error',
-      signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000),
-      headers:{apikey:config.publishableKey,Authorization:'Bearer '+session.token,'Content-Type':'application/json'},body:JSON.stringify(args)});
-    const body=await response.json().catch(()=>null);
+    const networkFailure=error=>!signal?.aborted&&networkErrors.has(error?.cause?.code||error?.code)
+      ?Object.assign(failure('Coordination Supabase indisponible.',503),{code:'DESKTOP_NETWORK_UNAVAILABLE'}):error;
+    let response;
+    try{response=await fetchFn(config.supabaseUrl+'/rest/v1/rpc/'+name,{method:'POST',redirect:'error',
+        signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000),
+        headers:{apikey:config.publishableKey,Authorization:'Bearer '+session.token,'Content-Type':'application/json'},body:JSON.stringify(args)});
+    }catch(error){throw networkFailure(error);}
+    const body=await response.json().catch(error=>{
+      if([401,403].includes(response.status))return null;
+      const classified=networkFailure(error);
+      if(signal?.aborted||isTransientDesktopError(classified))throw classified;
+      return null;
+    });
     if(!response.ok)throw Object.assign(failure(response.status===401?'Session Ludy expirée.':'Coordination Supabase indisponible.',response.status),{code:body?.code});
     return body;
   };

@@ -28,6 +28,7 @@ function opsTrackAlertToast(node, alert, box) {
 }
 function operationsCleanup() {
   OPS.abort?.abort(); OPS.abort = null; OPS.paint = null;
+  OPS.overviewBusy = null;
   // Let the next route read its own snapshot; late completions keep their token.
   if (typeof LIVE !== 'undefined') { LIVE.request = null; LIVE.busy = false; }
   OPS.zonesNavigation?.cleanup(); OPS.zonesNavigation = null;

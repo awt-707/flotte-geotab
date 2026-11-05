@@ -173,18 +173,18 @@ test('unknown coverage stays distinct from zero and paused read errors remain vi
   assert.doesNotMatch(element('#myclicar-read-error').innerHTML, /<b>/);
 });
 
-test('MyClicar API calls use the authenticated local endpoint with the connector timeout', async () => {
+test('MyClicar status has a bounded read deadline while actions retain their connector timeout', async () => {
   const requests = [], timeouts = [];
   const context = vm.createContext({
     S: { session: { access_token: 'synthetic-local-token' } },
-    AbortSignal: { timeout: value => { timeouts.push(value); return 'synthetic-signal'; } },
+    AbortController, AbortSignal: { any: AbortSignal.any.bind(AbortSignal), timeout: value => { timeouts.push(value); return new AbortController().signal; } },
     fetch: async (url, options) => { requests.push({ url, options }); return { ok: true, json: async () => initial() }; }
   });
   vm.runInContext(code, context);
   await vm.runInContext("fleetApi('myclicar/status')", context);
   await vm.runInContext("fleetApi('myclicar/start', {})", context);
   assert.deepEqual(requests.map(item => item.url), ['/api/fleet/myclicar/status', '/api/fleet/myclicar/start']);
-  assert.deepEqual(timeouts, [120000, 120000]);
+  assert.deepEqual(timeouts, [20000, 120000]);
   assert.equal(requests[0].options.method, 'GET');
   assert.equal(requests[0].options.body, undefined);
   assert.equal(requests[0].options.headers.Authorization, 'Bearer synthetic-local-token');

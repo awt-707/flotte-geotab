@@ -11,7 +11,7 @@ async function fixture({source={},activation={ok:true,polling:true},activationSt
   const element=selector=>{if(!nodes.has(selector))nodes.set(selector,{innerHTML:'',textContent:'',dataset:{},value:'',checked:false,hidden:false,disabled:false});return nodes.get(selector);};
   const bolt={id:'bolt',configured:true,status:'paused',auto_resume:false,polling:false,...source};
   const state={bolt,activation,activationStatus,configResult,configStatus,localConfigured,configReadStatus,configHold:null};
-  const context=vm.createContext({Date,AbortSignal,ROUTING:1,LIVE:{motionCoverage:null},S:{session:{access_token:'synthetic-only'},timers:[]},
+  const context=vm.createContext({Date,AbortController,AbortSignal,ROUTING:1,LIVE:{motionCoverage:null},S:{session:{access_token:'synthetic-only'},timers:[]},
     isAdmin:()=>true,$:element,esc:value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'),
     msg:(text,tone)=>`<div class="${tone}">${text}</div>`,fmtHMS:()=> '12:01:00',fmtDTY:()=> 'Synthetic date',workspaceIcon:()=>'',
     document:{hidden:false},setInterval:fn=>{timers.push(fn);return timers.length;},

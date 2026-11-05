@@ -22,6 +22,8 @@ try{
   if(url.pathname.startsWith('/api/fleet/')&&req.method()!=='GET'){writes++;return route.abort();}
   if(url.pathname==='/rest/v1/rpc/session_ping')return route.fulfill({json:null});
   if(url.pathname==='/api/fleet/overview')return route.fulfill({json:fixture()});
+  if(url.pathname==='/api/fleet/health')return route.fulfill({json:{sources:[]}});
+  if(url.pathname==='/api/fleet/alerts')return route.fulfill({json:{source:{status:'healthy'},events:[],motion_alerts:[],motion_watches:[]}});
   if(url.pathname==='/api/fleet/geotab/live')return route.fulfill({json:{source:{status:'healthy'},vehicles:[],events:[],motion_alerts:[],telemetry:{}}});
   return route.continue();
  });

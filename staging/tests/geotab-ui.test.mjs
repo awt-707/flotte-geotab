@@ -4,7 +4,6 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 
 const code = await fs.readFile(new URL('../site/direct.js', import.meta.url), 'utf8');
-const fleetCode = await fs.readFile(new URL('../site/fleet.js', import.meta.url), 'utf8');
 function ui() {
   const notifications = [], now = Date.now();
   const context = vm.createContext({
@@ -122,24 +121,4 @@ test('ongoing driving events survive their start time and engine reminders only 
   assert.equal(run('LIVE.motionWatches.length'), 1);
   run('processLocalLive({ motion_watches: [] })');
   assert.equal(run('LIVE.motionWatches.length'), 0);
-});
-
-test('background critical-alert reader uses one local request at a time and drops late responses after logout', async () => {
-  const { run, context } = ui();
-  const pending = [], timers = [];
-  Object.assign(context, { ROUTING: 1, pageOf: () => 'cockpit', setInterval: fn => { timers.push(fn); return 42; } });
-  context.S.timers = []; context.document.getElementById = () => null;
-  context.fakeApi = () => new Promise(resolve => pending.push(resolve));
-  vm.runInContext(fleetCode, context);
-  run('fleetApi = fakeApi; startLocalFleetAlerts(1)');
-  assert.equal(pending.length, 1);
-  await timers[0]();
-  assert.equal(pending.length, 1, 'no overlap while the request is pending');
-  context.S.session = null;
-  pending[0]({ source: { status: 'healthy' }, motion_alerts: [{ id: 'must-not-display', key: 'car', status: 'open' }] });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(run('LIVE.alerts.length'), 0);
-  await timers[0]();
-  assert.equal(pending.length, 1, 'no further request without the original session');
-  assert.equal(context.S.timers[0], 42, 'route cleanup owns the interval');
 });

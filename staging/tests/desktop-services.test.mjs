@@ -6,12 +6,14 @@ import path from 'node:path';
 import {Readable} from 'node:stream';
 import http from 'node:http';
 import {createDesktopServices} from '../desktop-runtime/services.mjs';
+import {createDesktopCoordinator} from '../desktop-runtime/coordinator.mjs';
 import {createFleetApi} from '../server/fleet.mjs';
 const config={environment:'production',projectRef:'abcdefghijklmnopqrst',supabaseUrl:'https://abcdefghijklmnopqrst.supabase.co',publishableKey:'sb_publishable_abcdefghijklmnopqrst'};
 const id='10000000-0000-4000-8000-000000000001';
-const token=(uid=id)=>['e30',Buffer.from(JSON.stringify({sub:uid,role:'authenticated',exp:Math.floor(Date.now()/1000)+3600})).toString('base64url'),'signature'].join('.');
-async function setup(t,{role='admin',stackFactory,browserFactory=null,authenticationFailure=null}={}){
-  const directory=await mkdtemp(path.join(os.tmpdir(),'ludy-desktop-services-'));let lease=false,fence=0;const requests=[],stacks=[];
+const tokenExpiry=Math.floor(Date.now()/1000)+3600;
+const token=(uid=id)=>['e30',Buffer.from(JSON.stringify({sub:uid,role:'authenticated',exp:tokenExpiry})).toString('base64url'),'signature'].join('.');
+async function setup(t,{role='admin',stackFactory,browserFactory=null,authenticationFailure=null,rpcFailure=null,coordinatorOptions={}}={}){
+  const directory=await mkdtemp(path.join(os.tmpdir(),'ludy-desktop-services-'));let lease=false,fence=0,deviceEnabled=false;const requests=[],stacks=[],coordinators=[];
   const fetchFn=async(url,opts={})=>{
     requests.push({url,opts});
     if(authenticationFailure&&(authenticationFailure.endpoint==='auth'?url.endsWith('/auth/v1/user'):url.includes('/rest/v1/profiles?'))){
@@ -20,12 +22,14 @@ async function setup(t,{role='admin',stackFactory,browserFactory=null,authentica
     if(url.endsWith('/auth/v1/user'))return Response.json({id});
     if(url.includes('/rest/v1/profiles?'))return Response.json([{role}]);
     const name=url.split('/').at(-1),args=JSON.parse(opts.body);
-    if(name==='desktop_worker_register'){lease=false;return Response.json({});}
+    const fault=rpcFailure?.(name,args);if(fault)return Response.json({code:fault.code},{status:fault.status});
+    if(name==='desktop_worker_register'){lease=false;deviceEnabled=args.p_enabled;}
     if(name==='desktop_worker_release'){lease=false;return Response.json({released:true});}
     if(name==='desktop_worker_claim'){lease=true;fence++;}
-    return Response.json({lease:lease?{scope:'workspace',fence,expires_at:new Date(Date.now()+90000).toISOString(),owned:true}:null});
+    return Response.json({device:{id:args.p_device_id,owner:true,enabled:deviceEnabled},lease:lease?{scope:'workspace',fence,expires_at:new Date(Date.now()+90000).toISOString(),owned:true}:null});
   };
   const services=await createDesktopServices({config,stateDir:directory,runtimeRoot:directory,fetchFn,browserFactory,
+    coordinatorFactory:options=>{const c=createDesktopCoordinator({...options,...coordinatorOptions});coordinators.push(c);return c;},
     stackFactory:stackFactory|| (async options=>{const s={options,started:false,closed:false,handle:async()=>false,start:async()=>{s.started=true;},close:async()=>{s.closed=true;}};stacks.push(s);return s;})});
   t.after(async()=>{await services.close();await rm(directory,{recursive:true,force:true});});
   const call=async(route,{body={},access=token(),method='POST'}={})=>{
@@ -33,7 +37,7 @@ async function setup(t,{role='admin',stackFactory,browserFactory=null,authentica
     let status,data;const res={headersSent:false,writeHead(s){status=s;this.headersSent=true;},end(x){data=JSON.parse(x);}};
     await services.handle(req,res);return{status,data};
   };
-  return {services,call,directory,requests,stacks};
+  return {services,call,directory,requests,stacks,coordinators,setDeviceEnabled:value=>{deviceEnabled=value;if(!value)lease=false;}};
 }
 test('the desktop session HTTP handler preserves retryable upstream failures and terminal refusals without leaking details',async t=>{
   for(const [endpoint,status,expected] of [['auth',408,503],['profile',429,503],['auth',503,503],['profile',502,503],['auth',401,401],['profile',403,403]]){
@@ -84,6 +88,51 @@ test('a browser created after sleep is closed without starting or replacing the 
   assert.equal(browser.started,0);assert.equal(browser.closed,1);
   assert.equal(stacks.at(-1).closed,true);assert.equal(services.status().uber.state,'stopped');
   assert.equal(services.status().coordinator.state,'paused');
+});
+
+test('an observer recovers temporary registration failure without resetting its session or reader',async t=>{
+  let broken=true;
+  const {services,stacks,coordinators,requests}=await setup(t,{rpcFailure:name=>name==='desktop_worker_register'&&broken?{status:503}:null});
+  await services.setSession(token());const reader=stacks[0],coordinator=coordinators[0];
+  assert.equal(services.status().role,'admin');assert.equal(services.status().coordinator.state,'unavailable');assert.equal(reader.started,false);
+  await services.setSession(token());assert.equal(coordinators.length,1);assert.equal(stacks.length,1);assert.equal(reader.closed,false);
+  broken=false;await coordinator.tick();
+  assert.equal(services.status().coordinator.state,'paused');assert.equal(services.status().error,null);
+  assert.equal(stacks[0],reader);assert.equal(reader.closed,false);assert.equal(reader.started,false);
+  const registration=requests.filter(r=>r.url.endsWith('/desktop_worker_register'));
+  assert.equal(registration.length,2);assert.ok(registration.every(r=>JSON.parse(r.opts.body).p_enabled===false));
+});
+test('an approved collector recovers startup status timeout without replaying activation',async t=>{
+  let broken=false;
+  const {services,call,stacks,coordinators,requests}=await setup(t,{rpcFailure:name=>name==='desktop_worker_status'&&broken?{status:504}:null});
+  await services.setSession(token());await call('participation',{body:{enabled:true}});await call('logout');
+  broken=true;const before=requests.length;await services.setSession(token());const reader=stacks.at(-1);
+  assert.equal(reader.started,false);assert.equal(services.status().participationEnabled,true);assert.equal(services.status().coordinator.state,'unavailable');
+  await services.setSession(token());assert.equal(coordinators.length,2);assert.equal(reader.closed,false);
+  broken=false;await coordinators.at(-1).tick();
+  assert.equal(services.status().coordinator.state,'leader');assert.equal(services.status().error,null);assert.equal(stacks.at(-1).started,true);
+  assert.ok(requests.slice(before).every(r=>!r.url.endsWith('/desktop_worker_register')));
+});
+test('a centrally disabled collector remains disabled at subsequent login and persists the server decision',async t=>{
+  const {services,call,directory,requests,stacks,setDeviceEnabled}=await setup(t);
+  await services.setSession(token());await call('participation',{body:{enabled:true}});await call('logout');
+  setDeviceEnabled(false);const before=requests.length;await services.setSession(token());
+  assert.equal(services.status().participationEnabled,false);assert.equal(services.status().coordinator.state,'paused');assert.equal(stacks.at(-1).started,false);
+  assert.ok(requests.slice(before).every(r=>!r.url.endsWith('/desktop_worker_register')));
+  const stored=JSON.parse(await readFile(path.join(directory,'users',id,'desktop.json'),'utf8'));assert.equal(stored.enabled,false);
+});
+test('an explicit activation timeout is not retried automatically or persisted as enabled',async t=>{
+  const {services,call,requests,coordinators,directory}=await setup(t,{rpcFailure:(name,args)=>name==='desktop_worker_register'&&args.p_enabled?{status:503}:null});
+  await services.setSession(token());assert.equal((await call('participation',{body:{enabled:true}})).status,503);
+  const before=requests.length;await coordinators[0].tick();await services.setSession(token());
+  assert.equal(services.status().participationEnabled,false);assert.notEqual(services.status().coordinator.state,'leader');
+  assert.ok(requests.slice(before).every(r=>!r.url.endsWith('/desktop_worker_register')));
+  assert.equal(JSON.parse(await readFile(path.join(directory,'users',id,'desktop.json'),'utf8')).enabled,false);
+});
+test('logout cancels observer registration retries even when the former coordinator is ticked again',async t=>{
+  const {services,call,coordinators,requests}=await setup(t,{rpcFailure:name=>name==='desktop_worker_register'?{status:503}:null});
+  await services.setSession(token());const former=coordinators[0];await call('logout');const before=requests.length;
+  await former.tick();assert.equal(requests.length,before);assert.equal(services.status().role,null);
 });
 
 test('paired HTTP status passes CORS in standby, requires pairing and keeps 409 and logout 401 visible to the extension',async t=>{

@@ -24,6 +24,8 @@ try {
   if(new URL(route.request().url()).pathname==='/api/fleet/disconnections'&&route.request().method()==='GET')return route.fulfill({json:{at:new Date().toISOString(),enabled:false,policy:'any',duty_mode:'contract',coverage:{expected_drivers:0},warnings:[],alerts:[]}});
   const path=new URL(route.request().url()).pathname.replace('/api/fleet/',''),method=route.request().method();
   if(path==='overview'&&method==='GET')return route.fulfill({json:{sources:[],drivers:[],alerts:[],settings:{}}});
+  if(path==='health'&&method==='GET')return route.fulfill({json:{sources:[]}});
+  if(path==='alerts'&&method==='GET')return route.fulfill({json:{source:{status:'not_configured'},events:[],motion_alerts:[],motion_watches:[]}});
   if(path==='geotab/live'&&method==='GET')return route.fulfill({json:{source:{status:'not_configured'},vehicles:[],events:[],telemetry:{},motion_alerts:[]}});
   if(['geotab/status','myclicar/status'].includes(path)&&method==='GET')return route.fulfill({json:{configured:false,status:'not_configured',devices:[],vehicles:[]}});
   if(path==='validation/status'&&method==='GET')return statusFailure?route.fulfill({status:503,json:{error:'Synthetic unavailable status'}}):route.fulfill({json:validation});

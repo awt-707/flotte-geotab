@@ -9,7 +9,7 @@
 // Rien n'est estimé : une valeur que Geotab ne fournit pas est « non mesuré ».
 // =============================================================================
 let MAP = null;
-const LIVE_SEC = window.FLOTTE_CONFIG?.GEOTAB_LOCAL ? 2 : 5, DRV_SEC = 30, TRAIL_MAX = 240;
+const LIVE_SEC = window.FLOTTE_CONFIG?.GEOTAB_LOCAL && !window.FLOTTE_CONFIG?.DESKTOP_PRODUCTION ? 2 : 5, DRV_SEC = 30, TRAIL_MAX = 240;
 // Économie des appels (quota de l'offre Supabase) : sans souris ni clavier depuis LIVE_IDLE_MIN minutes, positions toutes les minutes
 // et chauffeurs toutes les 5 minutes ; la moindre activité relance aussitôt le rythme normal.
 const LIVE_IDLE_MIN = 10, LIVE_IDLE_SEC = 60, DRV_IDLE_SEC = 300;
@@ -443,7 +443,7 @@ async function liveTick(my) {
     LIVE.pos = pos; LIVE.at = Date.now(); LIVE.err = ''; LIVE.retryAt = 0;
     if (CFG.GEOTAB_LOCAL) { LIVE.localSource = j.source || {}; LIVE.drv = j.telemetry || {}; LIVE.drvAt = j.source?.telemetry_at || 0; LIVE.motionCoverage = j.motion_coverage || null; processLocalLive(j); }
     else processLive(j);
-  } catch (e) { if (!current()) return; LIVE.at = 0; if (CFG.GEOTAB_LOCAL) { LIVE.localSource = { ...(LIVE.localSource || {}), status: 'error' }; suspendLocalMotionDisplay(); } else LIVE.pos = {}; LIVE.err = String(e.message || e).slice(0, 120); LIVE.retryAt = Date.now() + 60000; }
+  } catch (e) { if (!current() || e?.name === 'AbortError') return; LIVE.at = 0; if (CFG.GEOTAB_LOCAL) { LIVE.localSource = { ...(LIVE.localSource || {}), status: 'error' }; suspendLocalMotionDisplay(); } else LIVE.pos = {}; LIVE.err = String(e.message || e).slice(0, 120); LIVE.retryAt = Date.now() + 60000; }
   finally { if (LIVE.request === request) { LIVE.busy = false; LIVE.request = null; } }
   if (my !== ROUTING || owner !== S.session?.user?.id || sessionRevision !== S.sessionRevision) return;
   applyDirect();

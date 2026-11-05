@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createDesktopCoordinator} from '../desktop-runtime/coordinator.mjs';
 import {createDesktopSession} from '../desktop-runtime/session.mjs';
-import {createDesktopTransport,createDesktopRpc} from '../desktop-runtime/transport.mjs';
+import {createDesktopTransport,createDesktopRpc,isTransientDesktopError} from '../desktop-runtime/transport.mjs';
 import {createDesktopDatabaseTarget,resolveBackendTarget} from '../server/database-target.mjs';
 const config={environment:'production',projectRef:'abcdefghijklmnopqrst',supabaseUrl:'https://abcdefghijklmnopqrst.supabase.co',publishableKey:'sb_publishable_abcdefghijklmnopqrst'};
 const userId='10000000-0000-4000-8000-000000000001';
@@ -53,7 +53,7 @@ function controlPlane(){
     if(name==='desktop_worker_register')devices.set(id,args.p_enabled);
     if(name==='desktop_worker_release'){if(lease?.id===id&&lease.fence===args.p_fence)lease=null;return {released:true};}
     if(name==='desktop_worker_claim'&&devices.get(id)&&!lease)lease={id,fence:++sequence};
-    return {lease:lease?{scope:'workspace',fence:lease.fence,expires_at:new Date(Date.now()+90000).toISOString(),owned:lease.id===id}:null};
+    return {device:{id,owner:true,enabled:devices.get(id)||false},lease:lease?{scope:'workspace',fence:lease.fence,expires_at:new Date(Date.now()+90000).toISOString(),owned:lease.id===id}:null};
   };
 }
 test('two simulated PCs elect one collector and transfer ownership on explicit release',async()=>{
@@ -89,4 +89,110 @@ test('a registration completing after suspend stays paused until explicit resume
   await c.pause();pending.resolve({});await registering;
   assert.equal(claims,0);assert.equal(started,0);assert.equal(c.status().state,'paused');
   await c.resume();assert.equal(claims,1);assert.equal(started,1);await c.close();
+});
+
+function clock(){
+  let time=Date.now(),sequence=0;const timers=new Map();
+  return {now:()=>time,setTimer:(fn,delay)=>{const id=++sequence;timers.set(id,{fn,at:time+delay});return id;},clearTimer:id=>timers.delete(id),
+    advance:ms=>{time+=ms;},timers,fire:id=>{const timer=timers.get(id);assert.ok(timer);timers.delete(id);timer.fn();}};
+}
+test('temporary renewal errors retain only the already confirmed fence and original deadline',async t=>{
+  for(const error of [Object.assign(Error(),{status:408}),Object.assign(Error(),{status:429}),Object.assign(Error(),{status:502}),Object.assign(Error(),{status:503}),Object.assign(Error(),{status:504}),Object.assign(Error(),{status:500,code:'57014'}),Object.assign(Error(),{name:'TimeoutError'}),Object.assign(Error(),{code:'DESKTOP_NETWORK_UNAVAILABLE'})]){
+    await t.test(String(error.status||error.code||error.name),async()=>{
+      const timer=clock();let failRenewal=false,started=0,stopped=0;
+      const c=createDesktopCoordinator({deviceId:'A',getSession:()=>session,...timer,
+        rpc:async name=>{if(name==='desktop_worker_renew'&&failRenewal)throw error;
+          return {lease:{fence:7,expires_at:new Date(timer.now()+90000).toISOString(),owned:true}};},
+        onLeader:async()=>started++,onLost:async()=>stopped++});
+      await c.register(true);const initial=c.status(),deadline=[...timer.timers].find(([,v])=>v.at===timer.now()+70000);
+      stopped=0;timer.advance(25000);failRenewal=true;await c.tick();
+      assert.deepEqual(c.status(),initial);assert.equal(started,1);assert.equal(stopped,0);
+      assert.deepEqual(timer.timers.get(deadline[0]),deadline[1],'renewal failure does not replace or extend deadline');
+      timer.advance(45000);timer.fire(deadline[0]);
+      assert.equal(c.status().state,'unavailable');assert.equal(c.status().lease,null);assert.equal(stopped,1);
+      await c.close();
+    });
+  }
+});
+test('authorization, lost fence, unknown and non-owned renewal responses stop immediately',async t=>{
+  for(const [label,outcome]of [['401',{status:401}],['403',{status:403}],['permission despite 503',{status:503,code:'42501'}],['lost fence despite 503',{status:503,code:'55000'}],['unknown',{}],['non-owned',null]]){
+    await t.test(label,async()=>{
+      let failing=false,stops=0;const timer=clock();
+      const c=createDesktopCoordinator({deviceId:'A',getSession:()=>session,...timer,rpc:async name=>{
+        if(name==='desktop_worker_renew'&&failing){if(outcome===null)return {lease:{owned:false}};throw Object.assign(Error(),outcome);}
+        return {lease:{fence:1,expires_at:new Date(timer.now()+90000).toISOString(),owned:true}};
+      },onLost:async()=>stops++});
+      await c.register(true);stops=0;failing=true;await c.tick();
+      assert.equal(c.status().lease,null);assert.notEqual(c.status().state,'leader');assert.equal(stops,1);await c.close();
+    });
+  }
+});
+test('an explicitly transient claim failure never starts an unconfirmed collector',async()=>{
+  let starts=0;const c=createDesktopCoordinator({deviceId:'A',getSession:()=>session,...clock(),onLeader:async()=>starts++,
+    rpc:async name=>{if(name==='desktop_worker_claim')throw Object.assign(Error(),{status:503});return {};}});
+  await c.register(true);assert.equal(starts,0);assert.equal(c.status().state,'unavailable');assert.equal(c.status().lease,null);await c.close();
+});
+test('temporary observer registration retries without starting a collector and is cancelled by suspend or close',async()=>{
+  let broken=true,registered=0,starts=0;const timer=clock();
+  const c=createDesktopCoordinator({deviceId:'A',getSession:()=>session,...timer,onLeader:async()=>starts++,rpc:async(name,args)=>{
+    assert.equal(name,'desktop_worker_register');assert.equal(args.p_enabled,false);registered++;
+    if(broken)throw Object.assign(Error(),{status:503});return {device:{id:'A',owner:true,enabled:false}};
+  }});
+  await c.restore(false);assert.equal(c.status().state,'unavailable');assert.equal(timer.timers.size,1);
+  await c.pause();assert.equal(timer.timers.size,0);await c.tick();assert.equal(registered,1);
+  broken=false;await c.resume();assert.equal(registered,2);assert.equal(c.status().state,'paused');assert.equal(starts,0);assert.equal(timer.timers.size,0);
+  broken=true;await c.restore(false);assert.equal(timer.timers.size,1);await c.close();assert.equal(timer.timers.size,0);await c.tick();assert.equal(registered,3);
+});
+test('restoring an enabled preference only reads server approval, never re-enables a disabled device',async()=>{
+  let broken=true,serverEnabled=true,starts=0;const calls=[],registered=[],timer=clock();
+  const c=createDesktopCoordinator({deviceId:'A',getSession:()=>session,...timer,onRegistered:async enabled=>registered.push(enabled),onLeader:async()=>starts++,rpc:async name=>{
+    calls.push(name);assert.notEqual(name,'desktop_worker_register');
+    if(name==='desktop_worker_status'){if(broken)throw Object.assign(Error(),{status:503});return {device:{id:'A',owner:true,enabled:serverEnabled}};}
+    return {lease:{fence:4,expires_at:new Date(timer.now()+90000).toISOString(),owned:true}};
+  }});
+  await c.restore(true);assert.equal(starts,0);broken=false;serverEnabled=false;await c.tick();
+  assert.deepEqual(registered,[false]);assert.equal(starts,0);assert.equal(timer.timers.size,0);assert.equal(c.status().state,'paused');
+  serverEnabled=true;await c.tick();assert.equal(calls.length,2,'server re-enable alone does not undo a confirmed local disable');await c.close();
+});
+test('a transient startup status failure resumes an approved collector and terminal errors are not retried',async()=>{
+  let broken=true,starts=0;const timer=clock(),calls=[];
+  const c=createDesktopCoordinator({deviceId:'A',getSession:()=>session,...timer,onLeader:async()=>starts++,rpc:async name=>{
+    calls.push(name);if(name==='desktop_worker_status'){if(broken)throw Object.assign(Error(),{status:503});return {device:{id:'A',owner:true,enabled:true}};}
+    return {lease:{fence:8,expires_at:new Date(timer.now()+90000).toISOString(),owned:true}};
+  }});
+  await c.restore(true);broken=false;await c.tick();assert.equal(starts,1);assert.equal(c.status().lease.fence,8);
+  assert.deepEqual(calls,['desktop_worker_status','desktop_worker_status','desktop_worker_claim']);await c.close();
+  let attempts=0;const terminal=createDesktopCoordinator({deviceId:'A',getSession:()=>session,...clock(),rpc:async()=>{attempts++;throw Object.assign(Error(),{status:403});}});
+  await terminal.restore(true);await terminal.tick();assert.equal(attempts,1);await terminal.close();
+});
+test('a pending startup status cannot restore work after close',async()=>{
+  const pending=deferred(),entered=deferred();let starts=0,signal;
+  const c=createDesktopCoordinator({deviceId:'A',getSession:()=>session,...clock(),onLeader:async()=>starts++,rpc:async(name,args,options)=>{
+    assert.equal(name,'desktop_worker_status');signal=options.signal;entered.resolve();return pending.promise;
+  }});
+  const restoring=c.restore(true);await entered.promise;const closing=c.close();assert.equal(signal.aborted,true);
+  pending.resolve({device:{id:'A',owner:true,enabled:true}});await Promise.all([restoring,closing]);
+  assert.equal(starts,0);assert.equal(c.status().state,'paused');
+});
+test('RPC classifies known network failures while preserving unknown errors and cancellation',async()=>{
+  const errors=[Object.assign(new TypeError('fetch failed'),{cause:{code:'ECONNRESET'}}),new TypeError('programming error'),new DOMException('cancelled','AbortError')];
+  for(const [index,error]of errors.entries()){
+    const rpc=createDesktopRpc({config,getSession:()=>session,fetchFn:async()=>{throw error;}});
+    await assert.rejects(rpc('desktop_worker_status',{}),actual=>{assert.equal(isTransientDesktopError(actual),index===0);if(index)assert.equal(actual,error);return true;});
+  }
+});
+test('RPC retains temporary body-read failures but invalid JSON never grants renewal grace',async()=>{
+  for(const error of [new DOMException('body timed out','TimeoutError'),Object.assign(new TypeError('terminated'),{cause:{code:'UND_ERR_SOCKET'}})]){
+    const rpc=createDesktopRpc({config,getSession:()=>session,fetchFn:async()=>({ok:true,json:async()=>{throw error;}})});
+    await assert.rejects(rpc('desktop_worker_renew',{}),actual=>isTransientDesktopError(actual));
+  }
+  for(const status of [401,403]){
+    const rpc=createDesktopRpc({config,getSession:()=>session,fetchFn:async()=>({ok:false,status,json:async()=>{throw new DOMException('body timed out','TimeoutError');}})});
+    await assert.rejects(rpc('desktop_worker_renew',{}),actual=>actual.status===status&&!isTransientDesktopError(actual));
+  }
+  const timer=clock();let invalid=false,stops=0;
+  const rpc=createDesktopRpc({config,getSession:()=>session,fetchFn:async()=>invalid?new Response('invalid JSON'):
+    response({lease:{fence:1,expires_at:new Date(timer.now()+90000).toISOString(),owned:true}})});
+  const c=createDesktopCoordinator({rpc,deviceId:'A',getSession:()=>session,...timer,onLost:async()=>stops++});
+  await c.register(true);stops=0;invalid=true;await c.tick();assert.equal(stops,1);assert.notEqual(c.status().state,'leader');assert.equal(c.status().lease,null);await c.close();
 });

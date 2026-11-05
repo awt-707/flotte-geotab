@@ -75,15 +75,16 @@
   }
   async function poll(version){
     if(!current(version)||!token)return;
+    if(document.hidden){timer=setTimeout(()=>{timer=null;void poll(version);},5000);return;}
     const controller=new AbortController();requestController=controller;
     try {
       const result=await request('status',{signal:controller.signal});
-      if(!current(version))return;
+      if(!current(version)||controller.signal.aborted)return;
       status=result?.status && typeof result.status==='object'?result.status:result;message='';
-    } catch(error) {if(current(version)){status=null;message=errorMessage(error,'État du poste indisponible · nouvelle vérification en cours');}}
+    } catch(error) {if(current(version)&&!controller.signal.aborted){status=null;message=errorMessage(error,'État du poste indisponible · nouvelle vérification en cours');}}
     finally {
       if(requestController===controller)requestController=null;
-      if(current(version)&&token){paint();timer=setTimeout(()=>{timer=null;void poll(version);},5000);}
+      if(current(version)&&token&&!controller.signal.aborted){paint();timer=setTimeout(()=>{timer=null;void poll(version);},5000);}
     }
   }
   async function toggle(){

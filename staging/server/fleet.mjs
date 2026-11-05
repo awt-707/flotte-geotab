@@ -1,10 +1,12 @@
 import {sharedGeotabLive} from './shared-geotab.mjs';
+import {AsyncLocalStorage} from 'node:async_hooks';
+import {createObserverReadCache} from './observer-read-cache.mjs';
 import {resolveBackendTarget} from './database-target.mjs';
 import { createUberPairing } from './uber-pairing.mjs';
 import { createConnectorState } from './connector-state.mjs';
 import { BoltClient, readBoltCredentials, saveBoltCredentials } from './bolt.mjs';
 import {retryDeadline,retryTimerDelay} from './provider-retry.mjs';
-import { createGeotabService } from './geotab-service.mjs';
+import { createGeotabService, geotabIntervalMs } from './geotab-service.mjs';
 import { createMyclicarService } from './myclicar-service.mjs';
 import { readMyclicarCredentials } from './myclicar.mjs';
 import { createValidationMonitor } from './validation.mjs';
@@ -51,15 +53,37 @@ export function requestAllowed(req,extension=false){
   const origin=req.headers.origin;
   return !origin || LOCAL_ORIGINS.has(origin) || extension && /^(chrome|moz)-extension:\/\/[a-zA-Z0-9-]+$/.test(origin);
 }
-export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=false,isCollectionActive=()=>true,serviceKey,anonKey,boltEnvPath,geotabCredentialsPath,myclicarCredentialsPath,uberPairingPath,connectorStatePath,validationPath,fetchFn=fetch,now=Date.now,setTimer=setTimeout,clearTimer=clearTimeout,Bolt=BoltClient,Geotab=createGeotabService,Myclicar=createMyclicarService,onGeotabTelemetry=async()=>{},onGeotabPositions=async()=>{},onGeotabState=()=>{},getTelemetryArchiveStatus=()=>null}){
+export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=false,isCollectionActive=()=>true,serviceKey,anonKey,boltEnvPath,geotabCredentialsPath,myclicarCredentialsPath,uberPairingPath,connectorStatePath,validationPath,fetchFn=fetch,now=Date.now,setTimer=setTimeout,clearTimer=clearTimeout,Bolt=BoltClient,Geotab=createGeotabService,Myclicar=createMyclicarService,onGeotabTelemetry=async()=>{},onGeotabPositions=async()=>{},onGeotabState=()=>{},getTelemetryArchiveStatus=()=>null,observerCacheMs=databaseTarget?5000:0}){
   const base=resolveBackendTarget(supabaseUrl,databaseTarget);
   if(!serviceKey || !anonKey)throw new Error('Clés Supabase locales manquantes');
   const automation=createConnectorState({path:connectorStatePath});
+  const observerScope=new AsyncLocalStorage(),observerCache=createObserverReadCache({now,ttlMs:observerCacheMs});
   const tokenHeader=token=>({apikey:token===serviceKey?serviceKey:anonKey,Authorization:'Bearer '+token});
   async function db(table,{params={},method='GET',body,token=serviceKey,prefer}={}){
-    const res=await fetchFn(base+'/rest/v1/'+table+'?'+query(params),{method,redirect:'error',headers:{...tokenHeader(token),'Content-Type':'application/json',...(prefer?{Prefer:prefer}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(15000)});
-    if(!res.ok)throw httpError(502,'Base locale indisponible ('+table+', HTTP '+res.status+')');
-    if(res.status===204)return null;return res.json().catch(()=>null);
+    const load=async()=>{
+      const res=await fetchFn(base+'/rest/v1/'+table+'?'+query(params),{method,redirect:'error',headers:{...tokenHeader(token),'Content-Type':'application/json',...(prefer?{Prefer:prefer}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(15000)});
+      if(!res.ok)throw httpError(502,'Base locale indisponible ('+table+', HTTP '+res.status+')');
+      if(res.status===204)return null;return res.json().catch(()=>null);
+    };
+    // Collection decisions and authorization always use fresh reads. Only
+    // observer GETs share successful data; raw RLS rows remain token-scoped.
+    if(method==='GET'){
+      const scope=observerScope.getStore();
+      if(!(observerCacheMs>0)||!scope?.enabled||['profiles','user_agencies'].includes(table)||table.startsWith('rpc/')&&table!=='rpc/fleet_source_health')return load();
+      let cacheScope=token;
+      if(token!==serviceKey){
+        if(!scope.authority)return load();
+        // Recheck current membership before reusing RLS rows. A role or agency
+        // revocation changes the cache scope even while the JWT stays the same.
+        if(scope.authority.role!=='admin')scope.agencies??=list('user_agencies',{select:'agency_id',user_id:eq(scope.authority.id)},token).then(rows=>rows.map(row=>row.agency_id).sort());
+        cacheScope=JSON.stringify([token,scope.authority.id,scope.authority.role,scope.agencies?await scope.agencies:null]);
+      }
+      return observerCache.read(table,params,cacheScope,load);
+    }
+    const affected=table==='rpc/fleet_commit_disconnections'?['fleet_disconnection_checkpoints','fleet_disconnection_alerts']:
+      table==='rpc/fleet_save_motion_checkpoints'?['fleet_motion_checkpoints']:table.startsWith('rpc/')?null:table==='fleet_sources'?['fleet_sources','rpc/fleet_source_health']:[table];
+    observerCache.invalidate(affected);
+    try{return await load();}finally{observerCache.invalidate(affected);}
   }
   async function list(table,params={},token=serviceKey){const rows=[];for(let offset=0;offset<100000;offset+=1000){const part=await db(table,{params:{...params,limit:'1000',offset:String(offset)},token});if(!Array.isArray(part))throw httpError(502,'Réponse locale invalide');rows.push(...part);if(part.length<1000)return rows;}throw httpError(413,'Période trop grande');}
   const insert=(table,row)=>db(table,{method:'POST',body:row,prefer:'return=representation'});
@@ -74,6 +98,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
     const profiles=await db('profiles',{params:{select:'user_id,role',user_id:eq(user.id)},token});const profile=profiles?.[0];
     if(!profile || !['admin','manager','viewer'].includes(profile.role))throw httpError(403,'Accès flotte non autorisé');
     if(admin && profile.role!=='admin')throw httpError(403,'Administrateur local requis');
+    const scope=observerScope.getStore();if(scope)scope.authority={id:user.id,role:profile.role};
     return {token,user,profile};
   }
   async function health(source,status,extra={}){
@@ -245,7 +270,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
     return entry;
   }
   async function overview(token,admin){
-    const [sourceRows,drivers,latest,alerts,settings,identities,vehicleRows]=await Promise.all([list('fleet_sources',{order:'id'}),list('fleet_drivers',{order:'name,id'},token),list('fleet_latest',{order:'identity_id'},token),db('fleet_alerts',{params:{order:'opened_at.desc',limit:'500'},token}),db('fleet_settings',{params:{id:'eq.1'},token}),list('fleet_identities',{select:'id,driver_id,source'},token),list('vehicles',{select:'key,plate,other_plates,brand,model,agency_id,geotab_id,active'},token)]);
+    const [sourceRows,drivers,latest,alerts,settings,identities,vehicleRows]=await Promise.all([sharedCollection&&!admin?sourceHealth(token):list('fleet_sources',{order:'id'}),list('fleet_drivers',{order:'name,id'},token),list('fleet_latest',{order:'identity_id'},token),db('fleet_alerts',{params:{order:'opened_at.desc',limit:'500'},token}),db('fleet_settings',{params:{id:'eq.1'},token}),list('fleet_identities',{select:'id,driver_id,source'},token),list('vehicles',{select:'key,plate,other_plates,brand,model,agency_id,geotab_id,active'},token)]);
     const sourceById=Object.fromEntries(sourceRows.map(s=>[s.id,s]));
     const byDriver=new Map(),names=new Map(drivers.map(d=>[d.id,d.name]));
     for(const x of latest){const d=byDriver.get(x.driver_id)||{},state=effectiveState(x,sourceById[x.source],now());if(!d[x.source]||Date.parse(d[x.source].observed_at)<Date.parse(x.observed_at))d[x.source]=state;byDriver.set(x.driver_id,d);}
@@ -268,7 +293,20 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
       vehicle_observations:observedVehicleDrivers({drivers,latest,vehicles:vehicleRows,sources,now:now()}),
       alerts:alerts.map(a=>{let status=durationAlertStatus(a,duration.get(a.driver_id));if(status==='open'){if(shown.has(a.driver_id))status='suspended';else shown.add(a.driver_id);}return {...a,driver_name:names.get(a.driver_id)||'Chauffeur',status};}),settings:settings?.[0] || null};
   }
-  const handler=async(req,res)=>{
+  function sourceStatus(source){
+    const age=now()-Date.parse(source.last_success_at),ttl=Number(source.stale_after_s)*1000;
+    return source.status==='healthy'&&(!Number.isFinite(age)||age< -60000||!Number.isFinite(ttl)||ttl<=0||age>ttl)?'stale':source.status||'unconnected';
+  }
+  function sourceHealth(token){
+    // The source table remains admin-only. This RPC exposes just its bounded
+    // technical health; all business rows still use this caller's JWT and RLS.
+    return sharedCollection?db('rpc/fleet_source_health',{token}):list('fleet_sources',{select:'id,name,status,last_success_at,last_error,stale_after_s'});
+  }
+  async function sharedSourceStatus(id,token){
+    const source=(await sourceHealth(token)).find(row=>row.id===id)||{};
+    return {collectionRemote:true,configured:!!source.status&&source.status!=='unconnected',polling:source.status==='healthy',status:sourceStatus(source),last_success_at:source.last_success_at||null,last_error:source.last_error||null,stale_after_s:source.stale_after_s,vehicles:[],devices:[]};
+  }
+  const route=async(req,res)=>{
     const u=new URL(req.url,'http://127.0.0.1:4173');if(!u.pathname.startsWith('/api/fleet/'))return false;
     const isIngest=u.pathname==='/api/fleet/uber/ingest',isCollectionStatus=u.pathname==='/api/fleet/uber/collection-status',isBridge=isIngest||isCollectionStatus;
     if(!requestAllowed(req,isBridge)){reply(res,403,{error:'Origine locale non autorisée'});return true;}
@@ -311,8 +349,28 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
         });if(!ingestAcknowledged)reply(res,200,result);return true;
       }
       const mutation=req.method!=='GET',auth=await authenticate(req,mutation);
+      if(u.pathname==='/api/fleet/health'&&req.method==='GET'){
+        const sources=await sourceHealth(auth.token);
+        reply(res,200,{sources:sources.map(source=>({id:source.id,status:sourceStatus(source),last_success_at:source.last_success_at||null,last_error:source.last_error||null,stale_after_s:source.stale_after_s,collectionRemote:sharedCollection}))});return true;
+      }
       if(u.pathname==='/api/fleet/disconnections'&&req.method==='GET'){
-        reply(res,200,await disconnections.read(auth.token,{admin:auth.profile.role==='admin'}));return true;
+        reply(res,200,sharedCollection?await disconnections.readPublished(auth.token,{sources:sourceHealth(auth.token)}):await disconnections.read(auth.token,{admin:auth.profile.role==='admin'}));return true;
+      }
+      if(u.pathname==='/api/fleet/alerts'&&req.method==='GET'){
+        if(!sharedCollection){
+          const live=await geotab.live(auth.token);
+          reply(res,200,{at:live.at,source:live.source,events:live.events||[],motion_alerts:live.motion_alerts||[],motion_watches:live.motion_watches||[]});return true;
+        }
+        const sourceRead=sourceHealth(auth.token),vehicleRead=list('vehicles',{select:'key,plate,other_plates,geotab_id'},auth.token);
+        const [sources,vehicles,snapshots,motionState]=await Promise.all([sourceRead,vehicleRead,list('desktop_vehicle_live',{select:'vehicle_key,data,observed_at'},auth.token),motion.readPublished(auth.token,{vehicles:vehicleRead,sources:sourceRead})]);
+        const selected=new Map(vehicles.filter(row=>row.geotab_id).map(row=>[row.key,row])),source=sources.find(row=>row.id==='geotab')||{},at=now(),ttl=Math.max(20000,geotabIntervalMs(selected.size)*3);
+        const current=snapshots.filter(row=>selected.get(row.vehicle_key)?.geotab_id===row.data?.device_id&&at-Date.parse(row.observed_at)>=-60000&&at-Date.parse(row.observed_at)<ttl);
+        const byVehicle=new Map(current.map(row=>[row.vehicle_key,row.data]));
+        const events=current.flatMap(row=>(row.data.events||[])
+          .filter(event=>Number.isFinite(Date.parse(event.at))&&(!event.end||at-Date.parse(event.end)<1800000))
+          .map(event=>({...event,key:row.vehicle_key,plate:selected.get(row.vehicle_key).plate}))).sort((a,b)=>String(b.at).localeCompare(String(a.at)));
+        const alerts=motionState.alerts.map(alert=>({...alert,status:alert.status==='open'&&(source.motion_error||!byVehicle.has(alert.vehicle_key)||byVehicle.get(alert.vehicle_key).extra?.motion_error)?'suspended':alert.status}));
+        reply(res,200,{at:source.last_success_at||null,source:{status:sourceStatus(source),last_success_at:source.last_success_at||null,last_error:source.last_error||null,stale_after_s:source.stale_after_s,collectionRemote:sharedCollection},events,motion_alerts:alerts,motion_watches:[]});return true;
       }
       if(u.pathname==='/api/fleet/disconnections/settings'&&req.method==='POST'){
         const b=await bodyJson(req);
@@ -329,7 +387,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
       if(u.pathname.startsWith('/api/fleet/myclicar/')){
         if(auth.profile.role!=='admin')throw httpError(403,'Administrateur local requis');
         const action=u.pathname.slice('/api/fleet/myclicar/'.length);
-        if(action==='status'&&req.method==='GET'){reply(res,200,{...await myclicar.status(),...automationState('myclicar')});return true;}
+        if(action==='status'&&req.method==='GET'){reply(res,200,sharedCollection?await sharedSourceStatus('myclicar',auth.token):{...await myclicar.status(),...automationState('myclicar')});return true;}
         if(req.method==='POST'&&['connect','start','stop'].includes(action)){
           const data=await bodyJson(req);let result;
           if(action==='start'||action==='stop')result=await connectorIntent('myclicar',action==='start');
@@ -347,8 +405,11 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
         const action=u.pathname.slice('/api/fleet/geotab/'.length);
         if(action==='live'&&req.method==='GET'){
           if(sharedCollection){
-            const [sources,vehicles,positions,snapshots,alerts]=await Promise.all([db('fleet_sources',{params:{id:'eq.geotab'}}),list('vehicles',{select:'key,plate,geotab_id'},auth.token),list('live_status',{select:'vehicle_key,state,speed,since_min,last_pos_at,lat,lon,ign_on,updated_at'},auth.token),list('desktop_vehicle_live',{select:'vehicle_key,data,observed_at'},auth.token),motion.read(auth.token)]);
-            reply(res,200,sharedGeotabLive({source:sources[0],vehicles,positions,snapshots,motion:alerts,now:now()}));
+            const sourceRead=sourceHealth(auth.token),vehicleRead=list('vehicles',{select:'key,plate,other_plates,geotab_id'},auth.token);
+            const [sources,vehicles,positions,snapshots,alerts]=await Promise.all([sourceRead,vehicleRead,list('live_status',{select:'vehicle_key,state,speed,since_min,last_pos_at,lat,lon,ign_on,updated_at'},auth.token),list('desktop_vehicle_live',{select:'vehicle_key,data,observed_at'},auth.token),motion.readPublished(auth.token,{vehicles:vehicleRead,sources:sourceRead})]);
+            const source=sources.find(row=>row.id==='geotab');
+            if(source?.motion_error)alerts.alerts=alerts.alerts.map(alert=>({...alert,status:alert.status==='open'?'suspended':alert.status}));
+            reply(res,200,sharedGeotabLive({source,vehicles,positions,snapshots,motion:alerts,now:now()}));
           }else reply(res,200,await geotab.live(auth.token));return true;
         }
         if(['history','detail','report'].includes(action)&&req.method==='GET'){
@@ -356,7 +417,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
           reply(res,200,await geotab[action](auth.token,Object.fromEntries(u.searchParams)));return true;
         }
         if(auth.profile.role!=='admin')throw httpError(403,'Administrateur local requis');
-        if(action==='status'&&req.method==='GET'){reply(res,200,{...await geotab.status(),...automationState('geotab'),telemetry_archive:getTelemetryArchiveStatus()});return true;}
+        if(action==='status'&&req.method==='GET'){reply(res,200,sharedCollection?await sharedSourceStatus('geotab',auth.token):{...await geotab.status(),...automationState('geotab'),telemetry_archive:getTelemetryArchiveStatus()});return true;}
         if(req.method==='POST'&&['connect','devices','link','start','stop'].includes(action)){
           const data=await bodyJson(req);let result;
           if(action==='start'||action==='stop')result=await connectorIntent('geotab',action==='start');
@@ -378,6 +439,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
       if(u.pathname==='/api/fleet/overview' && req.method==='GET'){reply(res,200,await overview(auth.token,auth.profile.role==='admin'));return true;}
       if(u.pathname==='/api/fleet/drivers/matches'&&req.method==='GET'){
         if(auth.profile.role!=='admin')throw httpError(403,'Administrateur local requis');
+        observerCache.invalidate();
         reply(res,200,await matcher.review());return true;
       }
       if(u.pathname==='/api/fleet/drivers/match'&&req.method==='POST'){
@@ -387,7 +449,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
         const id=u.searchParams.get('driver_id'),from=validTime(u.searchParams.get('from')) || new Date(now()-86400000).toISOString(),to=validTime(u.searchParams.get('to')) || new Date(now()).toISOString();
         if(!id || !/^[0-9a-f-]{36}$/i.test(id) || Date.parse(to)<=Date.parse(from) || Date.parse(to)-Date.parse(from)>31*86400000 || Date.parse(to)>now()+60000)throw httpError(400,'Chauffeur et période de 31 jours maximum requis');
         const drivers=await db('fleet_drivers',{params:{id:eq(id)},token:auth.token});if(!drivers?.length)throw httpError(404,'Chauffeur introuvable');
-        const [sources,observations,events]=await Promise.all([list('fleet_sources',{order:'id'}),list('fleet_observations',{driver_id:eq(id),observed_at:'gte.'+new Date(Date.parse(from)-3600000).toISOString(),and:'(observed_at.lte.'+to+')',order:'observed_at,id'},auth.token),list('fleet_source_events',{at:'gte.'+new Date(Date.parse(from)-3600000).toISOString(),order:'at,id'},auth.token)]);
+        const [sources,observations,events]=await Promise.all([sharedCollection?sourceHealth(auth.token):list('fleet_sources',{order:'id'}),list('fleet_observations',{driver_id:eq(id),observed_at:'gte.'+new Date(Date.parse(from)-3600000).toISOString(),and:'(observed_at.lte.'+to+')',order:'observed_at,id'},auth.token),list('fleet_source_events',{at:'gte.'+new Date(Date.parse(from)-3600000).toISOString(),order:'at,id'},auth.token)]);
         const present=new Set(observations.map(x=>x.source));reply(res,200,{driver:drivers[0],from,to,observations,intervals:historyIntervals(observations,sources.filter(s=>present.has(s.id)),events,from,to),approximate:true});return true;
       }
       if(u.pathname==='/api/fleet/pair' && req.method==='POST'){reply(res,200,await pairs.issue(auth.user.id));return true;}
@@ -446,6 +508,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
     }catch(e){if(!ingestAcknowledged)reply(res,e.status || 500,{error:e.status?e.message:'Traitement local impossible'});}
     return true;
   };
+  const handler=(req,res)=>observerScope.run({enabled:req.method==='GET'},()=>route(req,res));
   // Share the existing pairing verifier: one private token store and the same
   // administrator revocation checks for live observations and report imports.
   handler.authorizeUberReport=verifyIngest;
@@ -459,6 +522,6 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
     const enabled=await automation.read();if(closed)return;
     return Promise.allSettled([...['bolt','geotab','myclicar'].filter(id=>enabled[id]).map(id=>id==='bolt'?startBolt():id==='myclicar'?myclicar.start():geotab.start()),validation.resume(),disconnections.start()]);
   };
-  handler.close=()=>{closed=true;boltPolling=false;boltGeneration++;clearTimer(boltTimer);geotab.close();myclicar.close();pairs.close();validation.close();disconnections.close();};
+  handler.close=()=>{closed=true;observerCache.invalidate();boltPolling=false;boltGeneration++;clearTimer(boltTimer);geotab.close();myclicar.close();pairs.close();validation.close();disconnections.close();};
   return handler;
 }
