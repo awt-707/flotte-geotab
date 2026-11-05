@@ -6,28 +6,30 @@ import {webcrypto} from 'node:crypto';
 const root=new URL('../uber-extension/',import.meta.url),protocol=await fs.readFile(new URL('protocol.js',root),'utf8'),background=await fs.readFile(new URL('background.js',root),'utf8');
 const ORG='11111111-1111-4111-8111-111111111111',URL_UBER='https://fleethub.uber.com/orgs/'+ORG+'/livemap',ID='fixture-extension',POPUP='chrome-extension://'+ID+'/popup.html';
 const token='ludy_uber_'+'x'.repeat(43);
-function fixture(saved={}){
+function fixture(saved={}, {fakeTimers=false,onStore}={}){
   let clock=Date.parse('2026-10-30T12:00:00Z'),listener,response={ok:true,status:200},statusResponse,tab={id:7,url:URL_UBER,status:'complete',active:true},content={running:false,runId:null},permission=false,otherTabs=[];
-  const requests=[],messages=[],events={},alarms=new Map(),injections=[],reloads=[];let trusted=false,reloadError=null;
+  const requests=[],messages=[],events={},alarms=new Map(),injections=[],reloads=[],timeouts=new Map();let trusted=false,reloadError=null,timerId=0;
   const event=name=>({addListener:fn=>{events[name]=fn;}});
   class DateMock extends Date{constructor(...args){super(...(args.length?args:[clock]));}static now(){return clock;}}
   const api={runtime:{id:ID,getURL:name=>'chrome-extension://'+ID+'/'+name,onMessage:{addListener:fn=>{listener=fn;}},onStartup:event('startup'),onInstalled:event('installed')},
-    storage:{local:{get:async()=>structuredClone(saved),set:async value=>{Object.assign(saved,structuredClone(value));},setAccessLevel:async value=>{trusted=value.accessLevel==='TRUSTED_CONTEXTS';}}},
+    storage:{local:{get:async()=>structuredClone(saved),set:async value=>{await onStore?.(value);Object.assign(saved,structuredClone(value));},setAccessLevel:async value=>{trusted=value.accessLevel==='TRUSTED_CONTEXTS';}}},
     permissions:{contains:async()=>permission,onRemoved:event('permissionRemoved')},
     tabs:{query:async()=>[tab,...otherTabs].filter(Boolean),get:async id=>{if(!tab||tab.id!==id)throw Error('missing');return tab;},sendMessage:async(id,message)=>{
-      messages.push(message);if(message.type==='LUDY_UBER_PING')return content;if(message.type==='LUDY_UBER_START')content={running:true,runId:message.runId,version:'0.6.6'};if(message.type==='LUDY_UBER_STOP')content={running:false,runId:null};
+      messages.push(message);if(message.type==='LUDY_UBER_PING')return content;if(message.type==='LUDY_UBER_START')content={running:true,runId:message.runId,version:'0.6.7'};if(message.type==='LUDY_UBER_STOP')content={running:false,runId:null};
       if(message.type==='LUDY_UBER_PREPARE_REFRESH')return {ok:true,runId:content.runId,version:content.version,ready:content.running&&!content.busy&&!content.hidden,busy:!!content.busy};return {ok:true};
     },reload:async(id,options)=>{if(reloadError)throw reloadError;reloads.push({id,options});tab={...tab,status:'loading'};content={running:false,runId:null};},onRemoved:event('removed'),onUpdated:event('updated'),onActivated:event('activated')},
     alarms:{create:async(name,spec)=>{alarms.set(name,spec);},clear:async name=>{alarms.delete(name);},onAlarm:event('alarm')},
     scripting:{executeScript:async spec=>{injections.push(spec);}}};
-  const context=vm.createContext({chrome:api,URL,TextEncoder,Date:DateMock,crypto:webcrypto,setTimeout,clearTimeout,AbortController,
+  const context=vm.createContext({chrome:api,URL,TextEncoder,Date:DateMock,crypto:webcrypto,
+    setTimeout:fakeTimers?(fn,delay)=>{const id=++timerId;timeouts.set(id,{fn,delay});return id;}:setTimeout,
+    clearTimeout:fakeTimers?id=>timeouts.delete(id):clearTimeout,AbortController,
     fetch:async(url,options)=>{requests.push({url,options,at:clock});const result=url.endsWith('/collection-status')?statusResponse:response;if(result instanceof Error)throw result;return typeof result==='function'?result(options):result;}});
   vm.runInContext(protocol,context);vm.runInContext(background,context);
   const call=(message,sender={id:ID,url:POPUP})=>new Promise(resolve=>listener(message,sender,resolve));
   const batch=()=>({observedAt:new Date(clock).toISOString(),sourceAt:null,organizationId:ORG,status:'observing',rows:[{sourceId:null,name:'Alex Fictif',state:'available',rawState:'Disponible',readAt:new Date(clock).toISOString(),sourceAt:null}],warnings:[]});
   const read=(extra={})=>call({type:'LUDY_UBER_READ',runId:saved.connector.runId,result:{...batch(),...extra}},{id:ID,url:URL_UBER,frameId:0,tab:{id:7}});
   const status=()=>call({type:'LUDY_UBER_STATUS'});
-  return {saved,requests,messages,events,alarms,injections,reloads,call,read,status,batch,advance:ms=>{clock+=ms;},respond:value=>{response=value;},respondStatus:value=>{statusResponse=value;},content:value=>{content=value;},setTab:value=>{tab=value;},trusted:()=>trusted,reloadError:value=>{reloadError=value;},
+  return {saved,requests,messages,events,alarms,injections,reloads,timeouts,call,read,status,batch,advance:ms=>{clock+=ms;},respond:value=>{response=value;},respondStatus:value=>{statusResponse=value;},content:value=>{content=value;},setTab:value=>{tab=value;},trusted:()=>trusted,reloadError:value=>{reloadError=value;},
     grant:value=>{permission=value;},otherTabs:value=>{otherTabs=value;},
     start:async()=>{await call({type:'LUDY_UBER_PAIR',token});return call({type:'LUDY_UBER_START'});}};
 }
@@ -37,6 +39,70 @@ test('a temporary local outage retries fresh observations with backoff without s
   f.advance(10000);f.respond({ok:true,status:200});result=await f.read();assert.equal(result.data.state,'observing');assert.equal(f.requests.length,2);
   assert.notEqual(JSON.parse(f.requests[0].options.body).observedAt,JSON.parse(f.requests[1].options.body).observedAt,'do not replay old positions');
   assert.equal(result.data.nextRetryAt,null);assert.equal(f.trusted(),true);assert.ok(!JSON.stringify(result.data).includes(token));assert.ok(f.messages.every(m=>!JSON.stringify(m).includes(token)));
+});
+test('slow local ingestion gets twenty-five seconds and never queues a second observation',async()=>{
+ const f=fixture({}, {fakeTimers:true});await f.start();let accept,entered;const sending=new Promise(resolve=>{entered=resolve;});
+ f.respond(()=>{entered();return new Promise(resolve=>{accept=resolve;});});const first=f.read();await sending;
+ assert.deepEqual([...f.timeouts.values()].map(timer=>timer.delay),[25000]);
+ f.advance(18000);assert.equal(f.requests[0].options.signal.aborted,false);
+ assert.equal((await f.read()).ok,false);assert.equal(f.requests.length,1,'no stale observation waits behind the active ingest');
+ accept({ok:true,status:200,json:async()=>({ok:true,observations:1})});const state=(await first).data;
+ assert.equal(state.state,'observing');assert.equal(state.lastHealthyAt,'2026-10-30T12:00:00.000Z');assert.equal(f.saved.connector.pendingUntil,0);assert.equal(f.timeouts.size,0);
+ f.respond({ok:true,status:200});await f.read();assert.equal(f.requests.length,2);
+ assert.equal(JSON.parse(f.requests[1].options.body).observedAt,'2026-10-30T12:00:18.000Z');
+});
+test('the local deadline releases an unresponsive fetch and only retries a fresh batch after backoff',async()=>{
+ const f=fixture({}, {fakeTimers:true});await f.start();let accept,entered;const sending=new Promise(resolve=>{entered=resolve;});
+ f.respond(()=>{entered();return new Promise(resolve=>{accept=resolve;});});const first=f.read();await sending;
+ f.advance(25000);[...f.timeouts.values()][0].fn();const state=(await first).data;
+ assert.equal(f.requests[0].options.signal.aborted,true);assert.equal(state.state,'retrying');assert.equal(state.lastHealthyAt,null);
+ assert.equal(state.nextRetryAt,'2026-10-30T12:00:40.000Z');
+ accept({ok:true,status:200});await new Promise(resolve=>setImmediate(resolve));assert.equal(f.saved.connector.lastHealthyAt,null,'late success cannot revive the timed-out observation');
+ f.advance(14999);await f.read();assert.equal(f.requests.length,1);
+ f.advance(1);f.respond({ok:true,status:200});assert.equal((await f.read()).data.state,'observing');
+ assert.equal(f.requests.length,2);assert.equal(JSON.parse(f.requests[1].options.body).observedAt,'2026-10-30T12:00:40.000Z');
+});
+test('worker recreation waits out an interrupted transmission without storing or replaying its rows',async()=>{
+ const f=fixture({}, {fakeTimers:true});await f.start();let accept,entered;const sending=new Promise(resolve=>{entered=resolve;});
+ f.respond(()=>{entered();return new Promise(resolve=>{accept=resolve;});});const first=f.read();await sending;
+ const saved=structuredClone(f.saved);assert.equal(saved.connector.pendingUntil,Date.parse('2026-10-30T12:00:40Z'));assert.ok(!JSON.stringify(saved).includes('Alex Fictif'));
+ const g=fixture(saved,{fakeTimers:true});await g.status();assert.equal((await g.read()).data.state,'retrying');assert.equal(g.requests.length,0);
+ g.advance(39999);await g.read();assert.equal(g.requests.length,0);g.advance(1);assert.equal((await g.read()).data.state,'observing');
+ assert.equal(g.requests.length,1);assert.equal(JSON.parse(g.requests[0].options.body).observedAt,'2026-10-30T12:00:40.000Z');
+ accept({ok:true,status:200});await first;
+});
+test('stop, forget and pairing changes interrupt ingestion immediately and reject late success',async()=>{
+ for(const type of ['LUDY_UBER_STOP','LUDY_UBER_FORGET','LUDY_UBER_PAIR']){
+  const f=fixture({}, {fakeTimers:true});await f.start();let accept,entered;const sending=new Promise(resolve=>{entered=resolve;});
+  f.respond(()=>{entered();return new Promise(resolve=>{accept=resolve;});});const first=f.read();await sending;
+  f.respond({ok:true,status:200});const newToken='ludy_uber_'+'n'.repeat(43),stopping=f.call({type,token:newToken});
+  assert.equal(f.requests[0].options.signal.aborted,true);await stopping;await first;
+  assert.equal(f.saved.connector.active,false);assert.equal(f.saved.connector.lastHealthyAt,null);
+  assert.equal(f.saved.connector.token,type==='LUDY_UBER_FORGET'?null:type==='LUDY_UBER_PAIR'?newToken:token);
+  accept({ok:true,status:200});await new Promise(resolve=>setImmediate(resolve));assert.equal(f.saved.connector.active,false);assert.equal(f.saved.connector.lastHealthyAt,null);
+  if(type!=='LUDY_UBER_FORGET'){
+   await f.call({type:'LUDY_UBER_START'});const count=f.requests.length;await f.read();assert.equal(f.requests.length,count,'a new run waits out any orphaned old server request');
+   f.advance(40000);await f.read();assert.equal(f.requests.length,count+1);
+  }
+ }
+});
+test('hiding the tracked page cancels ingestion but immediately reports the interrupted source',async()=>{
+ const f=fixture({}, {fakeTimers:true});await f.start();let accept,entered;const sending=new Promise(resolve=>{entered=resolve;});
+ f.respond(()=>{entered();return new Promise(resolve=>{accept=resolve;});});const first=f.read();await sending;
+ f.respond({ok:true,status:200});const hidden=f.read({status:'error',rows:[],warnings:['La Live Map est masquée.']});
+ assert.equal(f.requests[0].options.signal.aborted,true);assert.equal((await hidden).data.state,'error');await first;
+ assert.equal(f.requests.length,2);assert.equal(JSON.parse(f.requests[1].options.body).status,'error');assert.equal(f.saved.connector.lastHealthyAt,null);
+ accept({ok:true,status:200});await new Promise(resolve=>setImmediate(resolve));assert.equal(f.saved.connector.state,'error');
+ await f.read();assert.equal(f.requests.length,2,'fresh observing reads still respect the interrupted request deadline');
+});
+test('cancellation during a slow storage write is handled before a fetch can begin',async()=>{
+ let release,entered,blocked=false;const storing=new Promise(resolve=>{entered=resolve;});
+ const f=fixture({}, {fakeTimers:true,onStore:async value=>{
+  if(value.connector.pendingUntil&&!blocked){blocked=true;entered();await new Promise(resolve=>{release=resolve;});}
+ }});await f.start();const first=f.read();await storing;
+ const stopping=f.call({type:'LUDY_UBER_STOP'});await new Promise(resolve=>setImmediate(resolve));release();await stopping;await first;
+ assert.equal(f.saved.connector.active,false);assert.equal(f.saved.connector.lastHealthyAt,null);
+ assert.ok(f.requests.every(request=>JSON.parse(request.options.body).status==='stopped'),'no observing request after cancellation');
 });
 test('worker recreation keeps the pairing and collection; browser restart keeps only the pairing',async()=>{
   const f=fixture();await f.start();await f.read();const stored=structuredClone(f.saved),g=fixture(stored);
@@ -52,8 +118,10 @@ test('long outages cap retries and a successful read resets failures',async()=>{
   f.respond({ok:false,status:503});const result=await f.read();assert.equal(Date.parse(result.data.nextRetryAt)-f.requests.at(-1).at,15000);
 });
 test('refused pairing stops transmission and clears the token rather than retrying forever',async()=>{
-  const f=fixture();await f.start();f.respond({ok:false,status:401});const result=await f.read();assert.equal(result.data.active,false);assert.equal(result.data.paired,false);assert.equal(result.data.state,'pairing_required');
-  const count=f.requests.length;f.events.alarm({name:'ludy-uber-watchdog'});await f.status();assert.equal(f.requests.length,count);assert.equal(f.saved.connector.token,null);
+  for(const status of [401,403]){
+    const f=fixture();await f.start();f.respond({ok:false,status});const result=await f.read();assert.equal(result.data.active,false);assert.equal(result.data.paired,false);assert.equal(result.data.state,'pairing_required');
+    const count=f.requests.length;f.events.alarm({name:'ludy-uber-watchdog'});await f.status();assert.equal(f.requests.length,count);assert.equal(f.saved.connector.token,null);
+  }
 });
 test('same-page reload is recovered automatically, another fleet is never adopted',async()=>{
   const f=fixture();await f.start();await f.read();const before=f.saved.connector.runId;
@@ -72,23 +140,23 @@ test('Live Map refreshes after twenty minutes and resumes one collector without 
  await f.call({type:'LUDY_UBER_STOP'});
 });
 test('refresh waits for an entire sweep and its acknowledgement before reloading, without stopping or duplicating it',async()=>{
- const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.6',busy:true});f.advance(20*60000);
+ const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.7',busy:true});f.advance(20*60000);
  const stops=f.messages.filter(m=>m.type==='LUDY_UBER_STOP').length;f.events.alarm({name:'ludy-uber-map-refresh'});await f.status();assert.equal(f.reloads.length,0);assert.equal(f.saved.connector.refreshPending,true);assert.equal(f.messages.filter(m=>m.type==='LUDY_UBER_STOP').length,stops);
- await f.read();f.content({running:true,runId,version:'0.6.6',busy:false});const sender={id:ID,url:URL_UBER,frameId:0,tab:{id:7}};
+ await f.read();f.content({running:true,runId,version:'0.6.7',busy:false});const sender={id:ID,url:URL_UBER,frameId:0,tab:{id:7}};
  assert.equal((await f.call({type:'LUDY_UBER_REFRESH_READY',runId},sender)).ok,true);assert.equal(f.reloads.length,1);
  await f.call({type:'LUDY_UBER_REFRESH_READY',runId},sender);assert.equal(f.reloads.length,1);await f.call({type:'LUDY_UBER_STOP'});
 });
 test('stopping while refresh waits cancels future reloads and rejects late ready signals',async()=>{
- const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.6',busy:true});f.advance(20*60000);f.events.alarm({name:'ludy-uber-map-refresh'});await f.status();await f.call({type:'LUDY_UBER_STOP'});
+ const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.7',busy:true});f.advance(20*60000);f.events.alarm({name:'ludy-uber-map-refresh'});await f.status();await f.call({type:'LUDY_UBER_STOP'});
  assert.equal((await f.call({type:'LUDY_UBER_REFRESH_READY',runId},{id:ID,url:URL_UBER,frameId:0,tab:{id:7}})).ok,false);f.events.alarm({name:'ludy-uber-map-refresh'});f.events.updated(7,{status:'complete'});await f.status();assert.equal(f.reloads.length,0);assert.equal(f.alarms.size,0);assert.equal(f.saved.connector.token,token);
 });
 test('hidden or changed pages are not refreshed and a failed browser reload resumes collection before retry',async()=>{
- const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.6',hidden:true});f.advance(20*60000);f.events.alarm({name:'ludy-uber-map-refresh'});await f.status();assert.equal(f.reloads.length,0);
- f.content({running:true,runId,version:'0.6.6'});f.reloadError(Error('browser refused'));f.events.alarm({name:'ludy-uber-watchdog'});await f.status();assert.equal(f.reloads.length,0);assert.equal(f.messages.at(-1).type,'LUDY_UBER_CANCEL_REFRESH');assert.equal(f.saved.connector.active,true);assert.equal(f.saved.connector.lastRefreshAt,null);
+ const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.7',hidden:true});f.advance(20*60000);f.events.alarm({name:'ludy-uber-map-refresh'});await f.status();assert.equal(f.reloads.length,0);
+ f.content({running:true,runId,version:'0.6.7'});f.reloadError(Error('browser refused'));f.events.alarm({name:'ludy-uber-watchdog'});await f.status();assert.equal(f.reloads.length,0);assert.equal(f.messages.at(-1).type,'LUDY_UBER_CANCEL_REFRESH');assert.equal(f.saved.connector.active,true);assert.equal(f.saved.connector.lastRefreshAt,null);
  f.reloadError(null);f.advance(60000);f.events.alarm({name:'ludy-uber-watchdog'});await f.status();assert.equal(f.reloads.length,1);await f.call({type:'LUDY_UBER_STOP'});
 });
 test('worker recreation preserves the twenty-minute schedule and a foreign tab cannot request refresh',async()=>{
- const f=fixture();await f.start();const g=fixture(structuredClone(f.saved));await g.status();g.content({running:true,runId:g.saved.connector.runId,version:'0.6.6'});
+ const f=fixture();await f.start();const g=fixture(structuredClone(f.saved));await g.status();g.content({running:true,runId:g.saved.connector.runId,version:'0.6.7'});
  const request={type:'LUDY_UBER_REFRESH_READY',runId:g.saved.connector.runId};assert.equal((await g.call(request,{id:ID,url:URL_UBER.replace('/livemap','/reports'),frameId:0,tab:{id:7}})).ok,false);
  g.advance(20*60000);g.events.alarm({name:'ludy-uber-map-refresh'});await g.status();assert.equal(g.reloads.length,1);assert.equal(g.saved.connector.collectorId,f.saved.connector.collectorId);await f.call({type:'LUDY_UBER_STOP'});await g.call({type:'LUDY_UBER_STOP'});
 });
@@ -201,11 +269,13 @@ test('popup describes standby refresh as suspended while preserving the explicit
 
 test('a message with no response cannot freeze the visible content reader forever',async()=>{
  const contentSource=await fs.readFile(new URL('content.js',root),'utf8');let listener,requests=0,id=0;const ticks=new Map(),deadlines=new Map();
- const context=vm.createContext({AbortController,LudyUberScanner:{scan:async()=>({rows:[]})},chrome:{runtime:{id:ID,onMessage:{addListener:fn=>{listener=fn;}},sendMessage:()=>{requests++;return new Promise(()=>{});}}},document:{addEventListener(){}},addEventListener(){},setInterval:fn=>{ticks.set(1,fn);return 1;},clearInterval:n=>ticks.delete(n),setTimeout:fn=>{deadlines.set(++id,fn);return id;},clearTimeout:n=>deadlines.delete(n)});
+ const context=vm.createContext({AbortController,LudyUberScanner:{scan:async()=>({rows:[]})},chrome:{runtime:{id:ID,onMessage:{addListener:fn=>{listener=fn;}},sendMessage:()=>{requests++;return new Promise(()=>{});}}},document:{addEventListener(){}},addEventListener(){},setInterval:fn=>{ticks.set(1,fn);return 1;},clearInterval:n=>ticks.delete(n),setTimeout:(fn,delay)=>{deadlines.set(++id,{fn,delay});return id;},clearTimeout:n=>deadlines.delete(n)});
  vm.runInContext(contentSource,context);listener({type:'LUDY_UBER_START',runId:'run'},{id:ID},()=>{});await new Promise(resolve=>setImmediate(resolve));assert.equal(requests,1);
- for(const fn of deadlines.values())fn();await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual([...deadlines.values()].map(timer=>timer.delay),[35000],'the reader waits longer than the local POST deadline');
+ await ticks.get(1)();assert.equal(requests,1,'the next scan tick cannot overlap the pending acknowledgement');
+ for(const timer of deadlines.values())timer.fn();await new Promise(resolve=>setImmediate(resolve));
  void ticks.get(1)();await new Promise(resolve=>setImmediate(resolve));assert.equal(requests,2,'a later fresh read is attempted after the first message times out');
- listener({type:'LUDY_UBER_STOP'},{id:ID},()=>{});for(const fn of deadlines.values())fn();await new Promise(resolve=>setImmediate(resolve));assert.equal(ticks.size,0);
+ listener({type:'LUDY_UBER_STOP'},{id:ID},()=>{});for(const timer of deadlines.values())timer.fn();await new Promise(resolve=>setImmediate(resolve));assert.equal(ticks.size,0);
 });
 
 test('the updated extension injects the scanner before content and reports complete or partial list coverage',async()=>{

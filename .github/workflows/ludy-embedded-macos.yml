@@ -53,7 +53,7 @@ jobs:
           } finally {await fs.rm(root,{recursive:true,force:true});}
           NODE
       - name: Vérifier les connecteurs et le mode permanent sur Windows
-        run: node --test staging/tests/windows-bolt-credentials.test.mjs staging/tests/windows-connectors.test.mjs staging/tests/bolt-connectors-ui.test.mjs staging/tests/desktop-worker-ui.test.mjs staging/tests/desktop-auth.test.mjs staging/tests/desktop-session.test.mjs staging/tests/desktop-coordination.test.mjs staging/tests/app-session-lifecycle.test.mjs staging/tests/embedded-permanent.test.mjs
+        run: node --test staging/tests/windows-bolt-credentials.test.mjs staging/tests/windows-connectors.test.mjs staging/tests/bolt-connectors-ui.test.mjs staging/tests/desktop-worker-ui.test.mjs staging/tests/desktop-auth.test.mjs staging/tests/desktop-session.test.mjs staging/tests/desktop-coordination.test.mjs staging/tests/app-session-lifecycle.test.mjs staging/tests/embedded-permanent.test.mjs staging/tests/fleet-batching.test.mjs staging/tests/fleet-api.test.mjs staging/tests/uber-extension.test.mjs staging/tests/uber-durability.test.mjs staging/tests/uber-sweep-protocol.test.mjs
   build:
     name: macOS ${{ matrix.label }}
     if: github.repository == 'awt-707/flotte-geotab' && github.ref == 'refs/heads/staging'

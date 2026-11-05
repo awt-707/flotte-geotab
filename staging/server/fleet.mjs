@@ -104,10 +104,21 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
     return id;
   }
   async function writeRows(source,rows){
-    const src=(await db('fleet_sources',{params:{id:eq(source)}}))[0];
-    const received=new Date(now()).toISOString();let added=0;
+    if(!rows.length)return 0;
+    const [sources,identities,latest]=await Promise.all([
+      db('fleet_sources',{params:{id:eq(source)}}),
+      list('fleet_identities',{source:eq(source)}),list('fleet_latest',{source:eq(source)})
+    ]);
+    const src=sources[0],byKey=new Map(identities.map(id=>[id.source_key,id])),previousById=new Map(latest.map(row=>[row.identity_id,row]));
+    const received=new Date(now()).toISOString(),observations=[],updates=new Map();
     for(const row of rows){
-      const id=await identity(source,row),previous=(await db('fleet_latest',{params:{identity_id:eq(id.id)}}))?.[0];
+      const key=sourceKey(row.organizationId,row.sourceId,row.name);let id=byKey.get(key);
+      if(!id){
+        id=await identity(source,row);byKey.set(key,id);
+        const previous=(await db('fleet_latest',{params:{identity_id:eq(id.id)}}))?.[0];
+        if(previous)previousById.set(id.id,previous);
+      }
+      const previous=previousById.get(id.id);
       if(previous && Date.parse(previous.observed_at)>=Date.parse(row.readAt))continue;
       const evidence={...(row.evidence || {method:'visible_dom',raw_state:row.rawState || null,source_time_known:false}),
         ...(row.vehicleLabel&&row.vehicleModel?{vehicle_model:String(row.vehicleModel).slice(0,160)}:{}),
@@ -115,10 +126,14 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
       const data={identity_id:id.id,driver_id:id.driver_id,source,status:row.state,observed_at:row.readAt,received_at:received,source_at:row.sourceAt || null,event_at:row.eventAt || null,vehicle_label:row.vehicleLabel || null,evidence};
       const continuity=src.status==='healthy'?previous:null;
       const counters=nextCounters(continuity,data,src.stale_after_s);
-      await db('fleet_observations',{method:'POST',params:{on_conflict:'identity_id,observed_at'},body:data,prefer:'resolution=ignore-duplicates'});
-      await upsert('fleet_latest',[{...data,...counters}],'identity_id');added++;
+      const next={...data,...counters};observations.push(data);updates.set(id.id,next);previousById.set(id.id,next);
     }
-    return added;
+    // Keep each accepted observation, but publish only the final state for an
+    // identity. The overlay above preserves counter continuity and input order.
+    for(let offset=0;offset<observations.length;offset+=1000)await db('fleet_observations',{method:'POST',params:{on_conflict:'identity_id,observed_at'},body:observations.slice(offset,offset+1000),prefer:'resolution=ignore-duplicates'});
+    const latestRows=[...updates.values()];
+    for(let offset=0;offset<latestRows.length;offset+=1000)await upsert('fleet_latest',latestRows.slice(offset,offset+1000),'identity_id');
+    return observations.length;
   }
   async function reconcileDurationAlerts(){
     // Run once after a complete, healthy batch and canonical identity reconciliation.

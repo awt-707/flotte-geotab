@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const VERSION='0.6.6',previous=globalThis.__ludyUberCollector;
+  const VERSION='0.6.7',ACK_TIMEOUT_MS=35000,previous=globalThis.__ludyUberCollector;
   if(previous?.version===VERSION)return;
   // Old injected listeners cannot be removed without their original callback.
   // Require one page reload instead of running two collectors in the same tab.
@@ -21,7 +21,7 @@
     try{
       const result=await globalThis.LudyUberScanner.scan({signal:task.abort.signal});
       if(task.abort.signal.aborted||runId!==current||job!==task)return;
-      const reply=await Promise.race([api.runtime.sendMessage({type:'LUDY_UBER_READ',runId:current,result}),new Promise((_,reject)=>{deadline=setTimeout(()=>reject(Error('Lecture locale sans réponse.')),12000);})]);
+      const reply=await Promise.race([api.runtime.sendMessage({type:'LUDY_UBER_READ',runId:current,result}),new Promise((_,reject)=>{deadline=setTimeout(()=>reject(Error('Lecture locale sans réponse.')),ACK_TIMEOUT_MS);})]);
       if(runId===current&&reply?.ok&&reply.data?.active===false)stop();
     }catch{}finally{clearTimeout(deadline);if(job===task)job=null;refreshReady();}
   }

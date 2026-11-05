@@ -2,13 +2,15 @@
 if(typeof importScripts==='function')importScripts('protocol.js','reports-reader.js','reports-background.js');
 const extensionApi=globalThis.browser || globalThis.chrome;
 const bridge=globalThis.LudyUberProtocol;
-const WATCHDOG='ludy-uber-watchdog',REFRESH_ALARM='ludy-uber-map-refresh',REFRESH_MS=20*60000,RETRY_MIN=15000,RETRY_MAX=120000,READER_VERSION='0.6.6';
+const WATCHDOG='ludy-uber-watchdog',REFRESH_ALARM='ludy-uber-map-refresh',REFRESH_MS=20*60000,RETRY_MIN=15000,RETRY_MAX=120000,TRANSMIT_MS=25000,READER_VERSION='0.6.7';
 const UBER_ORIGIN='https://fleethub.uber.com/*';
 const storage=extensionApi.storage.local || extensionApi.storage.session;
-let connector={collectorId:null,token:null,tabId:null,runId:null,mapUrl:null,active:false,standby:false,autoResume:false,state:'stopped',lastReadAt:null,lastSentAt:null,lastHealthyAt:null,nextAttemptAt:0,nextRefreshAt:0,lastRefreshAt:null,refreshPending:false,failures:0,rows:0,coverage:null,message:'Associez Ludy puis démarrez la lecture de la Live Map.'};
+let connector={collectorId:null,token:null,tabId:null,runId:null,mapUrl:null,active:false,standby:false,autoResume:false,state:'stopped',lastReadAt:null,lastSentAt:null,lastHealthyAt:null,nextAttemptAt:0,pendingUntil:0,nextRefreshAt:0,lastRefreshAt:null,refreshPending:false,failures:0,rows:0,coverage:null,message:'Associez Ludy puis démarrez la lecture de la Live Map.'};
 let reportsAutomation=null;
 let collectionPoll=null,collectionPollRevision=0;
 const cancelCollectionPoll=()=>{collectionPollRevision++;collectionPoll?.abort();};
+let transmission=null,transmissionRevision=0,pendingReads=0;
+const cancelTransmission=()=>{transmissionRevision++;transmission?.abort();};
 const publicCoverage=value=>value?.mode==='list_sweep'&&typeof value.complete==='boolean'&&Number.isInteger(value.observed)&&value.observed>=0&&value.observed<=200
   ?{mode:'list_sweep',complete:value.complete,observed:value.observed,...(typeof value.reason==='string'&&value.reason.length<=160?{reason:value.reason}:{}),
     ...(Number.isInteger(value.vehicleObserved)&&value.vehicleObserved>=0&&value.vehicleObserved<=value.observed?{vehicleObserved:value.vehicleObserved}:{}),
@@ -20,6 +22,14 @@ const ready=(async()=>{
   if(saved.connector&&typeof saved.connector==='object'){
     for(const key of Object.keys(connector))if(key in saved.connector)connector[key]=saved.connector[key];
     if(!connector.token||!connector.collectorId){connector.active=false;connector.tabId=null;connector.runId=null;}
+    // An interrupted worker never replays its batch or overlaps its possibly
+    // still-running server request. Persist only a bounded deadline, not rows.
+    if(!Number.isFinite(connector.pendingUntil)||connector.pendingUntil<=Date.now())connector.pendingUntil=0;
+    else {
+      connector.pendingUntil=Math.min(connector.pendingUntil,Date.now()+TRANSMIT_MS+RETRY_MIN);
+      connector.nextAttemptAt=Math.max(connector.nextAttemptAt,connector.pendingUntil);
+      if(connector.active){connector.state='retrying';connector.message='Transmission interrompue. Attente avant une nouvelle lecture de la Live Map.';}
+    }
     await storage.set({connector});
     if(extensionApi.storage.local)await extensionApi.storage.session?.remove?.('connector');
   }
@@ -34,22 +44,37 @@ const scope=url=>{try{return new URL(url).pathname.split('/')[2]?.toLowerCase();
 const automaticAllowed=async()=>connector.autoResume&&!!await extensionApi.permissions?.contains?.({origins:[UBER_ORIGIN]});
 async function transmit(result) {
   const data=bridge.payload(result,connector.collectorId);
-  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
+  const observing=result.status==='observing',revision=transmissionRevision,controller=new AbortController();
+  const cancelled=()=>Error(revision!==transmissionRevision?'cancelled':'local_timeout');
+  let rejectAbort;const interrupted=new Promise((_,reject)=>{rejectAbort=()=>reject(cancelled());});
+  void interrupted.catch(()=>{}); // Cancellation may precede a slow storage write.
+  controller.signal.addEventListener('abort',rejectAbort,{once:true});transmission=controller;
+  // Keep fetch below Chrome MV3's 30-second response limit. The content reader
+  // waits longer than this deadline and never schedules an overlapping sweep.
+  const timeout=setTimeout(()=>controller.abort(),observing?TRANSMIT_MS:5000);
   try{
-    const response=await fetch(bridge.destination(bridge.ENDPOINT),{method:'POST',headers:{Authorization:`Bearer ${connector.token}`,'Content-Type':'application/json'},body:JSON.stringify(data),credentials:'omit',redirect:'error',cache:'no-store',signal:controller.signal});
+    if(observing){connector.pendingUntil=Date.now()+TRANSMIT_MS+RETRY_MIN;await persist();}
+    if(controller.signal.aborted)throw cancelled();
+    const response=await Promise.race([fetch(bridge.destination(bridge.ENDPOINT),{method:'POST',headers:{Authorization:`Bearer ${connector.token}`,'Content-Type':'application/json'},body:JSON.stringify(data),credentials:'omit',redirect:'error',cache:'no-store',signal:controller.signal}),interrupted]);
+    if(controller.signal.aborted||revision!==transmissionRevision)throw cancelled();
     if(!response.ok){const error=Error(response.status===401||response.status===403?'pairing':response.status===409?'collector_conflict':'local');
       if(response.status===409)error.collectionInactive=true;
       if(response.status===429){const retry=Number(response.headers?.get?.('retry-after'));if(Number.isFinite(retry)&&retry>0)error.retryMs=Math.min(300000,retry*1000);}
       throw error;
     }
-    const accepted=await response.json?.();
+    const accepted=await Promise.race([response.json?.(),interrupted]);
+    if(controller.signal.aborted||revision!==transmissionRevision)throw cancelled();
     if(result.status==='observing'&&accepted?.ignored)throw Error(accepted.reason==='stale_batch'?'stale_read':'collector_conflict');
     connector.lastSentAt=result.observedAt;connector.rows=result.rows.length;connector.state=result.status;connector.coverage=publicCoverage(data.coverage);
     if(result.status==='observing')connector.lastHealthyAt=result.observedAt;
     connector.failures=0;connector.nextAttemptAt=0;
     const scope=connector.coverage?(connector.coverage.complete?'Liste affichée parcourue':'Lecture partielle de la liste'):'Vue visible';
     connector.message=result.status==='observing'?`${scope} : ${result.rows.length} chauffeur(s) transmis à Ludy. Parcours automatique actif.`:result.warnings[0] || 'Lecture arrêtée.';
-  }finally{clearTimeout(timeout);}
+  }finally{
+    clearTimeout(timeout);controller.signal.removeEventListener('abort',rejectAbort);
+    if(transmission===controller)transmission=null;
+    if(observing&&revision===transmissionRevision)connector.pendingUntil=0;
+  }
 }
 async function stop(message='Lecture arrêtée.',notify=true) {
   const tabId=connector.tabId,wasActive=connector.active;
@@ -61,6 +86,7 @@ async function stop(message='Lecture arrêtée.',notify=true) {
   connector.message=message;await persist();return publicState();
 }
 async function failure(error) {
+  if(error?.message==='cancelled')return publicState();
   if(error?.message==='pairing'){
     await stop('Association expirée ou refusée. Créez un nouveau code dans Ludy.',false);
     connector.token=null;connector.state='pairing_required';await persist();return publicState();
@@ -110,7 +136,7 @@ async function begin(tab) {
     await extensionApi.scripting.executeScript({target:{tabId:tab.id,frameIds:[0]},files:['reader.js','scanner.js','content.js']});
     await extensionApi.tabs.sendMessage(tab.id,{type:'LUDY_UBER_START',runId:connector.runId});
   }catch{
-    connector.state='waiting_page';connector.message='Rechargez la page Uber pour appliquer l’extension 0.6.6, puis démarrez la lecture.';await persist();
+    connector.state='waiting_page';connector.message='Rechargez la page Uber pour appliquer l’extension 0.6.7, puis démarrez la lecture.';await persist();
   }
   return publicState();
 }
@@ -210,30 +236,39 @@ async function handle(message,sender) {
   if(message.type==='LUDY_UBER_READ'){
     const expected=scope(sender.url);if(message.result?.organizationId!==expected)throw Error('Flotte incohérente.');
     bridge.payload(message.result,connector.collectorId);connector.lastReadAt=new Date().toISOString();
-    if(Date.now()<connector.nextAttemptAt){await persist();return publicState();}
+    if(message.result.status==='observing'&&Date.now()<Math.max(connector.nextAttemptAt,connector.pendingUntil)){
+      connector.nextAttemptAt=Math.max(connector.nextAttemptAt,connector.pendingUntil);await persist();return publicState();
+    }
     try{await transmit(message.result);await persist();return publicState();}catch(error){return failure(error);}
   }
   throw Error('Action refusée.');
 }
 reportsAutomation=globalThis.LudyUberReportsAutomation?.create({api:extensionApi,storage,getPairing:()=>({token:connector.token,collectorId:connector.collectorId}),pairingReady:ready})||null;
 extensionApi.runtime.onMessage.addListener((message,sender,respond)=>{
-  // A stop/pairing change interrupts an awaited status check immediately. Its
-  // serialized handler will then commit the new state without starting a scan.
+  // Explicit stop/pairing changes interrupt pending local I/O before entering
+  // the serialized queue. Late responses cannot confirm the cancelled run.
   if(sender.id===extensionApi.runtime.id&&sender.url===extensionApi.runtime.getURL('popup.html')&&
-    (['LUDY_UBER_STOP','LUDY_UBER_FORGET','LUDY_UBER_PAIR'].includes(message?.type)||message?.type==='LUDY_UBER_AUTO'&&message.enabled===false))cancelCollectionPoll();
+    (['LUDY_UBER_STOP','LUDY_UBER_FORGET','LUDY_UBER_PAIR'].includes(message?.type)||message?.type==='LUDY_UBER_AUTO'&&message.enabled===false)){cancelCollectionPoll();cancelTransmission();}
+  const trackedPage=sender.id===extensionApi.runtime.id&&sender.tab?.id===connector.tabId&&sender.frameId===0&&message?.runId===connector.runId&&bridge.permittedUrl(sender.url);
+  if(trackedPage&&(message.type==='LUDY_UBER_CLOSED'||message.type==='LUDY_UBER_READ'&&message.result?.status!=='observing'))cancelTransmission();
   if(typeof message?.type==='string'&&message.type.startsWith('LUDY_UBER_REPORTS_')){
     if(!reportsAutomation){respond({ok:false,error:'Rechargez l’extension pour activer les rapports.'});return false;}
     reportsAutomation.handle(message,sender).then(data=>respond({ok:true,data}),error=>respond({ok:false,error:String(error.message||'Rapports indisponibles.').slice(0,400)}));return true;
   }
-  serialize(()=>handle(message,sender)).then(data=>respond({ok:true,data}),()=>respond({ok:false,error:'Action impossible. Vérifiez la Live Map, le code d’association et le serveur local.'}));
+  const read=sender.id===extensionApi.runtime.id&&sender.tab&&sender.frameId===0&&message?.type==='LUDY_UBER_READ'&&bridge.permittedUrl(sender.url);
+  // Never queue observations behind an unfinished ingest: by the time it
+  // finishes they may be stale. The content reader will take a fresh sample.
+  if(read&&message.result?.status==='observing'&&pendingReads){respond({ok:false,error:'Une lecture est déjà en cours de transmission.'});return false;}
+  if(read)pendingReads++;
+  serialize(()=>handle(message,sender)).then(data=>{if(read)pendingReads--;respond({ok:true,data});},()=>{if(read)pendingReads--;respond({ok:false,error:'Action impossible. Vérifiez la Live Map, le code d’association et le serveur local.'});});
   return true;
 });
-extensionApi.tabs.onRemoved.addListener(tabId=>{void serialize(async()=>{
+extensionApi.tabs.onRemoved.addListener(tabId=>{if(tabId===connector.tabId)cancelTransmission();void serialize(async()=>{
   if(tabId!==connector.tabId)return;
   if(await automaticAllowed())return waitForPage('Onglet Uber fermé. Reprise automatique quand la même Live Map sera visible.');
   return stop('Onglet Uber fermé.');
 });});
-extensionApi.tabs.onUpdated.addListener((tabId,change)=>{void serialize(async()=>{
+extensionApi.tabs.onUpdated.addListener((tabId,change)=>{if(tabId===connector.tabId&&change.url&&(!bridge.permittedUrl(change.url)||connector.mapUrl&&scope(change.url)!==scope(connector.mapUrl)))cancelTransmission();void serialize(async()=>{
   if(!connector.active)return;
   if(tabId!==connector.tabId){if(connector.autoResume&&connector.tabId===null&&change.status==='complete')await recover();return;}
   if(change.url&&(!bridge.permittedUrl(change.url)||connector.mapUrl&&scope(change.url)!==scope(connector.mapUrl))) {
