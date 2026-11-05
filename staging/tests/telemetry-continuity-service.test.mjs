@@ -120,12 +120,66 @@ test('repeated polls deduplicate independently of collection time while changed 
   assert.equal(db.stored.length, 2); assert.equal(db.stored[0].source_event_id, db.stored[1].source_event_id);
   assert.notEqual(db.stored[0].fingerprint, db.stored[1].fingerprint);
   assert.equal(service.status().duplicates, 1); assert.equal(service.status().conflicts, 1);
+  assert.equal(db.calls.length, 2, 'the acknowledged exact duplicate needs no new RPC');
+  await service.onGeotabTelemetry([sample(0)]); await service.flush();
+  assert.equal(db.calls.length, 2, 'a previously archived competing version remains an exact duplicate');
+});
+
+test('sixteen unchanged GPS samples generate no archive RPC after durable acknowledgement', async t => {
+  const {service, db, clock, pendingPath} = await setup(t);
+  const rows = Array.from({length: 16}, (_, index) => position(0, {key: 'car-' + index, vehicle_key: 'car-' + index, device_id: 'device-' + index}));
+  await service.onGeotabPositions(rows); await service.flush();
+  assert.equal(db.calls.length, 16); const journal = await readFile(pendingPath, 'utf8');
+  clock.value += 3000;
+  const repeated = await service.onGeotabPositions(rows); await service.flush();
+  assert.equal(repeated.accepted, 0); assert.equal(repeated.duplicates, 16); assert.equal(db.calls.length, 16);
+  assert.equal(await readFile(pendingPath, 'utf8'), journal, 'the cache never enters the durable journal');
+  await service.onGeotabPositions([{...rows[0], lat: 33.6}]); await service.flush();
+  assert.equal(db.calls.length, 17); assert.equal(db.stored.length, 17);
+  assert.equal(db.stored.at(-1).version, 2, 'changed coordinates at the same provider time stay a competing version');
+});
+
+test('acknowledged keys are bounded per service and evicted observations are safely reconfirmed', async t => {
+  const {service, db} = await setup(t, {maxPending: 2});
+  for (const second of [0, 1, 0, 2]) {await service.onGeotabTelemetry([sample(second)]); await service.flush();}
+  assert.equal(db.calls.length, 3);
+  await service.onGeotabTelemetry([sample(0)]); await service.flush();
+  assert.equal(db.calls.length, 3, 'recent duplicate refreshed its LRU position');
+  await service.onGeotabTelemetry([sample(1)]); await service.flush();
+  assert.equal(db.calls.length, 4, 'the oldest acknowledged key was evicted');
+  assert.equal(db.stored.length, 3, 'database idempotence still prevents a second archived fact');
+});
+
+test('a replacement service starts with no acknowledgement cache', async t => {
+  const first = await setup(t); await first.service.onGeotabPositions([position(0)]); await first.service.flush();
+  await first.service.close();
+  const replacement = createTelemetryContinuityService({db: first.db, pendingPath: first.pendingPath, now: () => first.clock.value});
+  t.after(() => replacement.close()); await replacement.start();
+  const result = await replacement.onGeotabPositions([position(0)]); await replacement.flush();
+  assert.equal(result.accepted, 1); assert.equal(first.db.calls.length, 2); assert.equal(first.db.stored.length, 1);
+  assert.equal(replacement.status().duplicates, 1);
+});
+
+test('a database acknowledgement is not cached before its journal cleanup is durable', async t => {
+  const {service, db, directory, pendingPath} = await setup(t);
+  const original = db.rpc;
+  db.rpc = async (...args) => {const receipt = await original(...args); await chmod(directory, 0o755); return receipt;};
+  await service.onGeotabPositions([position(0)]); await service.flush();
+  assert.equal(db.stored.length, 1); assert.equal(service.status().persisted, false);
+  assert.equal(JSON.parse(await readFile(pendingPath, 'utf8')).pending.length, 1);
+  await chmod(directory, 0o700); db.rpc = original;
+  const repeated = await service.onGeotabPositions([position(0)]); await service.flush();
+  assert.equal(repeated.accepted, 1, 'an acknowledgement with failed journal cleanup cannot suppress the next sample');
+  assert.equal(db.calls.length, 2); assert.equal(db.stored.length, 1); assert.equal(service.status().persisted, true);
+  await service.onGeotabPositions([position(0)]); await service.flush();assert.equal(db.calls.length, 2);
 });
 
 test('bounded database retries retain exhausted batches across restarts until explicit retry', async t => {
   const first = await setup(t); first.db.fail = true;
   await first.service.onGeotabTelemetry([sample(0)]); await first.service.flush();
   assert.equal(first.db.calls.length, 1); assert.equal(first.service.status().status, 'warning');
+  const repeated = await first.service.onGeotabTelemetry([sample(0)]);
+  assert.equal(repeated.accepted, 0); assert.equal(repeated.duplicates, 1); assert.equal(first.service.status().pending, 1, 'failed acknowledgements remain pending, never cached');
   await first.service.flush(); assert.equal(first.db.calls.length, 1, 'backoff respected');
   first.clock.value += 60000; await first.service.flush();
   assert.equal(first.db.calls.length, 2); assert.equal(first.service.status().exhausted, 1);
@@ -152,6 +206,7 @@ test('an untrusted receipt after a committed write keeps the journal and retries
   const {service, db} = await setup(t, {retryDelaysMs: []}); db.malformed = true;
   await service.onGeotabTelemetry([sample(0)]); await service.flush();
   assert.equal(db.stored.length, 1); assert.equal(service.status().pending, 1); assert.equal(service.status().databaseError, 'archive_receipt');
+  await service.onGeotabTelemetry([sample(0)]); assert.equal(service.status().pending, 1, 'malformed receipts never create acknowledged cache entries');
   db.malformed = false; await service.retryPending();
   assert.equal(db.stored.length, 1); assert.equal(service.status().duplicates, 1); assert.equal(service.status().pending, 0);
 });

@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const VERSION='0.6.7',ACK_TIMEOUT_MS=35000,previous=globalThis.__ludyUberCollector;
+  const VERSION='0.6.8',ACK_TIMEOUT_MS=35000,previous=globalThis.__ludyUberCollector;
   if(previous?.version===VERSION)return;
   // Old injected listeners cannot be removed without their original callback.
   // Require one page reload instead of running two collectors in the same tab.

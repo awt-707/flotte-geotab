@@ -142,6 +142,55 @@ async function callApi(handler,path,body,token='admin'){
  const req=Readable.from(body===undefined?[]:[Buffer.from(JSON.stringify(body))]);Object.assign(req,{url:'/api/fleet/'+path,method:body===undefined?'GET':'POST',headers:{host:'127.0.0.1:4173',authorization:'Bearer '+token},socket:{remoteAddress:'127.0.0.1'}});
  let code,value;await handler(req,{writeHead:s=>{code=s;},end:s=>{value=JSON.parse(s);},setHeader(){}});return {code,value};
 }
+function beginApi(handler,path,body){
+ const req=Readable.from([Buffer.from(JSON.stringify(body))]);Object.assign(req,{url:'/api/fleet/'+path,method:'POST',headers:{host:'127.0.0.1:4173',authorization:'Bearer admin'},socket:{remoteAddress:'127.0.0.1'}});
+ let resolveReply,code,ends=0;const response=new Promise(resolve=>{resolveReply=resolve;});
+ const completed=handler(req,{writeHead:status=>{code=status;},end:json=>{ends++;resolveReply({code,value:JSON.parse(json)});},setHeader(){}});
+ return {response,completed,get ends(){return ends;}};
+}
+test('Uber acknowledges durable observations while derived work retains the queue ahead of the next batch',{timeout:3000},async t=>{
+ const local=mockLocal();let at=Date.parse('2026-11-05T12:00:00Z'),release;
+ const gate=new Promise(resolve=>{release=resolve;});t.after(()=>release());let reconciliations=0;
+ const fetchFn=async(url,options)=>{
+  if(new URL(url).pathname.endsWith('/rpc/fleet_reconcile_vehicle_contracts')){if(++reconciliations===1)await gate;return Response.json({}, {status:503});}
+  return local.fetchFn(url,options);
+ };
+ const handler=createFleetApi({supabaseUrl:'http://127.0.0.1:57421',serviceKey:'service',anonKey:'anon',fetchFn,now:()=>at});t.after(()=>handler.close());
+ const first=beginApi(handler,'uber/ingest',uberBatch(at,'offline')),accepted=await first.response;
+ assert.equal(accepted.code,200);assert.equal(accepted.value.observations,1);assert.equal(first.ends,1);
+ assert.equal(local.tables.fleet_latest.length,1);assert.equal(local.tables.fleet_sources[0].status,'healthy');
+ at+=1000;const second=beginApi(handler,'uber/ingest',uberBatch(at,'available'));let secondAcknowledged=false;second.response.then(()=>{secondAcknowledged=true;});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(reconciliations,1);assert.equal(secondAcknowledged,false);assert.equal(local.tables.fleet_observations.length,1,'later observations cannot overtake pending alert processing');
+ release();await first.completed;assert.equal((await second.response).code,200);await second.completed;
+ assert.equal(first.ends,1);assert.equal(second.ends,1);assert.equal(local.tables.fleet_observations.length,2);assert.equal(local.tables.fleet_latest[0].status,'available');
+});
+
+for(const failure of ['fleet_observations','fleet_latest','health'])test('Uber does not acknowledge before '+failure+' is durable',async t=>{
+ const local=mockLocal(),at=Date.parse('2026-11-05T12:00:00Z');let reconciliations=0;
+ const fetchFn=async(url,options={})=>{
+  const resource=new URL(url).pathname.split('/').at(-1);
+  if(resource==='fleet_reconcile_vehicle_contracts')reconciliations++;
+  if(options.method==='POST'&&resource===failure||failure==='health'&&resource==='fleet_sources'&&options.method==='PATCH'&&JSON.parse(options.body).status==='healthy')return Response.json({}, {status:503});
+  return local.fetchFn(url,options);
+ };
+ const handler=createFleetApi({supabaseUrl:'http://127.0.0.1:57421',serviceKey:'service',anonKey:'anon',fetchFn,now:()=>at});t.after(()=>handler.close());
+ const request=beginApi(handler,'uber/ingest',uberBatch(at,'offline'));assert.equal((await request.response).code,502);await request.completed;
+ assert.equal(request.ends,1);assert.equal(reconciliations,0);assert.equal(local.tables.fleet_sources[0].status,'error');
+});
+
+test('a failed derived alert calculation after Uber acknowledgement records degradation without a second response',async t=>{
+ const local=mockLocal(),at=Date.parse('2026-11-05T12:00:00Z');
+ const fetchFn=async(url,options)=>{
+  const path=new URL(url).pathname;
+  if(path.includes('/rpc/')||path.endsWith('/fleet_settings'))return Response.json({}, {status:503});
+  return local.fetchFn(url,options);
+ };
+ const handler=createFleetApi({supabaseUrl:'http://127.0.0.1:57421',serviceKey:'service',anonKey:'anon',fetchFn,now:()=>at});t.after(()=>handler.close());
+ const request=beginApi(handler,'uber/ingest',uberBatch(at,'offline'));assert.equal((await request.response).code,200);await request.completed;
+ assert.equal(request.ends,1);assert.equal(local.tables.fleet_observations.length,1);assert.equal(local.tables.fleet_sources[0].status,'error');
+ assert.match(local.tables.fleet_sources[0].last_error,/Observations Uber reçues.*traitement des alertes interrompu/);
+ assert.equal(local.tables.fleet_latest[0].offline_samples,0,'failed alert processing remains conservative about continuity');
+});
 test('paired collection status is minimal, available in standby and rejects invalid or revoked pairing without provider calls',async()=>{
  const {tables,fetchFn,requests}=mockLocal();let active=false;
  const handler=createFleetApi({supabaseUrl:'http://127.0.0.1:57421',serviceKey:'service',anonKey:'anon',fetchFn,isCollectionActive:()=>active});

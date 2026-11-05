@@ -93,7 +93,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
     onPositions:async(rows,source)=>{await onGeotabPositions(rows,source).catch(()=>{});if(matcher.error)throw new Error('Associations automatiques indisponibles');return motion.update(rows,source);},onTelemetry:onGeotabTelemetry,readMotion:motion.read});
   const myclicar=Myclicar({db,list,patch,health,credentialsPath:myclicarCredentialsPath,fetchFn,now,setTimer,clearTimer,
     afterInventorySync:()=>geotab.autoAssociate(),
-    afterSync:()=>serial(async()=>{const result=await matcher.run({force:true});await disconnections.reconcile().catch(()=>{});return result;})});
+    afterSync:()=>serial(async()=>{const result=await matcher.run({force:true,includeReview:false});await disconnections.reconcile().catch(()=>{});return result;})});
   async function identity(source,row){
     const key=sourceKey(row.organizationId,row.sourceId,row.name);
     let id=(await db('fleet_identities',{params:{source:eq(source),source_key:eq(key)}}))?.[0];
@@ -187,7 +187,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
           for(let i=0;i<snap.vehicles.length;i+=500)await upsert('fleet_provider_vehicles',snap.vehicles.slice(i,i+500),'source,organization_id,external_id');
           if(generation!==boltGeneration)return {ok:true,ignored:true,polling:false};
           await health('bolt','healthy',{last_success_at:snap.at,last_error:null,coverage:snap.coverage||{kind:'company_roster',drivers:snap.rows.length,vehicles:snap.vehicles.length,companies:snap.companies.length},metadata:{companies:snap.companies}});
-          if(count)await matcher.run({force:true}).catch(()=>{});
+          if(count)await matcher.run({force:true,includeReview:false}).catch(()=>{});
           await reconcileDurationAlerts();
           await disconnections.reconcile().catch(()=>{});
           return {ok:true,source:'bolt',received_at:snap.at,observations:count,drivers:snap.rows.length,vehicles:snap.vehicles.length,companies:snap.companies.length};
@@ -274,6 +274,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
     if(!requestAllowed(req,isBridge)){reply(res,403,{error:'Origine locale non autorisée'});return true;}
     if(isBridge && req.headers.origin){res.setHeader('Access-Control-Allow-Origin',req.headers.origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods',isCollectionStatus?'GET, OPTIONS':'POST, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');res.setHeader('Access-Control-Max-Age','300');}
     if(req.method==='OPTIONS'){if(isBridge){res.writeHead(204);res.end();}else reply(res,405,{error:'Méthode non autorisée'});return true;}
+    let ingestAcknowledged=false;
     try{
       if(isCollectionStatus){
         if(req.method!=='GET')throw httpError(405,'Méthode non autorisée');
@@ -298,12 +299,16 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
           try{
             const count=await writeRows('uber',batch.rows.map(r=>({...r,organizationId:batch.organizationId})));
             await health('uber','healthy',{last_success_at:at,last_attempt_at:at,last_error:null,coverage:{kind:batch.coverage?'list_sweep':'visible_rows_only',drivers:batch.rows.length,ambiguous:batch.ambiguous,...(batch.coverage?{complete:batch.coverage.complete&&batch.ambiguous===0,reason:batch.ambiguous?'ambiguous_identity':batch.coverage.reason,...(batch.coverage.vehicleObserved!==undefined?{vehicleObserved:batch.rows.filter(r=>r.vehicleLabel).length,vehicleComplete:batch.coverage.vehicleComplete===true&&batch.rows.every(r=>r.vehicleLabel)&&batch.ambiguous===0}:{})}:{})},metadata:{collector_id:batch.collectorId,organization_id:batch.organizationId,last_observed_at:batch.observedAt,last_batch_status:batch.status,source_time_known:false}});
-            if(count)await matcher.run({force:true}).catch(()=>{});
+            const accepted={ok:true,observations:count,ambiguous:batch.ambiguous,received_at:at};
+            // Acknowledge durable observations before derived work. Retain this
+            // queue slot until alerts finish, so the next batch cannot overtake it.
+            ingestAcknowledged=true;reply(res,200,accepted);
+            if(count)await matcher.run({force:true,includeReview:false}).catch(()=>{});
             await reconcileDurationAlerts();
             await disconnections.reconcile().catch(()=>{});
-            return {ok:true,observations:count,ambiguous:batch.ambiguous,received_at:at};
-          }catch(error){await health('uber','error',{last_error:'Observations Uber non enregistrées ; reprise en attente.'});throw error;}
-        });reply(res,200,result);return true;
+            return accepted;
+          }catch(error){await health('uber','error',{last_error:ingestAcknowledged?'Observations Uber reçues ; traitement des alertes interrompu, reprise en attente.':'Observations Uber non enregistrées ; reprise en attente.'});throw error;}
+        });if(!ingestAcknowledged)reply(res,200,result);return true;
       }
       const mutation=req.method!=='GET',auth=await authenticate(req,mutation);
       if(u.pathname==='/api/fleet/disconnections'&&req.method==='GET'){
@@ -438,7 +443,7 @@ export function createFleetApi({supabaseUrl,databaseTarget,sharedCollection=fals
         const rows=await db('fleet_drivers',{params:{id:eq(canonical)}});reply(res,200,{ok:true,driver_id:canonical,drivers:rows,...(automatic?{automatic:true,association_pending:!!matcher.error}: {})});return true;
       }
       reply(res,404,{error:'Route inconnue'});
-    }catch(e){reply(res,e.status || 500,{error:e.status?e.message:'Traitement local impossible'});}
+    }catch(e){if(!ingestAcknowledged)reply(res,e.status || 500,{error:e.status?e.message:'Traitement local impossible'});}
     return true;
   };
   // Share the existing pairing verifier: one private token store and the same

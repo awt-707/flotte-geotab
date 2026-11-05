@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ludy · Uber Fleet local",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "description": "Lit la Live Map et collecte les rapports d’activité depuis un onglet Uber Rapports séparé vers Ludy local.",
   "permissions": ["activeTab", "scripting", "storage", "alarms"],
   "host_permissions": ["http://127.0.0.1:4173/*"],

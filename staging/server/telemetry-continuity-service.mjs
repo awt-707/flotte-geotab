@@ -130,6 +130,14 @@ export function createTelemetryContinuityService({db, pendingPath = DEFAULT_PEND
       !Array.isArray(retryDelaysMs) || retryDelaysMs.length > 10 || retryDelaysMs.some(delay => !Number.isSafeInteger(delay) || delay < 1) ||
       !Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60000) throw new TypeError('Configuration d’archive invalide.');
   let pending = new Map(), loaded = false, queue = Promise.resolve(), draining = null, timer = null, closed = false, activeController = null;
+  // Per-service LRU of exact semantic keys already acknowledged by the database
+  // and removed from the durable journal. Never persist this optimization: a
+  // new worker/account must confirm observations with the database again.
+  const acknowledged = new Set();
+  const rememberAcknowledged = key => {
+    acknowledged.delete(key); acknowledged.add(key);
+    if (acknowledged.size > maxPending) acknowledged.delete(acknowledged.values().next().value);
+  };
   let storageError = null, databaseError = null, lastSuccessAt = null, rejected = 0, persisted = true;
   const issues = {}, totals = {inserted: 0, duplicates: 0, conflicts: 0};
   const serial = work => {const task = queue.then(work); queue = task.catch(() => {}); return task;};
@@ -228,7 +236,8 @@ export function createTelemetryContinuityService({db, pendingPath = DEFAULT_PEND
               entry.retryAt = time() + (retryDelaysMs[entry.attempts - 1] || 0);
             }
           }
-          await save().catch(() => {});
+          const saved = await save().then(() => true, () => false);
+          if (receipt && saved) for (const entry of batch) rememberAcknowledged(entry.key);
         });
       }
       return status();
@@ -248,6 +257,7 @@ export function createTelemetryContinuityService({db, pendingPath = DEFAULT_PEND
       for (const event of extracted.events) {
         const key = semanticKey(event);
         if (pending.has(key)) {duplicates++; continue;}
+        if (acknowledged.has(key)) {rememberAcknowledged(key); duplicates++; totals.duplicates++; continue;}
         if (pending.size >= maxPending) {overflow++; continue;}
         pending.set(key, {key, event, attempts: 0, retryAt: time()}); accepted++;
       }

@@ -124,17 +124,18 @@ export function planDriverMatches({drivers=[],reference=[],identities=[],latest=
 }
 
 export function createDriverMatcher({list,db,now=Date.now}) {
-  let pending=null,lastRun=null,lastError=null,nextAt=0;
+  let pending=null,lastRun=null,lastError=null,nextAt=0,runRevision=0;const reviews=new WeakMap();
   async function snapshot(){const [drivers,reference,identities,latest,vehicles,sources,myclicarContracts,contractOverrides]=await Promise.all([
     list('fleet_drivers'),list('drivers',{select:'code,name,agency_id'}),list('fleet_identities',{select:'id,driver_id,source,organization_id'}),
     list('fleet_latest',{select:'driver_id,source,status,observed_at,vehicle_label,evidence'}),list('vehicles',{select:'key,plate,other_plates,agency_id,active'}),
     list('fleet_sources',{select:'id,status,last_success_at,stale_after_s'}),list('fleet_myclicar_contracts',{current:'eq.true'}),
     list('fleet_contract_assignment_overrides',{select:'contract_id,client_code,vehicle_key,effective_start_at'})]);return planDriverMatches({drivers,reference,identities,latest,vehicles,sources,myclicarContracts,contractOverrides,now:now()});}
   async function review(){return {...await snapshot(),last_run:lastRun,last_error:lastError};}
-  async function run({force=false}={}){
-    if(pending)return pending;if(!force&&now()<nextAt)return {ok:true,skipped:true};
-    nextAt=now()+10000;
-    pending=(async()=>{
+  async function run({force=false,includeReview=true}={}){
+    if(!pending){
+      if(!force&&now()<nextAt)return {ok:true,skipped:true};
+      nextAt=now()+10000;runRevision++;
+      pending=(async()=>{
       try{
         await db('rpc/fleet_reconcile_vehicle_contracts',{method:'POST',body:{}});
         const plan=await snapshot();let applied=0,vehicleLinked=0;
@@ -142,7 +143,7 @@ export function createDriverMatcher({list,db,now=Date.now}) {
           const target=await db(row.link_method==='name_spacing'?'rpc/fleet_auto_link_driver_spacing':'rpc/fleet_auto_link_driver',{method:'POST',body:{p_driver:row.driver_id,p_ludy_code:row.ludy_driver_code,p_platform_name:row.driver_name,p_ludy_name:row.ludy_name}});
           if(target)applied++;
         }
-        let cars=await snapshot();
+        let cars=applied?await snapshot():plan;
         // Revoke uncertain automatic evidence before considering new assignments.
         // Guard every write so a concurrent manual correction remains authoritative.
         for(const row of cars.rows.filter(r=>r.vehicle_invalidate))await db('fleet_drivers',{method:'PATCH',params:{id:'eq.'+row.driver_id,vehicle_link_method:'eq.'+row.vehicle_link_method,auto_link_disabled:'eq.false'},body:{vehicle_key:null,vehicle_link_evidence:{}}});
@@ -152,9 +153,19 @@ export function createDriverMatcher({list,db,now=Date.now}) {
             ?await db('rpc/fleet_auto_link_myclicar_vehicle',{method:'POST',body:{p_driver:row.driver_id,p_contract_id:row.vehicle_evidence.contract_id}})
             :await db('rpc/fleet_auto_link_vehicle',{method:'POST',body:{p_driver:row.driver_id,p_vehicle_key:row.vehicle_key,p_evidence:row.vehicle_evidence}});if(applied)vehicleLinked++;
         }
-        lastRun=new Date(now()).toISOString();lastError=null;return {ok:true,applied,vehicle_linked:vehicleLinked,review:await review()};
+        lastRun=new Date(now()).toISOString();lastError=null;return {ok:true,applied,vehicle_linked:vehicleLinked};
       }catch(e){lastError='Rapprochement automatique interrompu. Les associations précédentes sont conservées.';throw e;}
-    })().finally(()=>{pending=null;});return pending;
+      })().finally(()=>{pending=null;});
+    }
+    const operation=pending,revision=runRevision,result=await operation;
+    // Collectors need the applied changes only. A concurrent public caller
+    // still receives its requested review after the shared writes finish.
+    if(!includeReview)return result;
+    if(!reviews.has(operation))reviews.set(operation,review().catch(e=>{
+      if(revision===runRevision)lastError='Rapprochement automatique interrompu. Les associations précédentes sont conservées.';
+      throw e;
+    }));
+    return {...result,review:await reviews.get(operation)};
   }
   return {review,run,get error(){return lastError;}};
 }

@@ -15,7 +15,7 @@ function fixture(saved={}, {fakeTimers=false,onStore}={}){
     storage:{local:{get:async()=>structuredClone(saved),set:async value=>{await onStore?.(value);Object.assign(saved,structuredClone(value));},setAccessLevel:async value=>{trusted=value.accessLevel==='TRUSTED_CONTEXTS';}}},
     permissions:{contains:async()=>permission,onRemoved:event('permissionRemoved')},
     tabs:{query:async()=>[tab,...otherTabs].filter(Boolean),get:async id=>{if(!tab||tab.id!==id)throw Error('missing');return tab;},sendMessage:async(id,message)=>{
-      messages.push(message);if(message.type==='LUDY_UBER_PING')return content;if(message.type==='LUDY_UBER_START')content={running:true,runId:message.runId,version:'0.6.7'};if(message.type==='LUDY_UBER_STOP')content={running:false,runId:null};
+      messages.push(message);if(message.type==='LUDY_UBER_PING')return content;if(message.type==='LUDY_UBER_START')content={running:true,runId:message.runId,version:'0.6.8'};if(message.type==='LUDY_UBER_STOP')content={running:false,runId:null};
       if(message.type==='LUDY_UBER_PREPARE_REFRESH')return {ok:true,runId:content.runId,version:content.version,ready:content.running&&!content.busy&&!content.hidden,busy:!!content.busy};return {ok:true};
     },reload:async(id,options)=>{if(reloadError)throw reloadError;reloads.push({id,options});tab={...tab,status:'loading'};content={running:false,runId:null};},onRemoved:event('removed'),onUpdated:event('updated'),onActivated:event('activated')},
     alarms:{create:async(name,spec)=>{alarms.set(name,spec);},clear:async name=>{alarms.delete(name);},onAlarm:event('alarm')},
@@ -28,7 +28,9 @@ function fixture(saved={}, {fakeTimers=false,onStore}={}){
   const call=(message,sender={id:ID,url:POPUP})=>new Promise(resolve=>listener(message,sender,resolve));
   const batch=()=>({observedAt:new Date(clock).toISOString(),sourceAt:null,organizationId:ORG,status:'observing',rows:[{sourceId:null,name:'Alex Fictif',state:'available',rawState:'Disponible',readAt:new Date(clock).toISOString(),sourceAt:null}],warnings:[]});
   const read=(extra={})=>call({type:'LUDY_UBER_READ',runId:saved.connector.runId,result:{...batch(),...extra}},{id:ID,url:URL_UBER,frameId:0,tab:{id:7}});
-  const status=()=>call({type:'LUDY_UBER_STATUS'});
+  // Lifecycle tests let fire-and-forget browser events settle before inspecting
+  // their result. Raw call(STATUS) below checks the popup's immediate response.
+  const status=async()=>{await new Promise(resolve=>setImmediate(resolve));return call({type:'LUDY_UBER_STATUS'});};
   return {saved,requests,messages,events,alarms,injections,reloads,timeouts,call,read,status,batch,advance:ms=>{clock+=ms;},respond:value=>{response=value;},respondStatus:value=>{statusResponse=value;},content:value=>{content=value;},setTab:value=>{tab=value;},trusted:()=>trusted,reloadError:value=>{reloadError=value;},
     grant:value=>{permission=value;},otherTabs:value=>{otherTabs=value;},
     start:async()=>{await call({type:'LUDY_UBER_PAIR',token});return call({type:'LUDY_UBER_START'});}};
@@ -50,6 +52,39 @@ test('slow local ingestion gets twenty-five seconds and never queues a second ob
  assert.equal(state.state,'observing');assert.equal(state.lastHealthyAt,'2026-10-30T12:00:00.000Z');assert.equal(f.saved.connector.pendingUntil,0);assert.equal(f.timeouts.size,0);
  f.respond({ok:true,status:200});await f.read();assert.equal(f.requests.length,2);
  assert.equal(JSON.parse(f.requests[1].options.body).observedAt,'2026-10-30T12:00:18.000Z');
+});
+test('popup status responds during a hanging ingest and stop still cancels that ingest',async()=>{
+ const f=fixture({}, {fakeTimers:true});await f.start();let accept,entered,snapshot,readFinished=false;
+ const sending=new Promise(resolve=>{entered=resolve;});
+ f.respond(()=>{entered();return new Promise(resolve=>{accept=resolve;});});
+ const first=f.read().then(result=>{readFinished=true;return result;});await sending;
+ const pendingStatus=f.call({type:'LUDY_UBER_STATUS'}).then(result=>{snapshot=result;return result;});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.ok(snapshot,'popup responds without resolving the ingest or advancing its deadline');
+ assert.equal(snapshot.ok,true);assert.equal(snapshot.data.active,true);assert.equal(snapshot.data.paired,true);
+ assert.equal(snapshot.data.lastHealthyAt,null);assert.equal(JSON.stringify(snapshot).includes(token),false);
+ assert.equal(readFinished,false);assert.equal(f.requests.length,1);assert.equal(f.requests[0].options.signal.aborted,false);
+ f.respond({ok:true,status:200});const stopping=f.call({type:'LUDY_UBER_STOP'});
+ assert.equal(f.requests[0].options.signal.aborted,true);await stopping;await first;await pendingStatus;
+ assert.equal((await f.call({type:'LUDY_UBER_STATUS'})).data.active,false);
+ accept({ok:true,status:200,json:async()=>({ok:true,observations:1})});await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(f.saved.connector.active,false);assert.equal(f.saved.connector.lastHealthyAt,null);
+});
+test('immediate popup status still waits for stored initialization and excludes private pairing data',async()=>{
+ let entered,release,snapshot;const loading=new Promise(resolve=>{entered=resolve;});
+ const f=fixture({connector:{token,collectorId:'fixture-collector',active:false}}, {onStore:async()=>{entered();await new Promise(resolve=>{release=resolve;});}});
+ const pending=f.call({type:'LUDY_UBER_STATUS'}).then(result=>{snapshot=result;return result;});
+ await loading;await new Promise(resolve=>setImmediate(resolve));assert.equal(snapshot,undefined);
+ release();const result=await pending;assert.equal(result.ok,true);assert.equal(result.data.paired,true);
+ assert.equal(JSON.stringify(result).includes(token),false);assert.equal(JSON.stringify(result).includes('fixture-collector'),false);
+});
+test('popup status requires both the trusted extension sender and its exact popup URL',async()=>{
+ const f=fixture();await f.start();
+ for(const sender of [{id:'another-extension',url:POPUP},{id:ID,url:URL_UBER,frameId:0,tab:{id:7}},{id:ID,url:POPUP+'?other'}]){
+  const result=await f.call({type:'LUDY_UBER_STATUS'},sender);
+  assert.equal(result.ok,false);assert.equal(result.data,undefined);assert.equal(JSON.stringify(result).includes(token),false);
+ }
+ assert.equal((await f.call({type:'LUDY_UBER_STATUS'})).data.paired,true);
 });
 test('the local deadline releases an unresponsive fetch and only retries a fresh batch after backoff',async()=>{
  const f=fixture({}, {fakeTimers:true});await f.start();let accept,entered;const sending=new Promise(resolve=>{entered=resolve;});
@@ -140,23 +175,23 @@ test('Live Map refreshes after twenty minutes and resumes one collector without 
  await f.call({type:'LUDY_UBER_STOP'});
 });
 test('refresh waits for an entire sweep and its acknowledgement before reloading, without stopping or duplicating it',async()=>{
- const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.7',busy:true});f.advance(20*60000);
+ const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.8',busy:true});f.advance(20*60000);
  const stops=f.messages.filter(m=>m.type==='LUDY_UBER_STOP').length;f.events.alarm({name:'ludy-uber-map-refresh'});await f.status();assert.equal(f.reloads.length,0);assert.equal(f.saved.connector.refreshPending,true);assert.equal(f.messages.filter(m=>m.type==='LUDY_UBER_STOP').length,stops);
- await f.read();f.content({running:true,runId,version:'0.6.7',busy:false});const sender={id:ID,url:URL_UBER,frameId:0,tab:{id:7}};
+ await f.read();f.content({running:true,runId,version:'0.6.8',busy:false});const sender={id:ID,url:URL_UBER,frameId:0,tab:{id:7}};
  assert.equal((await f.call({type:'LUDY_UBER_REFRESH_READY',runId},sender)).ok,true);assert.equal(f.reloads.length,1);
  await f.call({type:'LUDY_UBER_REFRESH_READY',runId},sender);assert.equal(f.reloads.length,1);await f.call({type:'LUDY_UBER_STOP'});
 });
 test('stopping while refresh waits cancels future reloads and rejects late ready signals',async()=>{
- const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.7',busy:true});f.advance(20*60000);f.events.alarm({name:'ludy-uber-map-refresh'});await f.status();await f.call({type:'LUDY_UBER_STOP'});
+ const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.8',busy:true});f.advance(20*60000);f.events.alarm({name:'ludy-uber-map-refresh'});await f.status();await f.call({type:'LUDY_UBER_STOP'});
  assert.equal((await f.call({type:'LUDY_UBER_REFRESH_READY',runId},{id:ID,url:URL_UBER,frameId:0,tab:{id:7}})).ok,false);f.events.alarm({name:'ludy-uber-map-refresh'});f.events.updated(7,{status:'complete'});await f.status();assert.equal(f.reloads.length,0);assert.equal(f.alarms.size,0);assert.equal(f.saved.connector.token,token);
 });
 test('hidden or changed pages are not refreshed and a failed browser reload resumes collection before retry',async()=>{
- const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.7',hidden:true});f.advance(20*60000);f.events.alarm({name:'ludy-uber-map-refresh'});await f.status();assert.equal(f.reloads.length,0);
- f.content({running:true,runId,version:'0.6.7'});f.reloadError(Error('browser refused'));f.events.alarm({name:'ludy-uber-watchdog'});await f.status();assert.equal(f.reloads.length,0);assert.equal(f.messages.at(-1).type,'LUDY_UBER_CANCEL_REFRESH');assert.equal(f.saved.connector.active,true);assert.equal(f.saved.connector.lastRefreshAt,null);
+ const f=fixture();await f.start();const runId=f.saved.connector.runId;f.content({running:true,runId,version:'0.6.8',hidden:true});f.advance(20*60000);f.events.alarm({name:'ludy-uber-map-refresh'});await f.status();assert.equal(f.reloads.length,0);
+ f.content({running:true,runId,version:'0.6.8'});f.reloadError(Error('browser refused'));f.events.alarm({name:'ludy-uber-watchdog'});await f.status();assert.equal(f.reloads.length,0);assert.equal(f.messages.at(-1).type,'LUDY_UBER_CANCEL_REFRESH');assert.equal(f.saved.connector.active,true);assert.equal(f.saved.connector.lastRefreshAt,null);
  f.reloadError(null);f.advance(60000);f.events.alarm({name:'ludy-uber-watchdog'});await f.status();assert.equal(f.reloads.length,1);await f.call({type:'LUDY_UBER_STOP'});
 });
 test('worker recreation preserves the twenty-minute schedule and a foreign tab cannot request refresh',async()=>{
- const f=fixture();await f.start();const g=fixture(structuredClone(f.saved));await g.status();g.content({running:true,runId:g.saved.connector.runId,version:'0.6.7'});
+ const f=fixture();await f.start();const g=fixture(structuredClone(f.saved));await g.status();g.content({running:true,runId:g.saved.connector.runId,version:'0.6.8'});
  const request={type:'LUDY_UBER_REFRESH_READY',runId:g.saved.connector.runId};assert.equal((await g.call(request,{id:ID,url:URL_UBER.replace('/livemap','/reports'),frameId:0,tab:{id:7}})).ok,false);
  g.advance(20*60000);g.events.alarm({name:'ludy-uber-map-refresh'});await g.status();assert.equal(g.reloads.length,1);assert.equal(g.saved.connector.collectorId,f.saved.connector.collectorId);await f.call({type:'LUDY_UBER_STOP'});await g.call({type:'LUDY_UBER_STOP'});
 });

@@ -16,6 +16,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  collector-durability:
+    name: Archivage et continuité des collecteurs
+    if: github.repository == 'awt-707/flotte-geotab' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Vérifier l’archivage durable et les nouvelles observations
+        run: node --test staging/tests/telemetry-continuity-service.test.mjs staging/tests/telemetry-continuity.test.mjs staging/tests/telemetry-mapping.test.mjs
   windows-connectors:
     name: Connecteurs et poste permanent Windows
     if: github.repository == 'awt-707/flotte-geotab' && github.ref == 'refs/heads/staging'
@@ -62,7 +76,7 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_ENV, 'LUDY_TEST_CHROMIUM=' + chromium.executablePath() + '\n');
           NODE
       - name: Vérifier les connecteurs et le mode permanent sur Windows
-        run: node --test staging/tests/windows-bolt-credentials.test.mjs staging/tests/windows-connectors.test.mjs staging/tests/bolt-connectors-ui.test.mjs staging/tests/desktop-worker-ui.test.mjs staging/tests/desktop-auth.test.mjs staging/tests/desktop-session.test.mjs staging/tests/desktop-coordination.test.mjs staging/tests/app-session-lifecycle.test.mjs staging/tests/embedded-permanent.test.mjs staging/tests/fleet-batching.test.mjs staging/tests/fleet-api.test.mjs staging/tests/uber-extension.test.mjs staging/tests/uber-durability.test.mjs staging/tests/uber-sweep-protocol.test.mjs
+        run: node --test staging/tests/windows-bolt-credentials.test.mjs staging/tests/windows-connectors.test.mjs staging/tests/bolt-connectors-ui.test.mjs staging/tests/desktop-worker-ui.test.mjs staging/tests/desktop-auth.test.mjs staging/tests/desktop-session.test.mjs staging/tests/desktop-coordination.test.mjs staging/tests/app-session-lifecycle.test.mjs staging/tests/embedded-permanent.test.mjs staging/tests/fleet-batching.test.mjs staging/tests/fleet-api.test.mjs staging/tests/driver-matching.test.mjs staging/tests/uber-extension.test.mjs staging/tests/uber-durability.test.mjs staging/tests/uber-sweep-protocol.test.mjs
   build:
     name: macOS ${{ matrix.label }}
     if: github.repository == 'awt-707/flotte-geotab' && github.ref == 'refs/heads/staging'

@@ -48,6 +48,42 @@ test('matcher batches name reconciliation before refreshing vehicle proposals an
   assert.equal((await matcher.run()).skipped,true);assert.equal(calls.length,4);clock+=11000;await matcher.run();assert.equal(calls.length,6);
 });
 
+test('collector matching reuses an unchanged plan and omits only the unused final review',async()=>{
+ for(const includeReview of [false,true]){
+  const f=fixture();f.drivers.forEach(row=>{row.ludy_driver_code='L1';});let reads=0;const writes=[];
+  const tables={fleet_drivers:f.drivers,drivers:f.reference,fleet_identities:f.identities,fleet_latest:f.latest,vehicles:f.vehicles,fleet_sources:f.sources,fleet_myclicar_contracts:[],fleet_contract_assignment_overrides:[]};
+  const matcher=createDriverMatcher({now:()=>now,list:async table=>{reads++;return structuredClone(tables[table]);},db:async name=>{writes.push(name);return true;}});
+  const result=await matcher.run(includeReview?{}:{includeReview:false});assert.equal(result.vehicle_linked,1);assert.equal(result.applied,0);
+  assert.equal(reads,includeReview?16:8);assert.deepEqual(writes,['rpc/fleet_reconcile_vehicle_contracts','rpc/fleet_auto_link_vehicle']);
+  assert.equal(Object.hasOwn(result,'review'),includeReview);if(includeReview)assert.equal(result.review.rows.length,2);
+ }
+});
+
+test('a public caller joining a collector run receives a fresh review without repeating shared mutations',async()=>{
+ let release,entered;const gate=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});let reads=0,writes=0;
+ const matcher=createDriverMatcher({now:()=>now,list:async()=>{reads++;return [];},db:async()=>{writes++;entered();await gate;return 0;}});
+ const collector=matcher.run({includeReview:false});await started;const publicCall=matcher.run(),secondPublicCall=matcher.run();release();
+ const [collected,reviewed,alsoReviewed]=await Promise.all([collector,publicCall,secondPublicCall]);assert.equal(writes,1);assert.equal(reads,16);
+ assert.equal(Object.hasOwn(collected,'review'),false);assert.deepEqual(reviewed.review.rows,[]);assert.equal(reviewed.review.last_run,iso);
+ assert.deepEqual(alsoReviewed,reviewed);
+});
+
+test('a late public review failure cannot overwrite the health of a newer successful collector run',async()=>{
+ let rejectReview,reviewEntered,reads=0;const delayedReview=new Promise((_,reject)=>{rejectReview=reject;}),started=new Promise(resolve=>{reviewEntered=resolve;});
+ const matcher=createDriverMatcher({now:()=>now,db:async()=>0,list:async()=>{if(++reads===9){reviewEntered();return delayedReview;}return [];}});
+ const publicCall=matcher.run();await started;await matcher.run({force:true,includeReview:false});rejectReview(Error('older review unavailable'));
+ await assert.rejects(publicCall,/older review unavailable/);assert.equal(matcher.error,null);
+});
+
+test('collector matching refetches after a person link before deriving vehicle assignments',async()=>{
+ const f=fixture(),tables={fleet_drivers:f.drivers,drivers:f.reference,fleet_identities:f.identities,fleet_latest:f.latest,vehicles:f.vehicles,fleet_sources:f.sources};let reads=0;const mutations=[];
+ const matcher=createDriverMatcher({now:()=>now,list:async table=>{reads++;return structuredClone(tables[table]);},db:async(name,{body})=>{
+  mutations.push(name);if(name==='rpc/fleet_auto_link_driver'){tables.fleet_drivers.find(row=>row.id===body.p_driver).ludy_driver_code=body.p_ludy_code;return body.p_driver;}return true;
+ }});
+ const result=await matcher.run({includeReview:false});assert.equal(result.applied,2);assert.equal(result.vehicle_linked,1);assert.equal(reads,16);
+ assert.deepEqual(mutations,['rpc/fleet_reconcile_vehicle_contracts','rpc/fleet_auto_link_driver','rpc/fleet_auto_link_driver','rpc/fleet_auto_link_vehicle']);
+});
+
 test('an expired automatic vehicle claim cannot block a new driver while a manual claim still can',()=>{
   const f=fixture();f.reference.push({code:'L2',name:'Another Driver',agency_id:1});
   f.drivers[0]={...f.drivers[0],ludy_driver_code:'L1',vehicle_key:'1234A',vehicle_link_method:'platform_plate',vehicle_link_evidence:{source:'bolt',vehicle_origin:'bolt_live',expires_at:new Date(now-1000).toISOString()}};

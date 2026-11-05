@@ -2,7 +2,7 @@
 if(typeof importScripts==='function')importScripts('protocol.js','reports-reader.js','reports-background.js');
 const extensionApi=globalThis.browser || globalThis.chrome;
 const bridge=globalThis.LudyUberProtocol;
-const WATCHDOG='ludy-uber-watchdog',REFRESH_ALARM='ludy-uber-map-refresh',REFRESH_MS=20*60000,RETRY_MIN=15000,RETRY_MAX=120000,TRANSMIT_MS=25000,READER_VERSION='0.6.7';
+const WATCHDOG='ludy-uber-watchdog',REFRESH_ALARM='ludy-uber-map-refresh',REFRESH_MS=20*60000,RETRY_MIN=15000,RETRY_MAX=120000,TRANSMIT_MS=25000,READER_VERSION='0.6.8';
 const UBER_ORIGIN='https://fleethub.uber.com/*';
 const storage=extensionApi.storage.local || extensionApi.storage.session;
 let connector={collectorId:null,token:null,tabId:null,runId:null,mapUrl:null,active:false,standby:false,autoResume:false,state:'stopped',lastReadAt:null,lastSentAt:null,lastHealthyAt:null,nextAttemptAt:0,pendingUntil:0,nextRefreshAt:0,lastRefreshAt:null,refreshPending:false,failures:0,rows:0,coverage:null,message:'Associez Ludy puis démarrez la lecture de la Live Map.'};
@@ -136,7 +136,7 @@ async function begin(tab) {
     await extensionApi.scripting.executeScript({target:{tabId:tab.id,frameIds:[0]},files:['reader.js','scanner.js','content.js']});
     await extensionApi.tabs.sendMessage(tab.id,{type:'LUDY_UBER_START',runId:connector.runId});
   }catch{
-    connector.state='waiting_page';connector.message='Rechargez la page Uber pour appliquer l’extension 0.6.7, puis démarrez la lecture.';await persist();
+    connector.state='waiting_page';connector.message='Rechargez la page Uber pour appliquer l’extension 0.6.8, puis démarrez la lecture.';await persist();
   }
   return publicState();
 }
@@ -245,9 +245,16 @@ async function handle(message,sender) {
 }
 reportsAutomation=globalThis.LudyUberReportsAutomation?.create({api:extensionApi,storage,getPairing:()=>({token:connector.token,collectorId:connector.collectorId}),pairingReady:ready})||null;
 extensionApi.runtime.onMessage.addListener((message,sender,respond)=>{
+  const popup=sender.id===extensionApi.runtime.id&&sender.url===extensionApi.runtime.getURL('popup.html');
+  // A popup needs the latest public snapshot even while an ingest is pending.
+  // Initialization still completes first; mutations keep their serialized order.
+  if(popup&&message?.type==='LUDY_UBER_STATUS'){
+    ready.then(()=>handle(message,sender)).then(data=>respond({ok:true,data}),()=>respond({ok:false,error:'Action impossible. Vérifiez la Live Map, le code d’association et le serveur local.'}));
+    return true;
+  }
   // Explicit stop/pairing changes interrupt pending local I/O before entering
   // the serialized queue. Late responses cannot confirm the cancelled run.
-  if(sender.id===extensionApi.runtime.id&&sender.url===extensionApi.runtime.getURL('popup.html')&&
+  if(popup&&
     (['LUDY_UBER_STOP','LUDY_UBER_FORGET','LUDY_UBER_PAIR'].includes(message?.type)||message?.type==='LUDY_UBER_AUTO'&&message.enabled===false)){cancelCollectionPoll();cancelTransmission();}
   const trackedPage=sender.id===extensionApi.runtime.id&&sender.tab?.id===connector.tabId&&sender.frameId===0&&message?.runId===connector.runId&&bridge.permittedUrl(sender.url);
   if(trackedPage&&(message.type==='LUDY_UBER_CLOSED'||message.type==='LUDY_UBER_READ'&&message.result?.status!=='observing'))cancelTransmission();
