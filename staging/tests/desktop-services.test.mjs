@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,readdir,readFile} from 'node:fs/promises';
+import {mkdtemp,rm,readdir,readFile,realpath} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {Readable} from 'node:stream';
@@ -13,7 +13,8 @@ const id='10000000-0000-4000-8000-000000000001';
 const tokenExpiry=Math.floor(Date.now()/1000)+3600;
 const token=(uid=id)=>['e30',Buffer.from(JSON.stringify({sub:uid,role:'authenticated',exp:tokenExpiry})).toString('base64url'),'signature'].join('.');
 async function setup(t,{role='admin',stackFactory,browserFactory=null,authenticationFailure=null,rpcFailure=null,coordinatorOptions={}}={}){
-  const directory=await mkdtemp(path.join(os.tmpdir(),'ludy-desktop-services-'));let lease=false,fence=0,deviceEnabled=false;const requests=[],stacks=[],coordinators=[];
+  // Windows TEMP may contain an 8.3 alias; private storage requires the canonical path.
+  const directory=await realpath(await mkdtemp(path.join(os.tmpdir(),'ludy-desktop-services-')));let lease=false,fence=0,deviceEnabled=false;const requests=[],stacks=[],coordinators=[];
   const fetchFn=async(url,opts={})=>{
     requests.push({url,opts});
     if(authenticationFailure&&(authenticationFailure.endpoint==='auth'?url.endsWith('/auth/v1/user'):url.includes('/rest/v1/profiles?'))){
