@@ -575,7 +575,9 @@ window.__onNewAlert = onNewAlert;
 function watchAlerts() {
   if (S.alertCh) return;
   S.alertCh = sb.channel('alertes').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alerts' }, p => onNewAlert(p.new))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts' }, () => CACHE.touch()).on('postgres_changes', { event: '*', schema: 'public', table: 'live_status' }, () => CACHE.touch()).subscribe();   // alerte, passage du collecteur : pages gardées relues
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts' }, () => CACHE.touch()).subscribe();   // alerte : pages gardées relues
+  // Plus d'abonnement temps réel à live_status (05/11/2026, base saturée) : d'autres collecteurs la réécrivent toutes les
+  // 2 s, chaque page ouverte recevait chaque changement. Passage du collecteur vu par health() (toutes les minutes).
 }
 function msg(text, kind) { return `<div class="msg ${kind || ''}">${text}</div>`; }
 function badge(t, cls) { return t ? `<span class="badge ${cls || ''}">${esc(t)}</span>` : ''; }
@@ -661,7 +663,9 @@ async function health() {
   try {
     const { data, error } = await sb.from('live_status').select('updated_at').order('updated_at', { ascending: false }).limit(1);
     if (error || !S.session || S.session.user.id !== uid) return;   // erreur passagère : dernière lecture gardée ; autre utilisateur entre-temps
-    S.health = { uid, t: data && data[0] ? new Date(data[0].updated_at).getTime() : 0 }; healthPaint();
+    const t = data && data[0] ? new Date(data[0].updated_at).getTime() : 0;
+    if (S.health && S.health.uid === uid && t > S.health.t) CACHE.touch();   // nouveau passage du collecteur : pages gardées relues
+    S.health = { uid, t }; healthPaint();
   } catch (e) { }
 }
 
@@ -1724,7 +1728,8 @@ async function route() {
     S.timers.push(setInterval(() => liveDrvTick(my), DRV_SEC * 1000));
     S.timers.push(setInterval(liveClock, 1000));
     S.timers.push(setInterval(() => { if (!document.hidden && my === ROUTING) pageDirect(true).catch(() => { }); }, 60000));
-    S.channel = sb.channel('live').on('postgres_changes', { event: '*', schema: 'public', table: 'live_status' }, () => { clearTimeout(window.__lt); window.__lt = setTimeout(() => { if (my === ROUTING) pageDirect(true).catch(() => { }); }, 3000); }).subscribe();
+    // positions en direct : relais Geotab (liveTick) et relecture de la page chaque minute ; plus d'abonnement temps réel à
+    // live_status (réécrite toutes les 2 s par d'autres collecteurs depuis le 04/11/2026 : base saturée le 05/11)
   }
 }
 window.addEventListener('hashchange', route);
