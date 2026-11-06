@@ -181,7 +181,7 @@ async function cshTabDepot() {
   const pend = cshR(['uber', 'bolt', 'courses'].reduce((t, k) => t + Math.max(0, cshN(info.balances[k])), 0)), noProof = groups.filter(g => !filesOf(g).length);
   // jours à déposer (demande d'Ahmed : dépôt du lundi au lundi) : période choisie, par défaut depuis le dernier jour déjà déposé
   const okD = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
-  const lastCov = CS.all.filter(m => cshLive(m) && m.kind === 'depot' && m.day <= day).reduce((x, m) => { const l = cshDepDaysOf(m.comment); const z = l.length ? l[l.length - 1] : m.day; return z > x ? z : x; }, '');
+  const lastCov = cshDepLastDay(CS.all, day);   // jamais au-delà de la date d'un dépôt
   const firstIn = CS.all.filter(m => cshLive(m) && m.flow === 'in' && (m.kind === 'encaissement' || m.kind === 'course') && m.day <= day).reduce((x, m) => !x || m.day < x ? m.day : x, '');
   const dFrom0 = lastCov ? cshAddDay(lastCov, 1) : firstIn || cshAddDay(day, -7), dFrom = okD(q.get('dpdu')) ? q.get('dpdu') : (dFrom0 < cshAddDay(day, -62) ? cshAddDay(day, -62) : dFrom0);
   const dTo = okD(q.get('dpau')) ? q.get('dpau') : day, mon = cshWeek(day), pre = cshPresets(day)[0];
@@ -259,6 +259,9 @@ async function cshTabDepot() {
   $('#dppdf').onclick = () => { const d = read(), e = check(d); if (e) { $('#dpres').innerHTML = msg(esc(e), 'err'); return; } keep(d); d.ref = cshDepRef(d.day, 'projet'); try { cshDepositPdf(d); } catch (x) { alert(x.message); } };
   $('#dpsave').onclick = async () => {
     const d = read(), e = check(d); if (e) { $('#dpres').innerHTML = msg(esc(e), 'err'); return; }
+    // jours cochés après la date du dépôt : leurs espèces ne peuvent pas être dans ce dépôt
+    const late = d.days.filter(r => r.day > d.day);
+    if (late.length) { $('#dpres').innerHTML = msg('Le dépôt du ' + fmtDay(d.day) + ' ne peut pas contenir les espèces du ' + late.map(r => fmtDay(r.day)).join(', ') + ' : décochez ces jours ou changez la date du dépôt.', 'err'); return; }
     const pf0 = $('#dpfile') && $('#dpfile').files[0]; if (pf0) { try { cshFileCheck(pf0); } catch (x) { $('#dpres').innerHTML = msg('Reçu de la banque : ' + esc(x.message), 'err'); return; } }
     if (!(await ask('Enregistrer le dépôt de ' + cshMoney(d.total) + ' du ' + fmtDay(d.day) + ' ? Il sort des caisses choisies.'))) return;
     keep(d); d.ref = cshDepRef(d.day);
