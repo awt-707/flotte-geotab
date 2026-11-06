@@ -487,6 +487,11 @@ function cshDepositInfo(moves, day) {
 }
 
 /** Jours couverts par un dépôt, notés dans sa référence (« · jours 2026-10-27,2026-10-28 ») */
+/** Dernier jour réellement couvert par les dépôts enregistrés jusqu'au jour donné (jamais au-delà de la date d'un dépôt) */
+function cshDepLastDay(moves, day) {
+  return (moves || []).filter(m => cshLive(m) && m.kind === 'depot' && m.day <= day).reduce((x, m) => {
+    const l = cshDepDaysOf(m.comment).filter(d => d <= m.day).sort(), z = l.length ? l[l.length - 1] : m.day; return z > x ? z : x; }, '');
+}
 function cshDepDaysOf(comment) { const m = String(comment || '').match(/jours ([0-9,-]+)/); return m ? m[1].split(',').filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)) : []; }
 /**
  * Dépôt en banque par jours cochés (03/11/2026, demande d'Ahmed : dépôt du lundi au lundi) : chaque jour de from à to (93 au plus) avec
@@ -494,7 +499,9 @@ function cshDepDaysOf(comment) { const m = String(comment || '').match(/jours ([
  */
 function cshDepositDays(moves, from, to) {
   const live = (moves || []).filter(cshLive), dep = {}, out = [], ix = {};
-  live.filter(m => m.kind === 'depot').forEach(m => cshDepDaysOf(m.comment).forEach(d => { dep[d] = (String(m.comment).match(/DEP-[\w-]+/) || ['dépôt du ' + m.day])[0]; }));
+  // un dépôt ne couvre jamais des espèces encaissées après sa date (06/11/2026, signalé par Ahmed : dépôt du 03/11 qui faisait
+  // disparaître le 04/11 des jours à déposer)
+  live.filter(m => m.kind === 'depot').forEach(m => cshDepDaysOf(m.comment).filter(d => !m.day || d <= m.day).forEach(d => { dep[d] = (String(m.comment).match(/DEP-[\w-]+/) || ['dépôt du ' + m.day])[0]; }));
   for (let d = from; d && to && d <= to && out.length < 93; d = cshAddDay(d, 1)) { const r = { day: d, uber: 0, bolt: 0, courses: 0, total: 0, deposited: dep[d] || null }; out.push(r); ix[d] = r; }
   live.filter(m => m.flow === 'in' && (m.kind === 'encaissement' || m.kind === 'course') && ix[m.day]).forEach(m => {
     const r = ix[m.day], a = cshN(m.amount), k = m.kind === 'course' ? 'courses' : m.caisse === 'bolt' ? 'bolt' : 'uber';
@@ -523,7 +530,7 @@ function cshDepGroups(moves) {
     r[slot] = cshR(r[slot] + a); r.total = cshR(r.total + a); r.ids.push(m.id); if (m.day > r.day) r.day = m.day;
     const parts = c.split(' · ').map(x => x.trim()).filter(Boolean);
     parts.slice(ref ? 1 : 0).forEach(x => { if (/^déposé par /.test(x)) r.who = r.who || x.slice(11); else if (/^jours /.test(x)) { } else if (!r.bank && ref) r.bank = x; });
-    cshDepDaysOf(c).forEach(d => { if (r.days.indexOf(d) < 0) r.days.push(d); });
+    cshDepDaysOf(c).filter(d => !m.day || d <= m.day).forEach(d => { if (r.days.indexOf(d) < 0) r.days.push(d); });
     if (!ref && !r.note) r.note = c;
   });
   return Object.values(g).map(r => Object.assign(r, { days: r.days.sort() })).sort((a, b) => b.day.localeCompare(a.day) || String(b.key).localeCompare(String(a.key)));
@@ -556,4 +563,4 @@ function cshShortfalls(moves, declaredOf) {
 
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
   cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory,
-  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepositDays, cshDepositSum, cshDepGroups, CSH_COMPLEMENT, cshShortfalls, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };
+  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepLastDay, cshDepositDays, cshDepositSum, cshDepGroups, CSH_COMPLEMENT, cshShortfalls, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };

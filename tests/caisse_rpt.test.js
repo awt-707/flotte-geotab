@@ -329,3 +329,15 @@ test('dépôt en banque par jours cochés : espèces par jour et par caisse, jou
   assert.deepStrictEqual(C.cshDepDaysOf('Bordereau X · jours 2026-10-27,2026-10-28'), ['2026-10-27', '2026-10-28']);
   assert.deepStrictEqual(C.cshDepDaysOf('Bordereau X'), []);
 });
+
+test('dépôt en banque : un dépôt ne couvre jamais des espèces encaissées après sa date (dépôt du 03/11 qui retirait le 04/11)', () => {
+  const C3 = require('../site/caisse_calc.js');
+  const mv = [{ id: 1, caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 300, day: '2026-11-03' },
+    { id: 2, caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 3248, day: '2026-11-04' },
+    { id: 3, caisse: 'bolt', kind: 'encaissement', flow: 'in', amount: 180, day: '2026-11-05' },
+    { id: 4, caisse: 'uber', kind: 'depot', flow: 'out', amount: 300, day: '2026-11-03', comment: 'Bordereau DEP-1-20261103-1 · Banque · déposé par A · jours 2026-11-03,2026-11-04' }];
+  const days = C3.cshDepositDays(mv, '2026-11-03', '2026-11-05');
+  assert.deepStrictEqual(days.map(r => [r.day, r.total, r.deposited]), [['2026-11-03', 300, 'DEP-1-20261103-1'], ['2026-11-04', 3248, null], ['2026-11-05', 180, null]]);
+  assert.strictEqual(C3.cshDepLastDay(mv, '2026-11-06'), '2026-11-03', 'jours à déposer proposés à partir du 04/11');
+  assert.deepStrictEqual(C3.cshDepGroups(mv)[0].days, ['2026-11-03']);
+});
