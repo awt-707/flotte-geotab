@@ -91,10 +91,14 @@ function geoPublishFree_(devs, linked) {
   let st = []; try { st = geoCall_('Get', { typeName: 'DeviceStatusInfo' }) || []; } catch (e) { st = []; }
   const last = {}; st.forEach(s => { if (s && s.device) last[s.device.id] = { t: s.dateTime || null, on: s.isDeviceCommunicating !== false }; });
   const since = Date.now() - 30 * DAY;
+  // boîtiers dont le nom, la plaque ou le commentaire porte une plaque marocaine d'abord : la base Geotab compte aussi des centaines de
+  // véhicules d'autres flottes (plaques françaises), qui remplissaient les 300 places de la liste et cachaient les boîtiers de la flotte
+  const ma = d => [d.name, d.licensePlate, d.comment].some(x => geoPlatesIn_(x).some(p => !p.whole));
   const list = devs.filter(d => !L[d.id]).map(d => ({ id: d.id, n: String(d.name || ''), p: String(d.licensePlate || ''), v: geoVin_(d.vehicleIdentificationNumber || d.engineVehicleIdentificationNumber),
-    s: String(d.serialNumber || ''), t: last[d.id] ? last[d.id].t : null, on: last[d.id] ? last[d.id].on : null }))
+    s: String(d.serialNumber || ''), t: last[d.id] ? last[d.id].t : null, on: last[d.id] ? last[d.id].on : null, ma: ma(d) }))
     .filter(x => !x.t || new Date(x.t).getTime() >= since || !st.length)
-    .sort((a, b) => String(b.t || '').localeCompare(String(a.t || '')) || a.n.localeCompare(b.n)).slice(0, 300);
+    .sort((a, b) => (b.ma - a.ma) || String(b.t || '').localeCompare(String(a.t || '')) || a.n.localeCompare(b.n)).slice(0, 300)
+    .map(x => { delete x.ma; return x; });
   sbReq_('post', 'params?on_conflict=key', [
     { key: 'geotabDevices', label: 'Boîtiers Geotab non associés (calculé par le collecteur)', value: JSON.stringify({ at: new Date().toISOString(), list }), note: 'Ne pas modifier', sort: 997 }],
     { Prefer: 'resolution=merge-duplicates,return=minimal' });

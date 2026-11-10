@@ -57,6 +57,20 @@ test('boîtiers Geotab : VIN lu par le boîtier, plaque dans le nom, lettre arab
   assert.strictEqual(env.psql("select state from live_status where vehicle_key = '567896A'"), 'Non relié à Geotab');
 });
 
+test('liste des boîtiers libres : plaques marocaines d\'abord (la base Geotab compte des centaines de véhicules d\'autres flottes)', () => {
+  const { collector } = require('./lib/v6');
+  const B = collector(Date.UTC(2026, 10, 10, 12, 0));
+  // 320 boîtiers à plaque française vus récemment + 2 boîtiers de la flotte (plaques WW), sans relevé récent : avant, hors des 300 premiers
+  const fr = Array.from({ length: 320 }, (_, i) => ({ id: 'bF' + i, name: 'H' + String.fromCharCode(65 + i % 26) + '-' + String(100 + i).slice(-3) + '-QM', licensePlate: '' }));
+  const ma = [{ id: 'bM1', name: '968209 WW', licensePlate: '' }, { id: 'bM2', name: 'Sonata', licensePlate: 'WW968210' }];
+  B.ctx.__devs = fr.concat(ma);
+  B.run(`geoCall_ = function (m, p) { return m === 'Get' && p.typeName === 'DeviceStatusInfo' ? __devs.filter(d => d.id.startsWith('bF')).map(d => ({ device: { id: d.id }, dateTime: '2026-11-10T11:59:00Z', isDeviceCommunicating: true })) : []; }; geoPublishFree_(__devs, [])`);
+  const list = JSON.parse(env.psql("select value from params where key = 'geotabDevices'")).list;
+  assert.strictEqual(list.length, 300);
+  assert.deepStrictEqual(list.slice(0, 2).map(d => d.id).sort(), ['bM1', 'bM2']);
+  assert.ok(!('ma' in list[0]));
+});
+
 test('plaques lues dans un texte libre (nom, plaque, commentaire du boîtier)', () => {
   const { collector } = require('./lib/v6');
   const B = collector(Date.UTC(2026, 9, 4, 12, 0));
