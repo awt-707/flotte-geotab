@@ -587,12 +587,67 @@ test('manifeste : réglages de l\'administrateur (entreprise, cachet rendu trans
     await page.waitForFunction(() => /Réglages enregistrés/.test(document.querySelector('#mfsres').innerText));
     const plateOf = env.psql(`select plate from vehicles where key = '${key}'`);
     assert.strictEqual(env.psql(`select agrement || '|' || seats from parc where regexp_replace(upper(plate), '[^0-9A-Z]', '', 'g') = regexp_replace(upper('${plateOf}'), '[^0-9A-Z]', '', 'g')`), 'TT/99999/2026|7');
-    assert.strictEqual(env.psql("select company->>'dossier' from manifest_config"), '1234/TOUR/2026');
-    assert.match(env.psql('select left(stamp, 22) from manifest_config'), /^data:image\/png;base64,/);
+    assert.strictEqual(env.psql("select company->>'dossier' from manifest_config where id = 1"), '1234/TOUR/2026');
+    assert.match(env.psql('select left(stamp, 22) from manifest_config where id = 1'), /^data:image\/png;base64,/);
     await page.selectOption('#mfveh', key);
     await page.waitForFunction(() => /7 places autorisées · N° d'agrément TT\/99999\/2026/.test(document.querySelector('#mfvinfo').innerText));
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
+});
+
+test('sociétés : plaque attribuée à EL PUENTE, manifeste et devis à son nom (en-tête, cachet, mentions)', async () => {
+  const fs = require('fs');
+  const { br, page, errors } = await openBrowser();
+  try {
+    assert.strictEqual(env.psql("select company->>'nom' from manifest_config where id = 2"), 'EL PUENTE TRAVEL SARL', 'société créée par la migration');
+    env.psql("update manifest_config set stamp = null where id = 2");
+    await login(page, '#/manifeste');
+    await page.waitForSelector('#mfset');
+    await page.click('#mfset summary');
+    const key = JSON.parse(env.psql("select json_agg(key order by plate) from vehicles"))[1];
+    // la plaque passe à EL PUENTE ; cachet d'EL PUENTE ajouté
+    await page.selectOption(`[data-mfvco="${key}"]`, '2');
+    await page.click('#mfsave');
+    await page.waitForFunction(() => /Réglages enregistrés/.test(document.querySelector('#mfsres').innerText));
+    const plateOf = env.psql(`select plate from vehicles where key = '${key}'`);
+    assert.strictEqual(env.psql(`select company_id from parc where regexp_replace(upper(plate), '[^0-9A-Z]', '', 'g') = regexp_replace(upper('${plateOf}'), '[^0-9A-Z]', '', 'g')`), '2');
+    await page.selectOption('#mfcosel', '2');
+    await page.waitForFunction(() => /EL PUENTE/.test(document.querySelector('#mfsetb h3:nth-of-type(2)').innerText));
+    await page.fill('[data-mfc="tel"]', '0522000000');
+    await page.setInputFiles('#mfsf', path.join(__dirname, '..', 'site', 'logo-ludy-sombre.png'));
+    await page.waitForSelector('#mfsp img');
+    await page.click('#mfsave');
+    await page.waitForFunction(() => /Réglages enregistrés/.test(document.querySelector('#mfsres').innerText));
+    assert.match(env.psql("select company->>'tel' || '|' || left(stamp, 22) from manifest_config where id = 2"), /^0522000000\|data:image\/png;base64,/);
+    assert.strictEqual(env.psql("select company->>'nom' from manifest_config where id = 1"), 'LUXURY & DISCOVERY', 'société principale inchangée');
+    // manifeste du véhicule : société de la plaque proposée, PDF à son nom
+    await page.goto('about:blank'); await page.goto('http://localhost:8080/#/manifeste');
+    await page.waitForSelector('#mfco');
+    await page.selectOption('#mfveh', key);
+    await page.waitForFunction(() => /Société : EL PUENTE TRAVEL SARL/.test(document.querySelector('#mfvinfo').innerText));
+    await page.fill('#mfdon', 'Karim Bennani'); await page.fill('#mfcin', 'bk123456'); await page.fill('#mfdrv', 'Chauffeur Test');
+    await page.fill('#mfa', 'Aéroport Mohammed V, Casablanca'); await page.fill('#mfb', 'Hôtel Sofitel, Rabat');
+    await page.evaluate(() => { const b = window.buildManifest; window.__mf = []; window.buildManifest = (J, d, A) => { window.__mf.push({ nom: d.company.nom, tel: d.company.tel, stamp: A.stamp.slice(0, 22) }); return b(J, d, A); }; });
+    await page.click('#mfgen');
+    await page.waitForSelector('#mfdl');
+    assert.deepStrictEqual(await page.evaluate(() => window.__mf), [{ nom: 'EL PUENTE TRAVEL SARL', tel: '0522000000', stamp: 'data:image/png;base64,' }], 'manifeste à l\'en-tête et au cachet d\'EL PUENTE');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#mfdl')]);
+    const f = path.join(env.OUT, 'site_manifeste_elpuente.pdf'); await dl.saveAs(f);
+    assert.strictEqual(fs.readFileSync(f).slice(0, 5).toString(), '%PDF-');
+    assert.strictEqual(env.psql("select data->>'company_id' from manifests order by id desc limit 1"), '2');
+    // devis d'une course sur ce véhicule : émetteur EL PUENTE (en-tête, bas de page), pas les mentions de LUXURY & DISCOVERY
+    const dv = await page.evaluate(async k => {
+      await new Promise(r => { const s = document.createElement('script'); s.src = 'courses.js'; if (typeof crsPdf === 'function') return r(); s.onload = r; document.head.appendChild(s); });
+      const G = { company: 'LUDY, marque de services exploitée par LUXURY & DISCOVERY', contact: 'contact Ludy', vat: 10 };
+      const p = { lines: [{ label: 'Transfert', qty: 1, unit: 450, amount: 450 }], total: 450, tva: 40.91, ht: 409.09, vat: 10, included: {} };
+      const f = { client: 'John Smith', kind: 'Transfert simple', vehicleKey: k };
+      const raw = crsPdf({ number: 'DEV-2026-0009', vehicle_key: k, needs_validation: false }, f, p, G, true).output();
+      const raw1 = crsPdf({ number: 'DEV-2026-0010', needs_validation: false }, { client: 'X', kind: 'Transfert simple', companyId: '1', vehicleKey: k }, p, G, true).output();
+      return { short: crsIssuer({ vehicle_key: k }, f, G).short, el: raw.includes('EL PUENTE TRAVEL SARL'), lux: raw.includes('LUXURY'), lux1: raw1.includes('LUXURY & DISCOVERY'), el1: raw1.includes('EL PUENTE') };
+    }, key);
+    assert.deepStrictEqual(dv, { short: 'EL PUENTE TRAVEL SARL', el: true, lux: false, lux1: true, el1: false });
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); env.psql("update parc set company_id = null; update manifest_config set stamp = null, company = company - 'tel' || jsonb_build_object('tel', '') where id = 2; truncate manifests restart identity"); }
 });
 
 test('limites de l\'hébergement : mesures dans Réglages, avertissement à 80 % ; En direct ralenti sans activité', async () => {

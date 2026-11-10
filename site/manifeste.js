@@ -139,7 +139,23 @@ function manifText(d, link) {
 function manifSeats(model, parcSeats) { const n = parseInt(parcSeats, 10); if (n > 0) return n; const m = String(model || '').toLowerCase(); return Object.keys(MANIF_SEATS).filter(k => m.indexOf(k) >= 0).map(k => MANIF_SEATS[k])[0] || ''; }
 
 // ---------- Page Manifeste ----------
-const MF = { cfg: null, parc: [], bg: {}, last: null, draft: null, hist: [], drvAuto: null };
+const MF = { cfg: null, cfgs: [], parc: [], bg: {}, last: null, draft: null, hist: [], drvAuto: null };
+/** Sociétés (manifest_config, une ligne par société ; id 1 = société principale). multi = migration 20261124 exécutée */
+function mfCos() { return (MF.cfgs && MF.cfgs.length ? MF.cfgs : [MF.cfg || { id: 1, company: {} }]).filter(c => c.active !== false); }
+function mfMulti() { return !!(MF.cfgs && MF.cfgs[0] && 'active' in MF.cfgs[0]); }
+function mfCoName(c) { return String((c && c.company && c.company.nom) || 'Société ' + ((c && c.id) || 1)); }
+/** Société d'un véhicule : celle de sa plaque dans le parc (parc.company_id), sinon la société principale */
+function mfCoOfVeh(key) {
+  const v = key && vehOf(key), id = v ? +mfParcOf(v).company_id || 0 : 0;
+  return (id && (MF.cfgs || []).find(c => c.id === id && c.active !== false)) || (MF.cfgs || []).find(c => c.id === 1) || MF.cfg || { id: 1, company: {} };
+}
+/** Société retenue : choisie (id), sinon celle du véhicule */
+function mfCo(id, key) { return (+id && (MF.cfgs || []).find(c => c.id === +id)) || mfCoOfVeh(key); }
+/** Liste de choix de la société (vide = selon le véhicule) */
+function mfCoOpts(sel, key) {
+  const d = mfCoOfVeh(key);
+  return `<option value="">Selon le véhicule${key ? ' (' + esc(mfCoName(d)) + ')' : ''}</option>` + mfCos().map(c => `<option value="${c.id}" ${+sel === c.id ? 'selected' : ''}>${esc(mfCoName(c))}</option>`).join('');
+}
 function mfParcOf(v) { const n = normPlate(v.plate); return MF.parc.find(p => normPlate(p.plate) === n) || MF.parc.find(p => String(v.other_plates || '').split(/[,;]/).some(o => o.trim() && normPlate(o) === normPlate(p.plate))) || {}; }
 function mfVehicles() { return vehPick(); }
 function mfVeh(key) {
@@ -176,10 +192,10 @@ async function mfEnsure(force) {
   }
   MF.parcAt = Date.now();
   try {
-    const [c, parc] = await Promise.all([sb.from('manifest_config').select('*').eq('id', 1).maybeSingle(), all('parc', '*').catch(() => [])]);
+    const [c, parc] = await Promise.all([sb.from('manifest_config').select('*').order('id'), all('parc', '*').catch(() => [])]);
     if (c.error) throw new Error(c.error.message);
-    MF.cfg = c.data || { company: {}, email_to: '', stamp: null }; MF.parc = parc; MF.cfgErr = '';
-  } catch (e) { MF.cfgErr = e.message; MF.cfg = { company: {}, email_to: '', stamp: null }; }
+    MF.cfgs = c.data || []; MF.cfg = MF.cfgs.find(x => x.id === 1) || { id: 1, company: {}, email_to: '', stamp: null }; MF.parc = parc; MF.cfgErr = '';
+  } catch (e) { MF.cfgErr = e.message; MF.cfg = { id: 1, company: {}, email_to: '', stamp: null }; MF.cfgs = []; }
   return MF.cfgErr;
 }
 async function pageManifeste() {
@@ -195,13 +211,14 @@ async function pageManifeste() {
   if (typeof addrSetPlaces === 'function') addrSetPlaces(places);
   $('#page').innerHTML = `<div class="head"><h1>Manifestes</h1><div class="sub">Manifeste de passagers (transport touristique) sur les formulaires officiels : véhicule, N° d'agrément et chauffeur pris dans Ludy (contrat en cours à l'heure de départ). PDF à partager par WhatsApp ou par e-mail.</div></div>
     ${cfgErr ? msg('Manifestes pas encore installés dans la base : exécuter <b>supabase/migrations/20261027000000_manifestes.sql</b> dans Supabase &gt; SQL Editor. (' + esc(cfgErr) + ')', 'err') : ''}
-    ${!cfgErr && !MF.cfg.stamp ? msg('Cachet de l\'entreprise manquant : ' + (isAdmin() ? (typeof MOBILE !== 'undefined' && MOBILE ? 'l\'ajouter depuis l\'ordinateur (Manifestes &gt; Réglages).' : 'l\'ajouter dans « Réglages des manifestes » en bas de page.') : 'l\'administrateur doit l\'ajouter (Manifestes &gt; Réglages).'), 'warn') : ''}
+    ${!cfgErr && mfCos().some(c => !c.stamp) ? msg('Cachet manquant (' + esc(mfCos().filter(c => !c.stamp).map(mfCoName).join(', ')) + ') : ' + (isAdmin() ? (typeof MOBILE !== 'undefined' && MOBILE ? 'l\'ajouter depuis l\'ordinateur (Manifestes &gt; Réglages).' : 'l\'ajouter dans « Réglages des manifestes » en bas de page.') : 'l\'administrateur doit l\'ajouter (Manifestes &gt; Réglages).'), 'warn') : ''}
     ${!edit ? msg('Lecture seule : la création de manifestes est réservée aux gestionnaires et à l\'administrateur.', 'warn') : ''}
     <div class="grid2 mfgrid">
     <div>
       <div class="panel"><h2>Véhicule et chauffeur</h2>
         <div class="mfrow"><label>Véhicule <select id="mfveh"><option value="">Choisir…</option>${vs.map(v => `<option value="${esc(v.key)}" ${v.key === st.vehicle ? 'selected' : ''}>${esc(v.plate)}${v.model ? ' · ' + esc(v.model) : ''}</option>`).join('')}</select></label>
           <label>Véhicule de remplacement <input id="mfrep" value="${esc(st.remplacement || '')}" placeholder="Immatriculation (option)" size="18"></label></div>
+        ${mfCos().length > 1 ? `<div class="mfrow"><label>Société (en-tête et cachet du manifeste) <select id="mfco">${mfCoOpts(st.companyId, st.vehicle)}</select></label></div>` : ''}
         <div id="mfvinfo" class="small"></div>
         <div class="mfrow"><label>Date et heure de départ <input type="datetime-local" id="mfdep" value="${esc(st.dateDep || '')}"></label>
           <label>Date de retour (option) <input type="date" id="mfret" value="${esc(st.dateRet || '')}"></label></div>
@@ -238,7 +255,7 @@ async function pageManifeste() {
 
 function mfRead() {
   const st = MF.draft, v = id => { const e = $('#' + id); return e ? e.value : undefined; };
-  st.vehicle = v('mfveh'); st.remplacement = v('mfrep'); st.dateDep = v('mfdep'); st.dateRet = v('mfret'); st.chauffeur = v('mfdrv'); st.chauffeurTel = v('mftel');
+  st.vehicle = v('mfveh'); if ($('#mfco')) st.companyId = v('mfco'); st.remplacement = v('mfrep'); st.dateDep = v('mfdep'); st.dateRet = v('mfret'); st.chauffeur = v('mfdrv'); st.chauffeurTel = v('mftel');
   st.donneur = v('mfdon'); if ($('#mfcin')) st.cin = v('mfcin'); if ($('#mfnb')) st.nb = Math.max(1, parseInt(v('mfnb'), 10) || 1);
   st.depart = v('mfa'); st.terminus = v('mfb'); st.prestation = v('mfpre'); st.nature = v('mfnat'); st.obs = v('mfobs');
   if ($('#mfdv')) st.donneurVoyage = $('#mfdv').checked;
@@ -258,7 +275,8 @@ function mfPassengers() {
 }
 function mfVehInfo() {
   const v = MF.draft.vehicle && mfVeh(MF.draft.vehicle), el = $('#mfvinfo'); if (!el) return;
-  el.innerHTML = !v ? '' : esc([v.marque, v.modele].filter(Boolean).join(' ')) + ' · ' + (v.places ? v.places + ' places autorisées' : '<b>places non renseignées</b>') + ' · ' +
+  const co = $('#mfco'); if (co) { const k = co.value; co.innerHTML = mfCoOpts(k, MF.draft.vehicle); co.value = k; }
+  el.innerHTML = !v ? '' : (mfCos().length > 1 ? 'Société : <b>' + esc(mfCoName(mfCo(MF.draft.companyId, v.key))) + '</b> · ' : '') + esc([v.marque, v.modele].filter(Boolean).join(' ')) + ' · ' + (v.places ? v.places + ' places autorisées' : '<b>places non renseignées</b>') + ' · ' +
     (v.autorisation ? 'N° d\'agrément ' + esc(v.autorisation) : '<b>N° d\'agrément non renseigné</b> (N° d\'autorisation de l\'entreprise imprimé)');
 }
 /** Chauffeur du contrat en cours sur le véhicule à l'heure de départ (remplit les champs sauf saisie manuelle) */
@@ -276,6 +294,7 @@ async function mfDriverAuto() {
 function mfBind() {
   const st = MF.draft;
   $('#mfveh').onchange = () => { mfRead(); st.drvManual = false; mfVehInfo(); mfPassengers(); mfDriverAuto(); };
+  if ($('#mfco')) $('#mfco').onchange = () => { mfRead(); mfVehInfo(); };
   $('#mfdep').onchange = () => { mfRead(); mfDriverAuto(); };
   $('#mfdrv').oninput = $('#mftel').oninput = () => { st.drvManual = true; };
   $('#mfdrv').onchange = () => {   // chauffeur choisi dans la liste : son téléphone
@@ -321,18 +340,18 @@ async function mfGenerate() {
  * privées (manifeste automatique, extra = { mission_id, number }). Renvoie l'objet affiché par mfDone ; erreur si impossible.
  */
 async function mfMake(st, extra) {
-  const v = st.vehicle && mfVeh(st.vehicle);
-  if (!MF.cfg.stamp) throw new Error('Cachet de l\'entreprise manquant : impossible de générer (Manifestes > Réglages des manifestes).');
+  const v = st.vehicle && mfVeh(st.vehicle), co = mfCo(st.companyId, st.vehicle);
+  if (!co.stamp) throw new Error('Cachet de la société ' + mfCoName(co) + ' manquant : impossible de générer (Manifestes > Réglages des manifestes).');
   if (!window.jspdf) throw new Error('Bibliothèque PDF non chargée, réessayez dans un instant.');
   v.remplacement = String(st.remplacement || '').trim().toUpperCase();
   const dn = String(st.donneur).trim(), pass = st.type === 'resident' ? (st.donneurVoyage !== false ? [dn] : []).concat(st.passengers.map(p => p.trim()).filter(Boolean)).slice(0, v.places || 59) : [];
-  const company = Object.assign({}, MF.cfg.company || {}, v.autorisation ? { autorisation: v.autorisation } : {});
+  const company = Object.assign({}, co.company || {}, v.autorisation ? { autorisation: v.autorisation } : {});
   const d = { type: st.type, company, vehicule: v, donneur: dn, cin: String(st.cin || '').trim().toUpperCase(), nbPassagers: st.type === 'resident' ? pass.length : Math.min(st.nb || 1, v.places || 59), passagers: pass,
     depart: st.depart.trim(), terminus: st.terminus.trim(), prestation: st.prestation, nature: String(st.nature || '').trim(),
     dateDepart: manifFrDate(st.dateDep), dateRetour: manifFrDate(st.dateRet), observations: String(st.obs || '').trim(),
     etabli: fmtDay(addDays(today(), -1)), chauffeur: st.chauffeur.trim(), chauffeurTel: String(st.chauffeurTel || '').trim(), dateDep: st.dateDep };
   {
-    const A = { stamp: MF.cfg.stamp, stampW: 150, stampRatio: await mfRatio(MF.cfg.stamp) };
+    const A = { stamp: co.stamp, stampW: 150, stampRatio: await mfRatio(co.stamp) };
     if (d.type === 'resident') { A.bg1 = await mfImage(MANIF_BG.bg1); A.bg2 = await mfImage(MANIF_BG.bg2); } else A.bg3 = await mfImage(MANIF_BG.bg3);
     const doc = buildManifest(window.jspdf.jsPDF, d, A), blob = doc.output('blob'), name = manifFileName(d);
     // PDF gardé dans le stockage privé « manifestes » : lien signé dans les messages
@@ -346,9 +365,9 @@ async function mfMake(st, extra) {
     const raw = Object.assign({}, st); delete raw.drvManual;
     const row = { vehicle_key: v.key, plate: v.plaque, driver_name: d.chauffeur, driver_phone: d.chauffeurTel || null, client: d.donneur,
       depart_at: (parseLocalDT(st.dateDep) || new Date()).toISOString(), file_name: name, file_path: path, message: manifText(d, link),
-      data: Object.assign({ d: Object.assign({}, d, { company: undefined }), raw }, extra || {}) };
+      data: Object.assign({ d: Object.assign({}, d, { company: undefined }), raw, company_id: co.id || 1 }, extra || {}) };
     const ins = await sb.from('manifests').insert(row).select('id').single();
-    return { id: ins.data ? ins.data.id : null, d, blob, name, link, path, upErr, saveErr: ins.error ? ins.error.message : '', email: st.chauffeurEmail || '',
+    return { id: ins.data ? ins.data.id : null, d, blob, name, link, path, upErr, saveErr: ins.error ? ins.error.message : '', email: st.chauffeurEmail || '', emailTo: co.email_to || '',
       row: ins.error ? null : Object.assign({ id: ins.data.id, created_at: new Date().toISOString() }, row) };
   }
 }
@@ -373,6 +392,8 @@ async function mfLink(path) {
   if (error) throw error;
   return data.signedUrl;
 }
+/** Destinataires e-mail par défaut : ceux de la société du manifeste, sinon de la société principale */
+function mfMailTo(m) { return (m && m.emailTo) || (MF.cfg && MF.cfg.email_to) || ''; }
 /** Panneau du manifeste créé : partage WhatsApp / e-mail, téléchargement */
 function mfDone(m, box) {
   box = box || $('#mfdone'); if (!box) return;
@@ -384,10 +405,10 @@ function mfDone(m, box) {
     <div class="adact mfact">
       ${wa ? `<a class="btn small" id="mfwa1" href="https://wa.me/${wa}?text=${encodeURIComponent(txt)}" target="_blank" rel="noopener">WhatsApp au chauffeur</a>` : ''}
       <a class="btn small${wa ? ' ghostb' : ''}" id="mfwa" href="https://wa.me/?text=${encodeURIComponent(txt)}" target="_blank" rel="noopener">WhatsApp (choisir le contact)</a>
-      <a class="btn small ghostb" id="mfmail" href="mailto:${encodeURIComponent(MF.cfg.email_to || m.email || '').replace(/%2C/gi, ',').replace(/%40/g, '@')}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(txt)}">Ma messagerie</a>
+      <a class="btn small ghostb" id="mfmail" href="mailto:${encodeURIComponent(mfMailTo(m) || m.email || '').replace(/%2C/gi, ',').replace(/%40/g, '@')}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(txt)}">Ma messagerie</a>
       ${canFile ? '<button class="ghost small" id="mfshare">Partager le PDF…</button>' : ''}
       <button class="ghost small" id="mfdl">Télécharger le PDF</button><button class="ghost small" id="mfcopy">Copier le message</button><button class="ghost small" id="mfret2">Préparer le retour</button></div>
-    ${m.id ? `<div class="mfrow mfmailrow"><label>E-mail avec le PDF joint (envoyé par Ludy) <input id="mfto" value="${esc(MF.cfg.email_to || m.email || '')}" placeholder="adresse@exemple.ma, autre@exemple.ma" size="40"></label><button class="small" id="mfsend">Envoyer</button></div><div id="mfsendr" class="small"></div>` : ''}
+    ${m.id ? `<div class="mfrow mfmailrow"><label>E-mail avec le PDF joint (envoyé par Ludy) <input id="mfto" value="${esc(mfMailTo(m) || m.email || '')}" placeholder="adresse@exemple.ma, autre@exemple.ma" size="40"></label><button class="small" id="mfsend">Envoyer</button></div><div id="mfsendr" class="small"></div>` : ''}
     <details><summary class="small">Aperçu du message</summary><pre class="mftxt">${esc(txt)}</pre></details></div>`;
   $('#mfdl').onclick = () => { const u = URL.createObjectURL(m.blob), a = document.createElement('a'); a.href = u; a.download = m.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); };
   $('#mfcopy').onclick = async () => { try { await navigator.clipboard.writeText(txt); $('#mfcopy').textContent = 'Copié'; } catch (e) { await askText('Copiez le message :', txt); } };
@@ -436,38 +457,64 @@ function mfHistory() {
   });
 }
 
-// ---------- Réglages (administrateur) : entreprise, cachet, agrément et places par véhicule ----------
+// ---------- Réglages (administrateur) : sociétés (en-tête, cachet), agrément, places et société par véhicule ----------
 function mfSettings() {
-  const c = MF.cfg.company || {}, box = $('#mfsetb'), vs = mfVehicles();
-  box.innerHTML = `<div class="mfrow">${[['nom', 'Dénomination', 28], ['adresse', 'Adresse', 48], ['tel', 'Tél/Fax', 14], ['autorisation', 'N° d\'autorisation', 16], ['dossier', 'N° de dossier', 16]]
+  const cos = mfCos(), multi = mfMulti();
+  if (!cos.some(c => c.id === MF.setCo)) MF.setCo = 1;
+  const cur = cos.find(c => c.id === MF.setCo) || MF.cfg, c = cur.company || {}, box = $('#mfsetb'), vs = mfVehicles();
+  box.innerHTML = `<h3>Sociétés</h3>
+    ${multi ? `<div class="mfrow"><label>Société <select id="mfcosel">${cos.map(x => `<option value="${x.id}" ${x.id === cur.id ? 'selected' : ''}>${esc(mfCoName(x))}${x.id === 1 ? ' (principale)' : ''}</option>`).join('')}</select></label>
+      <button type="button" class="ghost small" id="mfconew">+ Nouvelle société</button>${cur.id !== 1 ? '<button type="button" class="ghost small" id="mfcodel">Retirer cette société</button>' : ''}</div>
+      <div class="small">Chaque véhicule utilise la société choisie pour sa plaque (tableau Véhicules ci-dessous), sinon la société principale : en-tête et cachet du manifeste, émetteur du devis.</div>`
+      : msg('Une seule société : exécuter <b>supabase/migrations/20261124000000_societes.sql</b> dans Supabase &gt; SQL Editor pour en ajouter (El Puente…) et attribuer des plaques.', 'warn')}
+    <div class="mfrow">${[['nom', 'Dénomination', 28], ['adresse', 'Adresse', 48], ['tel', 'Tél/Fax', 14], ['autorisation', 'N° d\'autorisation', 16], ['dossier', 'N° de dossier', 16]]
       .map(x => `<label>${x[1]} <input data-mfc="${x[0]}" value="${esc(c[x[0]] || '')}" size="${x[2]}"></label>`).join('')}</div>
-    <div class="mfrow"><label>Destinataires e-mail par défaut (ex. service de l'équipement et du transport) <input id="mfcto" value="${esc(MF.cfg.email_to || '')}" size="48" placeholder="adresse@exemple.ma, autre@exemple.ma"></label></div>
-    <h3>Cachet</h3><div class="mfrow"><div class="mfstamp" id="mfsp">${MF.cfg.stamp ? `<img src="${esc(MF.cfg.stamp)}" alt="Cachet">` : '<span class="small">Aucun</span>'}</div>
+    <div class="mfrow"><label class="wide">Mentions légales du devis (bas de page${cur.id === 1 ? ' ; vide = celles de la grille tarifaire' : ' ; vide = dénomination, adresse et téléphone'}) <textarea data-mfc="mentions" rows="2" cols="70">${esc(c.mentions || '')}</textarea></label>
+      <label>Contact du devis <input data-mfc="contact" value="${esc(c.contact || '')}" size="40"></label></div>
+    <div class="mfrow"><label>Destinataires e-mail par défaut (ex. service de l'équipement et du transport) <input id="mfcto" value="${esc(cur.email_to || '')}" size="48" placeholder="adresse@exemple.ma, autre@exemple.ma"></label></div>
+    <h3>Cachet${multi ? ' de ' + esc(mfCoName(cur)) : ''}</h3><div class="mfrow"><div class="mfstamp" id="mfsp">${cur.stamp ? `<img src="${esc(cur.stamp)}" alt="Cachet">` : '<span class="small">Aucun</span>'}</div>
       <label>Photo du cachet (fond blanc, rendu transparent) <input type="file" id="mfsf" accept="image/*"></label><button type="button" class="ghost small" id="mfsdel">Retirer</button></div>
-    <h3>Véhicules</h3><div class="small">N° d'agrément imprimé à la place du N° d'autorisation de l'entreprise ; places autorisées (vide : ${Object.keys(MANIF_SEATS).map(k => k.charAt(0).toUpperCase() + k.slice(1) + ' ' + MANIF_SEATS[k]).join(', ')}).</div>
-    ${table('mfvt', [['Plaque', v => plate(v.plate)], ['Modèle', v => esc(v.model || '')], ['N° d\'agrément', v => `<input data-mfag="${esc(v.key)}" value="${esc(mfParcOf(v).agrement || '')}" size="16">`],
-      ['Places', v => `<input type="number" min="1" max="59" data-mfse="${esc(v.key)}" value="${esc(mfParcOf(v).seats || '')}" style="width:80px">`]], vs, { empty: 'Aucun véhicule' })}
+    <h3>Véhicules</h3><div class="small">N° d'agrément imprimé à la place du N° d'autorisation de la société ; places autorisées (vide : ${Object.keys(MANIF_SEATS).map(k => k.charAt(0).toUpperCase() + k.slice(1) + ' ' + MANIF_SEATS[k]).join(', ')})${multi ? ' ; société de la plaque (manifestes et devis)' : ''}.</div>
+    ${table('mfvt', [['Plaque', v => plate(v.plate)], ['Modèle', v => esc(v.model || '')]].concat(multi ? [['Société', v => `<select data-mfvco="${esc(v.key)}">${cos.map(x => `<option value="${x.id}" ${x.id === (+mfParcOf(v).company_id || 1) ? 'selected' : ''}>${esc(mfCoName(x))}</option>`).join('')}</select>`, v => mfCoName(mfCoOfVeh(v.key))]] : [])
+      .concat([['N° d\'agrément', v => `<input data-mfag="${esc(v.key)}" value="${esc(mfParcOf(v).agrement || '')}" size="16">`],
+      ['Places', v => `<input type="number" min="1" max="59" data-mfse="${esc(v.key)}" value="${esc(mfParcOf(v).seats || '')}" style="width:80px">`]]), vs, { empty: 'Aucun véhicule' })}
     <div class="mfgo"><button id="mfsave">Enregistrer les réglages</button> <span id="mfsres"></span></div>`;
-  let stamp = MF.cfg.stamp || null;
+  let stamp = cur.stamp || null;
+  const out = $('#mfsres'), reload = async id => { await mfEnsure(true); MF.setCo = id; mfSettings(); mfVehInfo(); };
   $('#mfsf').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { stamp = await mfStamp(f); $('#mfsp').innerHTML = `<img src="${esc(stamp)}" alt="Cachet">`; } catch (x) { alert(x.message); } };
   $('#mfsdel').onclick = () => { stamp = null; $('#mfsp').innerHTML = '<span class="small">Aucun</span>'; };
+  if ($('#mfcosel')) $('#mfcosel').onchange = () => { MF.setCo = +$('#mfcosel').value || 1; mfSettings(); };
+  if ($('#mfconew')) $('#mfconew').onclick = async () => {
+    const nom = await askText('Dénomination de la nouvelle société :', ''); if (!nom || !nom.trim()) return;
+    const r = await sb.from('manifest_config').insert({ company: { nom: nom.trim().toUpperCase(), adresse: '', tel: '', autorisation: '', dossier: '' } }).select('id').single();
+    if (r.error) { out.innerHTML = '<span class="err">Erreur : ' + esc(r.error.message) + '</span>'; return; }
+    await reload(r.data.id);
+  };
+  if ($('#mfcodel')) $('#mfcodel').onclick = async () => {
+    if (!await ask('Retirer la société ' + mfCoName(cur) + ' ? Ses plaques reviennent à la société principale ; les manifestes déjà faits restent.')) return;
+    const r = await sb.from('manifest_config').delete().eq('id', cur.id);
+    if (r.error) { out.innerHTML = '<span class="err">Erreur : ' + esc(r.error.message) + '</span>'; return; }
+    await reload(1);
+  };
   $('#mfsave').onclick = async () => {
-    const out = $('#mfsres'), comp = {}; document.querySelectorAll('[data-mfc]').forEach(i => { comp[i.dataset.mfc] = i.value.trim(); });
+    const comp = Object.assign({}, c); document.querySelectorAll('[data-mfc]').forEach(i => { comp[i.dataset.mfc] = i.value.trim(); });
     out.textContent = 'Enregistrement…';
     try {
-      const r = await sb.from('manifest_config').upsert({ id: 1, company: comp, email_to: $('#mfcto').value.trim() || null, stamp, updated_at: new Date().toISOString() });
+      const row = { company: comp, email_to: $('#mfcto').value.trim() || null, stamp, updated_at: new Date().toISOString() };
+      const r = cur.id === 1 ? await sb.from('manifest_config').upsert(Object.assign({ id: 1 }, row)) : await sb.from('manifest_config').update(row).eq('id', cur.id);
       if (r.error) throw new Error(r.error.message);
-      // agrément et places : ligne du parc du véhicule (créée si absente)
+      // agrément, places et société : ligne du parc du véhicule (créée si absente)
       for (const v of vs) {
         const ag = $(`[data-mfag="${CSS.escape(v.key)}"]`).value.trim(), se = parseInt($(`[data-mfse="${CSS.escape(v.key)}"]`).value, 10) || null, p = mfParcOf(v);
-        if ((p.agrement || '') === ag && (p.seats || null) === se) continue;
-        const u = p.plate ? await sb.from('parc').update({ agrement: ag || null, seats: se }).eq('plate', p.plate)
-          : await sb.from('parc').insert({ plate: v.plate, brand: v.brand || null, model: v.model || null, agency_id: v.agency_id || null, agrement: ag || null, seats: se });
+        const ce = $(`[data-mfvco="${CSS.escape(v.key)}"]`), co = ce ? (+ce.value === 1 ? null : +ce.value) : undefined;
+        const ch = { agrement: ag || null, seats: se }; if (co !== undefined) ch.company_id = co;
+        if ((p.agrement || '') === ag && (p.seats || null) === se && (co === undefined || (+p.company_id || null) === co)) continue;
+        const u = p.plate ? await sb.from('parc').update(ch).eq('plate', p.plate)
+          : await sb.from('parc').insert(Object.assign({ plate: v.plate, brand: v.brand || null, model: v.model || null, agency_id: v.agency_id || null }, ch));
         if (u.error) throw new Error(v.plate + ' : ' + u.error.message);
       }
-      MF.cfg = Object.assign({}, MF.cfg, { company: comp, email_to: $('#mfcto').value.trim(), stamp });
-      MF.parc = await all('parc', '*'); mfVehInfo(); mfPassengers();
-      out.innerHTML = '<span class="ok">Réglages enregistrés.</span>';   // après la relecture du parc : l'écran montre déjà les nouvelles valeurs
+      await reload(cur.id); mfPassengers();
+      $('#mfsres').innerHTML = '<span class="ok">Réglages enregistrés.</span>';   // après la relecture : l'écran montre déjà les nouvelles valeurs
     } catch (e) { out.innerHTML = '<span class="err">Erreur : ' + esc(e.message) + '</span>'; }
   };
 }
