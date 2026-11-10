@@ -59,7 +59,7 @@ test('manifeste PDF : résident sur 2 pages, non-résident sur 1 page, texte dan
 
 test('manifestes : réglages lus par les gestionnaires, modifiés par l\'administrateur ; historique et envoi limités aux véhicules de ses agences', () => {
   env.resetDb();
-  env.psql(`update manifest_config set stamp = null, email_to = null;
+  env.psql(`update manifest_config set stamp = null, email_to = null; update manifest_config set company = company || '{"dossier": "2939/TOUR/2025"}' where id = 1;
     insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin';
     insert into profiles (user_id, email, role) values ('${MGR}', 'new@x', 'manager') on conflict (user_id) do update set role = 'manager';
     insert into agencies (id, name) overriding system value values (1, 'Rabat'), (2, 'Casa');
@@ -70,11 +70,11 @@ test('manifestes : réglages lus par les gestionnaires, modifiés par l\'adminis
     // agrément repris du modèle par la migration (rejouée sur ce parc)
     env.psql(fs.readFileSync(path.join(env.ROOT, 'supabase', 'migrations', '20261027000000_manifestes.sql'), 'utf8'));
     assert.deepStrictEqual(env.psql("select plate || '=' || agrement from parc order by plate").split('\n'), ['86119 T 1=TT/43191/2025', '86433-T-1=TT/43186/2025']);
-    assert.strictEqual(as(MGR, "select company->>'dossier' from manifest_config"), '2939/TOUR/2025');
+    assert.strictEqual(as(MGR, "select company->>'dossier' from manifest_config where id = 1"), '2939/TOUR/2025');
     as(MGR, "update manifest_config set email_to = 'x@y.ma'");   // aucune ligne modifiable : sans effet
-    assert.strictEqual(env.psql('select coalesce(email_to, \'\') from manifest_config'), '');
+    assert.strictEqual(env.psql('select coalesce(email_to, \'\') from manifest_config where id = 1'), '');
     as(ADMIN, "update manifest_config set email_to = 'dret@exemple.ma'");
-    assert.strictEqual(env.psql('select email_to from manifest_config'), 'dret@exemple.ma');
+    assert.strictEqual(env.psql('select email_to from manifest_config where id = 1'), 'dret@exemple.ma');
     // gestionnaire : manifeste de ses véhicules seulement
     as(MGR, "insert into manifests (vehicle_key, plate, driver_name, file_path) values ('86433T1', '86433-T-1', 'Z', '2026-10/a.pdf')");
     assert.throws(() => as(MGR, "insert into manifests (vehicle_key, plate) values ('86119T1', '86119-T-1')"), /row-level security/);

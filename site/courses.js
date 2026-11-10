@@ -255,7 +255,7 @@ function crsTabs(t) {
 }
 async function pageCourses() {
   const q = qs(), my = ROUTING, t = q.get('t') || '';
-  await Promise.all([crsLoadGrid(), vehRefresh()]);
+  await Promise.all([crsLoadGrid(), mfEnsure()]);   // mfEnsure : véhicules, parc et sociétés (en-tête du devis, manifeste)
   if (my !== ROUTING) return;
   const head = `<div class="head"><h1>Courses privées</h1><div class="sub">Mise à disposition avec chauffeur et courses privées : découverte client, devis selon la grille tarifaire, validation de l'exploitation, suivi jusqu'à la facture, contrôle réel par Geotab.</div></div>`;
   if (CR.gridErr) { $('#page').innerHTML = head + msg('Module pas encore installé dans la base : exécuter <b>supabase/migrations/20261031000000_courses.sql</b> dans Supabase &gt; SQL Editor. (' + esc(CR.gridErr) + ')', 'err'); return; }
@@ -378,6 +378,7 @@ function crsForm() {
   <details class="panel" open><summary><h2>5. Véhicule</h2></summary><div class="mfrow">
     ${crsField('cat', 'Catégorie (grille)', 'select', { options: crsCats().map(c => [c.id, c.model + ' — ' + c.label]) })}${crsField('nVeh', 'Nombre de véhicules', 'number', { min: 1 })}
     ${crsField('pax', 'Passagers', 'number', { min: 1 })}${crsField('bags', 'Bagages (nombre et volume)', 'text', { size: 18 })}
+    ${typeof mfCos === 'function' && mfCos().length > 1 ? crsField('companyId', 'Société (émetteur du devis, manifeste)', 'select', { empty: 'Selon le véhicule' + (f.vehicleKey ? ' (' + mfCoName(mfCoOfVeh(f.vehicleKey)) + ')' : ''), options: mfCos().map(c => [String(c.id), mfCoName(c)]) }) : ''}
     ${crsField('vehicleKey', 'Véhicule affecté (bloqué à la confirmation)', 'select', { empty: 'À affecter', options: vs.filter(v => !f.cat || crsModelIs(v.model, f.cat)).map(v => [v.key, v.plate + (v.model ? ' · ' + v.model : '')]) })}
     ${crsField('childSeat', 'Siège enfant', 'check')}${crsField('replacement', 'Véhicule de remplacement identique demandé', 'check')}${crsField('vehNotes', 'Exigences (couleur, standing, équipements)', 'text', { size: 30 })}</div>
     <div id="crsvinfo" class="small"></div></details>
@@ -585,7 +586,7 @@ function crsBindSide(p, val, miss) {
 /** Résumé du devis (WhatsApp, corps de l'e-mail) */
 function crsQuoteText(p) {
   const f = CR.f, m = CR.cur || {}, inc = p.included || {}, t = crsTimes(f);
-  return ['Ludy · Devis ' + (m.number || ''), (f.kind || '') + ' · ' + crsCatName(f.cat), t.a ? 'Du ' + fmtDTY(t.a) + (t.b ? ' au ' + fmtDTY(t.b) : '') : '',
+  return [crsIssuer(m, f).short + ' · Devis ' + (m.number || ''), (f.kind || '') + ' · ' + crsCatName(f.cat), t.a ? 'Du ' + fmtDTY(t.a) + (t.b ? ' au ' + fmtDTY(t.b) : '') : '',
     [f.startAddr || f.startCity, f.endAddr || f.endCity || f.dest].filter(Boolean).length > 1 ? 'Trajet : ' + [f.startAddr || f.startCity, f.endAddr || f.endCity || f.dest].filter(Boolean).join(' → ') : '',
     inc.h || inc.km ? 'Inclus : ' + [inc.h ? inc.h + ' h/jour' : '', inc.km ? inc.km + ' km/jour' : ''].filter(Boolean).join(', ') : '',
     'Total : ' + crsMoney(p.total) + ' TTC' + (p.deposit ? ' · acompte ' + crsMoney(p.deposit) : ''), 'Au-delà : ' + crsMoney(p.extraHour) + ' / heure, ' + crsMoney(p.extraKm) + ' / km',
@@ -624,7 +625,7 @@ async function crsSendQuote() {
     const path = today().slice(0, 7) + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)) + '.pdf';
     const up = await sb.storage.from('devis').upload(path, blob, { contentType: 'application/pdf', upsert: false });
     if (up.error) throw new Error(/bucket/i.test(up.error.message || '') ? 'stockage des devis pas encore installé : exécuter supabase/migrations/20261102000000_devis_mail.sql (' + up.error.message + ')' : up.error.message);
-    const { data, error } = await sb.from('jobs').insert({ kind: 'quote_mail', arg: JSON.stringify({ id: m.id, to: list.join(','), path, name, subject: 'Devis Ludy ' + (m.number || ''), body: crsQuoteText(p) }) }).select('id').single();
+    const { data, error } = await sb.from('jobs').insert({ kind: 'quote_mail', arg: JSON.stringify({ id: m.id, to: list.join(','), path, name, subject: 'Devis ' + crsIssuer(m, f).short + ' ' + (m.number || ''), body: crsQuoteText(p) }) }).select('id').single();
     if (error) throw new Error(/row-level|policy/i.test(error.message) ? 'envoi non autorisé (exécuter supabase/migrations/20261102000000_devis_mail.sql) : ' + error.message : error.message);
     if (CR.cur.status === 'Demande') await crsSave('Devis envoyé');
     say('Envoi demandé à ' + esc(list.join(', ')) + ' : Ludy l\'envoie dans les 5 minutes avec le devis en PDF joint.', 'ok');
@@ -648,7 +649,7 @@ function crsMfDraft(m, f) {
   const kind = f.kind || '', base = crsBase(f, crsG() || {});
   const pre = kind === 'Transfert aéroport' ? 'Transfert aéroport' : kind === 'Circuit touristique' ? 'Circuit' : base === 'interville' || base === 'aeroport' || base === 'convenu' ? 'Transfert' : 'Mise à disposition';
   const G = crsG() || {}, terminus = f.endAddr || f.endCity || (base === 'aeroport' ? 'A' + crsAirport(G).slice(1) + ', ' + crsOrigin(G) : f.dest) || '';
-  return { type: f.mfType === 'Non résident' ? 'non' : 'resident', vehicle: m.vehicle_key || '', remplacement: '', dateDep: dep, dateRet: ret,
+  return { type: f.mfType === 'Non résident' ? 'non' : 'resident', vehicle: m.vehicle_key || '', companyId: f.companyId || '', remplacement: '', dateDep: dep, dateRet: ret,
     chauffeur: String(f.driverName || m.driver_name || '').trim(), chauffeurTel: String(f.driverPhone || '').trim(), donneur: String(f.client || m.client_name || '').trim(),
     cin: f.cin || '', nb: Math.max(1, crsN(f.pax) || 1), passengers: String(f.paxNames || '').split(/\n|;/).map(x => x.trim()).filter(Boolean), donneurVoyage: true,
     depart: String(f.startAddr || f.startCity || '').trim(), terminus: String(terminus).trim(), prestation: pre, nature: pre === 'Mise à disposition' ? 'Mise à disposition' : 'Transfert',
@@ -717,6 +718,7 @@ async function crsQuick(head) {
     ${canEdit() ? '' : msg('Lecture seule : les courses sont créées par les gestionnaires et l\'administrateur.', 'warn')}
     <div class="grid2 mfgrid"><div><div class="panel"><h2>Course</h2>
       <div class="mfrow"><label>Véhicule <select id="qkveh"><option value="">Choisir…</option>${vs.map(x => `<option value="${esc(x.key)}" ${x.key === q.veh ? 'selected' : ''}>${esc(x.plate)}${x.model ? ' · ' + esc(x.model) : ''}</option>`).join('')}</select></label>
+        ${mfCos().length > 1 ? `<label>Société <select id="qkco">${mfCoOpts(q.co, q.veh)}</select></label>` : ''}
         <label>Départ le <input type="datetime-local" id="qkdep" value="${v('dep')}"></label><label>Fin prévue <input type="datetime-local" id="qkend" value="${v('end')}"></label></div>
       <div class="mfrow"><label>Adresse de départ <input id="qkfrom" data-addr value="${v('from')}" placeholder="Hôtel, adresse, aéroport…" size="34"></label>
         <button type="button" class="ghost small" id="qkswap" title="Inverser départ et arrivée">⇅</button>
@@ -746,7 +748,7 @@ async function crsQuick(head) {
     const c = await mfContractAt(q.veh, t.getTime()).catch(() => null); if (CR.qDrv !== key) return;
     if (c) { if (!q.drvManual) { $('#qkdrv').value = q.drv = c.name || ''; $('#qktel').value = q.tel = c.phone || ''; } el.textContent = 'Contrat ' + c.num + ' : ' + (c.name || c.code) + (c.phone ? ' · ' + c.phone : '') + (q.drvManual ? ' (chauffeur saisi à la main gardé)' : ''); }
     else el.innerHTML = '<b>Aucun contrat</b> sur ce véhicule à cette heure : choisir le chauffeur.'; };
-  $('#qkveh').onchange = () => { q.drvManual = false; drvAuto(); if (q.grid) gridPrice(); };
+  $('#qkveh').onchange = () => { q.drvManual = false; drvAuto(); if (q.grid) gridPrice(); const co = $('#qkco'); if (co) { const k = co.value; co.innerHTML = mfCoOpts(k, $('#qkveh').value); co.value = k; } };
   $('#qkdep').onchange = () => { const old = q.dep; rd(); const a = parseLocalDT(old), b = parseLocalDT(q.end), n = parseLocalDT(q.dep);
     if (n && a && b && b > a) { q.end = crsLocalDT(new Date(n.getTime() + (b - a))); $('#qkend').value = q.end; } drvAuto(); };   // fin décalée d'autant
   $('#qkdrv').oninput = $('#qktel').oninput = () => { q.drvManual = true; };
@@ -777,7 +779,8 @@ async function crsQuickCreate(q) {
   // le manifeste doit pouvoir être établi : vérifié avant de lancer la course
   if (!bad.length) { const err = await mfEnsure(); if (err) bad.push('les manifestes (base : ' + err + ')');
     else { const st = await mfDriverFill(crsMfDraft({ vehicle_key: q.veh, start_at: a.toISOString(), end_at: b.toISOString() }, f)); mfCheck(st).forEach(x => { if (!bad.includes(x)) bad.push(x); });
-      if (!f.driverPhone && st.chauffeurTel) f.driverPhone = st.chauffeurTel; if (!f.driverName && st.chauffeur) f.driverName = st.chauffeur; } }
+      if (!f.driverPhone && st.chauffeurTel) f.driverPhone = st.chauffeurTel; if (!f.driverName && st.chauffeur) f.driverName = st.chauffeur;
+      if (mfMulti()) f.companyId = String(+q.co || mfCoOfVeh(q.veh).id || 1); } }   // société figée à la création (devis, manifeste)
   if (bad.length) { const e = new Error('À compléter : ' + bad.join(', ') + '.'); e.bad = true; throw e; }
   CR.cur = null; CR.f = f; CR.edit = canEdit();
   const p = crsPrice(f, G), row = crsRow(f, p);
@@ -807,7 +810,7 @@ async function crsQuoteSave(m, f, p, G) {
 }
 async function crsQuickGo(head) {
   const q = CR.q, res = $('#qkres'), btn = $('#qkgo');
-  ['veh', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cmail', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph', cmail: 'cml' }[k] || k)); if (e) q[k] = e.value; });
+  ['veh', 'co', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cmail', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph', cmail: 'cml' }[k] || k)); if (e) q[k] = e.value; });
   q.gridRef = q.grid ? ($('#qkgrid').selectedOptions[0] || {}).textContent : '';
   btn.disabled = true; res.innerHTML = msg('Lancement…');
   try {
@@ -924,6 +927,16 @@ function crsGridPage(head, work) {
   };
 }
 
+// ---------- société de la course (El Puente…) : choisie, sinon celle de la plaque, sinon la société principale ----------
+function crsCo(m, f) { return typeof mfCo === 'function' && MF.cfg ? mfCo(f && f.companyId, (f && f.vehicleKey) || (m && m.vehicle_key)) : null; }
+/** Émetteur du devis : société principale = marque Ludy (mentions de la grille), autre société = son nom, ses mentions */
+function crsIssuer(m, f, G) {
+  const co = crsCo(m, f), c = (co && co.company) || {}, main = !co || co.id === 1;
+  return { main, short: main ? 'Ludy' : mfCoName(co), name: String(c.nom || ''), addr: String(c.adresse || ''),
+    mentions: c.mentions || (main ? (G && G.company) || '' : [c.nom, c.adresse, c.tel ? 'Tél. ' + c.tel : '', c.dossier ? 'Dossier n° ' + c.dossier : ''].filter(Boolean).join(' — ')),
+    contact: c.contact || (main ? (G && G.contact) || '' : '') };
+}
+
 // ---------- PDF : devis et rapport km / horaires ----------
 function crsPdfDoc() {
   if (!window.jspdf) throw new Error('bibliothèque PDF non chargée, réessayez dans un instant');
@@ -935,8 +948,9 @@ function crsPdfName(m, f) { return 'Devis-' + (m.number || 'Ludy') + (f.client ?
 function crsPdf(m, f, p, G, keep) {
   const doc = crsPdfDoc(), W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 14, acc = [123, 30, 46], ink = [20, 32, 43], mute = [93, 107, 120];
   const t = crsTimes(f), inc = p.included || {}, cl = crsCl, draft = m.needs_validation !== false && crsVal(f, p.total, G).length && !m.validated_at;
-  const font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); doc.setTextColor(...(c || ink)); };
-  try { doc.addImage(RPT_LOGO, 'PNG', M, 10, 38, 9.3); } catch (e) { }
+  const font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); doc.setTextColor(...(c || ink)); }, iss = crsIssuer(m, f, G);
+  if (iss.main) { try { doc.addImage(RPT_LOGO, 'PNG', M, 10, 38, 9.3); } catch (e) { } }
+  else { font('bold', 13); doc.text(doc.splitTextToSize(cl(iss.name), (W - 2 * M) / 2 - 4)[0] || '', M, 15); font('normal', 8, mute); doc.text(doc.splitTextToSize(cl(iss.addr), (W - 2 * M) / 2 - 4).slice(0, 2), M, 20); }
   font('bold', 16); doc.text('DEVIS' + (m.number ? ' N° ' + m.number : ''), W - M, 15, { align: 'right' });
   font('normal', 9, mute); doc.text('Établi le ' + fmtDay(today()) + ' · valable ' + (crsN(f.validDays) || 7) + ' jours · grille ' + cl(G.valid || ''), W - M, 20.5, { align: 'right' });
   if (draft) { font('bold', 10, [180, 35, 24]); doc.text('PROJET - en attente de validation de l\'exploitation', W - M, 26, { align: 'right' }); }
@@ -968,7 +982,7 @@ function crsPdf(m, f, p, G, keep) {
     'Réservation confirmée après validation écrite du devis' + (p.deposit ? ', paiement de l\'acompte (' + crsMoney(p.deposit) + ')' : '') + ' et transmission des informations nécessaires à l\'organisation.',
     G.cancel ? (/^annulation/i.test(G.cancel) ? G.cancel : 'Annulation : ' + G.cancel) : '', 'TVA ' + p.vat + ' % incluse. ' + (G.notes || ''), f.quoteNotes || '']);
   const n = doc.getNumberOfPages();
-  for (let i = 1; i <= n; i++) { doc.setPage(i); font('normal', 6.8, mute); const l = doc.splitTextToSize(cl((G.company || '') + (G.contact ? ' · ' + G.contact : '')), W - 2 * M); doc.text(l, W / 2, H - 9, { align: 'center' }); doc.text('Page ' + i + ' / ' + n, W - M, H - 4, { align: 'right' }); }
+  for (let i = 1; i <= n; i++) { doc.setPage(i); font('normal', 6.8, mute); const l = doc.splitTextToSize(cl((iss.mentions || '') + (iss.contact ? ' · ' + iss.contact : '')), W - 2 * M); doc.text(l, W / 2, H - 9, { align: 'center' }); doc.text('Page ' + i + ' / ' + n, W - M, H - 4, { align: 'right' }); }
   if (!keep) doc.save(crsPdfName(m, f));
   return doc;
 }

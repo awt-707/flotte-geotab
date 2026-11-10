@@ -233,9 +233,10 @@ async function cshTabCoursesM(p) {
         <div class="mg2">${D.mf && D.mf.r ? '<button type="button" class="ghost" id="mobmfdl">Manifeste PDF</button>' : '<span></span>'}${D.quote ? '<button type="button" class="ghost" id="mobqdl">Devis PDF</button>' : ''}</div>
         <button type="button" class="ghost mbtn" id="mobnew">Nouvelle course</button></div>
       <div class="small">Encaissement à l'arrivée du chauffeur : onglet « À encaisser ».</div><div class="small" id="mobshr"></div></div>` : '';
-  cshBody(seg + doneCard + (err ? msg('Manifestes pas encore installés dans la base : ' + esc(err), 'err') : '') + (!err && MF.cfg && !MF.cfg.stamp ? msg('Cachet de l\'entreprise manquant : manifeste impossible (à ajouter depuis l\'ordinateur, Manifestes &gt; Réglages).', 'warn') : '') + (D ? '' : `
+  cshBody(seg + doneCard + (err ? msg('Manifestes pas encore installés dans la base : ' + esc(err), 'err') : '') + (!err && MF.cfg && mfCos().some(c => !c.stamp) ? msg('Cachet manquant (' + esc(mfCos().filter(c => !c.stamp).map(mfCoName).join(', ')) + ') : manifeste impossible pour ses véhicules (à ajouter depuis l\'ordinateur, Manifestes &gt; Réglages).', 'warn') : '') + (D ? '' : `
     <div class="mcard mform"><h3>Course</h3>
       <label>Véhicule <select id="qkveh"><option value="">Choisir…</option>${vs.map(x => `<option value="${esc(x.key)}" ${x.key === q.veh ? 'selected' : ''}>${esc(x.plate)}${x.model ? ' · ' + esc(x.model) : ''}</option>`).join('')}</select></label>
+      ${mfCos().length > 1 ? `<label>Société <select id="qkco">${mfCoOpts(q.co, q.veh)}</select></label>` : ''}
       <label>Départ le <input type="datetime-local" id="qkdep" value="${v('dep')}"></label><label>Fin prévue <input type="datetime-local" id="qkend" value="${v('end')}"></label>
       <label>Adresse de départ <input id="qkfrom" data-addr value="${v('from')}" placeholder="Hôtel, adresse, aéroport…"></label>
       <label>Adresse d'arrivée <input id="qkto" data-addr value="${v('to')}" placeholder="Hôtel, adresse, aéroport…"></label>
@@ -253,7 +254,7 @@ async function cshTabCoursesM(p) {
       <button type="button" class="mbtn" id="qkgo">Créer la course</button><div id="qkres"></div>
       <div class="small">Crée la course (véhicule bloqué), le manifeste et le devis PDF. L'encaissement se fait à l'arrivée du chauffeur.</div></div>`));
   if (D) return mobDoneBind(p);
-  const rd = () => { ['veh', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph' }[k] || k)); if (e) q[k] = e.value; });
+  const rd = () => { ['veh', 'co', 'dep', 'end', 'from', 'to', 'drv', 'tel', 'grid', 'price', 'client', 'cphone', 'cin', 'pax', 'obs', 'names'].forEach(k => { const e = $('#qk' + ({ client: 'cli', cphone: 'cph' }[k] || k)); if (e) q[k] = e.value; });
     q.gridRef = q.grid && $('#qkgrid').selectedOptions[0] ? $('#qkgrid').selectedOptions[0].textContent : ''; return q; };
   const gridPrice = () => { rd(); const vv = vehOf(q.veh), cat = crsCatOf(vv), [gid, t, dest] = String(q.grid || '').split('|'), g = crsGridOf(gid), row = ((t === 'A' ? g.airport : g.intercity) || []).find(r => r.dest === dest);
     const pr = row && cat ? crsN(row[cat]) : 0, info = $('#qkpinfo');
@@ -264,7 +265,7 @@ async function cshTabCoursesM(p) {
     const c = await mfContractAt(q.veh, t.getTime()).catch(() => null); if (MOB.drvKey !== key || !$('#qkdrv')) return;
     if (c) { if (!q.drvManual) { $('#qkdrv').value = q.drv = c.name || ''; $('#qktel').value = q.tel = c.phone || ''; } el.textContent = 'Contrat ' + c.num + ' : ' + (c.name || c.code) + (c.phone ? ' · ' + c.phone : ''); }
     else el.innerHTML = '<b>Aucun contrat</b> sur ce véhicule à cette heure : choisir le chauffeur.'; };
-  $('#qkveh').onchange = () => { q.drvManual = false; drvAuto(); if (q.grid) gridPrice(); };
+  $('#qkveh').onchange = () => { q.drvManual = false; drvAuto(); if (q.grid) gridPrice(); const co = $('#qkco'); if (co) { const k = co.value; co.innerHTML = mfCoOpts(k, $('#qkveh').value); co.value = k; } };
   $('#qkdep').onchange = () => { const old = q.dep; rd(); const a = parseLocalDT(old), b = parseLocalDT(q.end), n = parseLocalDT(q.dep);
     if (n && a && b && b > a) { q.end = crsLocalDT(new Date(n.getTime() + (b - a))); $('#qkend').value = q.end; } drvAuto(); };
   $('#qkdrv').oninput = $('#qktel').oninput = () => { q.drvManual = true; };
