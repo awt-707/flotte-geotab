@@ -355,13 +355,18 @@ async function mfMake(st, extra) {
     if (d.type === 'resident') { A.bg1 = await mfImage(MANIF_BG.bg1); A.bg2 = await mfImage(MANIF_BG.bg2); } else A.bg3 = await mfImage(MANIF_BG.bg3);
     const doc = buildManifest(window.jspdf.jsPDF, d, A), blob = doc.output('blob'), name = manifFileName(d);
     // PDF gardé dans le stockage privé « manifestes » : lien signé dans les messages
+    // deux essais : réseau du téléphone coupé un instant, jeton renouvelé entre les deux (site/jeton.js rejoue déjà un jeton refusé)
     let path = null, link = null, upErr = '';
-    try {
-      const pth = today().slice(0, 7) + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)) + '.pdf';
-      const up = await sb.storage.from('manifestes').upload(pth, blob, { contentType: 'application/pdf', upsert: false });
-      if (up.error) throw up.error;
-      path = pth; link = await mfLink(path);
-    } catch (e) { upErr = e.message || String(e); }
+    for (let k = 0; k < 2 && !path; k++) {
+      try {
+        if (k) { await new Promise(r => setTimeout(r, 1500)); await sb.auth.refreshSession().catch(() => null); }
+        const pth = today().slice(0, 7) + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)) + '.pdf';
+        const up = await sb.storage.from('manifestes').upload(pth, blob, { contentType: 'application/pdf', upsert: false });
+        if (up.error) throw up.error;
+        path = pth; upErr = '';
+      } catch (e) { upErr = e.message || String(e); }
+    }
+    if (path) { try { link = await mfLink(path); } catch (e) { upErr = 'lien du PDF : ' + (e.message || String(e)); } }
     const raw = Object.assign({}, st); delete raw.drvManual;
     const row = { vehicle_key: v.key, plate: v.plaque, driver_name: d.chauffeur, driver_phone: d.chauffeurTel || null, client: d.donneur,
       depart_at: (parseLocalDT(st.dateDep) || new Date()).toISOString(), file_name: name, file_path: path, message: manifText(d, link),
@@ -401,7 +406,7 @@ function mfDone(m, box) {
   const canFile = (() => { try { return !!(navigator.canShare && navigator.canShare({ files: [new File([m.blob], m.name, { type: 'application/pdf' })] })); } catch (e) { return false; } })();
   box.innerHTML = `<div class="panel mfok"><h2>Manifeste prêt</h2><div class="small">${esc(m.name)}</div>
     ${m.saveErr ? msg('Manifeste non enregistré dans l\'historique : ' + esc(m.saveErr), 'warn') : ''}
-    ${m.link ? '' : msg('PDF non mis en ligne (' + esc(m.upErr || 'stockage indisponible') + ') : le message part sans lien, joignez le PDF téléchargé.', 'warn')}
+    ${m.link ? '' : msg('PDF non mis en ligne (' + esc(m.upErr || 'stockage indisponible') + ') : ' + (window.LudyAndroid && window.LudyAndroid.share ? 'les boutons WhatsApp envoient quand même le PDF lui-même.' : 'le message part sans lien, joignez le PDF téléchargé.'), 'warn')}
     <div class="adact mfact">
       ${wa ? `<a class="btn small" id="mfwa1" href="https://wa.me/${wa}?text=${encodeURIComponent(txt)}" target="_blank" rel="noopener">WhatsApp au chauffeur</a>` : ''}
       <a class="btn small${wa ? ' ghostb' : ''}" id="mfwa" href="https://wa.me/?text=${encodeURIComponent(txt)}" target="_blank" rel="noopener">WhatsApp (choisir le contact)</a>
@@ -414,6 +419,10 @@ function mfDone(m, box) {
   $('#mfcopy').onclick = async () => { try { await navigator.clipboard.writeText(txt); $('#mfcopy').textContent = 'Copié'; } catch (e) { await askText('Copiez le message :', txt); } };
   if ($('#mfshare')) $('#mfshare').onclick = () => navigator.share({ files: [new File([m.blob], m.name, { type: 'application/pdf' })], text: txt }).catch(() => { });
   if (m.noReturn) $('#mfret2').hidden = true;
+  // application Android 1.2 : le PDF lui-même joint dans WhatsApp (même si le dépôt en ligne a échoué : aucun lien ni jeton à ouvrir)
+  if (window.LudyAndroid && typeof window.LudyAndroid.share === 'function' && typeof mobSharePdf === 'function') {
+    [['#mfwa1', m.d.chauffeurTel], ['#mfwa', '']].forEach(([id, ph]) => { const a = $(id); if (a) a.onclick = e => { e.preventDefault(); mobSharePdf(m.blob, m.name, ph, txt, m.link).catch(x => alert('Partage impossible : ' + (x.message || x))); }; });
+  }
   $('#mfret2').onclick = () => { const s = Object.assign({}, MF.draft, { depart: MF.draft.terminus, terminus: MF.draft.depart, dateDep: mfNowLocal(), dateRet: '' }); MF.draft = s; MF.last = null; pageManifeste(); };
   if ($('#mfsend')) $('#mfsend').onclick = () => mfSendMail(m.id, $('#mfto').value, $('#mfsendr'));
 }

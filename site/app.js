@@ -1,6 +1,11 @@
 // Ludy (supervision de flotte, données Geotab) — site web (lecture de la base Supabase alimentée par le collecteur Apps Script)
 const CFG = window.FLOTTE_CONFIG || {};
-const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true }, global: { fetch: cacheFetch(() => CACHE) } });   // écriture = lectures gardées oubliées (site/cache.js)
+// écriture = lectures gardées oubliées (site/cache.js) ; jeton refusé (application revenue d'arrière-plan) = renouvelé, demande rejouée (site/jeton.js)
+let JWT_LOST_AT = 0;
+const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true }, global: { fetch: jwtRetryFetch(cacheFetch(() => CACHE), {
+  base: CFG.SUPABASE_URL, anon: CFG.SUPABASE_ANON_KEY,
+  refresh: async () => { const { data, error } = await sb.auth.refreshSession(); return !error && data && data.session ? data.session.access_token : null; },
+  lost: () => { if (Date.now() - JWT_LOST_AT > 120000) { JWT_LOST_AT = Date.now(); setTimeout(() => alert('Session expirée : reconnectez-vous. La page en cours (manifeste, saisie) est gardée.'), 0); } } }) } });
 const S = { session: null, profile: null, P: null, veh: null, vehList: [], rules: null, drv: null, timers: [], channel: null, agencies: [], agName: {}, alertCh: null };
 const $ = sel => document.querySelector(sel);
 const ROLE_TXT = { admin: 'Administrateur', manager: 'Gestionnaire', viewer: 'Lecture seule', rh: 'Ressources humaines', pending: 'En attente' };
