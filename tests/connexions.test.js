@@ -7,7 +7,8 @@ const ping = (uid, id, page, active) => as(uid, `select public.session_ping('${i
 
 test('signal des onglets : chacun écrit seulement sa session ; l\'administrateur voit tout le monde', () => {
   env.resetDb();
-  env.psql(`insert into profiles (user_id, email, role) values ('${MGR}', 'mgr@x', 'manager') on conflict (user_id) do update set role = 'manager'`);
+  env.psql(`insert into profiles (user_id, email, role) values ('${MGR}', 'mgr@x', 'manager') on conflict (user_id) do update set role = 'manager';
+    insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin'`);   // administrateur quel que soit l'ordre des tests
   try {
     ping(MGR, 'onglet-gestionnaire-1', 'En direct', true);
     ping(MGR, 'onglet-gestionnaire-1', 'Alertes', false);   // même onglet : mis à jour, pas dupliqué
