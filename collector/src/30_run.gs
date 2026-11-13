@@ -222,6 +222,8 @@ function collect() {
     // Pleins vus par la jauge sans FillUp Geotab (publié des heures après, ou jamais) : affichés tout de suite, retirés quand le FillUp arrive
     try { if (gaugeFills_()) markDirty_(addDays_(localDay_(Date.now()), -(GAUGE_FILL_DAYS - 1))); } catch (e) { msg.push('Pleins (jauge) : ' + e.message); }
     if (live && live.wrote) markDirty_(localDay_(Date.now() - DAY));
+    // Siphonages suspects contrôlés (GPS pendant l'arrêt, jauge après le redémarrage) : faux signaux marqués, avec la raison
+    try { const m = siphonCheckStep_(); if (m) msg.push(m); } catch (e) { msg.push('Contrôle des siphonages : ' + e.message); }
     // Véhicules encore sans boîtier Geotab (boîtier installé ou renommé après l'ajout au parc, VIN lu par le boîtier…) : nouvel essai toutes les 30 min
     try { const m = geoLinkStep_(); if (m) msg.push(m); } catch (e) { msg.push('Association Geotab : ' + e.message); }
     // Demandes du site (contrats importés, plaques, synchro immédiate, recalcul)

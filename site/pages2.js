@@ -166,12 +166,15 @@ async function pageCarburant() {
       ['Écart (%)', x => x.gap === null ? '' : `<span class="${Math.abs(x.gap) > 15 ? 'red' : ''}">${f1(x.gap)}</span>`, x => x.gap || 0, 'n']], ff, { empty: 'Aucun intervalle entre deux pleins complets sur les données conservées', page: true })}
     <h2>Récapitulatif des pleins par mois et par véhicule</h2>
     ${table('trec', [['Mois', o => o.m.slice(5) + '/' + o.m.slice(0, 4), o => o.m], ['Véhicule', o => vlink(o.key)], ['Pleins', o => o.n, null, 'n'], ['Litres', o => fillL(o.n, o.nm, o.l), o => o.l, 'n']], Object.values(rec).sort((a, b) => b.m.localeCompare(a.m)), { empty: 'Aucun plein', page: true })}
-    <h2>Siphonages suspects (baisse de jauge moteur coupé, sans trajet)</h2>
+    <h2>Siphonages suspects (baisse de jauge moteur coupé, sans trajet)</h2><div class="sub">Chaque alerte est contrôlée par Ludy : véhicule déplacé pendant l'arrêt (GPS Geotab) = trajet non enregistré ; jauge remontée après le redémarrage = véhicule garé en pente ou jauge instable. Ces deux cas passent en « Faux positif » ; il reste « À vérifier » ce qui est immobile avec une jauge restée basse.</div>
     ${table('tsi', [['Arrêt', f => fmtDTY(f.stop_start), f => f.stop_start], ['Redémarrage', f => fmtDTY(f.stop_end)], ['Véhicule', f => vlink(f.vehicle_key, f.plate)],
       ['Chauffeur à l\'arrêt', f => dlink(f.driver_code, drvName(f.driver_code, f.driver_name))], ['Chauffeur au redémarrage', f => esc(f.next_driver || '')], ['Durée arrêt (min)', f => f0(f.stop_min), null, 'n'],
-      ['Jauge avant → après (%)', f => f1(f.lvl_before) + ' → ' + f1(f.lvl_after)], ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n'],
+      ['Jauge avant → après', f => f1(f.lvl_before) + ' → ' + f1(f.lvl_after) + (/\(L\)/.test(f.source || '') ? ' L' : ' %')], ['Litres (jauge)', f => f1(f.liters_gauge), null, 'n'],
       ['Statut', f => canEdit() ? `<select class="fst" data-f="${esc(f.id)}">${['À vérifier', 'Vérifié', 'Faux positif'].map(s => `<option ${s === f.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(f.status || '')],
-      ['Lieu', f => mapLink(f.lat, f.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(f.lat, f.lon)}">carte</a>` : '']], siph, { empty: 'Aucun siphonage suspect', page: true })}
+      // contrôle du collecteur (GPS Geotab pendant l'arrêt, jauge après le redémarrage) : collector/src/23_siphon.gs
+      ['Contrôle Ludy', f => f.check_note ? `<span class="small${f.status === 'Faux positif' ? ' nm' : ''}">${esc(f.check_note)}</span>` : '<span class="small nm">contrôle au prochain passage (relevés d\'après le redémarrage)</span>'],
+      ['Lieu', f => mapLink(f.lat, f.lon) ? `<a target="_blank" rel="noopener" href="${mapLink(f.lat, f.lon)}">carte</a>` : '']],
+      siph.slice().sort((x, y) => (x.status === 'Faux positif') - (y.status === 'Faux positif')), { empty: 'Aucun siphonage suspect', page: true })}
     <h2>Trajets non enregistrés (boîtier coupé, le compteur km du véhicule a avancé)</h2>
     ${table('ttne', [['De', f => fmtDTY(f.stop_start), f => f.stop_start], ['À', f => fmtDTY(f.stop_end)], ['Véhicule', f => vlink(f.vehicle_key, f.plate)], ['Chauffeur', f => dlink(f.driver_code, drvName(f.driver_code, f.driver_name))],
       ['Km non enregistrés', f => esc(String(f.engine || '').split(' ')[0]), null, 'n'], ['Statut', f => esc(f.status || '')]], tne, { empty: 'Aucun', page: true })}`;
