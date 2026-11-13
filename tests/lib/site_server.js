@@ -72,8 +72,11 @@ function storage(req, res, u) {
     }
     if (req.method === 'POST') {   // dépôt (multipart du client Supabase) : le PDF lui-même
       const a = body.indexOf('%PDF-'), e = body.lastIndexOf('%%EOF');
-      if (a < 0 || e < 0 || STORE.has(p)) { res.statusCode = 400; return res.end('{"error":"invalid","message":"refusé"}'); }
-      STORE.set(p, body.slice(a, e + 5)); return res.end(JSON.stringify({ Key: p, Id: 'x' }));
+      // photo (justificatif scanné) : image JPEG ou PNG entière
+      const j = body.indexOf(Buffer.from([0xff, 0xd8, 0xff])), je = body.lastIndexOf(Buffer.from([0xff, 0xd9])), g = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47])), ge = body.lastIndexOf('IEND');
+      const part = a >= 0 && e >= 0 ? body.slice(a, e + 5) : j >= 0 && je > j ? body.slice(j, je + 2) : g >= 0 && ge > g ? body.slice(g, ge + 8) : null;
+      if (!part || STORE.has(p)) { res.statusCode = 400; return res.end('{"error":"invalid","message":"refusé"}'); }
+      STORE.set(p, part); return res.end(JSON.stringify({ Key: p, Id: 'x' }));
     }
     const k = p.replace(/^sign\//, ''), f = STORE.get(k);
     if (!f || (p.startsWith('sign/') && !/^jeton-/.test(u.searchParams.get('token') || '')) || (!p.startsWith('sign/') && !/Bearer \S/.test(req.headers.authorization || ''))) { res.statusCode = 400; return res.end('{"error":"not_found"}'); }

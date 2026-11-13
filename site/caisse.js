@@ -512,25 +512,32 @@ function cshTabDep(p) {
     if (/sans justificatif/i.test(cshVal('cdc'))) $('#cdj').value = 'KO'; };
   $('#cdc').onchange = fineUi;
   $('#cdsave').onclick = async () => {
-    const a = cshN(cshVal('cda')); if (!(a > 0) || !cshVal('cdd')) { alert('Date et montant obligatoires.'); return; }
-    const who = cshVal('cdw') ? cshResolve(cshVal('cdw')) : {}, fine = cshIsFine(cshVal('cdc'));
-    if (fine && !who.driver_name) { alert('Amende : choisir le chauffeur.'); return; }
-    if (fine && !cshVal('cdm') && !await ask('Amende sans commentaire (motif, lieu, n° de procès-verbal). Enregistrer quand même ?')) return;
-    // payée par la banque : hors caisse (virement), comme les avances et bonus
-    const mv = fine ? cshFineMove(cshVal('cdp'), cshVal('cdc'), cshVal('cdj'))
-      : { caisse: 'depenses', flow: cshVal('cdo') === 'Banque' ? 'virement' : 'out', ride_type: cshVal('cdr'), justif: cshVal('cdj'), source: cshVal('cdo') };
-    const file = $('#cdf') && $('#cdf').files[0];
-    try { if (file) cshFileCheck(file); } catch (e) { alert('Justificatif : ' + e.message); return; }
-    try {
-      const row = Object.assign(who, mv, { kind: 'depense', amount: a, day: cshVal('cdd'), shift: cshVal('cds'), label: cshVal('cdc'), comment: cshVal('cdm') || null });
-      if (file && (!row.justif || row.justif === 'En attente')) row.justif = 'OK';   // justificatif fourni avec la dépense
-      const id = await cshInsert(row);
-      if (file) { try { await cshFileUpload(file, { kind: 'justif', move: Object.assign({ id }, row) }); } catch (e) { alert('Dépense enregistrée, mais le justificatif n\'a pas pu être déposé : ' + (e.message || e) + '. Le déposer depuis la liste.'); } }
-      pageCaisse();
-    }
-    catch (e) { alert(e.message); }
+    if (await cshSaveDep({ day: cshVal('cdd'), shift: cshVal('cds'), driver: cshVal('cdw'), cat: cshVal('cdc'), ride: cshVal('cdr'), amount: cshVal('cda'), justif: cshVal('cdj'),
+      source: cshVal('cdo'), payer: cshVal('cdp'), comment: cshVal('cdm') }, $('#cdf') && $('#cdf').files[0])) pageCaisse();
   };
   cshBindRowActions(); cshBindMoveForm(); cshBindFiles();
+}
+
+/**
+ * Dépense (ticket par ticket), partagée par la page et le mode téléphone : v = { day, shift, driver, cat, ride, amount, justif, source, payer, comment },
+ * file = justificatif (photo ou PDF, facultatif : justificatif « OK » s'il est fourni). Renvoie l'identifiant, ou null si la saisie est refusée.
+ */
+async function cshSaveDep(v, file) {
+  const a = cshN(v.amount); if (!(a > 0) || !v.day) { alert('Date et montant obligatoires.'); return null; }
+  const who = v.driver ? cshResolve(v.driver) : {}, fine = cshIsFine(v.cat);
+  if (fine && !who.driver_name) { alert('Amende : choisir le chauffeur.'); return null; }
+  if (fine && !v.comment && !await ask('Amende sans commentaire (motif, lieu, n° de procès-verbal). Enregistrer quand même ?')) return null;
+  // payée par la banque : hors caisse (virement), comme les avances et bonus
+  const mv = fine ? cshFineMove(v.payer, v.cat, v.justif)
+    : { caisse: 'depenses', flow: v.source === 'Banque' ? 'virement' : 'out', ride_type: v.ride, justif: v.justif || 'En attente', source: v.source };
+  try { if (file) cshFileCheck(file); } catch (e) { alert('Justificatif : ' + e.message); return null; }
+  try {
+    const row = Object.assign(who, mv, { kind: 'depense', amount: a, day: v.day, shift: v.shift || null, label: v.cat, comment: v.comment || null });
+    if (file && (!row.justif || row.justif === 'En attente')) row.justif = 'OK';   // justificatif fourni avec la dépense
+    const id = await cshInsert(row);
+    if (file) { try { await cshFileUpload(file, { kind: 'justif', move: Object.assign({ id }, row) }); } catch (e) { alert('Dépense enregistrée, mais le justificatif n\'a pas pu être déposé : ' + (e.message || e) + '. Le déposer depuis la liste.'); } }
+    return id;
+  } catch (e) { alert(e.message); return null; }
 }
 
 // ---------- Avances RH ----------
