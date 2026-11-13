@@ -464,8 +464,24 @@ function cshFileCheck(f) {
   if (f.size > CSH_FILE_MAX) throw new Error('fichier trop lourd (15 Mo au plus)');
 }
 /** Dépôt d'un fichier : meta = { kind: 'justif', move } ou { kind: 'depot', ref, day, title } */
+/**
+ * Photo d'un justificatif (appareil photo du téléphone : 3 à 10 Mo) réduite avant le dépôt : 2000 px au plus, JPEG qualité 0,85 (lisible,
+ * ~0,5 Mo). PDF, petite image ou photo illisible par le navigateur : fichier d'origine.
+ */
+async function cshImgSmall(file, max) {
+  max = max || 2000;
+  if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type || '') || file.size < 600 * 1024 || typeof createImageBitmap !== 'function') return file;
+  try {
+    const bm = await createImageBitmap(file), k = Math.min(1, max / Math.max(bm.width, bm.height)), w = Math.round(bm.width * k), h = Math.round(bm.height * k);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h; cv.getContext('2d').drawImage(bm, 0, 0, w, h); if (bm.close) bm.close();
+    const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.85));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], String(file.name || 'justificatif').replace(/\.[^.]*$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch (e) { return file; }
+}
 async function cshFileUpload(file, meta) {
   cshFileCheck(file);
+  file = await cshImgSmall(file);
   const ag = CS.agId || 0, key = meta.kind === 'justif' ? 'm' + meta.move.id : String(meta.ref).replace(/[^\w-]+/g, '_');
   const path = ag + '/' + (meta.kind === 'justif' ? 'justificatifs' : 'depots') + '/' + key + '_' + Date.now() + '.' + cshFileExt(file);
   const up = await sb.storage.from('caisse').upload(path, file, { contentType: file.type, upsert: false }); if (up.error) throw up.error;

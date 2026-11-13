@@ -93,7 +93,8 @@ function cshLinks(o) {
 
 /**
  * Rapprochement des espèces Uber par chauffeur sur une période (onglet « Dashboard - Rappro Uber » du classeur) :
- * espèces Uber − dépenses « Course Uber » justifiées OK payées avec les espèces Uber (cshUberPaid) = théorique à remettre ; écart = théorique − encaissé net ;
+ * espèces Uber − dépenses « Course Uber » justifiées OK payées avec les espèces Uber (cshUberPaid) − promotions saisies à l'encaissement = théorique à remettre ;
+ * écart = théorique − encaissé net ;
  * écart > 0 : à retenir sur la paie (manquant) ; < 0 : à ajouter (excédent).
  * Compte Uber rattaché à aucun chauffeur Ludy (cshLinks), ou chauffeur sans compte Uber rattaché : « Compte Uber non relié », sans effet sur la paie.
  * o : { payments, moves, from, to, uuid2code, drivers, udrv, dayOfPayment(p) → aaaa-mm-jj (jour du shift), names: clé → nom }
@@ -101,7 +102,7 @@ function cshLinks(o) {
 function cshRappro(o) {
   const pf = o.pf || CSH_PF.uber, bolt = pf.id === 'bolt';
   o = Object.assign({}, o, { uuid2code: bolt ? {} : cshLinks(o) });
-  const by = {}, get = (k, name) => (by[k] = by[k] || { key: k, name: name || '', uber: 0, frais: 0, net: 0, trips: 0 });
+  const by = {}, get = (k, name) => (by[k] = by[k] || { key: k, name: name || '', uber: 0, frais: 0, promo: 0, net: 0, trips: 0 });
   const inP = d => d && d >= o.from && d <= o.to;
   (o.payments || []).forEach(p => {
     const d = o.dayOfPayment ? o.dayOfPayment(p) : String(p.day || '').slice(0, 10);
@@ -111,13 +112,13 @@ function cshRappro(o) {
   (o.moves || []).filter(cshLive).forEach(m => {
     if (!inP(m.day)) return;
     const k = cshMoveKey(m, o.uuid2code); if (!k) return;
-    if (m.caisse === pf.caisse && m.kind === 'encaissement') { const r = get(k, m.driver_name); r.net = cshR(r.net + cshN(m.amount)); }
+    if (m.caisse === pf.caisse && m.kind === 'encaissement') { const r = get(k, m.driver_name); r.net = cshR(r.net + cshN(m.amount)); r.promo = cshR(r.promo + cshN(m.promo)); }
     if (m.kind === 'depense' && m.ride_type === pf.ride && m.justif === 'OK' && cshUberPaid(m)) { const r = get(k, m.driver_name); r.frais = cshR(r.frais + cshN(m.amount)); }
   });
   const linked = new Set(Object.values(o.uuid2code));
   return Object.values(by).map(r => {
     if (o.names && o.names[r.key]) r.name = o.names[r.key];
-    r.theo = cshR(r.uber - r.frais); r.ecart = cshR(r.theo - r.net);
+    r.theo = cshR(r.uber - r.frais - r.promo); r.ecart = cshR(r.theo - r.net);   // promotion de la plateforme : due par Uber / Bolt, jamais par le chauffeur
     // espèces Uber d'un compte sans chauffeur Ludy, ou chauffeur sans compte Uber rattaché (rien à comparer) : pas d'effet sur la paie ;
     // Bolt : session d'un chauffeur Bolt qu'aucun chauffeur Ludy ne porte (nom ni contrat du véhicule), ou encaissement sans session Bolt importée
     r.unlinked = bolt ? r.key.indexOf('N:') === 0 || !r.uber : r.key.indexOf('U:') === 0 || (!r.uber && !linked.has(r.key));
@@ -542,7 +543,7 @@ const CSH_COMPLEMENT = 'Complément';
 /**
  * Encaissements du shift regroupés par contrat (sinon chauffeur + jour + shift) et par plateforme : le premier = encaissement du shift,
  * les suivants = compléments remis ensuite. Déclaré = espèces de la plateforme saisies avec l'encaissement, sinon declaredOf (export importé),
- * sinon null (export pas encore importé). dueAtShift = déclaré − encaissé au shift ; rest = déclaré − encaissé total (compléments compris).
+ * sinon null (export pas encore importé). dueAtShift = déclaré − encaissé au shift − promotion ; rest = déclaré − encaissé total (compléments compris) − promotion.
  * Statut : Manquant (il reste à encaisser), Soldé (manquant remis ensuite), Cadré, Excédent, Non importé.
  */
 function cshShortfalls(moves, declaredOf) {
@@ -554,13 +555,29 @@ function cshShortfalls(moves, declaredOf) {
     const l = groups[k], main = l.find(m => m.label !== CSH_COMPLEMENT) || l[0], comps = l.filter(m => m !== main);
     const declared = main.uber_cash != null && main.uber_cash !== '' ? cshN(main.uber_cash) : (declaredOf ? declaredOf(main) : null);
     const first = cshR(main.amount), extra = cshR(comps.reduce((t, m) => t + cshN(m.amount), 0)), total = cshR(first + extra);
-    const dueAtShift = declared == null ? null : cshR(declared - first), rest = declared == null ? null : cshR(declared - total);
+    const promo = cshR(cshN(main.promo));   // promotion de la plateforme : le client a payé moins, la différence n'est pas un manque du chauffeur
+    const dueAtShift = declared == null ? null : cshR(declared - first - promo), rest = declared == null ? null : cshR(declared - total - promo);
     const status = declared == null ? 'Non importé' : dueAtShift > 0.004 ? (rest > 0.004 ? 'Manquant' : rest < -0.004 ? 'Excédent' : 'Soldé') : dueAtShift < -0.004 ? 'Excédent' : 'Cadré';
     return { key: k, main, comps, caisse: main.caisse, day: main.day, shift: main.shift || '', driver_code: main.driver_code || null, driver_name: main.driver_name || '',
-      contract_num: main.contract_num || null, declared, first, extra, total, dueAtShift, rest, status };
+      contract_num: main.contract_num || null, declared, first, extra, total, promo, dueAtShift, rest, status };
   }).sort((a, b) => String(b.day).localeCompare(String(a.day)) || String(a.driver_name).localeCompare(String(b.driver_name)));
+}
+
+// ---------- Promotions Uber / Bolt (13/11/2026, demande d'Ahmed) ----------
+const CSH_PROMO_ST = ['À vérifier', 'Payée', 'Non payée'];
+/**
+ * Promotions saisies avec les encaissements du shift (le client a payé moins que le montant affiché par la plateforme) sur une période :
+ * une ligne par encaissement avec promotion, statut de vérification (vide = À vérifier). Totaux par statut.
+ */
+function cshPromos(moves, from, to) {
+  const rows = (moves || []).filter(m => cshLive(m) && m.kind === 'encaissement' && (m.caisse === 'uber' || m.caisse === 'bolt') && cshN(m.promo) > 0 && m.day >= from && m.day <= to)
+    .map(m => ({ m, day: m.day, shift: m.shift || '', caisse: m.caisse, driver_code: m.driver_code || null, driver_name: m.driver_name || '', contract_num: m.contract_num || null,
+      promo: cshR(m.promo), status: CSH_PROMO_ST.indexOf(m.promo_status) >= 0 ? m.promo_status : 'À vérifier' }))
+    .sort((a, b) => String(b.day).localeCompare(String(a.day)) || String(a.driver_name).localeCompare(String(b.driver_name)));
+  const sum = st => cshR(rows.filter(r => !st || r.status === st).reduce((t, r) => t + r.promo, 0));
+  return { rows, total: sum(), paid: sum('Payée'), unpaid: sum('Non payée'), check: sum('À vérifier') };
 }
 
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
   cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory,
-  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepLastDay, cshDepositDays, cshDepositSum, cshDepGroups, CSH_COMPLEMENT, cshShortfalls, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };
+  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepLastDay, cshDepositDays, cshDepositSum, cshDepGroups, CSH_COMPLEMENT, cshShortfalls, CSH_PROMO_ST, cshPromos, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };

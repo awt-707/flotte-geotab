@@ -1,7 +1,7 @@
 // Mode téléphone (demande d'Ahmed, 04/11/2026 : « dans l'APK, juste la caisse pour les encaissements de shift et de courses privées,
 // et le manifeste, rien d'autre ; ultra responsive, simple »). Actif dans l'application Android (user agent « LudyAndroid/… »,
 // android/…/MainActivity.java) sans la réinstaller, ou dans un navigateur ouvert une fois avec ?mobile=1 (?mobile=0 pour revenir).
-// Trois écrans en bas de l'écran : Encaissement du shift (Uber / Bolt), Courses privées (encaissement), Manifeste. Toutes les autres
+// Écrans en bas de l'écran : Encaissement du shift (Uber / Bolt), Courses privées (encaissement), Dépenses (justificatif scanné), Manifeste. Toutes les autres
 // pages renvoient au premier écran ; les calculs et les droits sont ceux du site (caisse.js, manifeste.js, base).
 // Chargé avant app.js : utilise ses outils (S, sb, $, esc, route…) au moment de l'appel.
 
@@ -20,10 +20,12 @@ if (MOBILE) {
 const MOB_ICON = {
   shift: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v5M18 9.5v5"/></svg>',
   courses: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.5V12l2-5h12l2 5v4.5"/><path d="M3 16.5h18v2.5H3z"/><circle cx="7.5" cy="14" r=".9"/><circle cx="16.5" cy="14" r=".9"/><path d="M6.5 11.5h11"/></svg>',
-  manifeste: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.5h8l4 4v15H6z"/><path d="M14 2.5v4h4M9 11h6M9 14.5h6M9 18h4"/></svg>'
+  manifeste: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.5h8l4 4v15H6z"/><path d="M14 2.5v4h4M9 11h6M9 14.5h6M9 18h4"/></svg>',
+  depenses: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.5h12v19l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5-2 1.5z"/><path d="M9 7.5h6M9 11h6M9 14.5h4"/></svg>'
 };
 const MOB_TABS = [{ k: 'shift', label: 'Encaissement', title: 'Encaissement du shift', href: '#/caisse?t=shift' },
   { k: 'courses', label: 'Courses', title: 'Courses privées', href: '#/caisse?t=courses' },
+  { k: 'depenses', label: 'Dépenses', title: 'Dépenses', href: '#/caisse?t=depenses' },
   { k: 'manifeste', label: 'Manifeste', title: 'Manifeste', href: '#/manifeste' }];
 /** Écrans ouverts à cet utilisateur (caisse : gestionnaires et administrateur ; volets choisis par l'administrateur respectés) */
 function mobTabs() {
@@ -33,7 +35,7 @@ function mobTabs() {
 function mobCur() {
   const p = pageOf(), t = qs().get('t');
   if (p === 'manifeste') return 'manifeste';
-  if (p === 'caisse' && (t === 'shift' || t === 'courses')) return t;
+  if (p === 'caisse' && (t === 'shift' || t === 'courses' || t === 'depenses')) return t;
   return null;
 }
 /** Route en mode téléphone : page hors des trois écrans = premier écran ouvert ; false si la page change */
@@ -84,7 +86,7 @@ function mobShell() {
 
 // ---------- Caisse (encaissement du shift, courses privées) ----------
 async function pageCaisseM() {
-  const my = ROUTING, t = qs().get('t') === 'courses' ? 'courses' : 'shift';
+  const my = ROUTING, t = ['courses', 'depenses'].indexOf(qs().get('t')) >= 0 ? qs().get('t') : 'shift';
   if (!canEdit()) { $('#page').innerHTML = msg('Caisse réservée aux gestionnaires et à l\'administrateur.', 'warn'); return; }
   const ag = cshAg();
   if (!ag) {   // plusieurs agences : chacune a sa caisse
@@ -98,7 +100,7 @@ async function pageCaisseM() {
   catch (e) { if (my === ROUTING) $('#page').innerHTML = msg('Lecture impossible : ' + esc(e.message), 'err'); return; }
   if (my !== ROUTING) return;
   $('#page').innerHTML = (S.agencies.length > 1 ? `<div class="mag">${esc(ag.name)}</div>` : '') + '<div id="cshbody"></div>' + cshDrvDatalist();
-  if (t === 'shift') cshTabShiftM(); else await cshTabCoursesM(p);
+  if (t === 'shift') cshTabShiftM(); else if (t === 'depenses') cshTabDepM(); else await cshTabCoursesM(p);
   window.__rerender = () => pageCaisse();
 }
 const mobNum = (attr, ph, v) => `<input type="number" inputmode="decimal" min="0" step="1" ${attr}${ph ? ` placeholder="${esc(ph)}"` : ''}${v != null && v !== '' ? ` value="${esc(v)}"` : ''}>`;
@@ -127,13 +129,14 @@ function cshTabShiftM() {
       const comps = f.comps.map(m => `<div class="small">+ ${cshMoney(m.amount)} ${m.label === CSH_COMPLEMENT ? 'complément' : 'encaissement'} · ${esc(fmtDT(m.created_at))}${cshCanFix(m) ? ` · <button type="button" class="mlink" data-cshx="${m.id}">annuler</button>` : ''}</div>`).join('');
       return `<div class="mpfd ${st === 'Manquant' ? 'short' : 'paid'}"><div class="mpfh"><b>${P.name}</b><span>espèces ${decl(r)}</span></div>
         <div class="mres"><div><span>Encaissé</span><b>${cshMoney(f.total)}</b></div><div><span>${st === 'Manquant' ? 'Reste à encaisser' : st === 'Soldé' ? 'Manque remis' : st === 'Excédent' ? 'Excédent' : 'Manque'}</span><b class="${st === 'Manquant' ? 'red' : 'ok'}">${f.rest == null ? '—' : cshMoney(Math.abs(f.rest))}</b></div></div>
-        <div class="small">Remis ${cshMoney(d.given)} · monnaie ${cshMoney(d.change)}${d.comment ? ' · ' + esc(d.comment) : ''}</div>${comps}
+        <div class="small">Remis ${cshMoney(d.given)} · monnaie ${cshMoney(d.change)}${f.promo ? ' · promotion ' + cshMoney(f.promo) : ''}${d.comment ? ' · ' + esc(d.comment) : ''}</div>${comps}
         <div class="mact">${f.rest > 0.004 ? `<button type="button" class="mbtn" data-cshcp="${i}|${pf}">+ Complément ${P.name} remis</button>` : ''}${cshCanFix(d) ? `<button type="button" class="mlink" data-cshx="${d.id}">Annuler l'encaissement ${P.name}</button>` : ''}</div></div>`;
     }
     return `<div class="mpf" data-pf="${pf}"><div class="mpfh"><b>${P.name}</b><span>espèces ${decl(r)}</span></div>
       <div class="mg2"><label>Remis ${mobNum('class="cgv"', 'MAD')}</label><label>Monnaie rendue ${mobNum('class="cch"', '0')}</label></div>
       <div class="mcalc" aria-live="polite"></div>
-      <details class="mmore"><summary>Manque ${P.name} (pas tout remis)</summary>
+      <details class="mmore"><summary>Promotion ou manque ${P.name}</summary>
+        <label>Promotion ${P.name} <span class="small">(le client a payé moins que le montant affiché : dû par ${P.name}, pas par le chauffeur)</span> ${mobNum('class="cpr"', 'MAD')}</label>
         <label>Manque <span class="small">${r.uber != null ? '(calculé d\'après l\'export, modifiable)' : '(si le chauffeur n\'a pas tout remis)'}</span> ${mobNum('class="cmq"', 'MAD')}</label></details></div>`;
   };
   const card = (c, i) => { const open = ['uber', 'bolt'].some(pf => c.rows[pf] && !c.rows[pf].sf), r = c.r;
@@ -151,12 +154,12 @@ function cshTabShiftM() {
   document.querySelectorAll('.mcard[data-card] .mpf').forEach(el => {
     const r = cards[+el.closest('.mcard').dataset.card].rows[el.dataset.pf], mq = el.querySelector('.cmq'), out = el.querySelector('.mcalc');
     const upd = () => {
-      const has = el.querySelector('.cgv').value !== '', net = cshR(cshN(el.querySelector('.cgv').value) - cshN(el.querySelector('.cch').value));
-      if (r.uber != null && !mq.dataset.touched) mq.value = has ? String(Math.max(0, cshR(r.uber - net))) : '';
-      const man = r.uber != null && !mq.dataset.touched ? cshR(r.uber - net) : mq.value === '' ? null : cshN(mq.value);
-      out.innerHTML = has ? `Encaissé <b>${cshMoney(net)}</b>${man == null ? '' : man > 0.004 ? ` · manque <b class="red">${cshMoney(man)}</b>` : man < -0.004 ? ` · excédent <b class="ok">${cshMoney(-man)}</b>` : ' · <b class="ok">cadré</b>'}` : '';
+      const has = el.querySelector('.cgv').value !== '', net = cshR(cshN(el.querySelector('.cgv').value) - cshN(el.querySelector('.cch').value)), pr = cshN(el.querySelector('.cpr').value);
+      if (r.uber != null && !mq.dataset.touched) mq.value = has ? String(Math.max(0, cshR(r.uber - net - pr))) : '';
+      const man = r.uber != null && !mq.dataset.touched ? cshR(r.uber - net - pr) : mq.value === '' ? null : cshN(mq.value);
+      out.innerHTML = has ? `Encaissé <b>${cshMoney(net)}</b>${pr ? ` · promotion <b>${cshMoney(pr)}</b>` : ''}${man == null ? '' : man > 0.004 ? ` · manque <b class="red">${cshMoney(man)}</b>` : man < -0.004 ? ` · excédent <b class="ok">${cshMoney(-man)}</b>` : ' · <b class="ok">cadré</b>'}` : '';
     };
-    el.querySelectorAll('.cgv,.cch').forEach(x => { x.oninput = upd; });
+    el.querySelectorAll('.cgv,.cch,.cpr').forEach(x => { x.oninput = upd; });
     mq.oninput = () => { mq.dataset.touched = '1'; upd(); };
   });
   // « Encaisser » : chaque ligne remplie (Uber, Bolt) enregistrée ; ligne laissée vide = pas d'espèces remises sur cette plateforme
@@ -167,7 +170,7 @@ function cshTabShiftM() {
     b.disabled = true; let n = 0;
     try {
       for (const x of todo) { const pf = x.dataset.pf, mq = x.querySelector('.cmq');
-        if (await cshSaveShift(PFX[pf], c.rows[pf], { gv: x.querySelector('.cgv').value, ch: x.querySelector('.cch').value, mq: mq.value, touched: !!mq.dataset.touched, cm })) n++;
+        if (await cshSaveShift(PFX[pf], c.rows[pf], { gv: x.querySelector('.cgv').value, ch: x.querySelector('.cch').value, pr: x.querySelector('.cpr').value, mq: mq.value, touched: !!mq.dataset.touched, cm })) n++;
         else if (!n) { b.disabled = false; return; } }
       pageCaisse();
     } catch (e) { alert(e.message); if (n) pageCaisse(); else b.disabled = false; }
@@ -336,4 +339,49 @@ function cshCoursesEncM(p, todo, seg) {
     try { if (await cshSaveCourse(sel, { day: cshVal('ccd'), driver: cshVal('ccw'), from: cshVal('ccf'), to: cshVal('cct'), amount: cshVal('cca'), pct: cshVal('ccp'), given: cshVal('ccr'), comment: cshVal('ccm') })) { CS.selMission = null; pageCaisse(); } else b.disabled = false; }
     catch (e) { b.disabled = false; alert(e.message); }
   };
+}
+
+// ---------- Dépenses (13/11/2026, demande d'Ahmed : dépenses dans l'APK, justificatif scanné avec l'appareil photo) ----------
+/** Champ « scanner le justificatif » : appareil photo du téléphone (APK : appareil photo ou fichiers ; Android 10 et plus) */
+const mobScan = (attr, label) => `<label class="mbtn mscan">📷 ${label || 'Scanner le justificatif'}<input type="file" accept="image/*" capture="environment" ${attr} hidden></label>`;
+function cshTabDepM() {
+  const cur = shiftAt(new Date(), S.P) || {}, since = addDays(today(), -6);
+  const rows = CS.moves.filter(m => cshLive(m) && m.kind === 'depense' && m.day >= since).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')) || b.id - a.id);
+  const filesOf = m => CS.filesErr ? [] : CS.files.filter(f => f.kind === 'justif' && f.move_id === m.id);
+  const pend = rows.filter(m => m.justif !== 'OK' && m.justif !== 'N.A');
+  const card = m => { const fl = filesOf(m), st = m.justif || 'En attente';
+    return `<div class="mcard mdep"><div class="mch"><div class="mwho2"><b>${esc(m.label || 'Dépense')} · ${cshMoney(m.amount)}</b><span>${esc(fmtDay(m.day))}${m.shift ? ' · ' + esc(m.shift) : ''}${m.driver_name ? ' · ' + esc(m.driver_name) : ''}${m.ride_type ? ' · ' + esc(m.ride_type) : ''}</span></div>
+      <span class="badge ${st === 'OK' ? 'ok' : st === 'KO' ? 'crit' : st === 'N.A' ? '' : 'warn'}">${esc(st === 'En attente' ? 'Justificatif à fournir' : 'Justificatif ' + st)}</span></div>
+      ${m.comment ? `<div class="small">${esc(m.comment)}</div>` : ''}${fl.length ? '<div class="cshfiles">' + cshFileLinks(fl) + '</div>' : ''}
+      ${CS.filesErr ? '' : `<div class="mact">${mobScan('data-cshup="justif|' + m.id + '"', fl.length ? 'Ajouter une photo' : 'Scanner le justificatif')}</div>`}</div>`; };
+  cshBody(`<div class="mcard mform"><h3>Nouvelle dépense</h3>
+      <label>Chauffeur <input id="mdw" list="cshdrv" placeholder="Nom du chauffeur (si dépense d'un chauffeur)" autocomplete="off"></label>
+      <div class="mg2"><label>Montant ${mobNum('id="mda"', 'MAD')}</label><label>Catégorie <select id="mdc">${CASH_DEP_CATS.map(x => `<option>${esc(x)}</option>`).join('')}</select></label></div>
+      <label id="mdrw">Type de course <select id="mdr">${CASH_RIDE_TYPES.map(x => `<option>${esc(x)}</option>`).join('')}</select></label>
+      <label id="mdow">Payée avec <select id="mdo">${['Chauffeur / Uber', 'Caisse - Dépenses', 'Banque'].map(x => `<option>${esc(x)}</option>`).join('')}</select></label>
+      <label id="mdpw" hidden>Amende payée par <select id="mdp">${CASH_FINE_PAY.map(x => `<option value="${x[0]}">${esc(x[1])}</option>`).join('')}</select></label>
+      <label class="mcom">Commentaire <input id="mdm" placeholder="Ex. ticket station Afriquia, n° de PV…"></label>
+      ${CS.filesErr ? '<div class="small">Justificatifs : migration 20261122000000_justificatifs.sql à exécuter dans Supabase.</div>' : `<div class="mscanbox">${mobScan('id="mdcam"')}
+        <label class="ghost mbtn">Choisir une photo ou un PDF<input type="file" accept="image/*,application/pdf" id="mdfile" hidden></label><div id="mdprev" class="small"></div></div>`}
+      <details class="mmore"><summary>Date et shift</summary><div class="mg2"><label>Date <input type="date" id="mdd" value="${esc(cur.day || today())}"></label>
+        <label>Shift <select id="mds">${['Jour', 'Nuit'].map(x => `<option ${x === cur.s ? 'selected' : ''}>${x}</option>`).join('')}</select></label></div></details>
+      <button type="button" class="mbtn" id="mdsave">Enregistrer la dépense</button>
+      <div class="small">Sans justificatif, la dépense d'un chauffeur est retenue sur sa paie ; le justificatif peut être scanné plus tard dans la liste ci-dessous.</div></div>
+    <h3 class="mh">Dépenses des 7 derniers jours${pend.length ? ` · <span class="red">${pend.length} justificatif${pend.length > 1 ? 's' : ''} à fournir</span>` : ''}</h3>
+    ${rows.length ? rows.map(card).join('') : '<div class="mempty"><p>Aucune dépense enregistrée ces 7 derniers jours.</p></div>'}`);
+  let file = null;
+  const fineUi = () => { const f = cshIsFine($('#mdc').value); $('#mdpw').hidden = !f; $('#mdow').hidden = f; $('#mdrw').hidden = f; };
+  $('#mdc').onchange = fineUi;
+  const pick = i => { if (!i) return; i.onchange = () => { file = i.files[0] || null; const pv = $('#mdprev'); if (!pv) return;
+    if (!file) { pv.innerHTML = ''; return; }
+    const ok = /^image\//.test(file.type) ? `<img src="${URL.createObjectURL(file)}" alt="Justificatif" class="mprev">` : '📄 ' + esc(file.name || 'fichier');
+    pv.innerHTML = ok + ` <button type="button" class="mlink" id="mdrm">retirer</button>`; $('#mdrm').onclick = () => { file = null; pv.innerHTML = ''; }; }; };
+  pick($('#mdcam')); pick($('#mdfile'));
+  $('#mdsave').onclick = async () => {
+    const b = $('#mdsave'); b.disabled = true; b.textContent = 'Enregistrement…';
+    const id = await cshSaveDep({ day: $('#mdd').value, shift: $('#mds').value, driver: $('#mdw').value, cat: $('#mdc').value, ride: $('#mdr').value, amount: $('#mda').value,
+      justif: /sans justificatif/i.test($('#mdc').value) ? 'KO' : 'En attente', source: $('#mdo').value, payer: $('#mdp').value, comment: $('#mdm').value.trim() }, file);
+    if (id) pageCaisse(); else { b.disabled = false; b.textContent = 'Enregistrer la dépense'; }
+  };
+  cshBindFiles();
 }

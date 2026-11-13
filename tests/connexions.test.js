@@ -7,13 +7,15 @@ const ping = (uid, id, page, active) => as(uid, `select public.session_ping('${i
 
 test('signal des onglets : chacun écrit seulement sa session ; l\'administrateur voit tout le monde', () => {
   env.resetDb();
-  env.psql(`insert into profiles (user_id, email, role) values ('${MGR}', 'mgr@x', 'manager') on conflict (user_id) do update set role = 'manager'`);
+  env.psql(`insert into profiles (user_id, email, role) values ('${MGR}', 'mgr@x', 'manager') on conflict (user_id) do update set role = 'manager';
+    insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin'`);
   try {
     ping(MGR, 'onglet-gestionnaire-1', 'En direct', true);
     ping(MGR, 'onglet-gestionnaire-1', 'Alertes', false);   // même onglet : mis à jour, pas dupliqué
     assert.strictEqual(env.psql("select count(*) || '|' || max(page) || '|' || bool_or(active) from user_sessions"), '1|Alertes|false');
     // un autre utilisateur ne peut pas reprendre l'onglet du gestionnaire ni écrire au nom d'un autre
-    ping(ADMIN, 'onglet-gestionnaire-1', 'Réglages', true);
+    // PostgreSQL 16.16 refuse par une erreur (règle de la base), 16.15 ignorait : dans les deux cas l'onglet reste au gestionnaire
+    try { ping(ADMIN, 'onglet-gestionnaire-1', 'Réglages', true); } catch (e) { assert.match(e.message, /row-level security/); }
     assert.strictEqual(env.psql("select user_id || '|' || page from user_sessions where id = 'onglet-gestionnaire-1'"), MGR + '|Alertes');
     assert.throws(() => as(MGR, `insert into user_sessions (id, user_id, page) values ('xxxxxxxx-faux', '${ADMIN}', 'x')`), /permission denied/);
     ping(ADMIN, 'onglet-admin-1', 'Connexions', true);
