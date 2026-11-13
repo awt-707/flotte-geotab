@@ -4,7 +4,7 @@
 
 const CS = { moves: [], all: [], pay: [], bolt: [], boltPay: [], drivers: [], udrv: [], uuid2code: {}, names: {}, ctrByDrv: {}, err: '' };
 const CSH_TABS = [['bord', 'Tableau de bord'], ['shift', 'Encaissement du shift'], ['depenses', 'Dépenses'], ['rh', 'Avances RH'], ['courses', 'Courses privées'],
-  ['bonus', 'Bonus'], ['rappro', 'Rapprochement Uber'], ['rapbolt', 'Rapprochement Bolt'], ['paie', 'Paie'], ['ca', 'Chiffre d\'affaires'], ['manques', 'Manques à encaisser'], ['rapports', 'Rapports'], ['depot', 'Dépôt en banque'], ['journal', 'Journal'], ['import', 'Imports']];
+  ['bonus', 'Bonus'], ['rappro', 'Rapprochement Uber'], ['rapbolt', 'Rapprochement Bolt'], ['paie', 'Paie'], ['ca', 'Chiffre d\'affaires'], ['manques', 'Manques à encaisser'], ['promos', 'Promotions'], ['rapports', 'Rapports'], ['depot', 'Dépôt en banque'], ['journal', 'Journal'], ['import', 'Imports']];
 const CSH_KIND = { encaissement: 'Encaissement', depense: 'Dépense', avance: 'Avance', remboursement: 'Remboursement d\'avance', course: 'Course privée', bonus: 'Bonus',
   recharge: 'Recharge de caisse', depot: 'Dépôt en banque', autre: 'Autre' };
 const CSH_FLOW_TXT = { in: 'Entrée de cash', out: 'Sortie de cash', virement: 'Virement' };
@@ -72,7 +72,7 @@ async function cshLoad(from, to) {
     all('uber_drivers', 'uuid,name,phone,email,status', A, ['name']),
     all('cash_moves', '*', q => A(q).gte('day', from).lte('day', to), ['day']),
     all('cash_moves', 'id,caisse,kind,flow,amount,day,comment,cancelled_at', A),
-    all('uber_payments', 'tx,at,driver_uuid,driver_name,cash,revenue', q => A(q).gte('at', dayBounds(lo).start.toISOString()).lt('at', dayBounds(hi).end.toISOString()), ['at']),
+    all('uber_payments', 'tx,at,driver_uuid,driver_name,cash,revenue,payout,description', q => A(q).gte('at', dayBounds(lo).start.toISOString()).lt('at', dayBounds(hi).end.toISOString()), ['at']),
     keys && !keys.length ? Promise.resolve([]) : all('contracts', 'num,client_code,name,vehicle_key,start_at,end_at', q => { q = q.lt('start_at', dayBounds(hi).end.toISOString()).gte('start_at', dayBounds(addDays(lo, -7)).start.toISOString()); return keys ? q.in('vehicle_key', keys) : q; }, ['start_at']),
     A(sb.from('uber_payments').select('at')).order('at', { ascending: false }).limit(1)]);
   // sessions Bolt (migration 20261119000000_bolt.sql) : sans la table, la caisse Uber reste utilisable
@@ -132,7 +132,7 @@ async function pageCaisse() {
   const go = () => { location.hash = cshHref(t, { du: $('#cshdu').value, au: $('#cshau').value }); };
   if ($('#cshdu')) { $('#cshdu').onchange = go; $('#cshau').onchange = go; }
   bindAg();
-  const tab = ({ bord: cshTabBord, shift: cshTabShift, depenses: cshTabDep, rh: cshTabRh, courses: cshTabCourses, bonus: cshTabBonus, rappro: cshTabRappro, rapbolt: cshTabRapBolt, paie: cshTabPaie, ca: cshTabCA, manques: cshTabManques, rapports: cshTabRapports, depot: cshTabDepot, journal: cshTabJournal, import: cshTabImport })[t];
+  const tab = ({ bord: cshTabBord, shift: cshTabShift, depenses: cshTabDep, rh: cshTabRh, courses: cshTabCourses, bonus: cshTabBonus, rappro: cshTabRappro, rapbolt: cshTabRapBolt, paie: cshTabPaie, ca: cshTabCA, manques: cshTabManques, promos: cshTabPromos, rapports: cshTabRapports, depot: cshTabDepot, journal: cshTabJournal, import: cshTabImport })[t];
   tab(p);
   // classeur Google de l'agence (un par agence, créé par le collecteur) : lien à côté des onglets
   cshSheetLink().then(id => { const x = $('#cshsl'); if (x && id && my === ROUTING) x.innerHTML = `<a href="${cshSheetUrl(id)}" target="_blank" rel="noopener">Classeur Google de l'agence ↗</a>`; }).catch(() => { });
@@ -193,7 +193,7 @@ async function cshInsert(row) {
   row.manager_name = row.manager_name || S.profile.name || S.profile.email || null;
   row.agency_id = CS.agId;   // caisse de l'agence choisie
   const r = await sb.from('cash_moves').insert(row).select('id').single();
-  if (r.error) throw new Error(r.error.message);
+  if (r.error) throw new Error(/promo/i.test(r.error.message) ? 'Promotions pas encore installées dans la base : exécuter supabase/migrations/20261125000000_promos.sql dans Supabase > SQL Editor (' + r.error.message + ')' : r.error.message);
   return r.data.id;
 }
 function cshCanFix(m) { return isAdmin() || (m.created_by === S.session.user.id && Date.now() - new Date(m.created_at).getTime() < 24 * HOUR); }
@@ -283,7 +283,8 @@ const CSH_ADDED = {};
 /** Heures d'un shift : début du shift → début du shift suivant (une nuit va jusqu'au matin du lendemain) */
 function cshShiftWin(day, s) { const nx = s === 'Jour' ? { day, s: 'Nuit' } : { day: addDays(day, 1), s: 'Jour' }; return { _s: shiftStart({ day, s }, S.P).getTime(), _e: shiftStart(nx, S.P).getTime() }; }
 /**
- * Encaissement d'une ligne du shift (v : remis gv, monnaie ch, manque mq, touched = manque saisi à la main, commentaire cm).
+ * Encaissement d'une ligne du shift (v : remis gv, monnaie ch, promotion de la plateforme pr, manque mq, touched = manque saisi à la main, commentaire cm).
+ * Promotion : différence entre le montant affiché par la plateforme et ce que le client a payé, jamais comptée comme un manque.
  * Espèces de la plateforme du shift : export importé, sinon encaissé + manque saisi ; manque modifié à la main = encaissé + manque.
  * Renvoie false si la saisie est refusée (message affiché), true une fois enregistré.
  */
@@ -291,11 +292,13 @@ async function cshSaveShift(X, r, v) {
   if (String(v.gv) === '') { alert('Montant remis par le chauffeur obligatoire (0 si rien n\'a été remis).'); return false; }
   const g = cshN(v.gv), ch = cshN(v.ch), net = cshR(g - ch);
   if (net < 0) { alert('La monnaie rendue dépasse le montant remis.'); return false; }
-  const man = String(v.mq) === '' ? null : cshR(cshN(v.mq)), dc = r.uber != null && !v.touched ? r.uber : man != null ? cshR(net + man) : null;
-  const cm = String(v.cm || '').trim(), short = dc == null ? 0 : cshR(dc - net);
+  const pr = cshR(Math.max(0, cshN(v.pr)));   // promotion de la plateforme : le client a payé moins, différence due par Uber / Bolt
+  const man = String(v.mq) === '' ? null : cshR(cshN(v.mq)), dc = r.uber != null && !v.touched ? r.uber : man != null || pr ? cshR(net + (man || 0) + pr) : null;
+  const cm = String(v.cm || '').trim(), short = dc == null ? 0 : cshR(dc - net - pr);
   if (short > 0 && !cm && !await ask('Manque de ' + cshMoney(short) + ' : classé dans « Manques à encaisser » (ligne rouge) jusqu\'à ce que le chauffeur le remette, sinon déduit de la paie. Enregistrer ?')) return false;
   await cshInsert({ caisse: X.pf, kind: 'encaissement', flow: 'in', amount: net, day: X.day, shift: X.s, driver_code: r.c.client_code || null, driver_name: r.c.extra ? r.c.name : cshDrvName(r.c.client_code), uber_uuid: r.uuid || null,
-    contract_num: r.c.num || null, vehicle_key: r.c.vehicle_key || null, uber_cash: dc, given: g, change: ch, source: 'Chauffeur', comment: cm || null });
+    contract_num: r.c.num || null, vehicle_key: r.c.vehicle_key || null, uber_cash: dc, given: g, change: ch, source: 'Chauffeur', comment: cm || null,
+    ...(pr ? { promo: pr, promo_status: 'À vérifier' } : {}) });
   if (r.added) CSH_ADDED[X.addKey] = (CSH_ADDED[X.addKey] || []).filter(a => (a.driver_code || 'N:' + cshName(a.driver_name)) !== r.c.key);
   return true;
 }
@@ -333,23 +336,24 @@ function cshTabShift() {
     const comps = f.comps.map(m => `<div class="small">+ ${cshMoney(m.amount)} ${m.label === CSH_COMPLEMENT ? 'complément' : 'encaissement'} · ${esc(fmtDTY(m.created_at))}${cshCanFix(m) ? ` <a href="#" data-cshx="${m.id}">annuler</a>` : ''}</div>`).join('');
     return `<tr class="done${cls}" data-done="${i}"><td>${esc(nameOf(r))}</td><td>${ctrCell(r)}</td><td class="n">${ann}</td>
       <td class="n">${cshMoney(d.given)}</td><td class="n">${cshMoney(d.change)}</td><td class="n"><b>${cshMoney(f.total)}</b>${comps}</td>
+      <td class="n">${f.promo ? cshMoney(f.promo) + `<div class="small">${esc(d.promo_status || 'À vérifier')}</div>` : ''}</td>
       <td class="n">${f.rest == null ? '<span class="nm">à saisir</span>' : cshSignedTxt(-f.rest)}${f.status === 'Soldé' ? '<div class="small ok">manque remis</div>' : f.status === 'Manquant' ? '<div class="small red">reste à encaisser</div>' : ''}</td>
       <td class="small">${esc(d.comment || '')}</td><td>${f.rest > 0.004 ? `<button class="small" data-cshcp="${i}">+ Complément</button> ` : ''}${cshCanFix(d) ? `<button class="ghost small" data-cshed="${i}">Modifier</button> <button class="ghost small" data-cshx="${d.id}">Annuler</button>` : '<span class="small ok">enregistré</span>'}</td></tr>`; };
   const newRow = (r, i) => `<tr data-row="${i}"><td>${esc(nameOf(r))}</td><td>${ctrCell(r)}${r.added ? ` <a href="#" class="small" data-cshrm="${i}">retirer</a>` : ''}</td><td class="n">${decl(r)}</td>
     <td class="n"><input type="number" min="0" step="1" class="cgv" style="width:90px"></td><td class="n"><input type="number" min="0" step="1" class="cch" style="width:80px"></td>
-    <td class="n cnet"></td><td class="n cman"><span class="cmant"></span><div><input type="number" min="0" step="1" class="cmq" style="width:80px" placeholder="manque" title="Manque : espèces que le chauffeur n'a pas remises (calculé depuis l'export s'il est importé, modifiable)"></div></td>
+    <td class="n cnet"></td><td class="n"><input type="number" min="0" step="1" class="cpr" style="width:80px" placeholder="promo" title="Promotion ${P.name} : le client a payé moins que le montant affiché ; la différence est due par ${P.name}, pas par le chauffeur"></td><td class="n cman"><span class="cmant"></span><div><input type="number" min="0" step="1" class="cmq" style="width:80px" placeholder="manque" title="Manque : espèces que le chauffeur n'a pas remises (calculé depuis l'export s'il est importé, modifiable)"></div></td>
     <td><input class="ccm" size="18" placeholder="si manquant"></td><td><button class="small" data-csav="${i}">Enregistrer</button></td></tr>`;
   cshBody(`<div class="tabs">${['uber', 'bolt'].map(x => `<a href="${link(day, s, x)}" class="${x === pf ? 'on' : ''}">Espèces ${CSH_PF[x].name}</a>`).join('')}</div>${B ? cshBoltWarn({ to: day }) : ''}
     <div class="bar"><a class="btn small ghostb" href="${link(prev[0], prev[1])}">← Shift précédent</a><label>Jour <input type="date" id="cshsd" value="${day}"></label>
       <label>Shift <select id="cshss"><option ${s === 'Jour' ? 'selected' : ''}>Jour</option><option ${s === 'Nuit' ? 'selected' : ''}>Nuit</option></select></label>
       <b>${esc(shiftDayName({ s, day }))}</b><a class="btn small ghostb" href="${link(next[0], next[1])}">Shift suivant →</a>
       <button class="small" id="cshfiche" title="Fiche à imprimer pour encaisser les chauffeurs du shift dans la rue (Uber et Bolt)">🖨 Fiche d'encaissement (PDF)</button></div>
-    <div class="small">Chauffeurs dont le contrat a commencé dans ce shift, et chauffeurs ajoutés au shift. Espèces ${P.name} = espèces collectées pendant le contrat (ajouté au shift : pendant les heures du shift ; export ${P.name} importé${lastImp ? ', jusqu\'au ' + esc(fmtDTY(lastImp)) : ''}). Encaissé net = remis − monnaie rendue. <b>Manque</b> = ce que le chauffeur n'a pas remis : calculé quand l'export est importé, sinon à saisir ; il est classé dans « Manques à encaisser » (ligne rouge) et compté dès qu'il est remis (« + Complément », ligne verte).</div>
-    <div class="tw"><table class="cshshift"><thead><tr><th>Chauffeur</th><th>Contrat</th><th class="n">Espèces ${P.name}</th><th class="n">Remis</th><th class="n">Monnaie rendue</th><th class="n">Encaissé net</th><th class="n">Manque</th><th>Commentaire</th><th></th></tr></thead><tbody>
-    ${rows.length ? rows.map((r, i) => r.sf ? doneRow(r, i) : newRow(r, i)).join('') : `<tr><td colspan="9" class="empty">Aucun contrat commencé dans ce shift${CS.ctr.length ? '' : ' (contrats non importés ?)'} : ajouter un chauffeur ci-dessous.</td></tr>`}
+    <div class="small">Chauffeurs dont le contrat a commencé dans ce shift, et chauffeurs ajoutés au shift. Espèces ${P.name} = espèces collectées pendant le contrat (ajouté au shift : pendant les heures du shift ; export ${P.name} importé${lastImp ? ', jusqu\'au ' + esc(fmtDTY(lastImp)) : ''}). Encaissé net = remis − monnaie rendue. <b>Promotion</b> = le client a payé moins que le montant affiché par ${P.name} (promotion) : la différence est due par ${P.name}, jamais retenue au chauffeur, à suivre dans « Promotions ». <b>Manque</b> = ce que le chauffeur n'a pas remis : calculé quand l'export est importé, sinon à saisir ; il est classé dans « Manques à encaisser » (ligne rouge) et compté dès qu'il est remis (« + Complément », ligne verte).</div>
+    <div class="tw"><table class="cshshift"><thead><tr><th>Chauffeur</th><th>Contrat</th><th class="n">Espèces ${P.name}</th><th class="n">Remis</th><th class="n">Monnaie rendue</th><th class="n">Encaissé net</th><th class="n" title="Le client a payé moins que le montant affiché (promotion de la plateforme) : différence due par ${P.name}">Promotion ${P.name}</th><th class="n">Manque</th><th>Commentaire</th><th></th></tr></thead><tbody>
+    ${rows.length ? rows.map((r, i) => r.sf ? doneRow(r, i) : newRow(r, i)).join('') : `<tr><td colspan="10" class="empty">Aucun contrat commencé dans ce shift${CS.ctr.length ? '' : ' (contrats non importés ?)'} : ajouter un chauffeur ci-dessous.</td></tr>`}
     </tbody>${rows.length ? (() => { const dr = rows.filter(r => r.sf), sum = f => cshR(dr.reduce((t, r) => t + cshN(f(r)), 0)), ub = cshR(rows.reduce((t, r) => t + cshN(r.uber), 0));
       return `<tfoot><tr class="ttot"><td>Total · ${dr.length} / ${rows.length} encaissé${dr.length > 1 ? 's' : ''}</td><td></td><td class="n"><b>${cshMoney(ub)}</b></td><td class="n"><b>${cshMoney(sum(r => r.sf.main.given))}</b></td><td class="n"><b>${cshMoney(sum(r => r.sf.main.change))}</b></td>
-        <td class="n"><b>${cshMoney(sum(r => r.sf.total))}</b></td><td class="n">${cshSignedTxt(-sum(r => r.sf.rest || 0))}</td><td></td><td></td></tr></tfoot>`; })() : ''}</table></div>
+        <td class="n"><b>${cshMoney(sum(r => r.sf.total))}</b></td><td class="n">${cshMoney(sum(r => r.sf.promo))}</td><td class="n">${cshSignedTxt(-sum(r => r.sf.rest || 0))}</td><td></td><td></td></tr></tfoot>`; })() : ''}</table></div>
     <div class="panel"><h3>Ajouter un chauffeur au shift (sans contrat à son nom)</h3><p class="small">Chauffeur qui a travaillé dans ce shift sans contrat édité à son nom : il est ajouté au tableau pour l'encaisser comme les autres (espèces ${P.name} relevées pendant les heures du shift, remis, monnaie, manque, compléments).</p>
       <div class="mfrow">${cshField('cxd', 'Chauffeur', 'text', { list: 'cshdrv', size: 26 })}<button class="small" id="cxadd">Ajouter au shift</button></div></div>
     <div class="panel"><h3>Fiche d'encaissement remplie</h3><p class="small">Imprimer la fiche (bouton « Fiche d'encaissement » ci-dessus), encaisser les chauffeurs dans la rue, saisir chaque ligne dans le tableau, puis déposer ici la photo ou le PDF de la fiche remplie et signée.</p>
@@ -361,17 +365,17 @@ function cshTabShift() {
   const goS = () => { location.hash = link($('#cshsd').value, $('#cshss').value); };
   $('#cshsd').onchange = goS; $('#cshss').onchange = goS;
   document.querySelectorAll('tr[data-row]').forEach(tr => { const r = rows[+tr.dataset.row], mq = tr.querySelector('.cmq'), upd = () => {
-    const g = cshN(tr.querySelector('.cgv').value), ch = cshN(tr.querySelector('.cch').value), net = cshR(g - ch), has = tr.querySelector('.cgv').value !== '';
+    const g = cshN(tr.querySelector('.cgv').value), ch = cshN(tr.querySelector('.cch').value), net = cshR(g - ch), has = tr.querySelector('.cgv').value !== '', pr = cshN(tr.querySelector('.cpr').value);
     tr.querySelector('.cnet').textContent = has ? cshMoney(net) : '';
-    // manque proposé d'après l'export (si importé) tant qu'il n'a pas été saisi à la main
-    if (r.uber != null && !mq.dataset.touched) mq.value = has ? String(Math.max(0, cshR(r.uber - net))) : '';
-    tr.querySelector('.cmant').innerHTML = has && r.uber != null ? cshSignedTxt(-(r.uber - net)) : ''; };
-    tr.querySelectorAll('.cgv,.cch').forEach(i => { i.oninput = upd; });
+    // manque proposé d'après l'export (si importé), promotion déduite, tant qu'il n'a pas été saisi à la main
+    if (r.uber != null && !mq.dataset.touched) mq.value = has ? String(Math.max(0, cshR(r.uber - net - pr))) : '';
+    tr.querySelector('.cmant').innerHTML = has && r.uber != null ? cshSignedTxt(-(r.uber - net - pr)) : ''; };
+    tr.querySelectorAll('.cgv,.cch,.cpr').forEach(i => { i.oninput = upd; });
     mq.oninput = () => { mq.dataset.touched = '1'; }; });
   document.querySelectorAll('[data-csav]').forEach(b => { b.onclick = async () => {
     const r = rows[+b.dataset.csav], tr = b.closest('tr'), mq = tr.querySelector('.cmq');
     b.disabled = true;
-    try { if (await cshSaveShift(X, r, { gv: tr.querySelector('.cgv').value, ch: tr.querySelector('.cch').value, mq: mq.value, touched: !!mq.dataset.touched, cm: tr.querySelector('.ccm').value })) pageCaisse(); else b.disabled = false; }
+    try { if (await cshSaveShift(X, r, { gv: tr.querySelector('.cgv').value, ch: tr.querySelector('.cch').value, pr: tr.querySelector('.cpr').value, mq: mq.value, touched: !!mq.dataset.touched, cm: tr.querySelector('.ccm').value })) pageCaisse(); else b.disabled = false; }
     catch (e) { b.disabled = false; alert(e.message); }
   }; });
   document.querySelectorAll('[data-cshrm]').forEach(a => { a.onclick = e => { e.preventDefault(); const r = rows[+a.dataset.cshrm];
@@ -383,14 +387,17 @@ function cshTabShift() {
   document.querySelectorAll('[data-cshed]').forEach(b => { b.onclick = () => {
     const r = rows[+b.dataset.cshed], f = r.sf, d = f.main, tr = b.closest('tr'), td = tr.children, man0 = f.dueAtShift == null ? '' : String(Math.max(0, f.dueAtShift));
     td[3].innerHTML = `<input type="number" min="0" step="1" class="egv" style="width:90px" value="${cshN(d.given)}">`; td[4].innerHTML = `<input type="number" min="0" step="1" class="ech" style="width:80px" value="${cshN(d.change)}">`;
-    td[6].innerHTML = `<input type="number" min="0" step="1" class="emq" style="width:80px" value="${man0}" placeholder="manque">`;
-    td[7].innerHTML = `<input class="ecm" size="18" value="${esc(d.comment || '')}">`; td[8].innerHTML = '<button class="small" data-cshes>Enregistrer la modification</button>';
+    td[6].innerHTML = `<input type="number" min="0" step="1" class="epr" style="width:80px" value="${f.promo || ''}" placeholder="promo">`;
+    td[7].innerHTML = `<input type="number" min="0" step="1" class="emq" style="width:80px" value="${man0}" placeholder="manque">`;
+    td[8].innerHTML = `<input class="ecm" size="18" value="${esc(d.comment || '')}">`; td[9].innerHTML = '<button class="small" data-cshes>Enregistrer la modification</button>';
     tr.querySelector('[data-cshes]').onclick = async () => {
       const g = cshN(tr.querySelector('.egv').value), ch = cshN(tr.querySelector('.ech').value), net = cshR(g - ch), mv = tr.querySelector('.emq').value;
       if (net < 0) { alert('La monnaie rendue dépasse le montant remis.'); return; }
+      const pr = cshR(Math.max(0, cshN(tr.querySelector('.epr').value)));
       const patch = { given: g, change: ch, amount: net, comment: tr.querySelector('.ecm').value.trim() || null };
-      // manque modifié (ou export pas importé) : espèces du shift = encaissé + manque ; sinon espèces de l'export gardées
-      if (mv !== man0 || r.uber == null) patch.uber_cash = mv === '' ? (r.uber != null ? r.uber : null) : cshR(net + cshN(mv));
+      if (pr !== cshR(f.promo)) Object.assign(patch, { promo: pr || null, promo_status: pr ? d.promo_status || 'À vérifier' : null });
+      // manque modifié (ou export pas importé) : espèces du shift = encaissé + promotion + manque ; sinon espèces de l'export gardées
+      if (mv !== man0 || r.uber == null) patch.uber_cash = mv === '' && !pr ? (r.uber != null ? r.uber : null) : r.uber != null && mv === '' ? r.uber : cshR(net + pr + cshN(mv));
       if (await cshPatch(d.id, patch)) pageCaisse();
     };
   }; });
@@ -429,6 +436,49 @@ function cshTabManques(p) {
   document.querySelectorAll('[data-mqc]').forEach(b => { b.onclick = async () => { const x = rows[+b.dataset.mqc]; try { if (await cshComplement(x.main, x.rest)) pageCaisse(); } catch (e) { alert(e.message); } }; });
   $('#cshmqx').onclick = () => cshXls('manques_a_encaisser_' + p.from + '_' + p.to, [['Jour', x => x.day], ['Shift', x => x.shift], ['Chauffeur', x => nm(x)], ['Contrat', x => x.contract_num || ''], ['Plateforme', x => x.caisse === 'bolt' ? 'Bolt' : 'Uber'],
     ['Espèces déclarées', x => '', x => x.declared], ['Encaissé au shift', x => '', x => x.first], ['Manquant au shift', x => '', x => x.dueAtShift], ['Remis ensuite', x => '', x => x.extra], ['Reste à encaisser', x => '', x => Math.max(0, x.rest)], ['Statut', x => x.status]], rows);
+}
+
+// ---------- Promotions Uber / Bolt (13/11/2026, demande d'Ahmed) ----------
+// Le client a payé moins que le montant affiché par la plateforme (promotion) : la différence, saisie avec l'encaissement du shift, n'est pas un
+// manque du chauffeur ; elle est due par Uber / Bolt. Suivi : statut de vérification (À vérifier, Payée, Non payée) et, en face, ce que l'export
+// de la plateforme montre pendant le contrat (espèces collectées, montant versé, lignes « promotion » ou « ajustement ») pour vérifier.
+/** Export de la plateforme pendant le contrat d'un encaissement : { pending } ou { cash, paid, adj: [{ at, desc, payout }] } (Uber), { cash, total } (Bolt) */
+function cshPromoExport(m) {
+  const c = (m.contract_num && CS.ctr.find(x => x.num === m.contract_num)) || Object.assign({ client_code: m.driver_code, uber_uuid: m.uber_uuid }, cshShiftWin(m.day, m.shift || 'Jour'));
+  const inC = x => { const t = new Date(x.at).getTime(); return t >= c._s && t <= c._e; };
+  if (m.caisse === 'bolt') {
+    if (CS.boltErr || !CS.boltLastAt || new Date(CS.boltLastAt).getTime() < c._e) return { pending: true };
+    const l = CS.boltPay.filter(x => x._key === c.client_code && inC(x)); return { cash: cshR(l.reduce((t, x) => t + cshN(x.cash), 0)), total: cshR(l.reduce((t, x) => t + cshN(x.total), 0)) };
+  }
+  const us = c.client_code ? Object.keys(CS.u2c || {}).filter(u => CS.u2c[u] === c.client_code) : c.uber_uuid ? [c.uber_uuid] : []; if (!us.length) return { unlinked: true };
+  if (!CS.lastAt || new Date(CS.lastAt).getTime() < c._e) return { pending: true };
+  const l = CS.pay.filter(x => us.indexOf(x.driver_uuid) >= 0 && inC(x));
+  return { cash: cshR(l.reduce((t, x) => t + cshN(x.cash), 0)), paid: cshR(l.reduce((t, x) => t + cshN(x.payout), 0)),
+    adj: l.filter(x => /promo|ajust|rembours|adjust/i.test(x.description || '')).map(x => ({ at: x.at, desc: x.description, payout: cshR(x.payout) })) };
+}
+function cshTabPromos(p) {
+  const P = cshPromos(CS.moves, p.from, p.to), q = qs(), f = CSH_PROMO_ST.indexOf(q.get('st')) >= 0 ? q.get('st') : '', rows = f ? P.rows.filter(r => r.status === f) : P.rows;
+  const nm = r => r.driver_code ? cshDrvName(r.driver_code) : r.driver_name || '';
+  const exp = r => { const e = cshPromoExport(r.m);
+    if (e.pending) return '<span class="nm">export pas encore importé</span>'; if (e.unlinked) return '<span class="nm">compte Uber non relié</span>';
+    if (r.caisse === 'bolt') return `espèces ${cshMoney(e.cash)} · total des paiements ${cshMoney(e.total)}`;
+    return `espèces ${cshMoney(e.cash)} · versé par Uber ${cshMoney(e.paid)}` + (e.adj.length ? e.adj.map(a => `<div class="small">${esc(fmtDT(a.at))} · ${esc(a.desc || '')} · ${cshMoney(a.payout)}</div>`).join('') : ''); };
+  const decl = r => { const x = r.m.uber_cash != null && r.m.uber_cash !== '' ? cshN(r.m.uber_cash) : cshDeclOf(r.m); return x == null ? '—' : cshMoney(x); };
+  cshBody(cards([['Promotions de la période', cshMoney(P.total) + `<div class="small">${f0(P.rows.length)} encaissement${P.rows.length > 1 ? 's' : ''}</div>`],
+      ['À vérifier', cshMoney(P.check), P.check ? 'warn' : 'ok'], ['Payées par la plateforme', cshMoney(P.paid), 'ok'], ['Non payées', cshMoney(P.unpaid), P.unpaid ? 'crit' : '']]) +
+    `<div class="bar"><span>Afficher</span> ${[['', 'Toutes (' + P.rows.length + ')']].concat(CSH_PROMO_ST.map(x => [x, x + ' (' + P.rows.filter(r => r.status === x).length + ')'])).map(x => `<a class="${x[0] === f ? 'on' : ''}" href="${cshHref('promos', { st: x[0] })}">${esc(x[1])}</a>`).join(' · ')}
+      <button class="ghost small" id="cshprx">Tableur</button></div>
+    <div class="tw"><table class="cshpr"><thead><tr><th>Jour</th><th>Shift</th><th>Chauffeur</th><th>Plateforme</th><th class="n">Montant affiché</th><th class="n">Encaissé</th><th class="n">Promotion</th><th>Export de la plateforme pendant le contrat</th><th>Payée par la plateforme ?</th></tr></thead><tbody>
+    ${rows.length ? rows.map((r, i) => `<tr><td>${fmtDay(r.day)}</td><td>${esc(r.shift)}</td><td>${esc(nm(r))}${r.contract_num ? `<div class="small">${esc(r.contract_num)}</div>` : ''}</td><td>${r.caisse === 'bolt' ? 'Bolt' : 'Uber'}</td>
+      <td class="n">${decl(r)}</td><td class="n">${cshMoney(r.m.amount)}</td><td class="n"><b>${cshMoney(r.promo)}</b></td><td class="small">${exp(r)}</td>
+      <td><select data-prst="${i}">${CSH_PROMO_ST.map(x => `<option ${x === r.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>${r.m.comment ? `<div class="small">${esc(r.m.comment)}</div>` : ''}</td></tr>`).join('')
+      : `<tr><td colspan="9" class="empty">Aucune promotion saisie sur la période${f ? ' avec ce statut' : ''}.</td></tr>`}
+    </tbody>${rows.length ? `<tfoot><tr class="ttot"><td colspan="6">Total · ${rows.length} promotion${rows.length > 1 ? 's' : ''}</td><td class="n"><b>${cshMoney(rows.reduce((t, r) => t + r.promo, 0))}</b></td><td></td><td></td></tr></tfoot>` : ''}</table></div>
+    <div class="small">Promotion = le client a payé moins que le montant affiché par la plateforme ; saisie avec l'encaissement du shift (colonne « Promotion »), elle n'est jamais retenue au chauffeur (manques, rapprochement, paie). En face : ce que l'export de la plateforme montre pendant le contrat (espèces collectées, montant versé par Uber, lignes « promotion » ou « ajustement ») pour vérifier qu'elle a été payée ; marquer « Payée » ou « Non payée ».</div>`);
+  document.querySelectorAll('[data-prst]').forEach(sel => { sel.onchange = async () => { const r = rows[+sel.dataset.prst]; sel.disabled = true;
+    try { if (await cshPatch(r.m.id, { promo_status: sel.value })) pageCaisse(); else sel.disabled = false; } catch (e) { sel.disabled = false; alert(e.message); } }; });
+  $('#cshprx').onclick = () => cshXls('promotions_' + p.from + '_' + p.to, [['Jour', r => r.day], ['Shift', r => r.shift], ['Chauffeur', r => nm(r)], ['Contrat', r => r.contract_num || ''], ['Plateforme', r => r.caisse === 'bolt' ? 'Bolt' : 'Uber'],
+    ['Encaissé', r => '', r => cshN(r.m.amount)], ['Promotion', r => '', r => r.promo], ['Statut', r => r.status], ['Commentaire', r => r.m.comment || '']], rows);
 }
 
 // ---------- Dépenses ----------

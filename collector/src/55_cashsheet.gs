@@ -51,13 +51,17 @@ function cshOff_(at) { const o = tzOffsetMin_(at), a = Math.abs(o); return (o < 
 function cshHashStr_(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + ':' + s.length; }
 
 /** Une ligne de l'onglet de la caisse (valeurs et formules), r = numéro de ligne dans le tableur */
+/** Promotion de la plateforme (13/11/2026) : espèces du shift recopiées sans elle (le manque du classeur ne la compte pas), notée dans le commentaire */
+function cshPromo_(m) { return m && m.kind === 'encaissement' && +m.promo > 0 ? +m.promo : 0; }
+function cshEncCash_(m) { const c = cshNum_(m.uber_cash); return c === '' ? '' : Math.round((c - cshPromo_(m)) * 100) / 100; }
+function cshEncCom_(m, pf) { const p = cshPromo_(m), c = cshTxt_(m.comment); return p ? (c ? c + ' · ' : '') + 'Promotion ' + pf + ' ' + p + ' MAD (' + (m.promo_status || 'À vérifier') + ')' : c; }
 function cshSheetRow_(caisse, m, r, who, crsDay) {
-  const day = cshSerial_(m.day), flow = CSH_FLOW_TXT_[m.flow] || '', mgr = cshTxt_(m.manager_name), com = cshTxt_(m.comment), name = cshTxt_(who), amt = cshNum_(m.amount);
+  const day = cshSerial_(m.day), flow = CSH_FLOW_TXT_[m.flow] || '', mgr = cshTxt_(m.manager_name), com = caisse === 'uber' ? cshEncCom_(m, 'Uber') : cshTxt_(m.comment), name = cshTxt_(who), amt = cshNum_(m.amount);
   const uuidF = col => '=IF(' + col + r + '="","",XLOOKUP(' + col + r + ',\'' + CSH_DRV_TAB_ + '\'!$A:$A,\'' + CSH_DRV_TAB_ + '\'!$G:$G))';
   const op = CSH_KIND_TXT_[m.kind] && m.kind !== 'avance' ? CSH_KIND_TXT_[m.kind] : (m.label || '');
   if (caisse === 'uber') {
     const enc = m.kind === 'encaissement', given = m.given != null ? cshNum_(m.given) : amt;
-    return [day, name, uuidF('B'), mgr, enc ? 'Chauffeur' : cshTxt_(op || 'Autre'), flow, cshTxt_(m.source), enc ? cshNum_(m.uber_cash) : '', given, enc ? cshNum_(m.change) : '',
+    return [day, name, uuidF('B'), mgr, enc ? 'Chauffeur' : cshTxt_(op || 'Autre'), flow, cshTxt_(m.source), enc ? cshEncCash_(m) : '', given, enc ? cshNum_(m.change) : '',
       '=I' + r + '-J' + r, '=H' + r + '-K' + r, com,
       '=SUMIFS(\'' + CSH_PAY_TAB_ + '\'!$C$6:$C,\'' + CSH_PAY_TAB_ + '\'!$B$6:$B,$B' + r + ',\'' + CSH_PAY_TAB_ + '\'!$A$6:$A,$A' + r + ')',
       '=IF(G' + r + '="Chauffeur",IF(N' + r + '-K' + r + '=0,"OK","KO"),"N.A")', ''];
@@ -80,8 +84,8 @@ function cshSheetRow_(caisse, m, r, who, crsDay) {
 function cshBoltEncRow_(m, r, who) {
   const enc = m.kind === 'encaissement', given = m.given != null ? cshNum_(m.given) : cshNum_(m.amount);
   return [cshSerial_(m.day), cshTxt_(m.shift), cshTxt_(who), cshTxt_(m.contract_num), cshTxt_(m.manager_name), enc ? 'Encaissement chauffeur' : cshTxt_(CSH_KIND_TXT_[m.kind] || m.label || 'Autre'),
-    CSH_FLOW_TXT_[m.flow] || '', cshTxt_(m.source), enc ? cshNum_(m.uber_cash) : '', given, enc ? cshNum_(m.change) : '', '=J' + r + '-K' + r,
-    enc ? '=IF(I' + r + '="","",I' + r + '-L' + r + ')' : '', cshTxt_(m.comment)];
+    CSH_FLOW_TXT_[m.flow] || '', cshTxt_(m.source), enc ? cshEncCash_(m) : '', given, enc ? cshNum_(m.change) : '', '=J' + r + '-K' + r,
+    enc ? '=IF(I' + r + '="","",I' + r + '-L' + r + ')' : '', cshEncCom_(m, 'Bolt')];
 }
 /** Ligne de l'onglet « Export Bolt - Activité des services Ludy » : mêmes colonnes que l'export Bolt */
 function cshBoltSesRow_(x) {

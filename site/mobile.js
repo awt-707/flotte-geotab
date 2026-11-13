@@ -127,13 +127,14 @@ function cshTabShiftM() {
       const comps = f.comps.map(m => `<div class="small">+ ${cshMoney(m.amount)} ${m.label === CSH_COMPLEMENT ? 'complément' : 'encaissement'} · ${esc(fmtDT(m.created_at))}${cshCanFix(m) ? ` · <button type="button" class="mlink" data-cshx="${m.id}">annuler</button>` : ''}</div>`).join('');
       return `<div class="mpfd ${st === 'Manquant' ? 'short' : 'paid'}"><div class="mpfh"><b>${P.name}</b><span>espèces ${decl(r)}</span></div>
         <div class="mres"><div><span>Encaissé</span><b>${cshMoney(f.total)}</b></div><div><span>${st === 'Manquant' ? 'Reste à encaisser' : st === 'Soldé' ? 'Manque remis' : st === 'Excédent' ? 'Excédent' : 'Manque'}</span><b class="${st === 'Manquant' ? 'red' : 'ok'}">${f.rest == null ? '—' : cshMoney(Math.abs(f.rest))}</b></div></div>
-        <div class="small">Remis ${cshMoney(d.given)} · monnaie ${cshMoney(d.change)}${d.comment ? ' · ' + esc(d.comment) : ''}</div>${comps}
+        <div class="small">Remis ${cshMoney(d.given)} · monnaie ${cshMoney(d.change)}${f.promo ? ' · promotion ' + cshMoney(f.promo) : ''}${d.comment ? ' · ' + esc(d.comment) : ''}</div>${comps}
         <div class="mact">${f.rest > 0.004 ? `<button type="button" class="mbtn" data-cshcp="${i}|${pf}">+ Complément ${P.name} remis</button>` : ''}${cshCanFix(d) ? `<button type="button" class="mlink" data-cshx="${d.id}">Annuler l'encaissement ${P.name}</button>` : ''}</div></div>`;
     }
     return `<div class="mpf" data-pf="${pf}"><div class="mpfh"><b>${P.name}</b><span>espèces ${decl(r)}</span></div>
       <div class="mg2"><label>Remis ${mobNum('class="cgv"', 'MAD')}</label><label>Monnaie rendue ${mobNum('class="cch"', '0')}</label></div>
       <div class="mcalc" aria-live="polite"></div>
-      <details class="mmore"><summary>Manque ${P.name} (pas tout remis)</summary>
+      <details class="mmore"><summary>Promotion ou manque ${P.name}</summary>
+        <label>Promotion ${P.name} <span class="small">(le client a payé moins que le montant affiché : dû par ${P.name}, pas par le chauffeur)</span> ${mobNum('class="cpr"', 'MAD')}</label>
         <label>Manque <span class="small">${r.uber != null ? '(calculé d\'après l\'export, modifiable)' : '(si le chauffeur n\'a pas tout remis)'}</span> ${mobNum('class="cmq"', 'MAD')}</label></details></div>`;
   };
   const card = (c, i) => { const open = ['uber', 'bolt'].some(pf => c.rows[pf] && !c.rows[pf].sf), r = c.r;
@@ -151,12 +152,12 @@ function cshTabShiftM() {
   document.querySelectorAll('.mcard[data-card] .mpf').forEach(el => {
     const r = cards[+el.closest('.mcard').dataset.card].rows[el.dataset.pf], mq = el.querySelector('.cmq'), out = el.querySelector('.mcalc');
     const upd = () => {
-      const has = el.querySelector('.cgv').value !== '', net = cshR(cshN(el.querySelector('.cgv').value) - cshN(el.querySelector('.cch').value));
-      if (r.uber != null && !mq.dataset.touched) mq.value = has ? String(Math.max(0, cshR(r.uber - net))) : '';
-      const man = r.uber != null && !mq.dataset.touched ? cshR(r.uber - net) : mq.value === '' ? null : cshN(mq.value);
-      out.innerHTML = has ? `Encaissé <b>${cshMoney(net)}</b>${man == null ? '' : man > 0.004 ? ` · manque <b class="red">${cshMoney(man)}</b>` : man < -0.004 ? ` · excédent <b class="ok">${cshMoney(-man)}</b>` : ' · <b class="ok">cadré</b>'}` : '';
+      const has = el.querySelector('.cgv').value !== '', net = cshR(cshN(el.querySelector('.cgv').value) - cshN(el.querySelector('.cch').value)), pr = cshN(el.querySelector('.cpr').value);
+      if (r.uber != null && !mq.dataset.touched) mq.value = has ? String(Math.max(0, cshR(r.uber - net - pr))) : '';
+      const man = r.uber != null && !mq.dataset.touched ? cshR(r.uber - net - pr) : mq.value === '' ? null : cshN(mq.value);
+      out.innerHTML = has ? `Encaissé <b>${cshMoney(net)}</b>${pr ? ` · promotion <b>${cshMoney(pr)}</b>` : ''}${man == null ? '' : man > 0.004 ? ` · manque <b class="red">${cshMoney(man)}</b>` : man < -0.004 ? ` · excédent <b class="ok">${cshMoney(-man)}</b>` : ' · <b class="ok">cadré</b>'}` : '';
     };
-    el.querySelectorAll('.cgv,.cch').forEach(x => { x.oninput = upd; });
+    el.querySelectorAll('.cgv,.cch,.cpr').forEach(x => { x.oninput = upd; });
     mq.oninput = () => { mq.dataset.touched = '1'; upd(); };
   });
   // « Encaisser » : chaque ligne remplie (Uber, Bolt) enregistrée ; ligne laissée vide = pas d'espèces remises sur cette plateforme
@@ -167,7 +168,7 @@ function cshTabShiftM() {
     b.disabled = true; let n = 0;
     try {
       for (const x of todo) { const pf = x.dataset.pf, mq = x.querySelector('.cmq');
-        if (await cshSaveShift(PFX[pf], c.rows[pf], { gv: x.querySelector('.cgv').value, ch: x.querySelector('.cch').value, mq: mq.value, touched: !!mq.dataset.touched, cm })) n++;
+        if (await cshSaveShift(PFX[pf], c.rows[pf], { gv: x.querySelector('.cgv').value, ch: x.querySelector('.cch').value, pr: x.querySelector('.cpr').value, mq: mq.value, touched: !!mq.dataset.touched, cm })) n++;
         else if (!n) { b.disabled = false; return; } }
       pageCaisse();
     } catch (e) { alert(e.message); if (n) pageCaisse(); else b.disabled = false; }
