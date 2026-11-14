@@ -18,11 +18,15 @@ do $$ begin
   execute 'drop policy if exists caisse_select on storage.objects';
   execute 'create policy caisse_select on storage.objects as permissive for select to authenticated using (((bucket_id = ''caisse''::text) AND cash_folder_ok((storage.foldername(name))[1])))';
   execute 'drop policy if exists contrats_delete on storage.objects';
-  execute 'create policy contrats_delete on storage.objects as permissive for delete to authenticated using (((bucket_id = ''contrats''::text) AND ((storage.foldername(name))[1] ~ ''^\d+$''::text) AND rh_scope(NULLIF(((storage.foldername(name))[1])::bigint, 0))))';
+  execute 'create policy contrats_delete on storage.objects as permissive for delete to authenticated using (((bucket_id = ''contrats''::text) AND (( SELECT is_admin() AS is_admin) OR (( SELECT is_rh() AS is_rh) AND (EXISTS ( SELECT 1
+   FROM work_contracts w
+  WHERE ((w.pdf_path = objects.name) OR (w.legal_path = objects.name))))))))';
   execute 'drop policy if exists contrats_insert on storage.objects';
   execute 'create policy contrats_insert on storage.objects as permissive for insert to authenticated with check (((bucket_id = ''contrats''::text) AND ((storage.foldername(name))[1] ~ ''^\d+$''::text) AND wc_can(NULLIF(((storage.foldername(name))[1])::bigint, 0))))';
   execute 'drop policy if exists contrats_select on storage.objects';
-  execute 'create policy contrats_select on storage.objects as permissive for select to authenticated using (((bucket_id = ''contrats''::text) AND ((storage.foldername(name))[1] ~ ''^\d+$''::text) AND wc_can(NULLIF(((storage.foldername(name))[1])::bigint, 0))))';
+  execute 'create policy contrats_select on storage.objects as permissive for select to authenticated using (((bucket_id = ''contrats''::text) AND (( SELECT is_admin() AS is_admin) OR (owner_id = (( SELECT auth.uid() AS uid))::text) OR (EXISTS ( SELECT 1
+   FROM work_contracts w
+  WHERE ((w.pdf_path = objects.name) OR (w.legal_path = objects.name)))))))';
   execute 'drop policy if exists devis_insert on storage.objects';
   execute 'create policy devis_insert on storage.objects as permissive for insert to authenticated with check (((bucket_id = ''devis''::text) AND (my_role() = ANY (ARRAY[''admin''::text, ''manager''::text])) AND (name ~ ''^\d{4}-\d{2}/[0-9A-Za-z-]{8,64}\.pdf$''::text)))';
   execute 'drop policy if exists devis_select on storage.objects';
