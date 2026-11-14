@@ -100,15 +100,40 @@ function svStats(pauses, now, P) {
   return Object.values(by).map(g => Object.assign(g, { min: Math.round(g.min), over: Math.max(0, Math.round(g.min - lim)) }))
     .sort((a, b) => String(b.shift_day).localeCompare(String(a.shift_day)) || String(a.shift).localeCompare(String(b.shift)) || String(a.driver_name).localeCompare(String(b.driver_name)));
 }
-/** Message WhatsApp de fin de pause (au chauffeur) */
-function svWaPauseEnd(p, now) {
-  const late = now - svPauseEndAt(p);
-  return '🔴 *FIN DE PAUSE*\n' + (p.driver_name ? p.driver_name + ', v' : 'V') + 'otre pause est terminée' + (late > SV_MIN ? ' depuis ' + svDur(late) : '') + '.\n' +
-    'Véhicule ' + (p.plate || '') + ' : merci de reprendre le service maintenant.';
+/** Durée en darija (écriture arabe) : 1 h 05 → « 1 ساعة و 5 دقايق », 10 min → « 10 دقايق » */
+function svDurAr(ms) {
+  const s = Math.round(Math.abs(ms) / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  const mn = x => x === 1 ? 'دقيقة' : x + ' دقايق';
+  if (h) return h + ' ساعة' + (m ? ' و ' + mn(m) : '');
+  if (m) return mn(m);
+  return r + ' ثانية';
 }
-/** Message WhatsApp : véhicule en pause en mouvement */
+/** Raison du déplacement (texte de svMoved) en darija : « à 1,1 km de sa place, 42 km/h » / « en route à 41 km/h » */
+function svWhyAr(why) {
+  const t = String(why || ''), far = t.match(/à ([\d,.]+) (km|m) de sa place/), sp = t.match(/(\d+) km\/h/), out = [];
+  if (far) out.push('بعيدة على البلاصة ديالها ب ' + far[1] + (far[2] === 'km' ? ' كيلومتر' : ' متر'));
+  if (sp) out.push('ب ' + sp[1] + ' كم/س');
+  return out.length ? out.join('، ') : 'كاتمشي';
+}
+/** Message WhatsApp de fin de pause (au chauffeur), en français puis en darija */
+function svWaPauseEnd(p, now) {
+  const late = now - svPauseEndAt(p), nm = p.driver_name || '', pl = p.plate || '';
+  return '🔴 *FIN DE PAUSE*\n' + (nm ? nm + ', v' : 'V') + 'otre pause est terminée' + (late > SV_MIN ? ' depuis ' + svDur(late) : '') + '.\n' +
+    'Véhicule ' + pl + ' : merci de reprendre le service maintenant.\n\n' +
+    '🔴 *سالات الاستراحة*\n' + (nm ? nm + '، ' : '') + 'الاستراحة ديالك سالات' + (late > SV_MIN ? ' هادي ' + svDurAr(late) : '') + '.\n' +
+    'الطوموبيل ' + pl + ': عافاك رجع للخدمة دابا.';
+}
+/** Message WhatsApp : véhicule en pause en mouvement (français puis darija) */
 function svWaMoved(p, why) {
-  return '🔴 *ALERTE PAUSE*\n' + (p.driver_name || 'Chauffeur') + ' : le véhicule ' + (p.plate || '') + ' est en pause mais il roule (' + why + ').\nMerci d\'appeler l\'exploitation.';
+  const nm = p.driver_name || 'Chauffeur', pl = p.plate || '';
+  return '🔴 *ALERTE PAUSE*\n' + nm + ' : le véhicule ' + pl + ' est en pause mais il roule (' + why + ').\nMerci d\'appeler l\'exploitation.\n\n' +
+    '🔴 *تنبيه الاستراحة*\n' + (p.driver_name ? p.driver_name + '، ' : '') + 'الطوموبيل ' + pl + ' راه فالاستراحة ولكن كاتمشي (' + svWhyAr(why) + ').\nعافاك عيّط للإدارة دابا.';
+}
+/** Message WhatsApp : pause en cours (temps qui reste, heure de fin), français puis darija ; endHM = heure de fin HH:MM */
+function svWaPauseNow(p, now, endHM) {
+  const left = svPauseEndAt(p) - now, pl = p.plate || '';
+  return '⏸ Pause en cours : reste ' + svDur(left) + ' (fin à ' + endHM + '). Véhicule ' + pl + '.\n\n' +
+    '⏸ راك فالاستراحة: باقي ليك ' + svDurAr(left) + ' (كاتسالي مع ' + endHM + '). الطوموبيل ' + pl + '.';
 }
 /** Message WhatsApp : détail d'une course suivie (client ou chauffeur) */
 function svWaTrack(tr, m, fmt) {
@@ -122,4 +147,4 @@ function svWaTrack(tr, m, fmt) {
     (tr.ended_at || tr.arrived_at ? 'Durée : ' + svDur(new Date(tr.arrived_at || tr.ended_at).getTime() - new Date(tr.started_at).getTime()) : ''),
     (Array.isArray(tr.points) && tr.points.length > 1 ? 'Distance (GPS) : ' + String(svKm(tr.points)).replace('.', ',') + ' km' : '')].filter(Boolean).join('\n');
 }
-if (typeof module !== 'undefined') module.exports = { PAUSE_DEF, svP, svDist, svPauseEndAt, svPauseMin, svDrvKey, svUsedMin, svLeftMin, svReminders, svPauseState, svMoved, svArrived, svAddPoint, svKm, svDur, svClock, svStats, svWaPauseEnd, svWaMoved, svWaTrack };
+if (typeof module !== 'undefined') module.exports = { PAUSE_DEF, svP, svDist, svPauseEndAt, svPauseMin, svDrvKey, svUsedMin, svLeftMin, svReminders, svPauseState, svMoved, svArrived, svAddPoint, svKm, svDur, svClock, svStats, svDurAr, svWhyAr, svWaPauseEnd, svWaMoved, svWaPauseNow, svWaTrack };

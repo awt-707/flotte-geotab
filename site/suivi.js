@@ -409,5 +409,5 @@ document.addEventListener('click', async e => {
   if (t.dataset.svend) { const p = P(t.dataset.svend); if (p) { await svEndPause(p, 'Terminée par le gestionnaire'); if (pageOf() === 'direct' && typeof applyDirect === 'function') applyDirect(); } return; }
   if (t.dataset.svplus) { const p = P(t.dataset.svplus); if (p) { await svExtend(p, 5); if (pageOf() === 'direct' && typeof applyDirect === 'function') applyDirect(); } return; }
   if (t.dataset.svwa) { const p = P(t.dataset.svwa); if (!p) return; const st = svPauseState(p, Date.now());
-    svWa(p.driver_phone, p.moved_at ? svWaMoved(p, p.moved_note || 'en mouvement') : st.over ? svWaPauseEnd(p, Date.now()) : '⏸ Pause en cours : reste ' + svDur(st.left) + ' (fin à ' + fmtDT(new Date(svPauseEndAt(p))).slice(6) + '). Véhicule ' + (p.plate || '') + '.'); }
+    svWa(p.driver_phone, p.moved_at ? svWaMoved(p, p.moved_note || 'en mouvement') : st.over ? svWaPauseEnd(p, Date.now()) : svWaPauseNow(p, Date.now(), fmtDT(new Date(svPauseEndAt(p))).slice(6))); }
 });
