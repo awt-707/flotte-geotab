@@ -34,6 +34,11 @@ test('calculs : 2 h par shift, rappels toutes les 30 min, véhicule qui bouge, a
   const day = st.find(g => g.shift_day === '2026-11-14');
   assert.deepStrictEqual([day.n, day.min, day.over, day.moved, day.late], [3, 170, 50, 1, 1]);
   assert.match(C.svWaPauseEnd({ driver_name: 'ALPHA', plate: 'WW1', started_at: iso(now - 70 * MIN), planned_min: 60 }, now), /FIN DE PAUSE[\s\S]*ALPHA[\s\S]*depuis 10 min[\s\S]*WW1/);
+  // messages au chauffeur : français puis darija (écriture arabe)
+  assert.match(C.svWaPauseEnd({ driver_name: 'ALPHA', plate: 'WW1', started_at: iso(now - 70 * MIN), planned_min: 60 }, now), /\n\n🔴 \*سالات الاستراحة\*\nALPHA، الاستراحة ديالك سالات هادي 10 دقايق\.\nالطوموبيل WW1: عافاك رجع للخدمة دابا\.$/);
+  assert.match(C.svWaMoved({ driver_name: 'ALPHA', plate: 'WW1' }, 'en route à 41 km/h'), /^🔴 \*ALERTE PAUSE\*\nALPHA : le véhicule WW1 est en pause mais il roule \(en route à 41 km\/h\)\.[\s\S]*\n\n🔴 \*تنبيه الاستراحة\*\nALPHA، الطوموبيل WW1 راه فالاستراحة ولكن كاتمشي \(ب 41 كم\/س\)\.\nعافاك عيّط للإدارة دابا\.$/);
+  assert.strictEqual(C.svWhyAr('à 1,1 km de sa place, 42 km/h'), 'بعيدة على البلاصة ديالها ب 1,1 كيلومتر، ب 42 كم/س');
+  assert.match(C.svWaPauseNow({ plate: 'WW1', started_at: iso(now - 20 * MIN), planned_min: 105 }, now, '19:25'), /reste 1 h 25 \(fin à 19:25\)[\s\S]*باقي ليك 1 ساعة و 25 دقايق \(كاتسالي مع 19:25\)/);
 });
 
 test('base : gestionnaire = véhicules de ses agences, une pause ouverte par véhicule, heure de la base', () => {
