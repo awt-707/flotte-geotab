@@ -1451,6 +1451,50 @@ async function boltSettingsLoad() {
     b.disabled = false;
   };
 }
+/**
+ * Réglages > Intégrations > Uber (14/11/2026, demande d'Ahmed) : identifiants de l'application créée sur le tableau de bord développeur
+ * d'Uber (developer.uber.com), gardés dans la base (integration_set), secret jamais renvoyé ; « Tester la connexion » = demande
+ * uber_test traitée par le collecteur (droits ouverts par Uber, organisation, statuts des chauffeurs).
+ */
+async function uberSettingsLoad() {
+  const box = $('#uberbox'); if (!box) return;
+  const { data, error } = await sb.rpc('integration_status');
+  if (!$('#uberbox')) return;
+  if (error) { box.innerHTML = msg(esc(error.message), 'warn'); return; }
+  const st = {}; (data || []).forEach(r => { st[r.name] = r; });
+  const when = k => st[k] ? '<span class="small ok">enregistré le ' + esc(fmtDTY(st[k].updated_at)) + '</span>' : '<span class="small">non enregistré</span>';
+  box.innerHTML = `<div class="panel"><div class="mfrow">
+      <label>Identifiant client (Client ID) <input id="ubid" size="30" autocomplete="off" value="${esc((st.uber_client_id || {}).shown || '')}"> ${when('uber_client_id')}</label>
+      <label>Secret client (Client Secret) <input id="ubsec" type="password" size="30" autocomplete="new-password" placeholder="${st.uber_client_secret ? '•••••••• (laisser vide pour garder)' : 'coller le secret'}"> ${when('uber_client_secret')}</label></div>
+    <p><button id="ubsave">Enregistrer</button> <button class="ghost" id="ubtest">Tester la connexion Uber</button> ${st.uber_client_secret ? '<button class="ghost small" id="ubdel">Effacer le secret</button>' : ''}</p><div id="ubres"></div></div>`;
+  const say = (h, k) => { $('#ubres').innerHTML = msg(h, k); };
+  $('#ubsave').onclick = async () => {
+    try {
+      const sets = [['uber_client_id', $('#ubid').value.trim()]];
+      if ($('#ubsec').value.trim()) sets.push(['uber_client_secret', $('#ubsec').value.trim()]);
+      for (const [k, v] of sets) { const r = await sb.rpc('integration_set', { p_name: k, p_value: v }); if (r.error) throw new Error(/réglage inconnu/.test(r.error.message) ? 'Module pas encore installé : migration 20261201000000_uber_api.sql à exécuter' : r.error.message); }
+      $('#ubsec').value = ''; await uberSettingsLoad(); say('Identifiants Uber enregistrés (le secret n\'est plus affiché).', 'ok');
+    } catch (e) { say(esc(e.message || e), 'err'); }
+  };
+  if ($('#ubdel')) $('#ubdel').onclick = async () => { if (!await ask('Effacer le secret Uber de Ludy ?')) return; const r = await sb.rpc('integration_set', { p_name: 'uber_client_secret', p_value: '' }); if (r.error) say(esc(r.error.message), 'err'); else uberSettingsLoad(); };
+  $('#ubtest').onclick = async () => {
+    const b = $('#ubtest'); b.disabled = true; say('Test demandé : résultat au prochain passage du collecteur (5 min au plus)…', 'info');
+    try {
+      const id = await job('uber_test');
+      for (let i = 0; i < 80; i++) {
+        await new Promise(r => setTimeout(r, 5000)); if (!$('#ubres')) return;
+        const { data: j } = await sb.from('jobs').select('done_at,result').eq('id', id).maybeSingle();
+        if (j && j.done_at) { say(esc(j.result || ''), /non ouvert|refus|manquant|Erreur/.test(j.result || '') ? 'warn' : 'ok'); b.disabled = false; return; }
+      }
+      say('Pas encore de réponse du collecteur : le résultat apparaîtra dans Réglages > Demandes.', 'warn');
+    } catch (e) { say(esc(e.message || e), 'err'); }
+    b.disabled = false;
+  };
+}
+function uberSettingsHtml() {
+  return `<h2>Intégrations · Uber (API officielle des flottes)</h2><div class="sub">Identifiants de l'application créée sur le tableau de bord développeur d'Uber (developer.uber.com &gt; Créer une application &gt; Authentification : Client ID et Client Secret). Gardés dans la base de Ludy, lus seulement par le collecteur : le secret n'est jamais réaffiché. Le test indique quels droits Uber a ouverts (organisation, statut des chauffeurs, position en direct).</div>
+    <div id="uberbox"><div class="loading">Chargement…</div></div>`;
+}
 function boltSettingsHtml() {
   return `<h2>Intégrations · Bolt Fleet</h2><div class="sub">Identifiants de l'API Bolt (portail Bolt Fleet &gt; identifiants API). Gardés dans la base de Ludy, lus seulement par le collecteur : le secret n'est jamais réaffiché. N° de société = le nombre dans l'adresse du portail (fleets.bolt.eu/<b>392246</b>/…).</div>
     <div id="boltbox"><div class="loading">Chargement…</div></div>`;
@@ -1587,6 +1631,7 @@ async function pageReglages() {
     ${extSettingsHtml(params)}
     ${mailSettingsHtml(params)}
     ${boltSettingsHtml()}
+    ${uberSettingsHtml()}
     <h2>Alertes par e-mail</h2><div class="sub">Chaque nouvelle alerte (veille et jour même) est envoyée une seule fois aux destinataires concernés, dans les minutes qui suivent son calcul par le collecteur.</div>
     <div class="panel row"><label>Email <input id="reml" type="email" size="22" placeholder="chef@clicar.fr"></label><label>Nom <input id="rnom" size="14"></label>
       <label>Agence <select id="rag">${agOptions('', 'Toutes')}</select></label><label>Gravité minimum <select id="rsev">${SEVS.map(x => `<option ${x === 'Haute' ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
@@ -1629,7 +1674,7 @@ async function pageReglages() {
     $('#upgbox').scrollIntoView({ block: 'nearest' });
   }; });
   document.querySelectorAll('.urole').forEach(s => { s.onchange = async () => { const { error } = await sb.from('profiles').update({ role: s.value }).eq('user_id', s.dataset.u); if (error) alert(error.message); else s.classList.add('saved'); }; });
-  boltSettingsLoad();
+  boltSettingsLoad(); uberSettingsLoad();
   document.querySelectorAll('.ped').forEach(i => { i.onchange = async () => { const { error } = await sb.from('params').update({ value: i.value }).eq('key', i.dataset.k); if (error) alert(error.message); else { i.classList.add('saved'); S.P = null; S.ctrShift = {}; await loadRef(); } }; });   // horaires des shifts changés : shift des contrats recalculé
   document.querySelectorAll('.red_').forEach(i => { i.onchange = async () => { const { error } = await sb.from('rules').update({ weight: num(i.value) }).eq('id', i.dataset.k); if (error) alert(error.message); else { i.classList.add('saved'); await job('recompute', addDays(today(), -31)).catch(e => alert('Recalcul non demandé : ' + e.message)); } }; });
   const done = t => { $('#actres').innerHTML = msg(t + ' Le collecteur s\'en charge dans 5 minutes maximum (suivi ci-dessous).', 'ok'); };

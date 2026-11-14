@@ -69,7 +69,7 @@ CREATE FUNCTION public.integration_set(p_name text, p_value text) RETURNS void
     AS $_$
 begin
   if not public.is_admin() then raise exception 'réservé à l''administrateur'; end if;
-  if p_name not in ('bolt_client_id', 'bolt_client_secret', 'bolt_company_id') then raise exception 'réglage inconnu : %', p_name; end if;
+  if p_name not in ('bolt_client_id', 'bolt_client_secret', 'bolt_company_id', 'uber_client_id', 'uber_client_secret') then raise exception 'réglage inconnu : %', p_name; end if;
   if p_value is null or btrim(p_value) = '' then delete from integration_secrets where name = p_name; return; end if;
   if p_name = 'bolt_company_id' and btrim(p_value) !~ '^\d+(\s*,\s*\d+)*$' then raise exception 'numéro de société Bolt : chiffres seulement (plusieurs séparés par des virgules)'; end if;
   insert into integration_secrets (name, value, updated_at, updated_by) values (p_name, btrim(p_value), now(), auth.uid())
@@ -82,7 +82,7 @@ CREATE FUNCTION public.integration_status() RETURNS TABLE(name text, updated_at 
     AS $$
 begin
   if not public.is_admin() then raise exception 'réservé à l''administrateur'; end if;
-  return query select s.name, s.updated_at, case when s.name = 'bolt_client_secret' then null else s.value end from integration_secrets s order by s.name;
+  return query select s.name, s.updated_at, case when s.name like '%secret%' then null else s.value end from integration_secrets s order by s.name;
 end $$;
 
 CREATE FUNCTION public.is_admin() RETURNS boolean
