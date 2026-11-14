@@ -22,8 +22,10 @@ test('signal des onglets : chacun écrit seulement sa session ; l\'administrateu
     assert.strictEqual(as(MGR, 'select count(*) from user_sessions'), '1', 'le gestionnaire ne voit que sa session');
     assert.strictEqual(as(ADMIN, 'select count(*) from user_sessions'), '2', 'l\'administrateur voit tout le monde');
     assert.throws(() => env.psql("begin; set local role anon; select count(*) from user_sessions; commit;"), /permission denied/);
-    // déconnexion : la session disparaît
+    // déconnexion : la session est close et gardée (historique) ; seul l'administrateur l'efface (chacun : ses signaux de plus de 30 jours)
     as(MGR, "delete from user_sessions where id = 'onglet-gestionnaire-1'");
+    assert.strictEqual(env.psql('select count(*) from user_sessions'), '2');
+    as(ADMIN, "delete from user_sessions where id = 'onglet-gestionnaire-1'");
     assert.strictEqual(env.psql('select count(*) from user_sessions'), '1');
   } finally { env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'; delete from user_sessions`); }
 });
