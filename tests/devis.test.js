@@ -6,13 +6,13 @@ const env = require('./lib/env'), { startSite, openBrowser, login } = require('.
 const ADMIN = '11111111-1111-1111-1111-111111111111', MGR = '22222222-2222-2222-2222-222222222222';
 const as = (uid, sql) => env.psql(`begin; set local role authenticated; set local request.jwt.claims = '{"sub":"${uid}","role":"authenticated"}'; ${sql}; commit;`);
 const setup = () => {
-  env.resetDb(); env.psql('truncate missions, cash_moves, cash_files restart identity');
+  env.resetDb(); env.psql('truncate missions, mission_tracks, cash_moves, cash_files restart identity');
   env.psql(`insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin';
     insert into profiles (user_id, email, role) values ('${MGR}', 'new@x', 'manager') on conflict (user_id) do update set role = 'manager';
     insert into agencies (id, name) overriding system value values (1, 'Casa'); insert into user_agencies (user_id, agency_id) values ('${MGR}', 1);
     insert into vehicles (key, plate, model, active, agency_id) values ('968194WW', 'WW968194', 'SONATA', 'OUI', 1);`);
 };
-const done = () => { env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'; truncate missions, cash_moves, cash_files restart identity`); env.resetDb(); };
+const done = () => { env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'; truncate missions, mission_tracks, cash_moves, cash_files restart identity`); env.resetDb(); };
 
 test('base : devis d\'un gestionnaire toujours validé par l\'administrateur ; course rapide et anciens devis inchangés', () => {
   setup();

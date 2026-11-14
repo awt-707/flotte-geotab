@@ -6,7 +6,7 @@
     "build": "node collector/build.js",
     "check": "node scripts/check.js",
     "test:db": "bash tests/setup_db.sh",
-    "test": "npm run build && npm run check && node --test --test-concurrency=1 \"tests/*.test.js\"",
+    "test": "npm run build && npm run check && node --test --test-concurrency=1 --test-timeout=300000 \"tests/*.test.js\"",
     "test:site": "node --test --test-concurrency=1 tests/site.test.js tests/site_import.test.js"
   },
   "devDependencies": {
