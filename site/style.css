@@ -719,3 +719,10 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .svgo { min-height: 40px; min-width: 110px; font-weight: 700; }
 .svf { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 10px; }
 @media (max-width: 640px) { .svcard { grid-template-columns: 1fr; } .svct { flex-direction: row; gap: 8px; justify-content: flex-start; } .svrow { flex-wrap: wrap; } .svgo { width: 100%; } }
+
+/* Caisse > courses privées : course apportée par le chauffeur ? (prime ou non) */
+.cshbr { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 4px; }
+.cshbr > span { font-weight: 700; margin-right: 4px; }
+.cshbro { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 2px solid var(--line); border-radius: 999px; cursor: pointer; font-weight: 600; min-height: 40px; }
+.cshbro:has(input:checked) { border-color: var(--acc); background: var(--acc-soft); }
+.cshbro input { margin: 0; }

@@ -579,12 +579,23 @@ async function cshCoursesTodo(p) {
 async function cshSaveCourse(sel, v) {
   const ca = cshN(v.amount), rv = String(v.given), who = cshResolve(v.driver);
   if (!(ca > 0) || rv === '' || !who.driver_name) { alert('Chauffeur, montant de la course et montant remis obligatoires.'); return false; }
-  const c = cshCourse(ca, v.pct, rv);
+  // prime du chauffeur seulement s'il a apporté la course (demande d'Ahmed, 14/11/2026) ; choix obligatoire
+  if (v.brought !== 'oui' && v.brought !== 'non') { alert('Indiquez si la course a été apportée par le chauffeur (prime) ou non (pas de prime).'); return false; }
+  const pct = v.brought === 'oui' ? cshN(v.pct) : 0, c = cshCourse(ca, pct, rv);
   await cshInsert(Object.assign(who, { caisse: 'courses', kind: 'course', flow: 'in', amount: cshN(rv), day: v.day || today(), mission_id: sel ? sel.id : null, vehicle_key: sel ? sel.vehicle_key : null,
-    course_amount: ca, commission_pct: cshN(v.pct), prime: c.prime, prime_paid: c.paid, label: [v.from, v.to].filter(Boolean).join(' → ') || null, source: 'Chauffeur',
-    comment: [sel ? 'Course ' + (sel.number || '') : '', v.comment].filter(Boolean).join(' · ') || null }));
+    course_amount: ca, commission_pct: pct, prime: c.prime, prime_paid: c.paid, label: [v.from, v.to].filter(Boolean).join(' → ') || null, source: 'Chauffeur',
+    comment: [v.brought === 'oui' ? 'Apportée par le chauffeur' : 'Course de l\'agence (sans prime)', sel ? 'Course ' + (sel.number || '') : '', v.comment].filter(Boolean).join(' · ') || null }));
   return true;
 }
+/** Choix « course apportée par le chauffeur ? » (oui = prime, non = pas de prime) */
+function cshBroughtHtml(pct0) {
+  return `<div class="cshbr" role="radiogroup" aria-label="Course apportée par le chauffeur ?"><span>Course apportée par le chauffeur ?</span>
+    <label class="cshbro"><input type="radio" name="ccbr" value="oui"> Oui : prime ${esc(f1(pct0))} %</label>
+    <label class="cshbro"><input type="radio" name="ccbr" value="non"> Non : pas de prime</label></div>`;
+}
+function cshBrought() { const x = document.querySelector('input[name="ccbr"]:checked'); return x ? x.value : ''; }
+/** Prime (%) retenue : celle saisie si la course vient du chauffeur, 0 sinon ; champ % grisé quand la réponse est non */
+function cshBrPct() { const b = cshBrought(), el = $('#ccp'); if (el) el.disabled = b === 'non'; return b === 'non' ? 0 : cshVal('ccp'); }
 async function cshTabCourses(p) {
   const my = ROUTING, pct0 = cshN(S.P.cashCommissionPct === undefined ? 10 : S.P.cashCommissionPct);
   const { mis, todo } = await cshCoursesTodo(p);
@@ -601,19 +612,20 @@ async function cshTabCourses(p) {
       ${cshField('ccf', 'Départ', 'text', { size: 18, value: f.startAddr || f.startCity || '' })}${cshField('cct', 'Arrivée', 'text', { size: 18, value: f.endAddr || f.endCity || f.dest || '' })}
       ${cshField('cca', 'Montant de la course (MAD)', 'number', { min: 0, value: sel && sel.total_ttc != null ? sel.total_ttc : '' })}${cshField('ccp', 'Prime chauffeur (%)', 'number', { min: 0, step: 0.5, value: pct0, w: 80 })}
       ${cshField('ccr', 'Montant remis en caisse (MAD)', 'number', { min: 0 })}${cshField('ccm', 'Commentaire', 'text', { size: 24 })}<button id="ccsave">Encaisser</button></div>
+      ${cshBroughtHtml(pct0)}
       <div class="small" id="cccalc"></div></div>` +
     cshList('tcshcrs', rows, [['Date', m => fmtDay(m.day), m => m.day], cshDrvCol(), ['Opération', m => m.kind === 'course' ? esc(m.label || 'Course privée') + (m.mission_id ? ' <a class="small" href="#/courses?id=' + m.mission_id + '">fiche</a>' : '') : esc(CSH_KIND[m.kind] || m.kind)],
       ['Course', m => m.course_amount == null ? '' : cshMoney(m.course_amount), m => cshN(m.course_amount), 'n'], ['Encaissé', m => (m.flow === 'out' ? '−' : '') + cshMoney(m.amount), m => cshN(m.amount), 'n'],
       ['Prime', m => m.prime == null ? '' : cshMoney(m.prime) + (m.commission_pct != null ? ' <span class="small">(' + f1(m.commission_pct) + ' %)</span>' : ''), m => cshN(m.prime), 'n'],
       ['Déjà gardée', m => m.prime_paid == null ? '' : cshMoney(m.prime_paid), m => cshN(m.prime_paid), 'n'], ['Reste à payer', m => m.kind === 'course' ? cshSignedTxt(cshN(m.prime) - cshN(m.prime_paid)) : '', m => cshN(m.prime) - cshN(m.prime_paid), 'n'],
       ['Commentaire', m => esc(m.comment || '')], cshActCol()], ['course']) + cshMoveForm('courses'));
-  const calc = () => { const c = cshCourse(cshVal('cca'), cshVal('ccp'), cshVal('ccr') === '' ? cshVal('cca') : cshVal('ccr'));
-    $('#cccalc').innerHTML = cshVal('cca') === '' ? 'Prime = montant de la course × prime (%). Si le chauffeur garde sa prime, saisir le montant remis : la part gardée est comptée comme déjà payée.' :
-      `Prime ${cshMoney(c.prime)} · déjà gardée par le chauffeur ${cshMoney(c.paid)} · reste à payer sur la paie ${cshSignedTxt(c.reste)}`; };
-  ['cca', 'ccp', 'ccr'].forEach(id => { $('#' + id).oninput = calc; }); calc();
+  const calc = () => { const c = cshCourse(cshVal('cca'), cshBrPct(), cshVal('ccr') === '' ? cshVal('cca') : cshVal('ccr')), b = cshBrought();
+    $('#cccalc').innerHTML = cshVal('cca') === '' ? 'Prime = montant de la course × prime (%), seulement si la course a été apportée par le chauffeur. Si le chauffeur garde sa prime, saisir le montant remis : la part gardée est comptée comme déjà payée.' :
+      (b ? (b === 'non' ? 'Course de l\'agence : pas de prime · ' : '') + `Prime ${cshMoney(c.prime)} · déjà gardée par le chauffeur ${cshMoney(c.paid)} · reste à payer sur la paie ${cshSignedTxt(c.reste)}` : '<b>Choisir : course apportée par le chauffeur ou non</b>'); };
+  ['cca', 'ccp', 'ccr'].forEach(id => { $('#' + id).oninput = calc; }); document.querySelectorAll('input[name="ccbr"]').forEach(r => { r.onchange = calc; }); calc();
   document.querySelectorAll('[data-cshms]').forEach(b => { b.onclick = () => { CS.selMission = +b.dataset.cshms; cshTabCourses(p); setTimeout(() => { const x = $('#cshcform'); if (x) x.scrollIntoView({ block: 'center' }); }, 50); }; });
   $('#ccsave').onclick = async () => {
-    try { if (await cshSaveCourse(sel, { day: cshVal('ccd'), driver: cshVal('ccw'), from: cshVal('ccf'), to: cshVal('cct'), amount: cshVal('cca'), pct: cshVal('ccp'), given: cshVal('ccr'), comment: cshVal('ccm') })) { CS.selMission = null; pageCaisse(); } }
+    try { if (await cshSaveCourse(sel, { day: cshVal('ccd'), driver: cshVal('ccw'), from: cshVal('ccf'), to: cshVal('cct'), amount: cshVal('cca'), pct: cshVal('ccp'), brought: cshBrought(), given: cshVal('ccr'), comment: cshVal('ccm') })) { CS.selMission = null; pageCaisse(); } }
     catch (e) { alert(e.message); }
   };
   cshBindRowActions(); cshBindMoveForm();

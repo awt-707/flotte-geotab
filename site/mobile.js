@@ -318,6 +318,7 @@ function cshCoursesEncM(p, todo, seg) {
     ${sel ? `<div class="small">${esc(fmtDT(sel.start_at))} · ${esc(sel.client_name || '')}${sel.vehicle_key ? ' · ' + esc(mobPlate(sel.vehicle_key)) : ''} · <button type="button" class="mlink" id="ccclr">autre course</button></div>` : ''}
     <label>Chauffeur <input id="ccw" list="cshdrv" autocomplete="off" value="${esc(sel ? sel.driver_name || '' : '')}" placeholder="Nom du chauffeur"></label>
     <div class="mg2"><label>Montant de la course ${mobNum('id="cca"', 'MAD', sel && sel.total_ttc != null ? sel.total_ttc : '')}</label><label>Remis en caisse ${mobNum('id="ccr"', 'MAD')}</label></div>
+    ${cshBroughtHtml(pct0)}
     <div class="mcalc" id="cccalc" aria-live="polite"></div>
     <details class="mmore"><summary>Trajet, prime, date, commentaire</summary>
       <div class="mg2"><label>Départ <input id="ccf" value="${esc(f.startAddr || f.startCity || '')}"></label><label>Arrivée <input id="cct" value="${esc(f.endAddr || f.endCity || f.dest || '')}"></label></div>
@@ -331,15 +332,16 @@ function cshCoursesEncM(p, todo, seg) {
     ${sel ? '' : '<details class="mmore"><summary>Course hors Ludy</summary>' + form + '</details>'}
     ${recent.length ? '<h3 class="mh">Derniers encaissements (7 jours)</h3>' + recent.slice(0, 30).map(m => `<div class="mcard mline"><div class="mch"><div class="mwho2"><b>${esc(m.driver_code ? cshDrvName(m.driver_code) : m.driver_name || '')}</b><span>${esc(fmtDay(m.day))}${m.label ? ' · ' + esc(m.label) : ''}</span></div>
       <div class="mdecl"><span>Prime ${cshMoney(m.prime)}</span><b>${cshMoney(m.amount)}</b></div></div>${cshCanFix(m) ? `<button type="button" class="mlink" data-cshx="${m.id}">Annuler</button>` : ''}</div>`).join('') : ''}`);
-  const calc = () => { const c = cshCourse(cshVal('cca'), cshVal('ccp'), cshVal('ccr') === '' ? cshVal('cca') : cshVal('ccr'));
-    $('#cccalc').innerHTML = cshVal('cca') === '' ? '' : `Prime ${cshMoney(c.prime)} · gardée par le chauffeur ${cshMoney(c.paid)} · reste à lui payer ${cshSignedTxt(c.reste)}`; };
-  ['cca', 'ccp', 'ccr'].forEach(id => { $('#' + id).oninput = calc; }); calc();
+  const calc = () => { const c = cshCourse(cshVal('cca'), cshBrPct(), cshVal('ccr') === '' ? cshVal('cca') : cshVal('ccr')), b = cshBrought();
+    $('#cccalc').innerHTML = cshVal('cca') === '' ? '' : !b ? '<b>Course apportée par le chauffeur ? Choisir oui ou non</b>' :
+      (b === 'non' ? 'Course de l\'agence : pas de prime · ' : '') + `Prime ${cshMoney(c.prime)} · gardée par le chauffeur ${cshMoney(c.paid)} · reste à lui payer ${cshSignedTxt(c.reste)}`; };
+  ['cca', 'ccp', 'ccr'].forEach(id => { $('#' + id).oninput = calc; }); document.querySelectorAll('input[name="ccbr"]').forEach(r => { r.onchange = calc; }); calc();
   document.querySelectorAll('[data-cshms]').forEach(b => { b.onclick = () => { CS.selMission = +b.dataset.cshms; cshCoursesEncM(p, todo, seg); const x = $('#cshcform'); if (x && x.scrollIntoView) x.scrollIntoView({ block: 'start' }); }; });
   if ($('#ccclr')) $('#ccclr').onclick = () => { CS.selMission = null; cshCoursesEncM(p, todo, seg); };
   document.querySelectorAll('[data-cshx]').forEach(b => { b.onclick = () => cshCancel(+b.dataset.cshx); });
   $('#ccsave').onclick = async () => {
     const b = $('#ccsave'); b.disabled = true;
-    try { if (await cshSaveCourse(sel, { day: cshVal('ccd'), driver: cshVal('ccw'), from: cshVal('ccf'), to: cshVal('cct'), amount: cshVal('cca'), pct: cshVal('ccp'), given: cshVal('ccr'), comment: cshVal('ccm') })) { CS.selMission = null; pageCaisse(); } else b.disabled = false; }
+    try { if (await cshSaveCourse(sel, { day: cshVal('ccd'), driver: cshVal('ccw'), from: cshVal('ccf'), to: cshVal('cct'), amount: cshVal('cca'), pct: cshVal('ccp'), brought: cshBrought(), given: cshVal('ccr'), comment: cshVal('ccm') })) { CS.selMission = null; pageCaisse(); } else b.disabled = false; }
     catch (e) { b.disabled = false; alert(e.message); }
   };
 }
