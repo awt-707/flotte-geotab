@@ -63,11 +63,19 @@ async function svEngine() {
       const st = svPauseState(p, now), pos = SV.pos[p.vehicle_key];
       svReminders(p, now, S.P).forEach(m => { const k = 'R|' + p.id + '|' + m; if (!svSeen(k)) { svMark(k); svToast(p, m); } });
       if (st.over && !svSeen('END|' + p.id) && !(SV.snooze['END|' + p.id] > now)) svPush({ k: 'END|' + p.id, kind: 'end', p });
+      // place du véhicule inconnue au début de la pause (relais indisponible) : première position à l'arrêt dans les 10 min
+      if (p.start_lat == null && pos && isFinite(+pos.lat) && pos.state !== 'En route' && now - new Date(p.started_at).getTime() < 10 * 60000) {
+        p.start_lat = +pos.lat; p.start_lon = +pos.lon;
+        sb.from('driver_pauses').update({ start_lat: p.start_lat, start_lon: p.start_lon }).eq('id', p.id).then(() => { }, () => { });
+      }
       const mv = svMoved(p, pos, S.P);
       if (mv) {
         if (!p.moved_at) { p.moved_at = new Date().toISOString(); p.moved_m = mv.m; p.moved_note = mv.why;
           sb.from('driver_pauses').update({ moved_at: p.moved_at, moved_m: mv.m, moved_note: mv.why }).eq('id', p.id).is('moved_at', null).then(() => { }, () => { }); }
-        if (!svSeen('MOV|' + p.id)) svPush({ k: 'MOV|' + p.id, kind: 'move', p, why: mv.why });
+        // alerte très importante : redemandée toutes les 2 min tant que le véhicule n'est pas revenu à sa place (sauf « déplacement autorisé »)
+        const k = 'MOV|' + p.id;
+        if (!svSeen(k) && !(SV.snooze[k] > now)) svPush({ k, kind: 'move', p, why: mv.why });
+        else if (SV.cur && SV.cur.k === k) SV.cur.why = mv.why;
       }
     }
     for (const t of ts) {
@@ -119,12 +127,14 @@ function svShow(a) {
       <div class="svact"><button class="svwa" id="svwa">WhatsApp ${a.kind === 'end' ? '« fin de pause »' : '« alerte pause »'} au chauffeur</button>
         ${!p.ended_at ? `<button class="svend" id="svend">${a.kind === 'end' ? 'Pause terminée (le chauffeur reprend)' : 'Terminer la pause'}</button>` : ''}
         ${a.kind === 'end' && svLeftMin(SV.pauses, svDrvKey(p), p.shift_day, p.shift, Date.now(), S.P, p.id) - (+p.planned_min) >= 5 ? '<button class="ghost" id="svplus">+5 min</button>' : ''}
-        <button class="ghost" id="svlater">${a.kind === 'end' ? 'Rappeler dans 2 min' : 'Fermer'}</button></div></div>`;
+        <button class="ghost" id="svlater">Rappeler dans 2 min</button>${a.kind === 'move' ? '<button class="ghost" id="svok">Déplacement autorisé</button>' : ''}</div>
+      ${a.kind === 'move' ? '<div class="svinfo small">Tant que le véhicule n\'est pas revenu à sa place, l\'alerte revient toutes les 2 min. Le collecteur envoie aussi l\'alerte par e-mail aux destinataires des alertes.</div>' : ''}</div>`;
     document.body.appendChild(o);
     $('#svwa').onclick = () => svWa(p.driver_phone, a.kind === 'end' ? svWaPauseEnd(p, Date.now()) : svWaMoved(p, a.why));
     if ($('#svend')) $('#svend').onclick = async () => { await svEndPause(p, a.kind === 'end' ? 'Fin du compte à rebours' : 'Véhicule en mouvement'); svClose(); };
     if ($('#svplus')) $('#svplus').onclick = async () => { await svExtend(p, 5); svClose(false); delete SV.shown[a.k]; };
-    $('#svlater').onclick = () => { if (a.kind === 'end') { SV.snooze[a.k] = Date.now() + 120000; svClose(false); } else svClose(); };
+    $('#svlater').onclick = () => { SV.snooze[a.k] = Date.now() + 120000; svClose(false); };   // fin de pause ou véhicule qui roule encore : redemandé dans 2 min
+    if ($('#svok')) $('#svok').onclick = async () => { if (await ask('Déplacement autorisé : ne plus alerter pour cette pause ?')) svClose(); };
   } else {
     const t = a.t, m = SV.mis[t.mission_id] || {};
     o.innerHTML = `<div class="svbox"><div class="svtag">COURSE ARRIVÉE À DESTINATION</div>
@@ -257,12 +267,7 @@ function svPausesTab(head) {
     const dk = svDrvKey({ driver_code: c ? c.client_code : '', driver_name: c ? c.name : '' }), used = c ? svUsedMin(SV.pauses, dk, sh.day, sh.s, now) : 0;
     return { v, c, sh, used, left: Math.max(0, svP(S.P, 'pauseShiftMin') - used), g: SV.pos[v.key] };
   }).sort((a, b) => (b.c ? 1 : 0) - (a.c ? 1 : 0) || String(a.v.plate).localeCompare(String(b.v.plate)));
-  const card = p => { const st = svPauseState(p, now);
-    return `<div class="svcard ${st.over ? 'over' : ''}${p.moved_at ? ' moved' : ''}"><div class="svct"><span class="svcd big" data-end="${svPauseEndAt(p)}"></span><span class="small">${st.over ? 'pause dépassée' : 'reste'}</span></div>
-      <div class="svcm"><b>${esc(p.driver_name || 'Chauffeur inconnu')}</b> ${plate(p.plate)}<div class="small">${esc(p.driver_phone || 'téléphone non renseigné')} · shift ${esc(p.shift)} du ${esc(fmtDay(p.shift_day))}</div>
-        <div class="small">Début ${esc(fmtDT(p.started_at).slice(6))} · ${esc(String(p.planned_min))} min prévues · en pause depuis <span class="svel" data-t="${new Date(p.started_at).getTime()}"></span></div>
-        ${p.moved_at ? `<div class="svmv">⚠ Véhicule en mouvement pendant la pause : ${esc(p.moved_note || '')} (${esc(fmtDT(p.moved_at).slice(6))})</div>` : ''}</div>
-      <div class="svca">${can ? `<button class="small" data-end="${p.id}">Fin de pause</button><button class="ghost small" data-plus="${p.id}">+5 min</button>` : ''}<button class="ghost small" data-wa="${p.id}">WhatsApp</button></div></div>`; };
+  const card = p => svPauseCard(p, can, now);
   $('#page').innerHTML = head + `
     <div class="panel"><h3>En pause (${open.length})</h3>${open.length ? '<div class="svcards">' + open.sort((a, b) => svPauseEndAt(a) - svPauseEndAt(b)).map(card).join('') + '</div>' : '<div class="empty">Aucun chauffeur en pause</div>'}</div>
     <div class="panel"><h3>Mettre un chauffeur en pause</h3>
@@ -279,10 +284,6 @@ function svPausesTab(head) {
     b.disabled = true;
     try { await svStartPause(x.v.key, +$('#svdur').value || 0, who); pageSuivi(true); } catch (e) { b.disabled = false; uiNote(e.message); }
   });
-  document.querySelectorAll('[data-end]').forEach(b => { if (b.tagName !== 'BUTTON') return; b.onclick = async () => { const p = SV.pauses.find(x => String(x.id) === b.dataset.end); if (p) await svEndPause(p, 'Terminée par le gestionnaire'); }; });
-  document.querySelectorAll('[data-plus]').forEach(b => b.onclick = async () => { const p = SV.pauses.find(x => String(x.id) === b.dataset.plus); if (p) await svExtend(p, 5); });
-  document.querySelectorAll('[data-wa]').forEach(b => b.onclick = () => { const p = SV.pauses.find(x => String(x.id) === b.dataset.wa); if (!p) return;
-    const st = svPauseState(p, Date.now()); svWa(p.driver_phone, st.over ? svWaPauseEnd(p, Date.now()) : '⏸ Pause en cours : reste ' + svDur(st.left) + ' (fin à ' + fmtDT(new Date(svPauseEndAt(p))).slice(6) + '). Véhicule ' + (p.plate || '') + '.'); });
   window.__repage = () => pageSuivi(true);
   svClockTick();
 }
@@ -359,3 +360,54 @@ async function svHistory(my, head) {
   document.querySelectorAll('[data-hwa]').forEach(b => b.onclick = () => { const t = ts.find(x => String(x.id) === b.dataset.hwa); if (t) svWa((mis[t.mission_id] || {}).client_phone, svWaTrack(t, mis[t.mission_id], fmtDTY)); });
   window.__repage = () => pageSuivi(true);
 }
+
+// ---------- page En direct : pauses en cours, mise en pause depuis la carte et la liste ----------
+/** Carte d'une pause en cours (compte à rebours, chauffeur, téléphone, véhicule qui bouge) */
+function svPauseCard(p, can, now) {
+  const st = svPauseState(p, now || Date.now());
+  return `<div class="svcard ${st.over ? 'over' : ''}${p.moved_at ? ' moved' : ''}"><div class="svct"><span class="svcd big" data-end="${svPauseEndAt(p)}"></span><span class="small">${st.over ? 'pause dépassée' : 'reste'}</span></div>
+    <div class="svcm"><b>${esc(p.driver_name || 'Chauffeur inconnu')}</b> ${plate(p.plate)}<div class="small">${esc(p.driver_phone || 'téléphone non renseigné')} · shift ${esc(p.shift)} du ${esc(fmtDay(p.shift_day))}</div>
+      <div class="small">Début ${esc(fmtDT(p.started_at).slice(6))} · ${esc(String(p.planned_min))} min prévues · en pause depuis <span class="svel" data-t="${new Date(p.started_at).getTime()}"></span></div>
+      ${p.moved_at ? `<div class="svmv">⚠ Véhicule en mouvement pendant la pause : ${esc(p.moved_note || '')} (${esc(fmtDT(p.moved_at).slice(6))})</div>` : ''}</div>
+    <div class="svca">${can ? `<button class="small" data-svend="${p.id}">Fin de pause</button><button class="ghost small" data-svplus="${p.id}">+5 min</button>` : ''}<button class="ghost small" data-svwa="${p.id}">WhatsApp</button></div></div>`;
+}
+function svPauseOf(key) { return SV.off ? null : SV.pauses.find(p => !p.ended_at && p.vehicle_key === key) || null; }
+/** Ligne « pause » d'une carte véhicule de la page En direct */
+function svVehLine(key) {
+  const p = svPauseOf(key); if (!p) return '';
+  return `<span class="vc-pause${p.moved_at ? ' moved' : svPauseState(p, Date.now()).over ? ' over' : ''}">⏸ ${p.moved_at ? 'EN PAUSE ET EN MOUVEMENT' : 'En pause'} · <b class="svcd" data-end="${svPauseEndAt(p)}"></b></span>`;
+}
+/** Section « Pauses » de la page En direct : pauses en cours (redessinées toutes les 5 s) + mise en pause rapide */
+function svDirectHtml(rows) {
+  if (SV.off || !canSee('suivi')) return '';
+  const can = svCan(), open = svOpen().sort((a, b) => svPauseEndAt(a) - svPauseEndAt(b));
+  return `<div class="sechead"><h2>Pauses chauffeurs</h2><span class="small">${esc(svP(S.P, 'pauseShiftMin'))} min par chauffeur et par shift · rappel toutes les ${esc(svP(S.P, 'pauseRemindMin'))} min · alerte si le véhicule en pause bouge de plus de ${esc(svP(S.P, 'pauseMoveM'))} m · <a href="#/suivi">Pauses et suivi des courses ›</a></span></div>
+    <div id="livepauselist">${svDirectList(open, can)}</div>
+    ${can ? `<div class="svq" id="livepauseform"><label>Véhicule <select id="lpveh"><option value="">— Choisir —</option>${rows.filter(r => !svPauseOf(r.vehicle_key)).map(r => `<option value="${esc(r.vehicle_key)}">${esc(r.plate || r.vehicle_key)} · ${esc(r.contract_num ? r.driver_name : 'sans contrat')}</option>`).join('')}</select></label>
+      <label>Durée <select id="lpdur"><option value="">tout le temps qui reste</option>${[15, 30, 45, 60, 90].map(x => `<option value="${x}">${x} min</option>`).join('')}</select></label>
+      <button class="svgo" id="lpgo">⏸ Mettre en pause</button></div>` : ''}`;
+}
+function svDirectList(open, can) { return open.length ? '<div class="svcards">' + open.map(p => svPauseCard(p, can)).join('') + '</div>' : '<div class="empty">Aucun chauffeur en pause</div>'; }
+/** Pause déclenchée depuis En direct (liste, carte, bulle du véhicule) : chauffeur du contrat en cours, sinon nom saisi */
+async function svGoFromLive(key, minutes) {
+  if (!svCan()) return;
+  if (svPauseOf(key)) { uiNote('Ce véhicule est déjà en pause.'); return; }
+  const c = typeof contractAt === 'function' ? contractAt(key, Date.now(), true) : null;
+  let who = { ctr: c };
+  if (!c) { const n = await askText('Véhicule sans contrat en cours : nom du chauffeur en pause ?', ''); if (!n) return; const t = await askText('Téléphone du chauffeur (WhatsApp) ?', ''); who = { ctr: null, name: n, phone: t || '' }; }
+  try { const p = await svStartPause(key, minutes || 0, who); onNewAlert({ id: 'PAUSEGO|' + p.id, vehicle_key: key, plate: p.plate, severity: 'Info', type: 'Pause commencée', driver_name: p.driver_name, detail: p.planned_min + ' min · fin à ' + fmtDT(new Date(svPauseEndAt(p))).slice(6), link: '#/suivi' }); }
+  catch (e) { uiNote(e.message); }
+  if (pageOf() === 'direct' && typeof applyDirect === 'function') applyDirect();
+}
+// actions des pauses par délégation (page En direct, bulles de la carte) : les éléments sont redessinés toutes les 5 s
+document.addEventListener('click', async e => {
+  const t = e.target.closest && e.target.closest('[data-svgo],[data-svend],[data-svplus],[data-svwa],#lpgo');
+  if (!t) return;
+  const P = id => SV.pauses.find(x => String(x.id) === String(id));
+  if (t.id === 'lpgo') { const k = $('#lpveh') && $('#lpveh').value; if (!k) { uiNote('Choisir le véhicule à mettre en pause.'); return; } t.disabled = true; await svGoFromLive(k, +($('#lpdur') || {}).value || 0); t.disabled = false; return; }
+  if (t.dataset.svgo) { e.preventDefault(); await svGoFromLive(t.dataset.svgo, 0); return; }
+  if (t.dataset.svend) { const p = P(t.dataset.svend); if (p) { await svEndPause(p, 'Terminée par le gestionnaire'); if (pageOf() === 'direct' && typeof applyDirect === 'function') applyDirect(); } return; }
+  if (t.dataset.svplus) { const p = P(t.dataset.svplus); if (p) { await svExtend(p, 5); if (pageOf() === 'direct' && typeof applyDirect === 'function') applyDirect(); } return; }
+  if (t.dataset.svwa) { const p = P(t.dataset.svwa); if (!p) return; const st = svPauseState(p, Date.now());
+    svWa(p.driver_phone, p.moved_at ? svWaMoved(p, p.moved_note || 'en mouvement') : st.over ? svWaPauseEnd(p, Date.now()) : '⏸ Pause en cours : reste ' + svDur(st.left) + ' (fin à ' + fmtDT(new Date(svPauseEndAt(p))).slice(6) + '). Véhicule ' + (p.plate || '') + '.'); }
+});

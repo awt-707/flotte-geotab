@@ -177,15 +177,19 @@ function kpisHtml(rows) {
   return cards([['En route', n('En route'), 'ok'], ['Arrêtés contact mis', n('Arrêté, contact mis'), n('Arrêté, contact mis') ? 'warn' : ''], ['Garés', n('Garé')],
     ['Boîtiers hors ligne', off, off ? 'crit' : ''], ['Sous contrat', ctr + ' / ' + rows.length],
     ...(rows.some(r => r.crs) ? [['En course privée', rows.filter(r => r.crs).length, 'crs']] : []),
+    ...(typeof svPauseOf === 'function' && rows.some(r => svPauseOf(r.vehicle_key)) ? [['En pause', rows.filter(r => svPauseOf(r.vehicle_key)).length, 'warn']] : []),
+    ...(typeof svPauseOf === 'function' && rows.some(r => (svPauseOf(r.vehicle_key) || {}).moved_at) ? [['En pause et en mouvement', rows.filter(r => (svPauseOf(r.vehicle_key) || {}).moved_at).length, 'crit']] : []),
     ...(rows.some(r => r.no_ctr === 'depasse') ? [['Contrats dépassés (extract à injecter)', rows.filter(r => r.no_ctr === 'depasse').length, 'warn']] : []), ['Alertes (30 min)', LIVE.alerts.filter(a => inAgency()(a.vehicle_key)).length, LIVE.alerts.length ? 'high' : '']]);
 }
 function vcardsHtml(rows) {
   if (!rows.length) return '<div class="empty">Aucun véhicule actif</div>';
-  return rows.map(r => `<button type="button" class="vcard st-${ST_CLS(r.state)}${r.crs ? ' crs' : ''}${LIVE.fast[r.vehicle_key] ? ' fast' : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
+  const pz = k => typeof svPauseOf === 'function' ? svPauseOf(k) : null;
+  return rows.map(r => `<button type="button" class="vcard st-${ST_CLS(r.state)}${r.crs ? ' crs' : ''}${LIVE.fast[r.vehicle_key] ? ' fast' : ''}${pz(r.vehicle_key) ? ' paused' + (pz(r.vehicle_key).moved_at ? ' pmoved' : '') : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
     <span class="vc-l1">${plate(r.plate)}<span class="vc-model">${esc(r.model || '')}</span><span class="vc-spd">${r.state === 'En route' ? f0(r.speed) + '<small> km/h</small>' : ''}</span></span>
     <span class="vc-l2"><span class="vc-st"><span class="sdot"></span>${esc(r.state || 'État inconnu')}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</span>${consoGauge(r)}</span>
     <span class="vc-l3">${r.crs ? crsLiveHtml(r) + ' <b>' + esc(r.crs_driver || r.driver_name || '') + '</b> <span class="small">' + esc(r.crs.client_company || r.crs.client_name || '') + '</span>'
       : r.contract_num ? `<b>${esc(r.driver_name)}</b> ${shiftBadge(r.shift)}` : noCtrHtml(r)}</span>
+    ${typeof svVehLine === 'function' ? svVehLine(r.vehicle_key) : ''}
     <span class="vc-l4">${r.live ? 'Position Geotab ' + esc(fmtHMS(r.last_pos_at).slice(6)) + ' · <span class="ago" data-t="' + esc(r.last_pos_at || '') + '">' + ago(r.last_pos_at) + '</span>'
       : r.last_pos_at ? 'Position du collecteur ' + esc(fmtDT(r.last_pos_at)) : 'Aucune position'}</span></button>`).join('');
 }
@@ -206,6 +210,7 @@ function vehTableHtml(rows) {
     ['Vitesse', r => r.speed ? f0(r.speed) + ' km/h' : '', r => r.speed, 'n'], ['Depuis', r => r.since_min != null ? fH(r.since_min / 60) : '', r => r.since_min, 'n'],
     ['Dernière position', r => r.live ? fmtHMS(r.last_pos_at) : fmtDT(r.last_pos_at), r => r.last_pos_at], ['Chauffeur sous contrat (maintenant)', r => r.contract_num ? dlink(r.driver_code, r.driver_name) : noCtrHtml(r), r => r.driver_name],
     ['Shift', r => r.contract_num ? shiftBadge(r.shift) : '', r => r.shift || 'z'], ['Contrat', r => esc(r.contract_num || '')],
+    ['Pause', r => { const p = typeof svPauseOf === 'function' ? svPauseOf(r.vehicle_key) : null; return p ? badge(p.moved_at ? 'En pause · en mouvement' : 'En pause', p.moved_at ? 'crit' : 'warn') + ' <b class="svcd" data-end="' + svPauseEndAt(p) + '"></b>' : ''; }],
     ['Course privée', r => r.crs ? crsLiveHtml(r, true) + (r.crs_driver ? '<div class="small">' + esc(r.crs_driver) + '</div>' : '') : '', r => r.crs ? r.crs.number : ''],
     ['Km aujourd\'hui', r => f1(r.km_today), r => r.km_today, 'n'], ['Conduite', r => r.drive_min_today == null ? '' : fH(r.drive_min_today / 60), r => r.drive_min_today, 'n'],
     ['Ralenti', r => r.idle_min_today == null ? '' : fH(r.idle_min_today / 60), r => r.idle_min_today, 'n'], ['Carburant (L)', r => r.fuel_l_today === null ? `<span class="nm">${NM}</span>` : f1(r.fuel_l_today), r => r.fuel_l_today, 'n'],
@@ -257,6 +262,7 @@ async function pageDirect(refresh) {
     <div class="head"><h1>En direct</h1><div class="sub"><span id="livest">${liveStatusTxt()}</span></div>
       ${canEdit() ? '<button id="syncnow" class="ghost">Mettre à jour les totaux du jour</button>' : ''}</div>
     <div id="livecards">${kpisHtml(rows)}</div>
+    <section id="livepause">${typeof svDirectHtml === 'function' ? svDirectHtml(rows) : ''}</section>
     <div class="livegrid">
       <section class="mapbox"><div id="map"></div>
         <div class="maplegend"><span class="lg st-ok">En route</span><span class="lg st-warn">Arrêté, contact mis</span><span class="lg st-mute">Garé</span><span class="lg st-crit">Hors ligne / au-dessus du seuil</span>
@@ -275,7 +281,11 @@ async function pageDirect(refresh) {
 }
 function applyDirect() {
   const rows = liveRows(), set = (sel, html) => { const el = $(sel); if (el) el.innerHTML = html; };
-  set('#livecards', kpisHtml(rows)); set('#vlist', vcardsHtml(rows)); set('#livetab', vehTableHtml(rows)); set('#livealerts', liveAlertsHtml()); set('#livedrv', liveDriversHtml(rows));
+  set('#livecards', kpisHtml(rows)); set('#vlist', vcardsHtml(rows));
+  // pauses : liste redessinée à chaque lecture ; formulaire de mise en pause gardé tant qu'il est utilisé
+  if (typeof svDirectHtml === 'function') { const f = $('#livepauseform'), busy = f && f.contains(document.activeElement);
+    if (busy) set('#livepauselist', svDirectList(svOpen().sort((a, b) => svPauseEndAt(a) - svPauseEndAt(b)), svCan())); else set('#livepause', svDirectHtml(rows));
+    if (typeof svClockTick === 'function') svClockTick(); } set('#livetab', vehTableHtml(rows)); set('#livealerts', liveAlertsHtml()); set('#livedrv', liveDriversHtml(rows));
   const st = $('#livest'); if (st) st.innerHTML = liveStatusTxt();
   if (MAP) rows.forEach(placeMarker);
 }
@@ -336,6 +346,8 @@ function popupHtml(r) {
     ${r.crs ? `<div>${crsLiveHtml(r, true)}<br>Chauffeur : <b>${esc(r.crs_driver || '—')}</b> · jusqu'au ${esc(fmtDTY(r.crs.end_at))}</div>` : ''}
     <div>${r.contract_num ? esc(r.driver_name) + ' · ' + esc(r.shift ? 'shift ' + r.shift.toLowerCase() : '') + ' · contrat ' + esc(r.contract_num) : noCtrHtml(r)}</div>
     <div class="small">Position ${r.live ? 'Geotab ' + esc(fmtHMS(r.last_pos_at)) : 'du collecteur ' + esc(fmtDT(r.last_pos_at))}</div>
+    ${typeof svPauseOf === 'function' && canSee('suivi') ? (svPauseOf(r.vehicle_key) ? `<div class="vpause${svPauseOf(r.vehicle_key).moved_at ? ' moved' : ''}">⏸ En pause · <b class="svcd" data-end="${svPauseEndAt(svPauseOf(r.vehicle_key))}"></b>${svCan() ? ` <button class="small" data-svend="${svPauseOf(r.vehicle_key).id}">Fin de pause</button>` : ''}</div>`
+      : svCan() ? `<div><button class="small svgo" data-svgo="${esc(r.vehicle_key)}">⏸ Mettre en pause</button></div>` : '') : ''}
     <div><a href="#/vehicule?k=${encodeURIComponent(r.vehicle_key)}">Fiche du véhicule</a>${r.contract_num && r.driver_code ? ` · <a href="#/chauffeur?c=${encodeURIComponent(r.driver_code)}">Fiche du chauffeur</a>` : ''}</div></div>`;
 }
 /** Marqueur d'un véhicule : créé ou déplacé en glissant vers sa nouvelle position ; trace du trajet depuis l'ouverture de la page */

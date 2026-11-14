@@ -726,3 +726,13 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .cshbro { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 2px solid var(--line); border-radius: 999px; cursor: pointer; font-weight: 600; min-height: 40px; }
 .cshbro:has(input:checked) { border-color: var(--acc); background: var(--acc-soft); }
 .cshbro input { margin: 0; }
+
+/* En direct : véhicule en pause (suivi.js) */
+.vcard.paused { box-shadow: inset 4px 0 0 var(--warn); }
+.vcard.pmoved { box-shadow: inset 6px 0 0 var(--crit); background: var(--crit-bg); animation: svpulse 1.2s ease-in-out infinite alternate; }
+.vc-pause { display: block; font-size: 12.5px; font-weight: 700; color: var(--warn); margin-top: 2px; }
+.vc-pause.over { color: var(--crit); }
+.vc-pause.moved { color: #fff; background: var(--crit); border-radius: 6px; padding: 2px 6px; }
+.vpause { margin: 4px 0; font-weight: 700; color: var(--warn); }
+.vpause.moved { color: var(--crit); }
+#livepause .svq { margin-top: 8px; }
