@@ -4011,62 +4011,6 @@ AS $function$
   on conflict (day, kind) do update set n = usage_daily.n + 1
 $function$;
 
-CREATE OR REPLACE FUNCTION public.hr_clock_do(p_kind text, p_birth date DEFAULT NULL::date, p_client text DEFAULT NULL::text)
- RETURNS jsonb
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare e public.hr_employees; st text; n int;
-begin
-  select * into e from public.hr_employees where user_id = auth.uid() and (left_on is null or left_on > current_date) and pointage;
-  if e.id is null then return jsonb_build_object('ok', false, 'error', 'Pointage non activé pour ce compte'); end if;
-  if p_kind not in ('in', 'pause', 'resume', 'out') then return jsonb_build_object('ok', false, 'error', 'Action inconnue'); end if;
-  st := public.hr_state(e.id) ->> 'state';
-  if p_kind = 'in' then
-    -- ouverture de Ludy : date de naissance obligatoire, 5 essais manqués en 15 minutes au plus
-    select count(*) into n from public.hr_clock where employee_id = e.id and kind = 'fail' and at > now() - interval '15 minutes';
-    if n >= 5 then return jsonb_build_object('ok', false, 'error', 'Trop d''essais : réessayez dans 15 minutes'); end if;
-    if e.birth_date is null then return jsonb_build_object('ok', false, 'error', 'Date de naissance absente de la fiche : demandez à l''administrateur de la renseigner'); end if;
-    if p_birth is distinct from e.birth_date then
-      insert into public.hr_clock (employee_id, user_id, kind, client) values (e.id, auth.uid(), 'fail', left(p_client, 80));
-      return jsonb_build_object('ok', false, 'error', 'Date de naissance incorrecte');
-    end if;
-    insert into public.hr_clock (employee_id, user_id, kind, client) values (e.id, auth.uid(), case when st = 'off' then 'in' else 'session' end, left(p_client, 80));
-  elsif p_kind = 'pause' then
-    if st <> 'on' then return jsonb_build_object('ok', false, 'error', 'Pause possible seulement en service'); end if;
-    insert into public.hr_clock (employee_id, user_id, kind, client) values (e.id, auth.uid(), 'pause', left(p_client, 80));
-  elsif p_kind = 'resume' then
-    if st <> 'pause' then return jsonb_build_object('ok', false, 'error', 'Aucune pause en cours'); end if;
-    insert into public.hr_clock (employee_id, user_id, kind, client) values (e.id, auth.uid(), 'resume', left(p_client, 80));
-  else
-    if st = 'off' then return jsonb_build_object('ok', false, 'error', 'Aucune journée en cours'); end if;
-    insert into public.hr_clock (employee_id, user_id, kind, client) values (e.id, auth.uid(), 'out', left(p_client, 80));
-  end if;
-  return jsonb_build_object('ok', true) || public.hr_me();
-end $function$;
-
-CREATE OR REPLACE FUNCTION public.plan_can_edit(p_agency bigint, p_week date DEFAULT NULL::date)
- RETURNS boolean
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-  select is_admin() or (
-    my_role() = 'manager' and p_agency = any(my_agency_ids())
-    and coalesce((select value from params where key = 'planManagersEdit'), 'oui') <> 'non'
-    and (p_week is null or not exists (select 1 from plan_weeks w where w.agency_id = p_agency and w.week = p_week and w.locked)))
-$function$;
-
-CREATE OR REPLACE FUNCTION public.plan_driver_in(p_code text, p_agency bigint)
- RETURNS boolean
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-  select is_admin() or (coalesce((select agency_id from driver_roster where driver_code = p_code), (select agency_id from drivers where code = p_code), p_agency) = p_agency)
-$function$;
-
 CREATE OR REPLACE FUNCTION public.refresh_drivers()
  RETURNS jsonb
  LANGUAGE plpgsql

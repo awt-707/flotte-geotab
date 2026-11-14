@@ -66,7 +66,8 @@ function updateDerived_(fromDay) {
   jrn.forEach(r => { const d = toDayStr_(r[IJ['Date']]); if (d < cut && longs[String(r[IJ['Contrat']] || '')]) { longKeys[String(r[IJ['Clé']])] = 1; if (d < cutA) cutA = d; } });
   const al = buildAlerts_(T, E, F, Il, jrn, veh, rules, P, cidx, cutA)
     .filter(r => toDayStr_(r[1]) >= cut || longKeys[String(r[0]).replace(/^[A-Z]+\|/, '')]);
-  dbRpc_('replace_alerts', { p_cut: cut, p_rows: al.map(r => toDb_('ALERT', r)) });
+  // alertes des pauses (véhicule en pause qui bouge) : reprises, sinon replace_alerts les effacerait
+  dbRpc_('replace_alerts', { p_cut: cut, p_rows: al.map(r => toDb_('ALERT', r)).concat(pauseAlertRows_(cut)) });
   // seuil plus atteint sur un contrat long (moyenne qui redescend) : son ancienne alerte est retirée
   const keep = {}; al.forEach(r => { keep[String(r[0])] = 1; });
   const stale = []; Object.keys(longKeys).forEach(k => ['RALJ', 'CONSO', 'DANG'].forEach(t => { if (!keep[t + '|' + k]) stale.push(t + '|' + k); }));
@@ -222,6 +223,8 @@ function collect() {
     // Pleins vus par la jauge sans FillUp Geotab (publié des heures après, ou jamais) : affichés tout de suite, retirés quand le FillUp arrive
     try { if (gaugeFills_()) markDirty_(addDays_(localDay_(Date.now()), -(GAUGE_FILL_DAYS - 1))); } catch (e) { msg.push('Pleins (jauge) : ' + e.message); }
     if (live && live.wrote) markDirty_(localDay_(Date.now() - DAY));
+    // Pauses chauffeurs : véhicule en pause qui bouge (positions Geotab du passage), alerte critique (bandeau + e-mail) même sans Ludy ouvert
+    try { const m = pauseMoveStep_(live && live.status); if (m) msg.push(m); } catch (e) { msg.push('Pauses : ' + e.message); }
     // Siphonages suspects contrôlés (GPS pendant l'arrêt, jauge après le redémarrage) : faux signaux marqués, avec la raison
     try { const m = siphonCheckStep_(); if (m) msg.push(m); } catch (e) { msg.push('Contrôle des siphonages : ' + e.message); }
     // Véhicules encore sans boîtier Geotab (boîtier installé ou renommé après l'ajout au parc, VIN lu par le boîtier…) : nouvel essai toutes les 30 min
