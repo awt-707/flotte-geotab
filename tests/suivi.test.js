@@ -44,14 +44,14 @@ test('base : gestionnaire = véhicules de ses agences, une pause ouverte par vé
     insert into vehicles (key, plate, agency_id) values ('V1', 'WW1', 1), ('V2', 'WW2', 2);`);
   try {
     as(MGR, "insert into driver_pauses (agency_id, vehicle_key, plate, driver_name, shift_day, shift, planned_min) values (1, 'V1', 'WW1', 'Ali', '2026-11-14', 'Jour', 30)");
-    assert.strictEqual(env.psql("select abs(extract(epoch from now() - started_at)) < 60 and created_by::text from driver_pauses"), 't|' + MGR, 'heure et auteur posés par la base');
+    assert.strictEqual(env.psql("select (abs(extract(epoch from now() - started_at)) < 60)::text || '|' || created_by::text from driver_pauses"), 'true|' + MGR, 'heure et auteur posés par la base');
     assert.throws(() => as(MGR, "insert into driver_pauses (vehicle_key, shift_day, shift, planned_min) values ('V1', '2026-11-14', 'Jour', 30)"), /one_open|duplicate/, 'déjà en pause');
     assert.throws(() => as(MGR, "insert into driver_pauses (agency_id, vehicle_key, shift_day, shift, planned_min) values (2, 'V2', '2026-11-14', 'Jour', 30)"), /row-level security/, 'autre agence');
     assert.throws(() => as(MGR, "update driver_pauses set started_at = now() - interval '3 hours'"), /permission denied/, 'début non modifiable');
     as(MGR, "update driver_pauses set ended_at = now() + interval '2 hours', end_reason = 'Terminée par le gestionnaire'");
     assert.strictEqual(env.psql('select ended_at <= now() and ended_by is not null from driver_pauses'), 't', 'fin jamais dans le futur');
     assert.throws(() => as(MGR, "update driver_pauses set ended_at = now() - interval '1 hour'"), /déjà terminé/);
-    assert.throws(() => as(MGR, 'delete from driver_pauses'), /permission denied|row-level/i);
+    as(MGR, 'delete from driver_pauses');   // règle : seul l'administrateur efface (aucune ligne visible à effacer pour le gestionnaire)
     assert.strictEqual(env.psql('select count(*) from driver_pauses'), '1');
     // suivi de course : course de son agence seulement
     env.psql("insert into missions (id, agency_id, client_name, vehicle_key, status, start_at, end_at) values (1, 1, 'Client A', 'V1', 'Confirmée', now(), now() + interval '2 hours'), (2, 2, 'Client B', 'V2', 'Confirmée', now(), now() + interval '2 hours')");
@@ -126,5 +126,5 @@ test('site : pause déclenchée, alerte rouge de fin de pause, véhicule en paus
     assert.match(await page.innerText('#tsva'), /ALPHA Test[\s\S]*WW968199[\s\S]*2/);
     assert.match(await page.innerText('#tsvc'), /Client Test/);
     assert.deepStrictEqual(errors, []);
-  } finally { await br.close(); srv.close(); env.resetDb(); env.psql('truncate missions restart identity cascade'); }
+  } finally { await br.close(); srv.kill(); env.resetDb(); env.psql('truncate missions restart identity cascade'); }
 });
