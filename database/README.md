@@ -24,6 +24,7 @@ Le test `tests/base.test.js` (`schema.js check`) construit une base depuis les m
 | `40_courses_manifestes` | Courses privées et devis, grilles tarifaires par ville, manifestes, sociétés émettrices |
 | `50_caisse` | Mouvements de caisse et leur historique, exports Uber et Bolt, fiches d'encaissement, justificatifs |
 | `60_planning_chauffeurs` | Réglages, cases jour / nuit, absences, semaines publiées ou verrouillées |
+| `65_suivi` | Pauses chauffeurs (compte à rebours, véhicule qui bouge) et suivi des courses privées jusqu'à l'arrivée |
 | `70_rh` | Salariés, événements RH, pointage, dossiers, sociétés employeuses, contrats de travail |
 
 Chaque domaine a deux fichiers :
