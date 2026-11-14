@@ -6,7 +6,7 @@
 // - Session Geotab gardée en mémoire et dans la table geotab_session (évite une connexion à chaque appel).
 // - Réponse Geotab gardée 2 s : plusieurs écrans ouverts ne multiplient pas les appels à Geotab.
 // Fichier sans dépendance, exécuté par Deno (index.ts) et par Node dans les tests.
-const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info, x-ludy-watch', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
 const CACHE_MS = 2000, EVENTS_MIN = 30, ROAD_EVERY = 20000;   // événements de conduite renvoyés : 30 dernières minutes
 const mem = { session: null, data: null, at: 0, pending: null, ids: {} };
 
@@ -162,6 +162,64 @@ async function drivers(deps, items, now) {
   Object.keys(drvMem).forEach(k => { if (now - drvMem[k].at > 5 * DRV_CACHE_MS) delete drvMem[k]; });
   return out;
 }
+// ---------- Téléphones Android 1.3 : alertes des pauses écran éteint (?mode=watch, en-tête x-ludy-watch = secret du téléphone) ----------
+// Mêmes règles que site/suivi_calc.js (svMoved, svArrived ; contrôlé par tests/alertes_telephone.test.js).
+const WDEF = { pauseMoveM: 300, pauseMoveKmh: 10, trackArriveM: 300, trackMinMin: 3 };
+const wP = (P, k) => { const v = Number((P || {})[k]); return isFinite(v) && v > 0 ? v : WDEF[k]; };
+export function wDist(a, b) {
+  if (!a || !b || !isFinite(+a.lat) || !isFinite(+a.lon) || !isFinite(+b.lat) || !isFinite(+b.lon)) return null;
+  const R = 6371000, r = x => x * Math.PI / 180, dLa = r(b.lat - a.lat), dLo = r(b.lon - a.lon);
+  const x = Math.sin(dLa / 2) ** 2 + Math.cos(r(+a.lat)) * Math.cos(r(+b.lat)) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+}
+/** Véhicule en pause qui a bougé : { m, why } ou null */
+export function wMoved(p, pos, P) {
+  if (!pos || p.ended_at) return null;
+  const d = p.start_lat != null ? wDist({ lat: p.start_lat, lon: p.start_lon }, pos) : null, lim = wP(P, 'pauseMoveM');
+  const fast = pos.state === 'En route' && +pos.speed >= wP(P, 'pauseMoveKmh');
+  if (d != null && d > lim) return { m: Math.round(d), why: 'à ' + (d >= 1000 ? (Math.round(d / 100) / 10).toString().replace('.', ',') + ' km' : Math.round(d) + ' m') + ' de sa place' + (fast ? ', ' + Math.round(+pos.speed) + ' km/h' : '') };
+  if (fast) return { m: d != null ? Math.round(d) : null, why: 'en route à ' + Math.round(+pos.speed) + ' km/h' };
+  return null;
+}
+/** Course arrivée : distance (m) ou null */
+export function wArrived(tr, pos, now, P) {
+  if (!pos || tr.dest_lat == null || tr.arrived_at || tr.ended_at) return null;
+  if (now - new Date(tr.started_at).getTime() < wP(P, 'trackMinMin') * 60000) return null;
+  const d = wDist({ lat: tr.dest_lat, lon: tr.dest_lon }, pos);
+  return d != null && d <= wP(P, 'trackArriveM') && !(pos.state === 'En route' && +pos.speed >= 30) ? Math.round(d) : null;
+}
+async function watch(deps, secret, now) {
+  const rest = deps.env('SUPABASE_REST') || (deps.env('SUPABASE_URL') + '/rest/v1'), svc = deps.env('SUPABASE_SERVICE_ROLE_KEY');
+  if (!svc) return json(503, { error: 'Clé service absente' });
+  const h = { apikey: svc, Authorization: 'Bearer ' + svc, 'Content-Type': 'application/json' };
+  const r = await deps.fetch(rest + '/rpc/watch_poll', { method: 'POST', headers: h, body: JSON.stringify({ p_secret: secret }) });
+  if (!r.ok) { const t = await r.text(); return /watch_unknown/.test(t) ? json(401, { error: 'watch_unknown' }) : json(502, { error: 'Base : HTTP ' + r.status }); }
+  const w = await r.json(), P = w.params || {}, pauses = w.pauses || [], tracks = w.tracks || [];
+  const keys = [...new Set(pauses.map(p => p.vehicle_key).concat(tracks.filter(t => !t.arrived_at && t.dest_lat != null).map(t => t.vehicle_key)))].filter(Boolean);
+  const nowIso = new Date(now).toISOString();
+  if (!keys.length) return json(200, Object.assign(w, { at: nowIso, geo: false }));
+  await deps.fetch(rest + '/rpc/bump_usage', { method: 'POST', headers: h, body: JSON.stringify({ p_kind: 'live' }) }).catch(() => null);
+  const vr = await deps.fetch(rest + '/vehicles?select=key,geotab_id&geotab_id=not.is.null&key=in.(' + keys.map(k => '"' + String(k).replace(/"/g, '') + '"').join(',') + ')', { headers: h });
+  const veh = vr.ok ? await vr.json() : [];
+  const f = veh.length ? await fleet(deps, veh.map(v => v.geotab_id)) : {}, pos = {};
+  veh.forEach(v => { const d = (f[v.geotab_id] || {}).dsi; if (!d || !isFinite(+d.latitude) || !isFinite(+d.longitude) || (!+d.latitude && !+d.longitude)) return;
+    pos[v.key] = { lat: +d.latitude, lon: +d.longitude, speed: d.isDriving ? Math.round(+d.speed || 0) : 0, state: d.isDriving ? 'En route' : 'Garé', at: d.dateTime }; });
+  const patch = (path, body) => deps.fetch(rest + '/' + path, { method: 'PATCH', headers: Object.assign({ Prefer: 'return=minimal' }, h), body: JSON.stringify(body) }).catch(() => null);
+  for (const p of pauses) {
+    const g = pos[p.vehicle_key]; if (!g) continue;
+    // place inconnue au début de la pause (relais indisponible) : relevée si le véhicule est à l'arrêt dans les 10 premières minutes
+    if (p.start_lat == null && g.state !== 'En route' && now - ms(p.started_at) < 10 * 60000) { await patch('driver_pauses?id=eq.' + p.id + '&start_lat=is.null', { start_lat: g.lat, start_lon: g.lon }); p.start_lat = g.lat; p.start_lon = g.lon; continue; }
+    const mv = wMoved(p, g, P);
+    p.away = !!mv; p.now_note = mv ? mv.why : null;
+    if (mv && !p.moved_at) { await patch('driver_pauses?id=eq.' + p.id + '&moved_at=is.null', { moved_at: nowIso, moved_m: mv.m, moved_note: mv.why }); p.moved_at = nowIso; p.moved_m = mv.m; p.moved_note = mv.why; }
+  }
+  for (const t of tracks) {
+    const g = pos[t.vehicle_key]; if (!g) continue;
+    t.dist_m = t.dest_lat != null ? Math.round(wDist({ lat: t.dest_lat, lon: t.dest_lon }, g)) : null;
+    if (wArrived(t, g, now, P) != null) { await patch('mission_tracks?id=eq.' + t.id + '&arrived_at=is.null', { arrived_at: nowIso }); t.arrived_at = nowIso; }
+  }
+  return json(200, Object.assign(w, { at: nowIso, geo: true, pauses, tracks }));
+}
 /** Réponse : vehicles (état en direct) et events (événements Geotab des 30 dernières minutes, du plus récent au plus ancien) ;
  *  ?mode=detail&key=…&from=…&to=… : fiche d'une alerte ; ?mode=drivers&c=clé@début,… : chauffeurs depuis le début de leur contrat */
 export async function handle(req, deps) {
@@ -169,6 +227,9 @@ export async function handle(req, deps) {
   const auth = req.headers.get('authorization') || '';
   if (!/^Bearer\s+\S+/.test(auth)) return json(401, { error: 'Connexion requise' });
   try {
+    // téléphone Android (service d'arrière-plan) : secret du téléphone, jamais le jeton de l'utilisateur (il expire quand l'application dort)
+    const wsec = req.headers.get('x-ludy-watch') || '';
+    if (wsec) return /^[0-9a-f]{64}$/.test(wsec) ? await watch(deps, wsec, deps.now ? deps.now() : Date.now()) : json(401, { error: 'watch_unknown' });
     // Véhicules visibles par l'utilisateur (droits de la base : agences)
     const rest = deps.env('SUPABASE_REST') || (deps.env('SUPABASE_URL') + '/rest/v1');
     const vr = await deps.fetch(rest + '/vehicles?select=key,plate,geotab_id,active&geotab_id=not.is.null', { headers: { apikey: deps.env('SUPABASE_ANON_KEY') || '', Authorization: auth } });

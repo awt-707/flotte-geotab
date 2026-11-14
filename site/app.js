@@ -510,6 +510,7 @@ let SHELL_KEY = '';
 async function doLogout() {
   // pointage : fin de journée proposée avant la déconnexion
   if (S.rhMe && S.rhMe.pointage && S.rhMe.state !== 'off' && await ask('Pointer la fin de votre journée avant de vous déconnecter ?')) await sb.rpc('hr_clock_do', { p_kind: 'out', p_client: rhClient() }).then(null, () => { });   // pas de .catch sur la requête supabase
+  if (typeof svWatchOff === 'function') await svWatchOff();   // alertes du téléphone (application Android 1.3) arrêtées avec la session
   await sessEnd(); await sb.auth.signOut(); location.hash = '';
 }
 function shell() {
