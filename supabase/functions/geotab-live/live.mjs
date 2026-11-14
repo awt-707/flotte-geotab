@@ -91,7 +91,7 @@ async function fleet(deps, ids) {
   })();
   try { return await p; } finally { if (mem.pending === p) mem.pending = null; }
 }
-const DET_PAD = 3 * 60000, DET_MAX = 90 * 60000, DRV_CACHE_MS = 15000, DRV_MAX_H = 36;
+const DET_PAD = 3 * 60000, DET_MAX = 90 * 60000, TRACK_MAX = 26 * 3600000, DRV_CACHE_MS = 15000, DRV_MAX_H = 36;
 const SPD = 'DiagnosticEngineRoadSpeedId', ODO = 'DiagnosticOdometerId', FUEL = 'DiagnosticDeviceTotalFuelId', IDLE = 'DiagnosticDeviceTotalIdleFuelId';
 const ms = t => new Date(t).getTime();
 /** Valeurs StatusData triées, sans le point de borne que Geotab ajoute au début de la fenêtre */
@@ -246,6 +246,17 @@ export async function handle(req, deps) {
       if (!v) return json(404, { error: 'Véhicule inconnu ou d\'une autre agence' });
       if (isNaN(from) || isNaN(to) || to < from) return json(400, { error: 'Dates invalides' });
       return json(200, Object.assign({ at: nowIso }, await detail(deps, v, from, Math.min(to, now))));
+    }
+    if (mode === 'track') {
+      // Contrôle Uber : positions GPS d'un véhicule sur une journée au plus (un seul appel Geotab), [heure, km/h, lat, lon]
+      const v = veh.find(x => x.key === q.get('key')), from = ms(q.get('from')), to = Math.min(ms(q.get('to')), now);
+      if (!v) return json(404, { error: 'Véhicule inconnu ou d\'une autre agence' });
+      if (isNaN(from) || isNaN(to) || to <= from || to - from > TRACK_MAX) return json(400, { error: 'Période invalide (26 h au plus)' });
+      const iso = t => new Date(t).toISOString();
+      const r = await geo(deps, 'Get', { typeName: 'LogRecord', search: { deviceSearch: { id: v.geotab_id }, fromDate: iso(from), toDate: iso(to) }, resultsLimit: 50000 });
+      const gps = (r || []).map(l => [ms(l.dateTime), Math.round(+l.speed || 0), Math.round(+l.latitude * 1e5) / 1e5, Math.round(+l.longitude * 1e5) / 1e5])
+        .filter(p => !isNaN(p[0]) && isFinite(p[2]) && isFinite(p[3]) && (p[2] || p[3])).sort((x, y) => x[0] - y[0]);
+      return json(200, { at: nowIso, key: v.key, from: iso(from), to: iso(to), gps });
     }
     if (mode === 'drivers') {
       // un seul chauffeur par véhicule (le dernier demandé), début arrondi à la minute : la demande reste bornée à la flotte
