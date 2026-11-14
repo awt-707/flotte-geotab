@@ -97,10 +97,10 @@ test('Android 1.2 : PDF (manifeste, devis) envoyés tels quels dans WhatsApp au 
   const java = a('app/src/main/java/com/ludy/flotte/MainActivity.java'), prov = a('app/src/main/java/com/ludy/flotte/FilesProvider.java'), man = a('app/src/main/AndroidManifest.xml'), g = a('app/build.gradle');
   assert.match(java, /@JavascriptInterface public void share\(String b64, String name, String mime, String text, String phone\)/);
   assert.match(java, /"com\.whatsapp", "com\.whatsapp\.w4b"/); assert.match(java, /putExtra\("jid", digits \+ "@s\.whatsapp\.net"\)/);
-  assert.match(java, /FLAG_GRANT_READ_URI_PERMISSION/); assert.match(java, /LudyAndroid\/1\.2/);
+  assert.match(java, /FLAG_GRANT_READ_URI_PERMISSION/); assert.match(java, /LudyAndroid\/1\.[2-9]/);
   assert.match(prov, /contains\("\.\."\)/, 'aucun fichier hors du dossier de partage');
   assert.match(prov, /lecture seule/);
   assert.match(man, /android:name="\.FilesProvider" android:authorities="com\.ludy\.flotte\.files" android:exported="false" android:grantUriPermissions="true"/);
   assert.match(man, /<package android:name="com\.whatsapp" \/>/);
-  assert.strictEqual(g.match(/versionName '([\d.]+)'/)[1], '1.2'); assert.ok(+g.match(/versionCode (\d+)/)[1] >= 3);
+  assert.ok(+g.match(/versionName '1\.(\d+)'/)[1] >= 2); assert.ok(+g.match(/versionCode (\d+)/)[1] >= 3);
 });

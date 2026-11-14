@@ -5,11 +5,14 @@ import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.view.View;
@@ -38,6 +41,8 @@ import java.io.OutputStream;
  * - PDF et tableurs créés par le site (adresses blob:) : enregistrés dans Téléchargements puis ouverts.
  * 1.2 (04/11/2026, demande d'Ahmed) : PDF (manifeste, devis) partagés tels quels dans WhatsApp, directement au numéro du chauffeur ou
  *   du client (LudyAndroid.share ; fichier servi par FilesProvider, sans bibliothèque) ; sans WhatsApp : choix de l'application.
+ * 1.3 (14/11/2026, demande d'Ahmed) : alertes des pauses et des courses suivies même écran éteint (WatchService, service au premier
+ *   plan) : LudyAndroid.watchStart / watchStop / watchStatus ; appui sur une alerte = page Pauses (#/suivi).
  */
 public class MainActivity extends Activity {
   static final String HOME = "https://ludy-flotte.pages.dev/";
@@ -65,7 +70,7 @@ public class MainActivity extends Activity {
     s.setSupportMultipleWindows(false);   // target="_blank" : même vue, puis shouldOverrideUrlLoading
     s.setAllowFileAccess(false);
     s.setMediaPlaybackRequiresUserGesture(true);
-    s.setUserAgentString(s.getUserAgentString() + " LudyAndroid/1.2");
+    s.setUserAgentString(s.getUserAgentString() + " LudyAndroid/1.3");
     CookieManager.getInstance().setAcceptCookie(true);
     CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
     web.addJavascriptInterface(new Bridge(), "LudyAndroid");
@@ -78,7 +83,16 @@ public class MainActivity extends Activity {
       @Override public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) { return choose(cb, p); }
     });
     web.setDownloadListener((url, ua, cd, mime, len) -> download(url, cd, mime));
-    if (b != null) web.restoreState(b); else web.loadUrl(HOME);
+    String hash = getIntent() == null ? null : getIntent().getStringExtra("hash");
+    if (b != null && hash == null) web.restoreState(b); else web.loadUrl(HOME + (hash != null && hash.startsWith("#/") ? hash : ""));
+    if (WatchService.enabled(this)) { try { WatchService.start(this); } catch (Exception e) { } }   // surveillance arrêtée par le système : relancée
+  }
+
+  /** Appui sur une alerte (application déjà ouverte) : page demandée */
+  @Override protected void onNewIntent(Intent i) {
+    super.onNewIntent(i);
+    String hash = i == null ? null : i.getStringExtra("hash");
+    if (hash != null && hash.matches("#/[a-z0-9?=&_-]*") && web != null) web.evaluateJavascript("location.hash=" + q(hash), null);
   }
 
   /** true = lien ouvert hors de la vue (WhatsApp, e-mail, téléphone, autre site) */
@@ -150,6 +164,49 @@ public class MainActivity extends Activity {
   static String q(String s) { return "'" + String.valueOf(s).replace("\\", "\\\\").replace("'", "\\'") + "'"; }
 
   class Bridge {
+    /** Alertes écran éteint : adresse Supabase, clé publique, secret du téléphone (watch_register) */
+    @JavascriptInterface public void watchStart(String url, String anon, String secret) {
+      if (url == null || !url.startsWith("https://") || secret == null || !secret.matches("[0-9a-f]{64}")) return;
+      WatchService.prefs(MainActivity.this).edit().putString("url", url.replaceAll("/+$", "")).putString("anon", anon == null ? "" : anon)
+          .putString("secret", secret).putBoolean("on", true).putString("err", "").apply();
+      runOnUiThread(() -> {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED)
+          requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 7);
+        try { WatchService.start(MainActivity.this); } catch (Exception e) { Toast.makeText(MainActivity.this, "Surveillance impossible : " + e.getMessage(), Toast.LENGTH_LONG).show(); }
+      });
+    }
+    /** Arrêt : renvoie le secret (retiré de la base par le site) */
+    @JavascriptInterface public String watchStop() {
+      String sec = WatchService.prefs(MainActivity.this).getString("secret", "");
+      WatchService.prefs(MainActivity.this).edit().clear().apply();
+      runOnUiThread(() -> stopService(new Intent(MainActivity.this, WatchService.class)));
+      return sec;
+    }
+    /** État : { on, notif, battery, last, err } */
+    @JavascriptInterface public String watchStatus() {
+      try {
+        android.content.SharedPreferences p = WatchService.prefs(MainActivity.this);
+        boolean notif = Build.VERSION.SDK_INT < 33 || checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED;
+        if (notif && Build.VERSION.SDK_INT >= 24) notif = getSystemService(android.app.NotificationManager.class).areNotificationsEnabled();
+        boolean bat = Build.VERSION.SDK_INT < 23 || getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName());
+        return new org.json.JSONObject().put("on", WatchService.enabled(MainActivity.this)).put("notif", notif).put("battery", bat)
+            .put("last", p.getLong("last", 0)).put("err", p.getString("err", "")).put("version", "1.3").toString();
+      } catch (Exception e) { return "{}"; }
+    }
+    /** Économie de batterie désactivée pour Ludy (sinon le téléphone peut endormir la surveillance) */
+    @JavascriptInterface public void watchBattery() {
+      runOnUiThread(() -> {
+        try { startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()))); }
+        catch (Exception e) { try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); } catch (Exception e2) { } }
+      });
+    }
+    /** Réglages des notifications de Ludy (alertes refusées) */
+    @JavascriptInterface public void watchNotifSettings() {
+      runOnUiThread(() -> {
+        try { startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())); }
+        catch (Exception e) { try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); } catch (Exception e2) { } }
+      });
+    }
     /** PDF créé par le site (base64) envoyé dans WhatsApp au numéro donné (vide : choisir la conversation) */
     @JavascriptInterface public void share(String b64, String name, String mime, String text, String phone) {
       runOnUiThread(() -> {

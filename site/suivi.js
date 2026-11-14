@@ -43,6 +43,7 @@ async function svPositions() {
 
 // ---------- moteur (toutes les 5 s, sur toutes les pages) ----------
 function svStart() {
+  svWatchCheck();
   if (SV.tick) return;
   SV.tick = setInterval(() => { svEngine().catch(() => { }); }, 5000);
   setInterval(svClockTick, 1000);
@@ -268,7 +269,7 @@ function svPausesTab(head) {
     return { v, c, sh, used, left: Math.max(0, svP(S.P, 'pauseShiftMin') - used), g: SV.pos[v.key] };
   }).sort((a, b) => (b.c ? 1 : 0) - (a.c ? 1 : 0) || String(a.v.plate).localeCompare(String(b.v.plate)));
   const card = p => svPauseCard(p, can, now);
-  $('#page').innerHTML = head + `
+  $('#page').innerHTML = head + svWatchHtml() + `
     <div class="panel"><h3>En pause (${open.length})</h3>${open.length ? '<div class="svcards">' + open.sort((a, b) => svPauseEndAt(a) - svPauseEndAt(b)).map(card).join('') + '</div>' : '<div class="empty">Aucun chauffeur en pause</div>'}</div>
     <div class="panel"><h3>Mettre un chauffeur en pause</h3>
       <div class="small">${esc(svP(S.P, 'pauseShiftMin'))} min de pause par chauffeur et par shift · rappel toutes les ${esc(svP(S.P, 'pauseRemindMin'))} min · alerte si le véhicule bouge de plus de ${esc(svP(S.P, 'pauseMoveM'))} m (GPS Geotab)</div>
@@ -284,8 +285,58 @@ function svPausesTab(head) {
     b.disabled = true;
     try { await svStartPause(x.v.key, +$('#svdur').value || 0, who); pageSuivi(true); } catch (e) { b.disabled = false; uiNote(e.message); }
   });
+  svWatchBind();
   window.__repage = () => pageSuivi(true);
   svClockTick();
+}
+// ---------- Alertes sur le téléphone, même écran éteint (application Android 1.3, 14/11/2026) ----------
+// L'application garde un service au premier plan qui interroge la base avec un secret propre au téléphone (watch_register) :
+// rappels, fin de pause, véhicule en pause qui bouge (positions Geotab du relais), course arrivée, en notifications.
+function svWatchApi() { const A = window.LudyAndroid; return A && typeof A.watchStart === 'function' ? A : null; }
+function svWatchStatus() { const A = svWatchApi(); if (!A) return null; try { return JSON.parse(A.watchStatus() || '{}') || {}; } catch (e) { return {}; } }
+function svWatchHtml() {
+  if (!window.LudyAndroid) return '';
+  const A = svWatchApi();
+  if (!A) return `<div class="panel svwatch"><h3>🔔 Alertes écran éteint</h3><div class="small">Pour recevoir les fins de pause et les véhicules en pause qui bougent même téléphone verrouillé, installez l'application Ludy 1.3.</div>
+    <p><a class="btn" href="${esc(CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.apk')}">Télécharger Ludy 1.3 (Android)</a></p></div>`;
+  const st = svWatchStatus() || {};
+  if (!st.on) return `<div class="panel svwatch"><h3>🔔 Alertes sur ce téléphone, même écran éteint</h3>
+    <div class="small">Rappel toutes les ${esc(String(svP(S.P, 'pauseRemindMin')))} min, fin de pause, véhicule en pause qui bouge (GPS Geotab, contrôle chaque minute), course arrivée : en notification avec sonnerie, même si Ludy est fermé ou le téléphone verrouillé.</div>
+    ${st.err ? msg(esc(st.err), 'warn') : ''}<p><button id="svwon">🔔 Activer les alertes sur ce téléphone</button></p></div>`;
+  const ago = st.last ? Math.round((Date.now() - st.last) / 1000) : null;
+  return `<div class="panel svwatch on"><h3>🔔 Alertes actives sur ce téléphone</h3>
+    <div class="small">${ago == null ? 'Démarrage…' : 'Dernier contrôle il y a ' + esc(ago < 90 ? ago + ' s' : Math.round(ago / 60) + ' min')} · notifications même écran éteint, Ludy fermé</div>
+    ${!st.notif ? `<div class="msg err">Notifications refusées : aucune alerte ne s'affichera. <button class="small" id="svwnotif">Autoriser les notifications</button></div>` : ''}
+    ${!st.battery ? `<div class="msg warn">Économie de batterie active : le téléphone peut endormir les alertes. <button class="small" id="svwbat">Désactiver pour Ludy</button></div>` : ''}
+    ${st.err && ago != null && ago > 120 ? msg('Dernière erreur : ' + esc(st.err), 'warn') : ''}
+    <p><button class="ghost small" id="svwoff">Arrêter les alertes sur ce téléphone</button></p></div>`;
+}
+async function svWatchOn() {
+  const A = svWatchApi(); if (!A) return;
+  const { data, error } = await sb.rpc('watch_register', { p_label: 'Application Android' });
+  if (error) throw new Error(/watch_register|PGRST202|42883/.test(error.message || '') ? 'Module pas encore installé : migration 20261129000000_alertes_telephone.sql à exécuter' : error.message);
+  A.watchStart(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, String(data));
+  try { localStorage.setItem('ludyWatchUser', S.session.user.id); } catch (e) { }
+}
+async function svWatchOff() {
+  const A = svWatchApi(); if (!A) return;
+  let sec = ''; try { sec = A.watchStop() || ''; } catch (e) { }
+  if (sec) await sb.rpc('watch_unregister', { p_secret: sec }).then(null, () => { });
+  try { localStorage.removeItem('ludyWatchUser'); } catch (e) { }
+}
+/** Autre utilisateur connecté sur le téléphone : les alertes de l'ancien compte sont arrêtées */
+function svWatchCheck() {
+  const st = svWatchStatus(); if (!st || !st.on || !S.session) return;
+  let u = ''; try { u = localStorage.getItem('ludyWatchUser') || ''; } catch (e) { }
+  if (u && u !== S.session.user.id) svWatchOff();
+}
+function svWatchBind() {
+  const A = svWatchApi(); if (!A) return;
+  const re = () => { const b = document.querySelector('.svwatch'); if (b) { b.outerHTML = svWatchHtml(); svWatchBind(); } };
+  if ($('#svwon')) $('#svwon').onclick = async () => { $('#svwon').disabled = true; try { await svWatchOn(); setTimeout(re, 1500); } catch (e) { uiNote(e.message); } re(); };
+  if ($('#svwoff')) $('#svwoff').onclick = async () => { if (await ask('Arrêter les alertes de pause sur ce téléphone ?')) { await svWatchOff(); re(); } };
+  if ($('#svwnotif')) $('#svwnotif').onclick = () => { A.watchNotifSettings(); };
+  if ($('#svwbat')) $('#svwbat').onclick = () => { A.watchBattery(); };
 }
 async function svCoursesTab(my, head) {
   const now = Date.now(), can = svCan(), ok = inAgency();
