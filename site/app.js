@@ -351,7 +351,7 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
-  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['suivi', 'Pauses et suivi des courses'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
 // Dossiers du menu (demande d'Ahmed : menu allégé) : un titre qui ouvre / ferme ses volets (clic sur le titre), ouvert
 // d'office quand la page affichée en fait partie. Ressources humaines : onglets de la page #/rh. Dossier réduit à un seul
@@ -1689,7 +1689,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, suivi: pageSuivi, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
@@ -1720,6 +1720,7 @@ async function route() {
   try { await PAGES[page](); } catch (e) { if (my === ROUTING) $('#page').innerHTML = msg('Erreur : ' + esc(e.message || e), 'err'); }
   if (my !== ROUTING) return;
   sessPing();   // connexions : page affichée envoyée tout de suite (puis toutes les minutes)
+  if (typeof svStart === 'function') svStart();   // pauses et courses suivies : compte à rebours et alertes sur toutes les pages
   if (MOBILE) return;
   S.timers.push(setInterval(health, 60000));
   // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)
@@ -1747,6 +1748,7 @@ sb.auth.onAuthStateChange(async (ev, session) => {
   const changed = (S.session && S.session.user.id) !== (session && session.user.id);
   if (changed) {   // autre utilisateur : rien de ce qui a été lu pour le précédent n'est gardé (droits par agence, planning)
     const tb = $('#toasts'); if (tb) tb.remove();   // bandeaux d'alerte du compte précédent
+    if (typeof svReset === 'function') svReset();   // pauses et courses suivies d'un autre compte oubliées
     sessReset();   // connexions : nouvelle session, pastille des connectés oubliée (jamais montrée à un autre compte)
     S.profile = null; S.P = null; S.rhMe = undefined; S.rhMeAt = 0; S.rhAlertN = 0; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
     S.health = null; S.nbal = null; S.nbcrs = null; SHELL_KEY = '';   // bas du menu : collecte et pastille Alertes oubliées, menu reconstruit

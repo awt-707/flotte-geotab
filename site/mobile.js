@@ -21,20 +21,23 @@ const MOB_ICON = {
   shift: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v5M18 9.5v5"/></svg>',
   courses: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.5V12l2-5h12l2 5v4.5"/><path d="M3 16.5h18v2.5H3z"/><circle cx="7.5" cy="14" r=".9"/><circle cx="16.5" cy="14" r=".9"/><path d="M6.5 11.5h11"/></svg>',
   manifeste: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.5h8l4 4v15H6z"/><path d="M14 2.5v4h4M9 11h6M9 14.5h6M9 18h4"/></svg>',
+  suivi: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg>',
   depenses: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.5h12v19l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5-2 1.5z"/><path d="M9 7.5h6M9 11h6M9 14.5h4"/></svg>'
 };
 const MOB_TABS = [{ k: 'shift', label: 'Encaissement', title: 'Encaissement du shift', href: '#/caisse?t=shift' },
   { k: 'courses', label: 'Courses', title: 'Courses privées', href: '#/caisse?t=courses' },
   { k: 'depenses', label: 'Dépenses', title: 'Dépenses', href: '#/caisse?t=depenses' },
+  { k: 'suivi', label: 'Pauses', title: 'Pauses et courses', href: '#/suivi' },
   { k: 'manifeste', label: 'Manifeste', title: 'Manifeste', href: '#/manifeste' }];
 /** Écrans ouverts à cet utilisateur (caisse : gestionnaires et administrateur ; volets choisis par l'administrateur respectés) */
 function mobTabs() {
-  return MOB_TABS.filter(x => x.k === 'manifeste' ? canSee('manifeste') : canEdit() && canSee('caisse'));
+  return MOB_TABS.filter(x => x.k === 'manifeste' ? canSee('manifeste') : x.k === 'suivi' ? canEdit() && canSee('suivi') : canEdit() && canSee('caisse'));
 }
 /** Écran affiché (null : page hors du mode téléphone) */
 function mobCur() {
   const p = pageOf(), t = qs().get('t');
   if (p === 'manifeste') return 'manifeste';
+  if (p === 'suivi') return 'suivi';
   if (p === 'caisse' && (t === 'shift' || t === 'courses' || t === 'depenses')) return t;
   return null;
 }
@@ -315,6 +318,7 @@ function cshCoursesEncM(p, todo, seg) {
     ${sel ? `<div class="small">${esc(fmtDT(sel.start_at))} · ${esc(sel.client_name || '')}${sel.vehicle_key ? ' · ' + esc(mobPlate(sel.vehicle_key)) : ''} · <button type="button" class="mlink" id="ccclr">autre course</button></div>` : ''}
     <label>Chauffeur <input id="ccw" list="cshdrv" autocomplete="off" value="${esc(sel ? sel.driver_name || '' : '')}" placeholder="Nom du chauffeur"></label>
     <div class="mg2"><label>Montant de la course ${mobNum('id="cca"', 'MAD', sel && sel.total_ttc != null ? sel.total_ttc : '')}</label><label>Remis en caisse ${mobNum('id="ccr"', 'MAD')}</label></div>
+    ${cshBroughtHtml(pct0)}
     <div class="mcalc" id="cccalc" aria-live="polite"></div>
     <details class="mmore"><summary>Trajet, prime, date, commentaire</summary>
       <div class="mg2"><label>Départ <input id="ccf" value="${esc(f.startAddr || f.startCity || '')}"></label><label>Arrivée <input id="cct" value="${esc(f.endAddr || f.endCity || f.dest || '')}"></label></div>
@@ -328,15 +332,16 @@ function cshCoursesEncM(p, todo, seg) {
     ${sel ? '' : '<details class="mmore"><summary>Course hors Ludy</summary>' + form + '</details>'}
     ${recent.length ? '<h3 class="mh">Derniers encaissements (7 jours)</h3>' + recent.slice(0, 30).map(m => `<div class="mcard mline"><div class="mch"><div class="mwho2"><b>${esc(m.driver_code ? cshDrvName(m.driver_code) : m.driver_name || '')}</b><span>${esc(fmtDay(m.day))}${m.label ? ' · ' + esc(m.label) : ''}</span></div>
       <div class="mdecl"><span>Prime ${cshMoney(m.prime)}</span><b>${cshMoney(m.amount)}</b></div></div>${cshCanFix(m) ? `<button type="button" class="mlink" data-cshx="${m.id}">Annuler</button>` : ''}</div>`).join('') : ''}`);
-  const calc = () => { const c = cshCourse(cshVal('cca'), cshVal('ccp'), cshVal('ccr') === '' ? cshVal('cca') : cshVal('ccr'));
-    $('#cccalc').innerHTML = cshVal('cca') === '' ? '' : `Prime ${cshMoney(c.prime)} · gardée par le chauffeur ${cshMoney(c.paid)} · reste à lui payer ${cshSignedTxt(c.reste)}`; };
-  ['cca', 'ccp', 'ccr'].forEach(id => { $('#' + id).oninput = calc; }); calc();
+  const calc = () => { const c = cshCourse(cshVal('cca'), cshBrPct(), cshVal('ccr') === '' ? cshVal('cca') : cshVal('ccr')), b = cshBrought();
+    $('#cccalc').innerHTML = cshVal('cca') === '' ? '' : !b ? '<b>Course apportée par le chauffeur ? Choisir oui ou non</b>' :
+      (b === 'non' ? 'Course de l\'agence : pas de prime · ' : '') + `Prime ${cshMoney(c.prime)} · gardée par le chauffeur ${cshMoney(c.paid)} · reste à lui payer ${cshSignedTxt(c.reste)}`; };
+  ['cca', 'ccp', 'ccr'].forEach(id => { $('#' + id).oninput = calc; }); document.querySelectorAll('input[name="ccbr"]').forEach(r => { r.onchange = calc; }); calc();
   document.querySelectorAll('[data-cshms]').forEach(b => { b.onclick = () => { CS.selMission = +b.dataset.cshms; cshCoursesEncM(p, todo, seg); const x = $('#cshcform'); if (x && x.scrollIntoView) x.scrollIntoView({ block: 'start' }); }; });
   if ($('#ccclr')) $('#ccclr').onclick = () => { CS.selMission = null; cshCoursesEncM(p, todo, seg); };
   document.querySelectorAll('[data-cshx]').forEach(b => { b.onclick = () => cshCancel(+b.dataset.cshx); });
   $('#ccsave').onclick = async () => {
     const b = $('#ccsave'); b.disabled = true;
-    try { if (await cshSaveCourse(sel, { day: cshVal('ccd'), driver: cshVal('ccw'), from: cshVal('ccf'), to: cshVal('cct'), amount: cshVal('cca'), pct: cshVal('ccp'), given: cshVal('ccr'), comment: cshVal('ccm') })) { CS.selMission = null; pageCaisse(); } else b.disabled = false; }
+    try { if (await cshSaveCourse(sel, { day: cshVal('ccd'), driver: cshVal('ccw'), from: cshVal('ccf'), to: cshVal('cct'), amount: cshVal('cca'), pct: cshVal('ccp'), brought: cshBrought(), given: cshVal('ccr'), comment: cshVal('ccm') })) { CS.selMission = null; pageCaisse(); } else b.disabled = false; }
     catch (e) { b.disabled = false; alert(e.message); }
   };
 }

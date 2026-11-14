@@ -21,6 +21,7 @@ test('application Android : trois écrans seulement, encaissement du shift et d\
     insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at) values ('K1', 'C1', 'ALPHA Test', 'WW968199', '968199WW', '${start}', '${end}');
     insert into missions (client_name, kind, total_ttc, needs_validation, level, status, driver_name, vehicle_key, start_at, number)
       values ('Client Test', 'Transfert aéroport', 450, false, 'Standard', 'Terminée', 'ALPHA Test', '968199WW', now() - interval '1 day', 'DEV-2026-0001');
+    select setval('public.mission_number_seq', greatest(1, (select last_value from public.mission_number_seq)) + 1);   -- numéro suivant jamais DEV-2026-0001 (déjà pris ci-dessus), même sur une base neuve
     insert into parc (plate, model, seats, agrement) values ('WW968199', 'STARIA', 7, 'TT/1/2026');
     update manifest_config set stamp = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';`);
   const srv = await startSite(), { br, page, errors } = await openBrowser(PHONE);
@@ -30,7 +31,7 @@ test('application Android : trois écrans seulement, encaissement du shift et d\
     // ouverture : premier écran, trois boutons en bas, aucun menu du site complet
     await loginPhone(page, '#/tableau');
     await page.waitForURL(/#\/caisse\?t=shift/);
-    assert.deepStrictEqual(await page.$$eval('.mtabs a', as => as.map(a => a.innerText.trim())), ['Encaissement', 'Courses', 'Dépenses', 'Manifeste']);
+    assert.deepStrictEqual(await page.$$eval('.mtabs a', as => as.map(a => a.innerText.trim())), ['Encaissement', 'Courses', 'Dépenses', 'Pauses', 'Manifeste']);
     assert.strictEqual(await page.locator('.side').count(), 0);
     // toute autre page renvoie au premier écran
     await page.evaluate(() => { location.hash = '#/reglages'; });
@@ -95,10 +96,20 @@ test('application Android : trois écrans seulement, encaissement du shift et d\
     assert.strictEqual(await page.inputValue('#ccw'), 'ALPHA Test');
     assert.strictEqual(await page.inputValue('#cca'), '450');
     await page.fill('#ccr', '405');
+    assert.match(await page.innerText('#cccalc'), /apportée par le chauffeur \? Choisir oui ou non/i, 'choix obligatoire');
+    await page.check('input[name="ccbr"][value="non"]');
+    assert.match(await page.innerText('#cccalc'), /Course de l'agence : pas de prime · Prime 0 MAD/);
+    await page.check('input[name="ccbr"][value="oui"]');
     assert.match(await page.innerText('#cccalc'), /Prime 45 MAD · gardée par le chauffeur 45 MAD/);
     await page.click('#ccsave');
     await page.waitForFunction(() => /1\s*course à encaisser/.test(document.querySelector('#page').innerText));
-    assert.strictEqual(env.psql("select amount || '|' || course_amount || '|' || prime || '|' || prime_paid from cash_moves where caisse = 'courses'"), '405.00|450.00|45.00|45.00');
+    assert.strictEqual(env.psql("select amount || '|' || course_amount || '|' || prime || '|' || prime_paid || '|' || split_part(comment, ' · ', 1) from cash_moves where caisse = 'courses'"), '405.00|450.00|45.00|45.00|Apportée par le chauffeur');
+    // course de l'agence (pas apportée par le chauffeur) : aucune prime, tout le montant est dû en caisse
+    await page.click('[data-cshms]');
+    await page.waitForFunction(() => /Encaisser la course/.test((document.querySelector('#cshcform') || {}).innerText || ''));
+    await page.fill('#ccr', '550'); await page.check('input[name="ccbr"][value="non"]'); await page.click('#ccsave');
+    await page.waitForFunction(() => /0\s*course à encaisser/.test(document.querySelector('#page').innerText));
+    assert.strictEqual(env.psql("select prime || '|' || prime_paid || '|' || commission_pct || '|' || split_part(comment, ' · ', 1) from cash_moves where caisse = 'courses' and amount = 550"), '0.00|0.00|0.00|Course de l\'agence (sans prime)');
     assert.ok(await noHScroll(page));
     // manifeste : formulaire sur une colonne, sans défilement horizontal, sans les réglages
     await page.click('.mtabs a[data-mt="manifeste"]');

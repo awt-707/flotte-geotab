@@ -17,7 +17,7 @@ test('application Android : dépense saisie, justificatif scanné (photo réduit
     await page.goto('http://localhost:8080/#/caisse?t=depenses');
     await page.fill('#le', 'admin@x'); await page.fill('#lp', 'secret123'); await page.click('#lf button[type=submit]');
     await page.waitForSelector('#mdsave');
-    assert.deepStrictEqual(await page.$$eval('.mtabs a', as => as.map(a => a.innerText.trim())), ['Encaissement', 'Courses', 'Dépenses', 'Manifeste']);
+    assert.deepStrictEqual(await page.$$eval('.mtabs a', as => as.map(a => a.innerText.trim())), ['Encaissement', 'Courses', 'Dépenses', 'Pauses', 'Manifeste']);
     assert.strictEqual(await page.innerText('#mtitle'), 'Dépenses');
     assert.strictEqual(await page.getAttribute('#mdcam', 'capture'), 'environment', 'appareil photo du téléphone');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'pas de défilement horizontal');
