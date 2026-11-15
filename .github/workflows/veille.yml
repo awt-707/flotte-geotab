@@ -4,7 +4,7 @@ name: Veille de Ludy
 # tout le temps »). Toutes les 30 min :
 # 1. santé de Supabase (base, service de données, connexion) par l'API de gestion ; service de données ou base en panne à deux
 #    contrôles espacés de 4 min = projet redémarré automatiquement (rien n'est effacé), puis attente du retour ;
-# 2. dernier passage du collecteur (table logs, plus de 45 min = signalé) ;
+# 2. dernier passage du collecteur (table logs : il y écrit au moins une fois par heure ; plus de 90 min = signalé) ;
 # 3. site en ligne.
 # Tout problème fait échouer la veille : GitHub envoie alors un e-mail (réglage « Actions » des notifications GitHub).
 on:
@@ -55,7 +55,7 @@ jobs:
           try: d=json.load(sys.stdin); t=datetime.datetime.fromisoformat(d[0]['at'].replace('Z','+00:00')); print(int((datetime.datetime.now(datetime.timezone.utc)-t).total_seconds()//60))
           except Exception: print(-1)")
             echo "Dernier passage du collecteur : il y a $last min"
-            if [ "$last" -lt 0 ] || [ "$last" -gt 45 ]; then fail="$fail Collecteur : aucun passage depuis ${last} min (Apps Script à vérifier)."; fi
+            if [ "$last" -lt 0 ] || [ "$last" -gt 90 ]; then fail="$fail Collecteur : aucun passage depuis ${last} min (Apps Script à vérifier)."; fi
           fi
           code=$(curl -s -m 30 -o /dev/null -w "%{http_code}" https://ludy-flotte.pages.dev/)
           echo "Site : HTTP $code"; [ "$code" = 200 ] || fail="$fail Site : HTTP $code."
