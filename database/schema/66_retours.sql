@@ -67,6 +67,8 @@ ALTER TABLE ONLY public.return_calls ALTER COLUMN id SET DEFAULT nextval('public
 ALTER TABLE ONLY public.return_calls
     ADD CONSTRAINT return_calls_pkey PRIMARY KEY (id);
 
+CREATE INDEX return_calls_arrived ON public.return_calls USING btree (arrived_at) WHERE ((done_at IS NULL) AND (cancelled_at IS NULL));
+
 CREATE INDEX return_calls_created ON public.return_calls USING btree (created_at);
 
 CREATE UNIQUE INDEX return_calls_open ON public.return_calls USING btree (contract_num) WHERE ((done_at IS NULL) AND (cancelled_at IS NULL));

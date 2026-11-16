@@ -41,6 +41,7 @@ import java.io.OutputStream;
  * - PDF et tableurs créés par le site (adresses blob:) : enregistrés dans Téléchargements puis ouverts.
  * 1.2 (04/11/2026, demande d'Ahmed) : PDF (manifeste, devis) partagés tels quels dans WhatsApp, directement au numéro du chauffeur ou
  *   du client (LudyAndroid.share ; fichier servi par FilesProvider, sans bibliothèque) ; sans WhatsApp : choix de l'application.
+ * 1.4 (16/11/2026, demande d'Ahmed) : notification quand un chauffeur prévenu est arrivé à l'agence (retours des véhicules, WatchService).
  * 1.3 (14/11/2026, demande d'Ahmed) : alertes des pauses et des courses suivies même écran éteint (WatchService, service au premier
  *   plan) : LudyAndroid.watchStart / watchStop / watchStatus ; appui sur une alerte = page Pauses (#/suivi).
  */
@@ -70,7 +71,7 @@ public class MainActivity extends Activity {
     s.setSupportMultipleWindows(false);   // target="_blank" : même vue, puis shouldOverrideUrlLoading
     s.setAllowFileAccess(false);
     s.setMediaPlaybackRequiresUserGesture(true);
-    s.setUserAgentString(s.getUserAgentString() + " LudyAndroid/1.3");
+    s.setUserAgentString(s.getUserAgentString() + " LudyAndroid/1.4");
     CookieManager.getInstance().setAcceptCookie(true);
     CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
     web.addJavascriptInterface(new Bridge(), "LudyAndroid");
@@ -190,7 +191,7 @@ public class MainActivity extends Activity {
         if (notif && Build.VERSION.SDK_INT >= 24) notif = getSystemService(android.app.NotificationManager.class).areNotificationsEnabled();
         boolean bat = Build.VERSION.SDK_INT < 23 || getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName());
         return new org.json.JSONObject().put("on", WatchService.enabled(MainActivity.this)).put("notif", notif).put("battery", bat)
-            .put("last", p.getLong("last", 0)).put("err", p.getString("err", "")).put("version", "1.3").toString();
+            .put("last", p.getLong("last", 0)).put("err", p.getString("err", "")).put("version", "1.4").toString();
       } catch (Exception e) { return "{}"; }
     }
     /** Économie de batterie désactivée pour Ludy (sinon le téléphone peut endormir la surveillance) */

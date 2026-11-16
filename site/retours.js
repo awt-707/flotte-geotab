@@ -124,10 +124,11 @@ function rtDraw() {
     ['Position', posCell, r => r.p ? r.p.state : ''], ['Distance à l\'agence', r => rtKm(r.dist), r => r.dist == null ? 1e12 : r.dist, 'n'],
     ['Heure de retour', r => slots[r.num] ? '<b>' + localHM(new Date(slots[r.num])) + '</b>' : '', r => slots[r.num] || 0],
     ['État', stBadge, r => RT_ST_ORD[st(r)]], ['', (r) => act(r, rows.indexOf(r))]];
-  const coordsBox = admin ? `<div class="panel row"><label>Position GPS de l'agence <input id="rtco" size="34" placeholder="31.6295, -7.9811 ou lien Google Maps" value="${ap ? ap.lat + ', ' + ap.lon : ''}"></label>
+  const notifBtn = !MOBILE && window.Notification && Notification.permission === 'default' ? '<div class="panel row"><button class="ghost" id="rtnotif">🔔 Activer les notifications du navigateur</button><span class="small">pour être prévenu de l\'arrivée d\'un chauffeur même quand Ludy est en arrière-plan</span></div>' : '';
+  const coordsBox = admin && !MOBILE ? `<div class="panel row"><label>Position GPS de l'agence <input id="rtco" size="34" placeholder="31.6295, -7.9811 ou lien Google Maps" value="${ap ? ap.lat + ', ' + ap.lon : ''}"></label>
       <label>Adresse (dans le message) <input id="rtadr" size="30" value="${esc((ag && ag.address) || '')}"></label><label>Rayon d'arrivée (m) <input id="rtrad" size="4" value="${(ag && ag.return_radius_m) || ''}" placeholder="${rtP(S.P, 'returnRadiusM')}"></label>
       <button id="rtcosave">Enregistrer</button>${ap ? `<a class="small" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${ap.lat},${ap.lon}">voir sur la carte ↗</a>` : ''}</div>` : '';
-  $('#page').innerHTML = `<div class="head"><h1>Retours véhicules</h1><div class="sub">Faites rentrer les chauffeurs un par un : classez les véhicules sous contrat (plus proche de l'agence, ou départ du contrat le plus ancien), donnez à chacun son heure de retour et prévenez-le sur WhatsApp. Distance à vol d'oiseau ; arrivée à l'agence vue par le GPS (${f0(radius)} m).</div></div>
+  $('#page').innerHTML = `<div class="head">${MOBILE ? '' : '<h1>Retours véhicules</h1>'}<div class="sub">Faites rentrer les chauffeurs un par un : classez les véhicules sous contrat (plus proche de l'agence, ou départ du contrat le plus ancien), donnez à chacun son heure de retour et prévenez-le sur WhatsApp. Distance à vol d'oiseau ; arrivée à l'agence vue par le GPS (${f0(radius)} m).</div></div>
     ${RT.off ? msg('Migration <b>20261202000000_retours.sql</b> à exécuter dans Supabase : les messages envoyés ne sont pas encore enregistrés.', 'warn') : ''}
     <div class="panel row"><label>Agence <select id="rtag">${RT.ags.map(a => `<option value="${a.id}" ${String(a.id) === String(RT.ag) ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
       <span>Ordre :</span><button class="${mode === 'dist' ? '' : 'ghost'}" data-rtmode="dist">📍 Plus proche de l'agence</button><button class="${mode === 'depart' ? '' : 'ghost'}" data-rtmode="depart">⏱ Départ du contrat le plus ancien</button>${mode === 'manuel' ? '<span class="badge">ordre modifié à la main</span>' : ''}
@@ -136,7 +137,9 @@ function rtDraw() {
     ${!ap ? msg(admin ? 'Saisissez la position GPS de l\'agence ci-dessus (coordonnées ou lien Google Maps) pour classer les véhicules par distance.' : 'Position GPS de l\'agence pas encore réglée par l\'administrateur : véhicules classés par départ du contrat.', 'warn') : ''}
     ${cards([['Véhicules sous contrat', f0(n.tot)], ['À prévenir', f0(n.tot - n.sent - n.arr - n.done), 'warn'], ['Prévenus, en route', f0(n.sent)], ['À l\'agence', f0(n.arr), 'ok'], ['Retours faits', f0(n.done)]])}
     ${canEdit ? `<div class="panel row">${next ? `<button id="rtnext">▶ Prévenir le suivant : ${esc(next.driver_name || next.plate)} (${esc(next.plate)}) · retour ${localHM(new Date(slots[next.num]))}</button>` : '<span class="small">Tous les chauffeurs joignables sont prévenus.</span>'}<span class="small">Chaque clic ouvre WhatsApp du chauffeur avec son message (français et darija) ; il reste à appuyer sur Envoyer.</span></div>` : ''}
-    ${table('trt', cols.map(c => [c[0], r => c[1](r), c[2], c[3]]), rows, { empty: 'Aucun véhicule sous contrat dans cette agence en ce moment.' })}`;
+    ${notifBtn}${rtAppHtml()}
+    ${MOBILE ? `<div id="trt">${rtCardsHtml(rows, slots, st, stBadge, act, posCell)}</div>` : table('trt', cols.map(c => [c[0], r => c[1](r), c[2], c[3]]), rows, { empty: 'Aucun véhicule sous contrat dans cette agence en ce moment.' })}`;
+  if ($('#rtnotif')) $('#rtnotif').onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } redraw(); };
   const redraw = () => rtDraw();
   $('#rtag').onchange = async () => { RT.ag = $('#rtag').value; rtLsSet('ag', RT.ag); $('#page').innerHTML = '<div class="empty">Chargement…</div>'; await rtLoad(); rtDraw(); };
   document.querySelectorAll('[data-rtmode]').forEach(b => { b.onclick = () => { rtLsSet('mode', b.dataset.rtmode); rtLsSet('order|' + RT.ag + '|' + today(), []); redraw(); }; });
@@ -168,4 +171,78 @@ function rtDraw() {
     RT.ags = await all('agencies', '*', null, ['name']); redraw();
   };
   window.__repage = redraw; window.__rerender = redraw;
+}
+
+// ---------- Notification d'arrivée à l'agence, sur toutes les pages (16/11/2026, demande d'Ahmed) ----------
+// Toutes les 20 s : appels de retour arrivés dans les 3 dernières heures et pas encore faits (arrivée notée par la page Retours, le relais
+// des téléphones ou le collecteur). Arrivée nouvelle = bandeau vert + bip ; onglet en arrière-plan = notification du navigateur (si permise).
+// À la première lecture, les arrivées de plus de 10 min sont marquées vues sans bandeau (pas de rafale à l'ouverture de Ludy).
+const RTW = { timer: null, primed: false, seen: null, uid: null };
+const RTW_KEY = 'rtSeen';
+function rtwCan() { return !!(S.profile && ['admin', 'manager'].includes(S.profile.role)) && canSee('retours'); }
+function rtwSeen() {
+  if (RTW.seen && RTW.uid === (S.profile && S.profile.user_id)) return RTW.seen;
+  RTW.uid = S.profile && S.profile.user_id; RTW.primed = false;
+  try { RTW.seen = JSON.parse(localStorage.getItem(RTW_KEY) || '{}') || {}; } catch (e) { RTW.seen = {}; }
+  return RTW.seen;
+}
+function rtwMark(id) {
+  const o = rtwSeen(); o[id] = Date.now();
+  const cut = Date.now() - 2 * DAY; Object.keys(o).forEach(k => { if (o[k] < cut) delete o[k]; });
+  try { localStorage.setItem(RTW_KEY, JSON.stringify(o)); } catch (e) { }
+}
+function rtwNotify(c) {
+  const v = (S.veh && S.veh[c.vehicle_key]) || {}, pl = v.plate || c.vehicle_key, ag = S.agName ? S.agName[c.agency_id] || '' : '', at = localHM(c.arrived_at);
+  let box = $('#toasts'); if (!box) { box = document.createElement('div'); box.id = 'toasts'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
+  const t = document.createElement('div'); t.className = 'toast ok rttoast';
+  t.innerHTML = `<button class="x" aria-label="Fermer">×</button><b>✅ Arrivé à l'agence${ag ? ' ' + esc(ag) : ''}</b> ${plate(pl)}<div>${esc(c.driver_name || '')}</div>
+    <div class="small">à ${esc(at)}${c.slot_at ? ' · retour prévu à ' + esc(localHM(c.slot_at)) : ''}</div><a href="#/retours">Voir les retours</a>`;
+  t.querySelector('.x').onclick = () => t.remove();
+  box.prepend(t); setTimeout(() => t.remove(), 120000);
+  if (typeof svBeep === 'function') svBeep();
+  try {
+    if (document.hidden && window.Notification && Notification.permission === 'granted')
+      new Notification('Ludy · arrivé à l\'agence', { body: (c.driver_name ? c.driver_name + ' · ' : '') + pl + (ag ? ' · ' + ag : '') + ' à ' + at, tag: 'rt' + c.id, icon: 'icon-192.png' });
+  } catch (e) { }
+}
+async function rtwTick() {
+  if (!S.session || !S.profile || !rtwCan() || RTW.busy) return;
+  RTW.busy = true;
+  try {
+    const { data, error } = await sb.from('return_calls').select('id,vehicle_key,driver_name,agency_id,slot_at,arrived_at')
+      .gte('arrived_at', new Date(Date.now() - 3 * HOUR).toISOString()).is('done_at', null).is('cancelled_at', null).order('arrived_at').limit(200);
+    if (error) return;
+    const seen = rtwSeen(), now = Date.now();
+    (data || []).forEach(c => {
+      if (seen[c.id]) return;
+      rtwMark(c.id);
+      if (!RTW.primed && now - new Date(c.arrived_at).getTime() > 10 * MIN) return;
+      rtwNotify(c);
+    });
+    RTW.primed = true;
+  } catch (e) { } finally { RTW.busy = false; }
+}
+function rtwStart() {
+  if (RTW.timer) return;
+  RTW.timer = setInterval(() => { rtwTick(); }, 20000);
+  rtwTick();
+}
+
+// ---------- Mode téléphone : cartes au lieu du tableau ----------
+function rtCardsHtml(rows, slots, st, stBadge, act, posCell) {
+  if (!rows.length) return '<div class="mempty"><b>Aucun véhicule sous contrat</b><p>Aucun contrat en cours dans cette agence.</p></div>';
+  return rows.map((r, i) => `<div class="mcard rtcard ${st(r)}"><div class="mcard-h"><b>#${i + 1} ${esc(r.plate)}</b><span>${rtKm(r.dist)}</span></div>
+    <div>${esc(r.driver_name || '')} ${r.phone ? '<span class="small">' + esc(r.phone) + '</span>' : '<span class="small">téléphone absent</span>'}</div>
+    <div class="small">Départ ${localHM(r.start_at)} · il y a ${rtAgo(r.start_at)} · ${posCell(r)}</div>
+    <div>${slots[r.num] ? 'Retour à <b>' + localHM(new Date(slots[r.num])) + '</b> · ' : ''}${stBadge(r)}</div>
+    <div class="row">${act(r, i)}</div></div>`).join('');
+}
+
+/** Application Android : notification de l'arrivée à l'agence même écran éteint (1.4 et alertes du téléphone activées) */
+function rtAppHtml() {
+  if (!window.LudyAndroid) return '';
+  const m = navigator.userAgent.match(/LudyAndroid\/(\d+)\.(\d+)/), old = !m || +m[1] < 1 || (+m[1] === 1 && +m[2] < 4);
+  if (old) return msg(`Pour être prévenu sur ce téléphone quand un chauffeur arrive à l'agence, même écran éteint, installez Ludy 1.4. <a href="${esc(CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.apk')}">Télécharger Ludy 1.4</a>`, 'warn');
+  const st = typeof svWatchStatus === 'function' ? svWatchStatus() || {} : {};
+  return st.on ? '' : msg('Activez les alertes sur ce téléphone (écran <a href="#/suivi">Pauses</a>) pour être prévenu de l\'arrivée des chauffeurs, même écran éteint.', 'warn');
 }

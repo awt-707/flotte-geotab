@@ -107,3 +107,57 @@ test('site : véhicules classés du plus proche au plus loin, prévenir le suiva
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
+
+test('collecteur : arrivée à l\'agence notée à chaque passage (positions Geotab du passage), même sans Ludy ouvert', () => {
+  const { collector } = require('./lib/v6');
+  env.resetDb();
+  const B = collector(Date.now());   // le harnais remet la base à zéro : données insérées après
+  env.psql(`insert into agencies (id, name, lat, lng, return_radius_m) overriding system value values (1, 'Marrakech', 31.63, -8.0, 250);
+    insert into vehicles (key, plate, agency_id) values ('V1', 'WW1', 1), ('V2', 'WW2', 1), ('V3', 'WW3', 1);
+    insert into return_calls (contract_num, vehicle_key, sent_at) values ('K1', 'V1', now()), ('K2', 'V2', now()), ('K3', 'V3', null);`);
+  try {
+    const st = { V1: { dsi: { latitude: 31.6301, longitude: -8.0002, isDriving: false } }, V2: { dsi: { latitude: 31.70, longitude: -8.0, isDriving: true, speed: 50 } },
+      V3: { dsi: { latitude: 31.63, longitude: -8.0, isDriving: false } } };
+    B.ctx.__st = st;
+    assert.match(B.run('returnArriveStep_(__st)'), /1 véhicule\(s\) arrivé\(s\)/);
+    assert.strictEqual(env.psql("select string_agg(contract_num, ',') from return_calls where arrived_at is not null"), 'K1', 'prévenu et à l\'agence ; pas prévenu : rien');
+    st.V2.dsi = { latitude: 31.6302, longitude: -8.0, isDriving: true, speed: 40 };
+    assert.strictEqual(B.run('returnArriveStep_(__st)'), '', 'passe devant l\'agence en roulant : pas arrivé');
+  } finally { env.resetDb(); }
+});
+
+test('site : bandeau « arrivé à l\'agence » sur toutes les pages ; écran Retours du téléphone (cartes, prévenir le suivant)', async () => {
+  env.resetDb();
+  const start = new Date(Date.now() - 3 * 3600000).toISOString(), end = new Date(Date.now() + 6 * 3600000).toISOString();
+  env.psql(`insert into agencies (id, name, lat, lng) overriding system value values (1, 'Marrakech', 31.63, -8.0);
+    insert into vehicles (key, plate, model, active, agency_id) values ('V1', 'WW968201', 'SONATA', 'OUI', 1), ('V2', 'WW968202', 'SONATA', 'OUI', 1);
+    insert into contracts (num, client_code, name, phone, plate, vehicle_key, start_at, end_at) values
+      ('K1', 'C1', 'ALPHA Test', '0612345678', 'WW968201', 'V1', '${start}', '${end}'), ('K2', 'C2', 'BRAVO Test', '0698765432', 'WW968202', 'V2', '${start}', '${end}');
+    insert into return_calls (contract_num, vehicle_key, driver_name, sent_at, slot_at) values ('K1', 'V1', 'ALPHA Test', now() - interval '20 minutes', now());`);
+  const pos = { V1: { key: 'V1', state: 'En route', speed: 30, lat: 31.70, lon: -8.0, at: new Date().toISOString() }, V2: { key: 'V2', state: 'Garé', speed: 0, lat: 31.66, lon: -8.0, at: new Date().toISOString() } };
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await page.addInitScript(() => { window.__uiDialogs = true; });
+    await page.route('**/functions/v1/geotab-live**', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: new Date().toISOString(), vehicles: Object.values(pos), events: [] }) }));
+    await page.goto('http://localhost:8080/#/alertes');
+    await page.fill('#le', 'admin@x'); await page.fill('#lp', 'secret123'); await page.click('#lf button[type=submit]');
+    await page.waitForSelector('#page h1');
+    // arrivée notée par le collecteur ou un téléphone pendant que la page Alertes est ouverte : bandeau vert
+    env.psql("update return_calls set arrived_at = now()");
+    await page.evaluate(() => rtwTick());
+    await page.waitForSelector('.toast.rttoast', { timeout: 15000 });
+    assert.match(await page.innerText('.toast.rttoast'), /Arrivé à l'agence Marrakech[\s\S]*WW968201[\s\S]*ALPHA Test/);
+    await page.evaluate(() => rtwTick());
+    assert.strictEqual(await page.locator('.toast.rttoast').count(), 1, 'une seule fois');
+    // écran Retours du mode téléphone
+    await page.goto('http://localhost:8080/?mobile=1#/retours');
+    await page.waitForSelector('.rtcard');
+    assert.match(await page.innerText('.mtabs'), /Retours/);
+    assert.match(await page.innerText('#trt'), /#1 WW968202[\s\S]*3,3 km[\s\S]*BRAVO Test[\s\S]*#2 WW968201[\s\S]*À l'agence/);
+    const wa = await page.evaluate(() => { let u = ''; window.open = x => { u = x; }; document.querySelector('#rtnext').click(); return u; });
+    assert.match(decodeURIComponent(wa), /^https:\/\/wa\.me\/212698765432\?text=🚗 \*RETOUR DU VÉHICULE\*[\s\S]*BRAVO Test/);
+    await page.waitForFunction(() => /Prévenu à/.test(document.querySelector('#trt').innerText));
+    assert.strictEqual(env.psql("select count(*) from return_calls where contract_num = 'K2' and sent_at is not null"), '1');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
+});

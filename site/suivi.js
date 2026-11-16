@@ -297,8 +297,8 @@ function svWatchStatus() { const A = svWatchApi(); if (!A) return null; try { re
 function svWatchHtml() {
   if (!window.LudyAndroid) return '';
   const A = svWatchApi();
-  if (!A) return `<div class="panel svwatch"><h3>🔔 Alertes écran éteint</h3><div class="small">Pour recevoir les fins de pause et les véhicules en pause qui bougent même téléphone verrouillé, installez l'application Ludy 1.3.</div>
-    <p><a class="btn" href="${esc(CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.apk')}">Télécharger Ludy 1.3 (Android)</a></p></div>`;
+  if (!A) return `<div class="panel svwatch"><h3>🔔 Alertes écran éteint</h3><div class="small">Pour recevoir les fins de pause et les véhicules en pause qui bougent même téléphone verrouillé, installez l'application Ludy 1.4 (aussi l'arrivée des chauffeurs à l'agence pour les retours).</div>
+    <p><a class="btn" href="${esc(CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.apk')}">Télécharger Ludy 1.4 (Android)</a></p></div>`;
   const st = svWatchStatus() || {};
   if (!st.on) return `<div class="panel svwatch"><h3>🔔 Alertes sur ce téléphone, même écran éteint</h3>
     <div class="small">Rappel toutes les ${esc(String(svP(S.P, 'pauseRemindMin')))} min, fin de pause, véhicule en pause qui bouge (GPS Geotab, contrôle chaque minute), course arrivée : en notification avec sonnerie, même si Ludy est fermé ou le téléphone verrouillé.</div>

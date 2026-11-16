@@ -33,7 +33,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Alertes des pauses et des courses suivies, même écran éteint (Ludy 1.3, 14/11/2026, demande d'Ahmed).
+ * Alertes des pauses, des courses suivies et des retours de véhicules (arrivée à l'agence, Ludy 1.4, 16/11/2026), même écran éteint (Ludy 1.3, 14/11/2026, demande d'Ahmed).
  * Service au premier plan (notification permanente « Ludy surveille les pauses ») qui interroge la base toutes les 30 s
  * avec le secret du téléphone (watch_poll ; jamais le jeton du site, qui expire quand l'application dort). Tant qu'une pause
  * ou une course est suivie, le relais geotab-live (?mode=watch) relit aussi les positions Geotab toutes les 60 s.
@@ -69,7 +69,7 @@ public class WatchService extends Service {
     NotificationManager nm = getSystemService(NotificationManager.class);
     if (Build.VERSION.SDK_INT >= 26) {
       NotificationChannel run = new NotificationChannel(CH_RUN, "Surveillance des pauses", NotificationManager.IMPORTANCE_LOW);
-      run.setDescription("Notification permanente tant que Ludy surveille les pauses");
+      run.setDescription("Notification permanente tant que Ludy surveille les pauses et les retours");
       nm.createNotificationChannel(run);
       NotificationChannel al = new NotificationChannel(CH_ALERT, "Alertes pauses et courses", NotificationManager.IMPORTANCE_HIGH);
       al.setDescription("Fin de pause, véhicule en pause qui bouge, course arrivée");
@@ -120,7 +120,7 @@ public class WatchService extends Service {
   }
 
   void foreground(String text) {
-    Notification n = builder(CH_RUN).setSmallIcon(android.R.drawable.ic_lock_idle_alarm).setContentTitle("Ludy surveille les pauses")
+    Notification n = builder(CH_RUN).setSmallIcon(android.R.drawable.ic_lock_idle_alarm).setContentTitle("Ludy surveille les pauses et les retours")
         .setContentText(text).setOngoing(true).setContentIntent(openApp("#/suivi", 0)).build();
     if (Build.VERSION.SDK_INT >= 29) startForeground(RUN_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
     else startForeground(RUN_ID, n);
@@ -128,7 +128,7 @@ public class WatchService extends Service {
 
   void alert(String key, String title, String text, String allowId) {
     Notification.Builder b = builder(CH_ALERT).setSmallIcon(android.R.drawable.stat_notify_error).setContentTitle(title).setContentText(text)
-        .setStyle(new Notification.BigTextStyle().bigText(text)).setAutoCancel(true).setContentIntent(openApp("#/suivi", key.hashCode()))
+        .setStyle(new Notification.BigTextStyle().bigText(text)).setAutoCancel(true).setContentIntent(openApp(key.startsWith("ret|") ? "#/retours" : "#/suivi", key.hashCode()))
         .setCategory(Notification.CATEGORY_ALARM).setVisibility(Notification.VISIBILITY_PUBLIC);
     if (Build.VERSION.SDK_INT < 26) b.setPriority(Notification.PRIORITY_MAX).setDefaults(Notification.DEFAULT_ALL);
     if (allowId != null) {
@@ -215,15 +215,19 @@ public class WatchService extends Service {
     SharedPreferences p = prefs(this);
     String base = p.getString("url", ""), secret = p.getString("secret", "");
     JSONObject w = new JSONObject(http("POST", base + "/rest/v1/rpc/watch_poll", new JSONObject().put("p_secret", secret).toString(), null));
-    JSONArray ps = w.optJSONArray("pauses"), ts = w.optJSONArray("tracks");
-    int np = ps == null ? 0 : ps.length(), nt = ts == null ? 0 : ts.length();
+    JSONArray ps = w.optJSONArray("pauses"), ts = w.optJSONArray("tracks"), rs = w.optJSONArray("returns");
+    int np = ps == null ? 0 : ps.length(), nt = ts == null ? 0 : ts.length(), nr = rs == null ? 0 : rs.length();
     long now = System.currentTimeMillis();
-    // positions Geotab (relais) : seulement quand une pause ou une course est suivie
-    if ((np > 0 || nt > 0) && now - lastGeo >= GEO_MS) {
+    // retours de véhicules : chauffeurs prévenus pas encore arrivés (le relais note l'arrivée à l'agence)
+    int nrWait = 0;
+    for (int i = 0; i < nr; i++) { String a = rs.getJSONObject(i).optString("arrived_at", ""); if (a.isEmpty() || a.equals("null")) nrWait++; }
+    // positions Geotab (relais) : seulement quand une pause, une course ou un retour est suivi
+    if ((np > 0 || nt > 0 || nrWait > 0) && now - lastGeo >= GEO_MS) {
       lastGeo = now;
       try {
         JSONObject g = new JSONObject(http("GET", base + "/functions/v1/geotab-live?mode=watch", null, secret));
         if (g.has("pauses")) { ps = g.optJSONArray("pauses"); ts = g.optJSONArray("tracks"); np = ps == null ? 0 : ps.length(); nt = ts == null ? 0 : ts.length(); }
+        if (g.has("returns")) { rs = g.optJSONArray("returns"); nr = rs == null ? 0 : rs.length(); }
       } catch (Unknown e) { throw e; } catch (Exception e) { /* relais indisponible : base seule (déplacements vus par le collecteur ou le site) */ }
     }
     JSONObject P = w.optJSONObject("params");
@@ -271,7 +275,21 @@ public class WatchService extends Service {
         alert(k, "🟢 COURSE ARRIVÉE À DESTINATION", x.optString("plate") + (name.isEmpty() ? "" : " · " + name) + (dest.isEmpty() ? "" : "\n" + dest) + "\nArrivée il y a " + dur(now - t(arr)) + ". Levez le suivi dans Ludy.", null);
       }
     }
-    String s = np == 0 && nt == 0 ? "Aucune pause en cours" : np + " pause(s) en cours" + (over > 0 ? " · " + over + " terminée(s)" : "") + (moved > 0 ? " · " + moved + " véhicule(s) en mouvement" : "") + (nt > 0 ? " · " + nt + " course(s) suivie(s)" : "");
+    // retour de véhicule : chauffeur arrivé à l'agence (une notification par retour)
+    int nrArr = 0; nrWait = 0;
+    for (int i = 0; i < nr; i++) {
+      JSONObject x = rs.getJSONObject(i);
+      String arr = x.optString("arrived_at", "");
+      if (arr.isEmpty() || arr.equals("null")) { nrWait++; continue; }
+      nrArr++;
+      String k = "ret|" + x.optString("id");
+      if (now - t(arr) < 3 * 3600000L && once(k)) {
+        String name = x.optString("driver_name", ""); if (name.equals("null")) name = "";
+        String ag = x.optString("agency", ""); if (ag.equals("null")) ag = "";
+        alert(k, "✅ ARRIVÉ À L'AGENCE", x.optString("plate") + (name.isEmpty() ? "" : " · " + name) + (ag.isEmpty() ? "" : "\nAgence " + ag) + "\nArrivé il y a " + dur(now - t(arr)) + ". Faites le retour du véhicule.", null);
+      }
+    }
+    String s = np == 0 && nt == 0 && nr == 0 ? "Aucune pause en cours" : np + " pause(s) en cours" + (over > 0 ? " · " + over + " terminée(s)" : "") + (moved > 0 ? " · " + moved + " véhicule(s) en mouvement" : "") + (nt > 0 ? " · " + nt + " course(s) suivie(s)" : "") + (nrWait > 0 ? " · " + nrWait + " retour(s) attendu(s)" : "") + (nrArr > 0 ? " · " + nrArr + " à l'agence" : "");
     return s;
   }
 }

@@ -1767,6 +1767,7 @@ async function route() {
   if (my !== ROUTING) return;
   sessPing();   // connexions : page affichée envoyée tout de suite (puis toutes les minutes)
   if (typeof svStart === 'function') svStart();   // pauses et courses suivies : compte à rebours et alertes sur toutes les pages
+  if (typeof rtwStart === 'function') rtwStart();   // retours : bandeau quand un chauffeur prévenu arrive à l'agence
   if (MOBILE) return;
   S.timers.push(setInterval(health, 60000));
   // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)
