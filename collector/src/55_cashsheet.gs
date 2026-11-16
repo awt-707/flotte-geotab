@@ -12,8 +12,9 @@ const CSH_SHEET_ = {
   courses: { tab: 'Caisse - Courses indep Ludy', first: 8, cols: 17, dates: [1, 9] },
   bonus: { tab: 'Caisse - Bonus performance Ludy', first: 5, cols: 10 }
 };
-// version de l'écriture : la changer réécrit tous les onglets au passage suivant (v3 : formules au séparateur du classeur, v4 : format date, 23/10/2026)
-let CSH_FMT_ = 'v4|';
+// version de l'écriture : la changer réécrit tous les onglets au passage suivant (v3 : formules au séparateur du classeur, v4 : format date, 23/10/2026 ;
+// v5 : manquant vide quand les espèces Uber ne sont pas connues, UUID sans #N/A, contrôle « Export Uber absent », 16/11/2026)
+let CSH_FMT_ = 'v5|';
 const CSH_DRV_TAB_ = 'Export Uber - Driver Status Ludy', CSH_PAY_TAB_ = 'Export Uber - Opérations de paiement Ludy', CSH_PAY_COLS_ = 37;
 const CSH_FLOW_TXT_ = { in: 'Entrée de cash', out: 'Sortie de cash', virement: 'Virement' };
 // Bolt (30/10/2026) : onglets créés par le collecteur (absents du classeur d'origine), en-tête en ligne 1, réécrits en entier s'ils ont changé
@@ -57,14 +58,16 @@ function cshEncCash_(m) { const c = cshNum_(m.uber_cash); return c === '' ? '' :
 function cshEncCom_(m, pf) { const p = cshPromo_(m), c = cshTxt_(m.comment); return p ? (c ? c + ' · ' : '') + 'Promotion ' + pf + ' ' + p + ' MAD (' + (m.promo_status || 'À vérifier') + ')' : c; }
 function cshSheetRow_(caisse, m, r, who, crsDay) {
   const day = cshSerial_(m.day), flow = CSH_FLOW_TXT_[m.flow] || '', mgr = cshTxt_(m.manager_name), com = caisse === 'uber' ? cshEncCom_(m, 'Uber') : cshTxt_(m.comment), name = cshTxt_(who), amt = cshNum_(m.amount);
-  const uuidF = col => '=IF(' + col + r + '="","",XLOOKUP(' + col + r + ',\'' + CSH_DRV_TAB_ + '\'!$A:$A,\'' + CSH_DRV_TAB_ + '\'!$G:$G))';
+  // UUID du chauffeur : vide (pas #N/A) quand le chauffeur n'est pas dans l'export « Driver Status » (16/11/2026)
+  const uuidF = col => '=IF(' + col + r + '="","",IFERROR(XLOOKUP(' + col + r + ',\'' + CSH_DRV_TAB_ + '\'!$A:$A,\'' + CSH_DRV_TAB_ + '\'!$G:$G),""))';
   const op = CSH_KIND_TXT_[m.kind] && m.kind !== 'avance' ? CSH_KIND_TXT_[m.kind] : (m.label || '');
   if (caisse === 'uber') {
     const enc = m.kind === 'encaissement', given = m.given != null ? cshNum_(m.given) : amt;
     return [day, name, uuidF('B'), mgr, enc ? 'Chauffeur' : cshTxt_(op || 'Autre'), flow, cshTxt_(m.source), enc ? cshEncCash_(m) : '', given, enc ? cshNum_(m.change) : '',
-      '=I' + r + '-J' + r, '=H' + r + '-K' + r, com,
+      // manquant : seulement pour un encaissement dont les espèces Uber sont connues (16/11/2026 : vide = −encaissé, dépôts compris, lu comme un excédent)
+      '=I' + r + '-J' + r, enc ? '=IF(H' + r + '="","",H' + r + '-K' + r + ')' : '', com,
       '=SUMIFS(\'' + CSH_PAY_TAB_ + '\'!$C$6:$C,\'' + CSH_PAY_TAB_ + '\'!$B$6:$B,$B' + r + ',\'' + CSH_PAY_TAB_ + '\'!$A$6:$A,$A' + r + ')',
-      '=IF(G' + r + '="Chauffeur",IF(N' + r + '-K' + r + '=0,"OK","KO"),"N.A")', ''];
+      '=IF(G' + r + '="Chauffeur",IF(COUNTIFS(\'' + CSH_PAY_TAB_ + '\'!$B$6:$B,$B' + r + ')=0,"Export Uber absent",IF(N' + r + '-K' + r + '=0,"OK","KO")),"N.A")', ''];
   }
   if (caisse === 'depenses') return [day, m.shift === 'Jour' ? 'Shift 1' : m.shift === 'Nuit' ? 'Shift 2' : '', name, uuidF('C'), mgr, amt, cshTxt_(m.ride_type),
     cshTxt_(m.kind === 'depense' ? m.label || 'Autre' : op), flow, cshTxt_(m.source), m.justif === 'En attente' ? '' : cshTxt_(m.justif), com];
@@ -268,10 +271,14 @@ function cashSheetStep_(t0) {
   // jour des courses Ludy : identifiants dédoublonnés, lus par 100 (adresse limitée à 2 Ko)
   const mis = [...new Set(moves.filter(m => m.mission_id).map(m => m.mission_id))], crsDay = {};
   for (let i = 0; i < mis.length; i += 100) dbSelect_('missions', 'select=id,start_at&id=in.(' + mis.slice(i, i + 100).join(',') + ')', 'id').forEach(x => { if (x.start_at) crsDay[x.id] = localDay_(x.start_at); });
+  // journal comptable : plaques des véhicules et liens vers les justificatifs / reçus copiés dans Google Drive
+  const extra = { plates: {}, files: [] };
+  try { dbSelect_('vehicles', 'select=key,plate', 'key').forEach(v => { extra.plates[v.key] = v.plate || v.key; }); } catch (e) { }
+  try { extra.files = dbSelect_('cash_files', 'select=id,agency_id,kind,move_id,dep_ref,drive_id&drive_id=not.is.null', 'id'); } catch (e) { }   // migration 20261122 pas exécutée
   const out = [];
   targets.forEach(T => {
     if (Date.now() - t0 > MAX_RUN_MS - 90000) return;
-    try { const m = cashSheetOne_(t0, T, P, moves, drv, udrv, crsDay, bolt); if (m) out.push((targets.length > 1 || T.name ? T.name + ' : ' : '') + m); }
+    try { const m = cashSheetOne_(t0, T, P, moves, drv, udrv, crsDay, bolt, extra); if (m) out.push((targets.length > 1 || T.name ? T.name + ' : ' : '') + m); }
     catch (e) { out.push((T.name ? T.name + ' : ' : '') + e.message); }
   });
   if (made) out.unshift(made);
@@ -284,7 +291,7 @@ function cshProp_(props, sheet, k, P) {
   const old = props.getProperty('CSH_SHEET_' + k);
   return { key, v: old !== null && sheet === String(P.cashSheetId || '').trim() ? old : null };
 }
-function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay, bolt0) {
+function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay, bolt0, extra) {
   const props = PropertiesService.getScriptProperties(), out = [], mine = x => T.ag == null || String(x.agency_id) === String(T.ag);
   const moves = allMoves.filter(mine), udrv = udrv0.filter(mine);
   const ss = SpreadsheetApp.openById(T.sheet);
@@ -351,6 +358,104 @@ function cashSheetOne_(t0, T, P, allMoves, drv, udrv0, crsDay, bolt0) {
       if (h !== prev[0] || props.getProperty(st.key) === null) { cshWrite_(msh, 2, rows, 1, +prev[1] || 0); props.setProperty(st.key, h + '|' + rows.length); }
     }
   }
+  if (extra) {
+    const files = {};
+    extra.files.filter(mine).forEach(f => { const u = 'https://drive.google.com/file/d/' + f.drive_id + '/view'; if (f.kind === 'justif' && f.move_id && !files[f.move_id]) files[f.move_id] = u; if (f.kind === 'depot' && f.dep_ref && !files['dep:' + f.dep_ref]) files['dep:' + f.dep_ref] = u; });
+    cshJournalStep_(ss, T, P, moves, who, files, extra.plates, props, daily, out);
+  }
   if (daily) props.setProperty(dayP.key, today);
   return out.join(', ');
+}
+
+// ---------- Journal comptable (16/11/2026, demande d'Ahmed : export pour la comptabilité) ----------
+// Onglet « Journal comptable Ludy » : une ligne par opération de caisse non annulée de l'agence, toutes caisses (Uber, Bolt, courses privées,
+// dépenses, avances RH, bonus), dans l'ordre des jours : entrée, sortie, hors caisse (virement), solde de la caisse après l'opération,
+// justificatif et lien vers sa copie dans Google Drive, référence du bordereau de dépôt. Valeurs seulement (aucune formule) : filtrable et
+// exportable tel quel. Onglet « Synthèse comptable Ludy » : formules sur le journal (par mois et par caisse, dépenses par catégorie, soldes).
+// Rien d'estimé : espèces déclarées par la plateforme vides quand elles ne sont pas connues (export non importé, rien saisi), manquant alors vide.
+const CSH_JRN_ = 'Journal comptable Ludy', CSH_SYN_ = 'Synthèse comptable Ludy';
+const CSH_JRN_H_ = ['N° pièce', 'Date', 'Mois', 'Shift', 'Caisse', 'Opération', 'Catégorie', 'Chauffeur', 'Contrat', 'Véhicule', 'Entrée (MAD)', 'Sortie (MAD)',
+  'Hors caisse (MAD)', 'Solde de la caisse (MAD)', 'Espèces déclarées plateforme (MAD)', 'Promotion (MAD)', 'Manquant déclaré (MAD)', 'Justificatif / statut', 'Pièce jointe (Drive)',
+  'Référence', 'Source / payée par', 'Gestionnaire', 'Commentaire', 'Saisie le'];
+const CSH_CAISSE_TXT_ = { uber: 'Encaissements Uber', bolt: 'Encaissements Bolt', courses: 'Courses privées', depenses: 'Dépenses chauffeurs', rh: 'Avances RH', bonus: 'Bonus performance' };
+const CSH_OP_TXT_ = { encaissement: 'Encaissement du shift', depot: 'Dépôt en banque', recharge: 'Recharge de caisse', depense: 'Dépense', avance: 'Avance sur salaire',
+  remboursement: 'Remboursement d\'avance', course: 'Course privée', bonus: 'Bonus', autre: 'Autre' };
+function cshR2_(x) { return Math.round(x * 100) / 100; }
+function cshRef_(m) {
+  const t = String(m.comment || '') + ' ' + String(m.label || ''), b = t.match(/Bordereau (\S+)/), d = t.match(/\b(DEV-\d{4}-\d+)\b/);
+  return b ? b[1] : d ? d[1] : '';
+}
+/** Lignes du journal (valeurs) : files = {move_id: url, 'dep:<bordereau>': url}, plates = {clé véhicule: plaque} */
+function cshJournalRows_(moves, who, files, plates) {
+  const ord = Object.values(CSH_CAISSE_TXT_), sol = {};
+  // lignes à 0 MAD sans espèces déclarées ni promotion (chauffeur du shift sans course Bolt, saisie « erreur contrat ») : sans effet sur la caisse, pas recopiées
+  const keep = m => +m.amount !== 0 || (m.kind === 'encaissement' && m.label !== 'Complément' && cshEncCash_(m) !== '') || +m.promo > 0;
+  return moves.filter(keep).sort((a, b) => String(a.day).localeCompare(String(b.day)) || (+a.id || 0) - (+b.id || 0)).map(m => {
+    const amt = +m.amount || 0, enc = m.kind === 'encaissement', comp = enc && m.label === 'Complément';
+    sol[m.caisse] = cshR2_((sol[m.caisse] || 0) + (m.flow === 'in' ? amt : m.flow === 'out' ? -amt : 0));
+    const decl = enc && !comp ? cshEncCash_(m) : '', net = m.given != null ? +m.given - (+m.change || 0) : amt;
+    const ref = cshRef_(m), link = files[m.id] || (ref && files['dep:' + ref]) || '';
+    const st = m.caisse === 'depenses' ? (m.justif || '') : m.caisse === 'rh' ? (m.kind === 'avance' ? (m.signed ? 'Avance signée' : 'Avance non signée') : '') : m.caisse === 'bonus' ? (m.status || '') : '';
+    const cat = m.kind === 'depense' ? (m.label || 'Autre') : m.kind === 'bonus' || m.kind === 'autre' ? (m.label || '') : comp ? 'Complément' : '';
+    return [cshTxt_('LUDY-' + m.id), cshSerial_(m.day), String(m.day || '').slice(0, 7), cshTxt_(m.shift), CSH_CAISSE_TXT_[m.caisse] || cshTxt_(m.caisse),
+      comp ? 'Complément du shift' : CSH_OP_TXT_[m.kind] || cshTxt_(m.kind), cshTxt_(cat), cshTxt_(who(m)), cshTxt_(m.contract_num), cshTxt_(plates[m.vehicle_key] || m.vehicle_key),
+      m.flow === 'in' ? amt : '', m.flow === 'out' ? amt : '', m.flow === 'virement' ? amt : '', sol[m.caisse],
+      decl, enc && +m.promo > 0 ? +m.promo : '', decl === '' ? '' : cshR2_(decl - net), cshTxt_(st), link, cshTxt_(ref), cshTxt_(m.source), cshTxt_(m.manager_name),
+      cshTxt_(m.comment), m.created_at ? fmtMa_(m.created_at, 'dd/MM/yyyy HH:mm') : ''];
+  }).map((r, i) => [r, i]).sort((a, b) => a[0][1] - b[0][1] || ord.indexOf(a[0][4]) - ord.indexOf(b[0][4]) || a[1] - b[1]).map(x => x[0]);   // par jour puis par caisse (ordre des saisies gardé)
+}
+/** Synthèse : formules SUMIFS / COUNTIFS sur le journal (syntaxe anglaise, convertie au séparateur du classeur par cshWrite_) */
+function cshSynthRows_(jrn) {
+  const J = c => '\'' + CSH_JRN_ + '\'!$' + c + ':$' + c, q = s => '"' + String(s).replace(/"/g, '""') + '"';
+  // mois = dates du journal (colonne B) du 1er au dernier jour : un critère texte « 2026-11 » serait lu comme une date par Google
+  const M = mo => { const [y, m] = mo.split('-').map(Number); return J('B') + ',">="&DATE(' + y + ',' + m + ',1),' + J('B') + ',"<"&DATE(' + y + ',' + (m + 1) + ',1)'; };
+  const months = [...new Set(jrn.map(r => r[2]).filter(Boolean))].sort(), caisses = Object.values(CSH_CAISSE_TXT_).filter(c => jrn.some(r => r[4] === c));
+  const cats = [...new Set(jrn.filter(r => r[5] === 'Dépense').map(r => r[6] || 'Autre'))].sort();
+  const rows = [], blank = () => rows.push(['', '', '', '', '', '', '']);
+  rows.push(['SYNTHÈSE COMPTABLE DE LA CAISSE (calculée sur l\'onglet « ' + CSH_JRN_ + ' »)', '', '', '', '', '', '']); blank();
+  rows.push(['1. Mouvements par mois et par caisse', '', '', '', '', '', '']);
+  rows.push(['Mois', 'Caisse', 'Entrées (MAD)', 'Sorties (MAD)', 'dont dépôts en banque (MAD)', 'Hors caisse (MAD)', 'Variation de la caisse (MAD)']);
+  months.forEach(mo => caisses.forEach(c => {
+    if (!jrn.some(r => r[2] === mo && r[4] === c)) return;
+    const n = rows.length + 1, k = M(mo) + ',' + J('E') + ',' + q(c);
+    rows.push([cshTxt_(mo), c, '=SUMIFS(' + J('K') + ',' + k + ')', '=SUMIFS(' + J('L') + ',' + k + ')', '=SUMIFS(' + J('L') + ',' + k + ',' + J('F') + ',"Dépôt en banque")',
+      '=SUMIFS(' + J('M') + ',' + k + ')', '=C' + n + '-D' + n]);
+  }));
+  blank(); rows.push(['2. Dépenses par mois et par catégorie (caisse Dépenses, hors recharges)', '', '', '', '', '', '']);
+  rows.push(['Mois', 'Catégorie', 'Montant (MAD)', 'Nombre', 'Justificatif OK', 'Sans justificatif OK (KO, en attente, vide)', 'Montant sans justificatif OK (MAD)']);
+  months.forEach(mo => cats.forEach(c => {
+    if (!jrn.some(r => r[2] === mo && r[5] === 'Dépense' && (r[6] || 'Autre') === c)) return;
+    const n = rows.length + 1, k = M(mo) + ',' + J('F') + ',"Dépense",' + J('G') + ',' + q(c);
+    rows.push([cshTxt_(mo), c, '=SUMIFS(' + J('L') + ',' + k + ')+SUMIFS(' + J('M') + ',' + k + ')', '=COUNTIFS(' + k + ')', '=COUNTIFS(' + k + ',' + J('R') + ',"OK")',
+      '=D' + n + '-E' + n + '-COUNTIFS(' + k + ',' + J('R') + ',"N.A")',
+      '=C' + n + '-SUMIFS(' + J('L') + ',' + k + ',' + J('R') + ',"OK")-SUMIFS(' + J('M') + ',' + k + ',' + J('R') + ',"OK")-SUMIFS(' + J('L') + ',' + k + ',' + J('R') + ',"N.A")-SUMIFS(' + J('M') + ',' + k + ',' + J('R') + ',"N.A")']);
+  }));
+  blank(); rows.push(['3. Soldes des caisses (toutes opérations du journal)', '', '', '', '', '', '']);
+  rows.push(['Caisse', '', 'Entrées (MAD)', 'Sorties (MAD)', 'dont dépôts en banque (MAD)', 'Hors caisse (MAD)', 'Solde (MAD)']);
+  const s0 = rows.length + 1;
+  caisses.forEach(c => {
+    const n = rows.length + 1, k = J('E') + ',' + q(c);
+    rows.push([c, '', '=SUMIFS(' + J('K') + ',' + k + ')', '=SUMIFS(' + J('L') + ',' + k + ')', '=SUMIFS(' + J('L') + ',' + k + ',' + J('F') + ',"Dépôt en banque")', '=SUMIFS(' + J('M') + ',' + k + ')', '=C' + n + '-D' + n]);
+  });
+  const s1 = rows.length;
+  rows.push(['Total', '', '=SUM(C' + s0 + ':C' + s1 + ')', '=SUM(D' + s0 + ':D' + s1 + ')', '=SUM(E' + s0 + ':E' + s1 + ')', '=SUM(F' + s0 + ':F' + s1 + ')', '=SUM(G' + s0 + ':G' + s1 + ')']);
+  blank(); rows.push(['4. Contrôles', '', '', '', '', '', '']);
+  rows.push(['Opérations dans le journal', '', '=COUNTA(' + J('A') + ')-1', '', '', '', '']);
+  rows.push(['Dépenses sans justificatif OK (KO, en attente, vide)', '', '=COUNTIFS(' + J('F') + ',"Dépense",' + J('R') + ',"<>OK",' + J('R') + ',"<>N.A")', '', '', '', '']);
+  rows.push(['Encaissements dont les espèces déclarées par la plateforme ne sont pas connues', '', '=COUNTIFS(' + J('F') + ',"Encaissement du shift",' + J('O') + ',"")', '', '', '', '']);
+  rows.push(['Manquants déclarés au shift (MAD)', '', '=SUMIFS(' + J('Q') + ',' + J('Q') + ',">0")', '', '', '', '']);
+  return rows;
+}
+function cshJournalStep_(ss, T, P, moves, who, files, plates, props, daily, out) {
+  const jrn = cshJournalRows_(moves, who, files, plates), syn = cshSynthRows_(jrn);
+  [[CSH_JRN_, CSH_JRN_H_, 'jrn', jrn, [2], [1, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21, 22, 23, 24]], [CSH_SYN_, null, 'syn', syn, [], [1]]].forEach(([tab, head, k, rows, dates, txt]) => {
+    const st = cshProp_(props, T.sheet, k, P), prev = (st.v || '|0').split('|'), h = cshHashStr_(CSH_FMT_ + JSON.stringify(rows));
+    if (h === prev[0] && !daily && st.v !== null && ss.getSheetByName(tab)) return;
+    let sh;
+    if (head) sh = cshBoltTab_(ss, tab, head);
+    else { sh = ss.getSheetByName(tab); if (!sh) sh = ss.insertSheet(tab); }
+    cshWrite_(sh, head ? 2 : 1, rows, head ? head.length : 7, +prev[1] || 0, txt, dates);
+    props.setProperty(st.key, h + '|' + rows.length);
+    if (h !== prev[0] && tab === CSH_JRN_) out.push('journal comptable ' + rows.length);
+  });
 }

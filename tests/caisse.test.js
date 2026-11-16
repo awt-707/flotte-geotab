@@ -353,7 +353,8 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
     insert into uber_payments (tx, at, driver_uuid, driver_name, first_name, last_name, raw, cash, revenue) values ('${pay.tx}', '${pay.at}', '${pay.driver_uuid}', 'Test Alpha', 'Test', 'Alpha', '${JSON.stringify(pay.raw).replace(/'/g, "''")}', 100, 64.5);
     insert into cash_moves (caisse, kind, flow, amount, day, shift, driver_code, uber_cash, given, change, source, manager_name, comment) values
       ('uber', 'encaissement', 'in', 723, '2026-10-20', 'Jour', 'C1', 913, 800, 77, 'Chauffeur', 'Gest Un', '+ à contrôler'),
-      ('uber', 'depot', 'out', 5000, '2026-10-21', null, null, null, null, null, 'Banque', 'Gest Un', null);
+      ('uber', 'depot', 'out', 5000, '2026-10-21', null, null, null, null, null, 'Banque', 'Gest Un', null),
+      ('uber', 'encaissement', 'in', 0, '2026-10-21', 'Nuit', 'C1', null, 0, 0, 'Chauffeur', 'Gest Un', 'erreur contrat');
     insert into cash_moves (caisse, kind, flow, amount, day, shift, driver_name, label, ride_type, justif, source) values
       ('depenses', 'depense', 'out', 50, '2026-10-20', 'Nuit', 'Essai Beta', 'Péage', 'Course Uber', 'En attente', 'Chauffeur / Uber');
     insert into cash_moves (caisse, kind, flow, amount, day, driver_code, course_amount, commission_pct, prime, prime_paid, label, source) values
@@ -373,7 +374,7 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
     dvAt(r, 7, { type: 'VALUE_IN_LIST', vals: [['Cash Nico', 'Banque'], true] });
   }
   assert.throws(() => B.run(`SpreadsheetApp.openById('${id}').getSheetByName('Caisse - Encaissements chauffeurs Ludy').getRange(8, 2).setValues([['Test Alpha']])`), /violates the data validation/);
-  assert.match(B.run('cashSheetStep_(Date.now())'), /Encaissements chauffeurs 2.*Dépenses chauffeurs 1.*1 transactions Uber/);
+  assert.match(B.run('cashSheetStep_(Date.now())'), /Encaissements chauffeurs 3.*Dépenses chauffeurs 1.*1 transactions Uber/);
   // règles gardées (même liste), en avertissement ; liste des gestionnaires rattachée à l'onglet « … Ludy »
   assert.ok([4, 5, 7].every(c => encT.dv['8,' + c] && encT.dv['8,' + c].getAllowInvalid()));
   assert.ok(!encT.dv['8,2'] && !encT.dv['9,2']);   // liste illisible : retirée
@@ -386,19 +387,38 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
   assert.strictEqual(depT.data[4][2], 'Essai Beta'); assert.ok(!depT.dv['5,3']);
   const enc = tab('Caisse - Encaissements chauffeurs Ludy').data;
   assert.deepStrictEqual(enc[7].slice(0, 13), [serial('2026-10-20'), 'Test Alpha',
-    '=IF(B8="","",XLOOKUP(B8,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G))', 'Gest Un', 'Chauffeur', 'Entrée de cash', 'Chauffeur', 913, 800, 77, '=I8-J8', '=H8-K8', '\'+ à contrôler']);
+    '=IF(B8="","",IFERROR(XLOOKUP(B8,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G),""))', 'Gest Un', 'Chauffeur', 'Entrée de cash', 'Chauffeur', 913, 800, 77, '=I8-J8', '=IF(H8="","",H8-K8)', '\'+ à contrôler']);
   // dates au format date (le modèle n'en avait pas sur toutes les lignes : « 46337 »), y compris la date de course
   assert.strictEqual(tab('Caisse - Encaissements chauffeurs Ludy').fmt['8,1'], 'dd/mm/yyyy');
   assert.strictEqual(tab('Caisse - Courses indep Ludy').fmt['8,9'], 'dd/mm/yyyy');
   assert.match(enc[7][13], /^=SUMIFS\('Export Uber - Opérations de paiement Ludy'!\$C\$6:\$C,.*\$B8,.*\$A8\)$/);
-  assert.deepStrictEqual(enc[8].slice(4, 11), ['Dépôt en banque', 'Sortie de cash', 'Banque', '', 5000, '', '=I9-J9']);
-  assert.deepStrictEqual(tab('Caisse - Dépenses chauffeurs Ludy').data[4], [serial('2026-10-20'), 'Shift 2', 'Essai Beta', '=IF(C5="","",XLOOKUP(C5,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G))',
+  assert.deepStrictEqual(enc[8].slice(4, 12), ['Dépôt en banque', 'Sortie de cash', 'Banque', '', 5000, '', '=I9-J9', ''], 'dépôt : pas de manquant');
+  assert.deepStrictEqual(enc[9].slice(7, 12), ['', 0, 0, '=I10-J10', '=IF(H10="","",H10-K10)'], 'encaissement sans espèces Uber connues : manquant vide');
+  assert.deepStrictEqual(tab('Caisse - Dépenses chauffeurs Ludy').data[4], [serial('2026-10-20'), 'Shift 2', 'Essai Beta', '=IF(C5="","",IFERROR(XLOOKUP(C5,\'Export Uber - Driver Status Ludy\'!$A:$A,\'Export Uber - Driver Status Ludy\'!$G:$G),""))',
     '', 50, 'Course Uber', 'Péage', 'Sortie de cash', 'Chauffeur / Uber', '', '']);
   assert.deepStrictEqual(tab('Caisse - Courses indep Ludy').data[7].slice(0, 17), [serial('2026-10-22'), '', 'Entrée de cash', 720, 'Encaissement chauffeur', 'Casablanca', 'Rabat', 'Test Alpha', serial('2026-10-22'), 800, 0.1, 80, 'Oui', '',
     '=IF($E8="Encaissement chauffeur",L8,0)', 80, '=IF($E8="Encaissement chauffeur",O8-P8,0)'], 'prime et montant déjà payé enregistrés dans Ludy');
   assert.deepStrictEqual(tab('Caisse - Avance RH Ludy').data[4].slice(4, 10), [300, 'Sortie de cash', 'Caisse RH', 'Avance sur Salaire', '', 'OK']);
   assert.deepStrictEqual(tab('Caisse - Bonus performance Ludy').data[4].slice(4, 9), [150, 'Virement', 'Challenge Shift', 'A payer', 'Caisse']);
   assert.deepStrictEqual(tab('Export Uber - Driver Status Ludy').data[1], ['Test Alpha', 'ACTIVE', '', '+212600000001', '', '', 'aaaaaaaa-1111-2222-3333-444444444444', '']);
+  // journal comptable (16/11/2026) : toutes les caisses, par jour puis par caisse, entrée / sortie / hors caisse, solde de chaque caisse
+  const jr = tab('Journal comptable Ludy').data;
+  assert.strictEqual(jr[0][0], 'N° pièce'); assert.strictEqual(jr[0].length, 24);
+  const j = jr.slice(1).filter(r => r[0]).map(r => [r[1], r[2], r[4], r[5], r[6], r[7], r[10], r[11], r[12], r[13], r[14], r[16], r[17]]);
+  assert.deepStrictEqual(j, [
+    [serial('2026-10-19'), '2026-10', 'Avances RH', 'Avance sur salaire', '', 'Test Alpha', '', 300, '', -300, '', '', 'Avance signée'],
+    [serial('2026-10-20'), '2026-10', 'Encaissements Uber', 'Encaissement du shift', '', 'Test Alpha', 723, '', '', 723, 913, 190, ''],
+    [serial('2026-10-20'), '2026-10', 'Dépenses chauffeurs', 'Dépense', 'Péage', 'Essai Beta', '', 50, '', -50, '', '', 'En attente'],
+    [serial('2026-10-20'), '2026-10', 'Bonus performance', 'Bonus', 'Challenge Shift', 'Test Alpha', '', '', 150, 0, '', '', 'A payer'],
+    [serial('2026-10-21'), '2026-10', 'Encaissements Uber', 'Dépôt en banque', '', '', '', 5000, '', -4277, '', '', ''],   // encaissement à 0 MAD du 21/10 : pas recopié
+    [serial('2026-10-22'), '2026-10', 'Courses privées', 'Course privée', '', 'Test Alpha', 720, '', '', 720, '', '', '']]);
+  assert.ok(jr.slice(1).every(r => !r[0] || /^LUDY-\d+$/.test(r[0])));
+  assert.ok(!jr.some(r => r.some(x => typeof x === 'string' && x[0] === '=')), 'journal : valeurs seulement');
+  // synthèse : formules sur le journal, mois par dates (pas de critère texte « 2026-10 »)
+  const sy = tab('Synthèse comptable Ludy').data, f1 = sy.find(r => r[0] === '2026-10' && r[1] === 'Encaissements Uber');
+  assert.strictEqual(f1[2], '=SUMIFS(\'Journal comptable Ludy\'!$K:$K,\'Journal comptable Ludy\'!$B:$B,">="&DATE(2026,10,1),\'Journal comptable Ludy\'!$B:$B,"<"&DATE(2026,11,1),\'Journal comptable Ludy\'!$E:$E,"Encaissements Uber")');
+  assert.ok(sy.find(r => r[0] === '2026-10' && r[1] === 'Péage'), 'dépenses par catégorie');
+  assert.ok(sy.find(r => r[0] === 'Total' && /^=SUM\(G\d+:G\d+\)$/.test(r[6])), 'total des soldes');
   const p = tab(PAY).data[5];
   assert.deepStrictEqual([p[0].slice(0, 8), p[1], p[2], p[3], p[5], p[6], p[11], p[12], p[13], p[14], p[15], p[20], p[35], p[36]],
     ['=IF(L6="', '=IF(F6="","",F6&" "&G6)', '=-O6', 'tx-0001-aaaa-bbbb-cccc', 'Test', 'Alpha', '2026-10-20 09:15:00.232 +0100 +01', -35.5, 64.5, -100, 60, 0, '', '=COUNTIFS($D:$D,D6)']);
@@ -408,8 +428,8 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
   env.psql("update cash_moves set cancelled_at = now() where kind = 'depot'");
   const p2 = Object.assign({}, pay, { tx: 'tx-0009' });
   env.psql(`insert into uber_payments (tx, at, first_name, last_name, raw) values ('tx-0009', '${pay.at}', 'Test', 'Alpha', '${JSON.stringify(Object.assign({}, p2.raw, { 'UUID de la transaction': 'tx-0009' })).replace(/'/g, "''")}')`);
-  assert.match(B.run('cashSheetStep_(Date.now())'), /Encaissements chauffeurs 1.*1 transactions Uber/);
-  assert.deepStrictEqual(enc[8].filter(x => x !== ''), []);
+  assert.match(B.run('cashSheetStep_(Date.now())'), /Encaissements chauffeurs 2.*1 transactions Uber/);
+  assert.deepStrictEqual(enc[9].filter(x => x !== ''), []);
   assert.strictEqual(tab(PAY).data[6][3], 'tx-0009');
   assert.strictEqual(tab(PAY).data[6][0].slice(0, 8), '=IF(L7="');
   // classeur en français (comme le vrai, fr_FR) : formules écrites avec « ; » (virgules = #ERROR!, constaté le 23/10)
@@ -419,8 +439,8 @@ test('classeur de sauvegarde : caisse recopiée dans les onglets « … Ludy » 
   B.run('cashSheetStep_(Date.now())');
   assert.strictEqual(tab(PAY).data.filter(r => r[3]).length, payBefore, 'transactions réécrites, pas ajoutées');
   const fr = tab('Caisse - Encaissements chauffeurs Ludy').data;
-  assert.strictEqual(fr[7][2], '=IF(B8="";"";XLOOKUP(B8;\'Export Uber - Driver Status Ludy\'!$A:$A;\'Export Uber - Driver Status Ludy\'!$G:$G))');
-  assert.strictEqual(fr[7][14], '=IF(G8="Chauffeur";IF(N8-K8=0;"OK";"KO");"N.A")');
+  assert.strictEqual(fr[7][2], '=IF(B8="";"";IFERROR(XLOOKUP(B8;\'Export Uber - Driver Status Ludy\'!$A:$A;\'Export Uber - Driver Status Ludy\'!$G:$G);""))');
+  assert.strictEqual(fr[7][14], '=IF(G8="Chauffeur";IF(COUNTIFS(\'Export Uber - Opérations de paiement Ludy\'!$B$6:$B;$B8)=0;"Export Uber absent";IF(N8-K8=0;"OK";"KO"));"N.A")');
   assert.ok(!book.sheets.some(sh => sh.data.some(r => r.includes('#ERROR!'))), 'aucune formule en erreur');
   // état du dernier passage publié pour le site (param cashSheetStatus), même quand le passage du collecteur est long
   B.run('cshStatus_("Classeur de la caisse : Encaissements chauffeurs 3")');
