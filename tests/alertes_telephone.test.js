@@ -105,6 +105,13 @@ test('relais ?mode=watch : véhicule en pause qui bouge noté, course arrivée n
     assert.deepStrictEqual(r.body.returns.map(x => [x.plate, x.agency, !!x.arrived_at]), [['WW968199', 'Rabat', true]]);
     assert.strictEqual(env.psql("select contract_num from return_calls where arrived_at is not null"), 'K1');
     assert.strictEqual(L.wReturned({ lat: 33.5831, lng: -7.5898 }, { lat: 33.5831, lon: -7.5898, state: 'En route', speed: 40 }, {}), null, 'passe devant l\'agence en roulant : pas arrivé');
+    // même règle que la page Retours et le collecteur (rtArrived, site/retours_calc.js) : rayon de l'agence, sinon returnRadiusM, sinon 300 m
+    const R = require('../site/retours_calc.js'), ag = { lat: 31.63, lng: -8.0 };
+    for (const [lat, state, speed, rad, P] of [[31.6302, 'Garé', 0, null, {}], [31.6302, 'En route', 40, null, {}], [31.6302, 'En route', 20, null, {}], [31.6335, 'Garé', 0, null, {}],
+      [31.6335, 'Garé', 0, 500, {}], [31.6335, 'Garé', 0, null, { returnRadiusM: '450' }], [31.70, 'Garé', 0, null, {}]]) {
+      const pos = { lat, lon: -8.0, state, speed }, radius = rad || +P.returnRadiusM || 300;
+      assert.strictEqual(L.wReturned(Object.assign({ radius_m: rad }, ag), pos, P) != null, R.rtArrived({ dist: R.rtDist({ lat: ag.lat, lon: ag.lng }, pos), p: pos }, radius), JSON.stringify([lat, state, speed, rad, P]));
+    }
     // aucune pause ni course suivie : Geotab jamais appelé
     env.psql('update driver_pauses set ended_at = now(); update mission_tracks set ended_at = now(); update return_calls set done_at = now()');
     geoCalls = 0; r = await call(sec);

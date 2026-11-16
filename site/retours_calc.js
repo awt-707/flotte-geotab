@@ -30,11 +30,19 @@ function rtParseCoords(s) {
   return null;
 }
 
+/**
+ * Véhicule arrivé à l'agence : à moins du rayon (mètres) et pas en route à 30 km/h ou plus (il passe devant l'agence sans s'arrêter).
+ * Même règle sur la page, au collecteur (returnArriveStep_) et au relais des téléphones (wReturned, live.mjs).
+ */
+function rtArrived(row, radius) {
+  const p = row.p || null;
+  return row.dist != null && row.dist <= radius && !(p && p.state === 'En route' && +p.speed >= 30);
+}
 /** État d'un retour : 'fait' (retour fait), 'arrive' (à l'agence), 'envoye' (message envoyé), 'aprevenir' */
 function rtState(row, radius) {
   const c = row.call || null;
   if (c && c.done_at) return 'fait';
-  if ((c && c.arrived_at) || (row.dist != null && row.dist <= radius)) return 'arrive';
+  if ((c && c.arrived_at) || rtArrived(row, radius)) return 'arrive';
   if (c && c.sent_at) return 'envoye';
   return 'aprevenir';
 }
@@ -89,4 +97,4 @@ function rtMsg(row, agency, slotTxt) {
     '⏰ ساعة الرجوع للوكالة: *' + slotTxt + '*' + map;
 }
 
-if (typeof module !== 'undefined') module.exports = { RT_DEF, rtP, rtDist, rtParseCoords, rtState, RT_ST_TXT, rtOrder, rtSlots, rtHM, rtMsg };
+if (typeof module !== 'undefined') module.exports = { RT_DEF, rtP, rtDist, rtParseCoords, rtArrived, rtState, RT_ST_TXT, rtOrder, rtSlots, rtHM, rtMsg };

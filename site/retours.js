@@ -89,7 +89,7 @@ async function pageRetours() {
 async function rtAuto() {
   const ag = RT.ags.find(a => String(a.id) === String(RT.ag)), radius = (ag && ag.return_radius_m) || rtP(S.P, 'returnRadiusM');
   for (const r of rtRowsNow(ag)) {
-    if (r.call && r.call.sent_at && !r.call.arrived_at && !r.call.done_at && r.dist != null && r.dist <= radius) {
+    if (r.call && r.call.sent_at && !r.call.arrived_at && !r.call.done_at && rtArrived(r, radius)) {
       try { await rtSave(r, { arrived_at: new Date().toISOString() }); } catch (e) { }
     }
   }
@@ -138,10 +138,12 @@ function rtDraw() {
     ${cards([['Véhicules sous contrat', f0(n.tot)], ['À prévenir', f0(n.tot - n.sent - n.arr - n.done), 'warn'], ['Prévenus, en route', f0(n.sent)], ['À l\'agence', f0(n.arr), 'ok'], ['Retours faits', f0(n.done)]])}
     ${canEdit ? `<div class="panel row">${next ? `<button id="rtnext">▶ Prévenir le suivant : ${esc(next.driver_name || next.plate)} (${esc(next.plate)}) · retour ${localHM(new Date(slots[next.num]))}</button>` : '<span class="small">Tous les chauffeurs joignables sont prévenus.</span>'}<span class="small">Chaque clic ouvre WhatsApp du chauffeur avec son message (français et darija) ; il reste à appuyer sur Envoyer.</span></div>` : ''}
     ${notifBtn}${rtAppHtml()}
+    <div id="rtmapslot"></div>
     ${MOBILE ? `<div id="trt">${rtCardsHtml(rows, slots, st, stBadge, act, posCell)}</div>` : table('trt', cols.map(c => [c[0], r => c[1](r), c[2], c[3]]), rows, { empty: 'Aucun véhicule sous contrat dans cette agence en ce moment.' })}`;
+  rtMapUpdate(rows, ag, slots, st, radius);
   if ($('#rtnotif')) $('#rtnotif').onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } redraw(); };
   const redraw = () => rtDraw();
-  $('#rtag').onchange = async () => { RT.ag = $('#rtag').value; rtLsSet('ag', RT.ag); $('#page').innerHTML = '<div class="empty">Chargement…</div>'; await rtLoad(); rtDraw(); };
+  $('#rtag').onchange = async () => { RT.ag = $('#rtag').value; RT.fit = false; rtLsSet('ag', RT.ag); $('#page').innerHTML = '<div class="empty">Chargement…</div>'; await rtLoad(); rtDraw(); };
   document.querySelectorAll('[data-rtmode]').forEach(b => { b.onclick = () => { rtLsSet('mode', b.dataset.rtmode); rtLsSet('order|' + RT.ag + '|' + today(), []); redraw(); }; });
   $('#rtstart').onchange = () => { rtLsSet('start|' + today(), $('#rtstart').value); redraw(); };
   $('#rtstep').onchange = () => { const v = num($('#rtstep').value, 0); rtLsSet('step', v > 0 && v <= 120 ? v : null); redraw(); };
@@ -245,4 +247,44 @@ function rtAppHtml() {
   if (old) return msg(`Pour être prévenu sur ce téléphone quand un chauffeur arrive à l'agence, même écran éteint, installez Ludy 1.4. <a href="${esc(CFG.SUPABASE_URL + '/storage/v1/object/public/app/Ludy.apk')}">Télécharger Ludy 1.4</a>`, 'warn');
   const st = typeof svWatchStatus === 'function' ? svWatchStatus() || {} : {};
   return st.on ? '' : msg('Activez les alertes sur ce téléphone (écran <a href="#/suivi">Pauses</a>) pour être prévenu de l\'arrivée des chauffeurs, même écran éteint.', 'warn');
+}
+
+// ---------- Carte (comme En direct) : agence, cercle du rayon d'arrivée, véhicules numérotés dans l'ordre des retours ----------
+// La carte est gardée d'un dessin à l'autre (la page est redessinée toutes les 5 s) : son élément est replacé dans la page.
+const RT_MK_CLS = { aprevenir: 'st-mute', envoye: 'st-warn', arrive: 'st-ok', fait: 'st-info' };
+function rtMapUpdate(rows, ag, slots, st, radius) {
+  const slot = $('#rtmapslot'); if (!slot || !window.L) return;
+  if (!RT.mapEl) {
+    RT.mapEl = document.createElement('div'); RT.mapEl.id = 'rtmap'; RT.mapEl.className = 'rtmap';
+    slot.replaceWith(RT.mapEl);
+    RT.map = L.map(RT.mapEl, { scrollWheelZoom: false, zoomControl: true }); osmLayer().addTo(RT.map);
+    RT.mk = {}; RT.fit = false;
+  } else { slot.replaceWith(RT.mapEl); setTimeout(() => RT.map && RT.map.invalidateSize(), 0); }
+  const m = RT.map, ap = rtAgPos(ag);
+  // agence et cercle du rayon d'arrivée
+  if (ap) {
+    const ll = [ap.lat, ap.lon], txt = `<span class="rtag-pin">🏢</span><span class="vmk-l">Agence ${esc((ag && ag.name) || '')}</span>`;
+    if (!RT.agMk) { RT.agMk = L.marker(ll, { icon: L.divIcon({ className: 'vmk', iconSize: [36, 36], iconAnchor: [18, 18], html: txt }), keyboard: false, zIndexOffset: -100 }).addTo(m);
+      RT.circle = L.circle(ll, { radius, className: 'rtcircle', weight: 2, fillOpacity: .08, interactive: false }).addTo(m); }
+    else { RT.agMk.setLatLng(ll); RT.agMk.setIcon(L.divIcon({ className: 'vmk', iconSize: [36, 36], iconAnchor: [18, 18], html: txt })); RT.circle.setLatLng(ll); RT.circle.setRadius(radius); }
+    RT.agMk.bindTooltip(`Agence ${esc((ag && ag.name) || '')} · arrivée à moins de ${f0(radius)} m`, { direction: 'top' });
+  } else if (RT.agMk) { RT.agMk.remove(); RT.circle.remove(); RT.agMk = null; RT.circle = null; }
+  // véhicules
+  const keep = {};
+  rows.forEach((r, i) => {
+    if (!r.p || r.p.lat == null || !isFinite(+r.p.lat)) return;
+    keep[r.key] = 1;
+    const s = st(r), ll = [+r.p.lat, +r.p.lon];
+    const html = `<span class="vmk-pin ${RT_MK_CLS[s] || 'st-mute'}${r.p.state === 'En route' ? ' moving' : ''}">${typeof VAN_SVG !== 'undefined' ? VAN_SVG : ''}</span><span class="vmk-l">#${i + 1} ${esc(r.plate || '')}${r.p.state === 'En route' ? ' · ' + f0(r.p.speed) + ' km/h' : ''}</span>`;
+    const pop = `<div class="vpop">${plate(r.plate)}<div><b>${esc(r.driver_name || '')}</b>${r.phone ? ' · ' + esc(r.phone) : ''}</div><div>${esc(RT_ST_TXT[s])}${slots[r.num] ? ' · retour à ' + localHM(new Date(slots[r.num])) : ''}</div>
+      <div class="small">${r.dist != null ? rtKm(r.dist) + ' de l\'agence (vol d\'oiseau)' : 'distance non mesurée'} · ${esc(r.p.state || '')}</div></div>`;
+    let mk = RT.mk[r.key];
+    if (!mk) { mk = RT.mk[r.key] = L.marker(ll, { icon: L.divIcon({ className: 'vmk', iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20], html }), keyboard: false }).bindPopup(pop).addTo(m); mk._h = html; }
+    else { mk.setLatLng(ll); if (mk._h !== html) { mk.setIcon(L.divIcon({ className: 'vmk', iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20], html })); mk._h = html; } mk.setPopupContent(pop); }
+  });
+  Object.keys(RT.mk).forEach(k => { if (!keep[k]) { RT.mk[k].remove(); delete RT.mk[k]; } });
+  if (!RT.fit) {
+    const pts = Object.values(RT.mk).map(x => x.getLatLng()); if (ap) pts.push(L.latLng(ap.lat, ap.lon));
+    if (pts.length) { m.fitBounds(L.latLngBounds(pts).pad(0.2), { maxZoom: 14 }); RT.fit = true; } else m.setView([31.63, -8.0], 6);
+  }
 }

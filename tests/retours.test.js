@@ -80,6 +80,12 @@ test('site : véhicules classés du plus proche au plus loin, prévenir le suiva
     const order = async () => (await page.$$eval('#trt tbody tr', trs => trs.map(t => t.children[1].innerText.split('\n')[0])));
     assert.deepStrictEqual(await order(), ['WW968202', 'WW968203', 'WW968201'], 'du plus proche au plus loin');
     assert.match(await page.innerText('#trt'), /2,2 km[\s\S]*5,6 km[\s\S]*11,1 km/);
+    // carte comme En direct : agence, cercle du rayon d'arrivée, véhicules numérotés dans l'ordre ; gardée d'un dessin à l'autre
+    assert.strictEqual(await page.locator('#rtmap .vmk-pin').count(), 3);
+    assert.strictEqual(await page.locator('#rtmap path.rtcircle').count(), 1);
+    assert.match(await page.innerText('#rtmap'), /Agence Marrakech[\s\S]*#1 WW968202/);
+    await page.evaluate(() => { window.__mapEl = document.getElementById('rtmap'); rtDraw(); });
+    assert.ok(await page.evaluate(() => document.getElementById('rtmap') === window.__mapEl), 'carte gardée');
     await page.click('[data-rtmode="depart"]');
     assert.deepStrictEqual(await order(), ['WW968201', 'WW968203', 'WW968202'], 'départ du contrat le plus ancien d\'abord');
     await page.click('[data-rtmode="dist"]');
