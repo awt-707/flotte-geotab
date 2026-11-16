@@ -84,7 +84,11 @@ CREATE TABLE public.agencies (
     city text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     cash_sheet_id text,
-    rh_drive jsonb DEFAULT '{}'::jsonb NOT NULL
+    rh_drive jsonb DEFAULT '{}'::jsonb NOT NULL,
+    lat double precision,
+    lng double precision,
+    address text,
+    return_radius_m integer
 );
 
 ALTER TABLE public.agencies ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
