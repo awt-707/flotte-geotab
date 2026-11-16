@@ -76,6 +76,24 @@ test('liste des boîtiers libres : plaques marocaines d\'abord (la base Geotab c
     { device: { id: 'bP2' }, dateTime: '2026-11-10T11:59:00Z', latitude: 48.85, longitude: 2.35 }] : []; }; geoPublishFree_(__devs2, ['bL1'])`);
   const fl = JSON.parse(env.psql("select value from params where key = 'geotabFleet'")).list;
   assert.deepStrictEqual(fl.map(d => [d.id, d.s, d.lie, d.maroc]), [['bL1', 'G9AAA0000001', true, null], ['bM3', 'G9AAA0000004', false, null], ['bP1', 'G9AAA0000002', false, true]]);
+  // Google Sheet d'Ahmed (param geotabSheetId) : onglet « Boîtiers Geotab (Ludy) » créé, autres onglets jamais touchés,
+  // une ligne par boîtier (plaque + numéro de boîtier + date d'activation), lignes gardées, nouveaux boîtiers ajoutés à la suite
+  const sid = B.run(`(function () { const b = SpreadsheetApp.create('Géoloc'); b.insertSheet('Recensement Géoloc').data = [['Immat DEF']]; return b.getId(); })()`);
+  env.psql(`insert into params (key, value) values ('geotabSheetId', '${sid}') on conflict (key) do update set value = excluded.value;
+    insert into vehicles (key, plate, brand, model, vin, other_plates, geotab_id) values ('861201T', '86120-T-1', 'HYUNDAI', 'STARIA', 'KMHYC811BTU266976', 'WW968197', 'bL1')
+    on conflict (key) do update set geotab_id = excluded.geotab_id, other_plates = excluded.other_plates, brand = excluded.brand, vin = excluded.vin;`);
+  B.ctx.__devs2[0].activeFrom = '2026-08-20T09:00:00Z';
+  B.run(`geoPublishFree_(__devs2, ['bL1'])`);
+  const gs = B.books[sid].getSheetByName('Boîtiers Geotab (Ludy)').data, H = gs[0], col = n => H.indexOf(n);
+  assert.strictEqual(JSON.stringify(B.books[sid].getSheetByName('Recensement Géoloc').data), '[["Immat DEF"]]', 'onglet existant intact');
+  assert.strictEqual(gs.filter(r => r[col('Identifiant Geotab')]).length - 1, 3);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([gs[1][col('Immatriculation')], gs[1][col('Immatriculation provisoire')], gs[1][col('N° de boîtier Geotab')], gs[1][col("Date d'activation Geotab")], gs[1][col('Relié à Ludy')]])),
+    ['86120-T-1', 'WW968197', 'G9AAA0000001', '20/08/2026 10:00', 'Oui']);
+  // nouveau boîtier activé au Maroc : ajouté à la suite ; boîtier retiré de Geotab : gardé, statut changé
+  B.ctx.__devs2 = B.ctx.__devs2.filter(d => d.id !== 'bM3').concat([{ id: 'bN1', name: '968215 WW', serialNumber: 'G9AAA0000009', activeFrom: '2026-11-10T08:00:00Z' }]);
+  B.run(`geoPublishFree_(__devs2, ['bL1'])`);
+  const gs2 = B.books[sid].getSheetByName('Boîtiers Geotab (Ludy)').data.filter(r => r[col('Identifiant Geotab')]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(gs2.slice(1).map(r => [r[col('Identifiant Geotab')], r[col('Statut')]]))), [['bL1', 'Actif'], ['bM3', 'Plus actif dans Geotab'], ['bP1', 'Actif'], ['bN1', 'Actif']]);
 });
 
 test('plaques lues dans un texte libre (nom, plaque, commentaire du boîtier)', () => {
