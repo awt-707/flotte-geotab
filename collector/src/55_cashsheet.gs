@@ -388,7 +388,9 @@ function cshRef_(m) {
 /** Lignes du journal (valeurs) : files = {move_id: url, 'dep:<bordereau>': url}, plates = {clé véhicule: plaque} */
 function cshJournalRows_(moves, who, files, plates) {
   const ord = Object.values(CSH_CAISSE_TXT_), sol = {};
-  return moves.slice().sort((a, b) => String(a.day).localeCompare(String(b.day)) || (+a.id || 0) - (+b.id || 0)).map(m => {
+  // lignes à 0 MAD sans espèces déclarées ni promotion (chauffeur du shift sans course Bolt, saisie « erreur contrat ») : sans effet sur la caisse, pas recopiées
+  const keep = m => +m.amount !== 0 || (m.kind === 'encaissement' && m.label !== 'Complément' && cshEncCash_(m) !== '') || +m.promo > 0;
+  return moves.filter(keep).sort((a, b) => String(a.day).localeCompare(String(b.day)) || (+a.id || 0) - (+b.id || 0)).map(m => {
     const amt = +m.amount || 0, enc = m.kind === 'encaissement', comp = enc && m.label === 'Complément';
     sol[m.caisse] = cshR2_((sol[m.caisse] || 0) + (m.flow === 'in' ? amt : m.flow === 'out' ? -amt : 0));
     const decl = enc && !comp ? cshEncCash_(m) : '', net = m.given != null ? +m.given - (+m.change || 0) : amt;
