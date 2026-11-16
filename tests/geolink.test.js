@@ -69,6 +69,13 @@ test('liste des boîtiers libres : plaques marocaines d\'abord (la base Geotab c
   assert.strictEqual(list.length, 300);
   assert.deepStrictEqual(list.slice(0, 2).map(d => d.id).sort(), ['bM1', 'bM2']);
   assert.ok(!('ma' in list[0]));
+  // boîtiers de la flotte (geotabFleet) : associés, ou dernière position au Maroc, ou plaque marocaine ; avec le numéro de série
+  B.ctx.__devs2 = [{ id: 'bL1', name: '86120-T-1', serialNumber: 'G9AAA0000001' }, { id: 'bP1', name: 'Essai', serialNumber: 'G9AAA0000002' },
+    { id: 'bP2', name: 'GA-399-ER', serialNumber: 'G9AAA0000003' }, { id: 'bM3', name: '968212 WW', serialNumber: 'G9AAA0000004' }];
+  B.run(`geoCall_ = function (m, p) { return p.typeName === 'DeviceStatusInfo' ? [{ device: { id: 'bP1' }, dateTime: '2026-11-10T11:59:00Z', latitude: 31.63, longitude: -8.0 },
+    { device: { id: 'bP2' }, dateTime: '2026-11-10T11:59:00Z', latitude: 48.85, longitude: 2.35 }] : []; }; geoPublishFree_(__devs2, ['bL1'])`);
+  const fl = JSON.parse(env.psql("select value from params where key = 'geotabFleet'")).list;
+  assert.deepStrictEqual(fl.map(d => [d.id, d.s, d.lie, d.maroc]), [['bL1', 'G9AAA0000001', true, null], ['bM3', 'G9AAA0000004', false, null], ['bP1', 'G9AAA0000002', false, true]]);
 });
 
 test('plaques lues dans un texte libre (nom, plaque, commentaire du boîtier)', () => {
