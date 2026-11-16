@@ -72,7 +72,8 @@ test('liste des boîtiers libres : plaques marocaines d\'abord (la base Geotab c
   // boîtiers de la flotte (geotabFleet) : associés, ou dernière position au Maroc, ou plaque marocaine ; avec le numéro de série
   B.ctx.__devs2 = [{ id: 'bL1', name: '86120-T-1', serialNumber: 'G9AAA0000001' }, { id: 'bP1', name: 'Essai', serialNumber: 'G9AAA0000002' },
     { id: 'bP2', name: 'GA-399-ER', serialNumber: 'G9AAA0000003' }, { id: 'bM3', name: '968212 WW', serialNumber: 'G9AAA0000004' }];
-  B.run(`geoCall_ = function (m, p) { return p.typeName === 'DeviceStatusInfo' ? [{ device: { id: 'bP1' }, dateTime: '2026-11-10T11:59:00Z', latitude: 31.63, longitude: -8.0 },
+  B.run(`geoCall_ = function (m, p) { if (p.typeName === 'LogRecord') return p.search.deviceSearch.id === 'bL1' ? [{ dateTime: '2026-08-21T10:30:00Z' }] : [];
+    return p.typeName === 'DeviceStatusInfo' ? [{ device: { id: 'bP1' }, dateTime: '2026-11-10T11:59:00Z', latitude: 31.63, longitude: -8.0 },
     { device: { id: 'bP2' }, dateTime: '2026-11-10T11:59:00Z', latitude: 48.85, longitude: 2.35 }] : []; }; geoPublishFree_(__devs2, ['bL1'])`);
   const fl = JSON.parse(env.psql("select value from params where key = 'geotabFleet'")).list;
   assert.deepStrictEqual(fl.map(d => [d.id, d.s, d.lie, d.maroc]), [['bL1', 'G9AAA0000001', true, null], ['bM3', 'G9AAA0000004', false, null], ['bP1', 'G9AAA0000002', false, true]]);
@@ -87,8 +88,9 @@ test('liste des boîtiers libres : plaques marocaines d\'abord (la base Geotab c
   const gs = B.books[sid].getSheetByName('Boîtiers Geotab (Ludy)').data, H = gs[0], col = n => H.indexOf(n);
   assert.strictEqual(JSON.stringify(B.books[sid].getSheetByName('Recensement Géoloc').data), '[["Immat DEF"]]', 'onglet existant intact');
   assert.strictEqual(gs.filter(r => r[col('Identifiant Geotab')]).length - 1, 3);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify([gs[1][col('Immatriculation')], gs[1][col('Immatriculation provisoire')], gs[1][col('N° de boîtier Geotab')], gs[1][col("Date d'activation Geotab")], gs[1][col('Relié à Ludy')]])),
-    ['86120-T-1', 'WW968197', 'G9AAA0000001', '20/08/2026 10:00', 'Oui']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([gs[1][col('Immatriculation')], gs[1][col('Immatriculation provisoire')], gs[1][col('N° de boîtier Geotab')], gs[1][col("Date d'installation (1er bornage GPS)")], gs[1][col("Date d'activation Geotab")], gs[1][col('Relié à Ludy')]])),
+    ['86120-T-1', 'WW968197', 'G9AAA0000001', '21/08/2026 11:30', '20/08/2026 10:00', 'Oui']);
+  assert.strictEqual(JSON.parse(env.psql("select value from params where key = 'geotabFleet'")).list[0].b, '2026-08-21T10:30:00Z');
   // nouveau boîtier activé au Maroc : ajouté à la suite ; boîtier retiré de Geotab : gardé, statut changé
   B.ctx.__devs2 = B.ctx.__devs2.filter(d => d.id !== 'bM3').concat([{ id: 'bN1', name: '968215 WW', serialNumber: 'G9AAA0000009', activeFrom: '2026-11-10T08:00:00Z' }]);
   B.run(`geoPublishFree_(__devs2, ['bL1'])`);
@@ -127,6 +129,30 @@ test('page Véhicules : véhicule sans boîtier signalé, boîtier choisi par l\
     assert.strictEqual(env.psql("select value from params where key = 'geotabManual'"), '{"1234540A":"bX1"}');
     assert.match(env.psql('select kind from jobs'), /import_vehicles/);
     assert.match(await page.innerText('#tvh'), /boîtier choisi, associé au prochain passage/);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
+});
+
+test('page Boîtiers GPS : plaque, numéro de boîtier, date d\'installation (1er bornage), export Excel, lien vers le Google Sheet', async () => {
+  const { startSite, openBrowser, login } = require('./lib/browser');
+  env.resetDb();
+  const fleet = { at: '2026-11-16T15:00:00Z', list: [
+    { id: 'b1861', s: 'G9AAA0000011', n: '86431-T-1', p: '', v: 'KMHL000000000001', t: '2026-11-16T14:58:00Z', on: true, a: '2026-08-20T09:00:00Z', b: '2026-08-21T10:30:00Z', maroc: true, lie: true },
+    { id: 'bZ9', s: 'G9AAA0000099', n: '968215 WW', p: '', v: '', t: null, on: null, a: '2026-11-10T08:00:00Z', b: null, maroc: null, lie: false }] };
+  env.psql(`insert into vehicles (key, plate, brand, model, active, geotab_id, geotab_name, other_plates) values ('861311T', '86431-T-1', 'HYUNDAI', 'SONATA', 'OUI', 'b1861', '86431-T-1', 'WW968194');
+    insert into params (key, value) values ('geotabFleet', '${JSON.stringify(fleet)}'), ('geotabSheetId', 'SHEET-TEST') on conflict (key) do update set value = excluded.value`);
+  const srv = await startSite();
+  const { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/boitiers');
+    await page.waitForSelector('#tbx');
+    const t = await page.innerText('#tbx');
+    assert.match(t, /86431-T-1[\s\S]*WW968194[\s\S]*G9AAA0000011[\s\S]*21\/08\/2026 11:30/);
+    assert.match(t, /968215 WW[\s\S]*G9AAA0000099[\s\S]*non mesuré/);
+    assert.strictEqual(await page.getAttribute('a[href*="docs.google.com/spreadsheets/d/SHEET-TEST"]', 'target'), '_blank');
+    assert.match(await page.innerText('#page'), /Teksat n'est pas encore relié/);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#bxx')]);
+    assert.match(dl.suggestedFilename(), /^boitiers_gps_\d{4}-\d\d-\d\d\.xlsx$/);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
