@@ -178,7 +178,7 @@ test('page Ressources humaines : fiche, congé posé dans le planning, présence
     const top = await page.$$eval('.side nav .navmain > a:not(.navcfg):not(.navallhd), .side nav .navmain > .navfold > a.navgrp', a => a.map(x => x.textContent.trim()));
     assert.deepStrictEqual(top, [...top].sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' })));
     assert.ok(top.includes('Flotte') && !top.includes('Plaques') && !top.includes('Véhicules'), top.join(', '));
-    assert.deepStrictEqual(await page.$$eval('.side nav .navsubs[data-grp="flotte"] a', a => a.map(x => x.textContent)), ['Plaques', 'Véhicules']);
+    assert.deepStrictEqual(await page.$$eval('.side nav .navsubs[data-grp="flotte"] a', a => a.map(x => x.textContent)), ['Boîtiers GPS', 'Plaques', 'Véhicules']);
     // présences du mois : 2 contrats = 2 jours, 24 h 30
     await page.goto('http://localhost:8080/#/rh?t=presences');
     await page.waitForSelector('#rhpres');
