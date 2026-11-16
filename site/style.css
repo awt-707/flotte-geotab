@@ -192,6 +192,9 @@ body.cachestale #page::before { content: 'Actualisation…'; position: fixed; to
 .toast { position: relative; background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--info); border-radius: var(--r); padding: 10px 34px 10px 12px;
   box-shadow: 0 6px 24px rgba(0,0,0,.18); font-size: 14px; display: flex; flex-direction: column; gap: 3px; }
 .toast.crit { border-left-color: var(--crit); } .toast.high { border-left-color: var(--high); } .toast.warn { border-left-color: var(--warn); }
+.toast.ok { border-left-color: var(--ok); }
+/* Retours véhicules (mode téléphone) */
+.rtcard .mcard-h { display: flex; justify-content: space-between; gap: 8px; } .rtcard.arrive { border-color: var(--ok); background: var(--ok-bg); } .rtcard.fait { opacity: .6; } .rtcard .row { flex-wrap: wrap; gap: 6px; }
 .toast .x { position: absolute; top: 4px; right: 4px; background: transparent; color: var(--mute); padding: 2px 8px; font-size: 18px; line-height: 1; }
 .rptview { overflow-x: auto; }
 .rpt .rhead { width: 100%; border-collapse: collapse; border-bottom: 2px solid var(--acc); margin-bottom: 12px; } .rpt .rhead td { vertical-align: bottom; padding: 0 0 8px; }

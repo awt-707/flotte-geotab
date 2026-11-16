@@ -47,7 +47,7 @@ begin
   return jsonb_build_object(
     'now', now(),
     'user_id', d.user_id,
-    'params', coalesce((select jsonb_object_agg(key, value) from params where key in ('pauseShiftMin', 'pauseRemindMin', 'pauseMoveM', 'trackArriveM')), '{}'),
+    'params', coalesce((select jsonb_object_agg(key, value) from params where key in ('pauseShiftMin', 'pauseRemindMin', 'pauseMoveM', 'trackArriveM', 'returnRadiusM')), '{}'),
     'pauses', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'vehicle_key', p.vehicle_key, 'plate', p.plate, 'driver_name', p.driver_name,
         'driver_phone', p.driver_phone, 'started_at', p.started_at, 'planned_min', p.planned_min, 'start_lat', p.start_lat, 'start_lon', p.start_lon,
         'moved_at', p.moved_at, 'moved_m', p.moved_m, 'moved_note', p.moved_note) order by p.started_at)
@@ -57,7 +57,13 @@ begin
         'driver_name', t.driver_name, 'started_at', t.started_at, 'dest_label', t.dest_label, 'dest_lat', t.dest_lat, 'dest_lon', t.dest_lon,
         'arrived_at', t.arrived_at) order by t.started_at)
       from mission_tracks t where t.ended_at is null and t.started_at > now() - interval '48 hours'
-        and (v_admin or t.vehicle_key = any(v_keys) or t.agency_id = any(v_ag))), '[]'));
+        and (v_admin or t.vehicle_key = any(v_keys) or t.agency_id = any(v_ag))), '[]'),
+    'returns', coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'contract_num', r.contract_num, 'vehicle_key', r.vehicle_key,
+        'plate', coalesce(v.plate, r.vehicle_key), 'driver_name', r.driver_name, 'slot_at', r.slot_at, 'sent_at', r.sent_at, 'arrived_at', r.arrived_at,
+        'agency', a.name, 'lat', a.lat, 'lng', a.lng, 'radius_m', a.return_radius_m) order by r.slot_at nulls last, r.sent_at)
+      from return_calls r left join vehicles v on v.key = r.vehicle_key left join agencies a on a.id = r.agency_id
+      where r.sent_at is not null and r.done_at is null and r.cancelled_at is null and r.created_at > now() - interval '24 hours'
+        and (v_admin or r.vehicle_key = any(v_keys))), '[]'));
 end $$;
 
 CREATE FUNCTION public.watch_register(p_label text) RETURNS text

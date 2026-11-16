@@ -97,8 +97,16 @@ test('relais ?mode=watch : véhicule en pause qui bouge noté, course arrivée n
     r = await call(sec);
     assert.ok(r.body.tracks[0].arrived_at, 'course arrivée');
     assert.strictEqual(env.psql('select count(*) from mission_tracks where arrived_at is not null'), '1');
+    // retour de véhicule (16/11/2026) : chauffeur prévenu, arrivée à l'agence notée par le relais ; retour d'une autre agence jamais renvoyé
+    env.psql(`update agencies set lat = 33.5831, lng = -7.5898 where id = 1; update agencies set lat = 31.63, lng = -8.0 where id = 2;
+      insert into return_calls (contract_num, vehicle_key, driver_name, sent_at, slot_at) values ('K1', '968199WW', 'ALPHA Test', now(), now() + interval '10 minutes'),
+        ('K2', '968200WW', 'BRAVO Test', now(), now())`);
+    r = await call(sec);
+    assert.deepStrictEqual(r.body.returns.map(x => [x.plate, x.agency, !!x.arrived_at]), [['WW968199', 'Rabat', true]]);
+    assert.strictEqual(env.psql("select contract_num from return_calls where arrived_at is not null"), 'K1');
+    assert.strictEqual(L.wReturned({ lat: 33.5831, lng: -7.5898 }, { lat: 33.5831, lon: -7.5898, state: 'En route', speed: 40 }, {}), null, 'passe devant l\'agence en roulant : pas arrivé');
     // aucune pause ni course suivie : Geotab jamais appelé
-    env.psql('update driver_pauses set ended_at = now(); update mission_tracks set ended_at = now()');
+    env.psql('update driver_pauses set ended_at = now(); update mission_tracks set ended_at = now(); update return_calls set done_at = now()');
     geoCalls = 0; r = await call(sec);
     assert.deepStrictEqual([r.status, r.body.geo, geoCalls], [200, false, 0]);
   } finally { env.resetDb(); }
@@ -114,8 +122,9 @@ test('application Android 1.3 : service au premier plan, notifications, relance 
   assert.match(svc, /x-ludy-watch/); assert.match(svc, /IMPORTANCE_HIGH/); assert.match(svc, /Déplacement autorisé/);
   assert.match(main, /@JavascriptInterface public void watchStart\(String url, String anon, String secret\)/);
   assert.match(main, /@JavascriptInterface public String watchStop\(\)/); assert.match(main, /@JavascriptInterface public String watchStatus\(\)/);
-  assert.match(main, /LudyAndroid\/1\.3/); assert.match(main, /onNewIntent/);
-  assert.match(g, /versionName '1\.3'/); assert.ok(+g.match(/versionCode (\d+)/)[1] >= 4);
+  assert.match(main, /LudyAndroid\/1\.4/); assert.match(main, /onNewIntent/);
+  assert.match(g, /versionName '1\.4'/); assert.ok(+g.match(/versionCode (\d+)/)[1] >= 5);
+  assert.match(svc, /ARRIVÉ À L'AGENCE/); assert.match(svc, /optJSONArray\("returns"\)/); assert.match(svc, /#\/retours/);
   // date de la base lue par le service : fraction de 0 à 6 chiffres
   const re = /Pattern\.compile\("(.*)"\)\.matcher/.exec(svc)[1].replace(/\\\\/g, '\\');
   ['2026-11-14T17:35:12+00:00', '2026-11-14T17:35:12.1+00:00', '2026-11-14T17:35:12.123456+01:00', '2026-11-14 17:35:12Z'].forEach(s => assert.match(s, new RegExp(re), s));

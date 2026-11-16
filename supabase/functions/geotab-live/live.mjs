@@ -188,14 +188,22 @@ export function wArrived(tr, pos, now, P) {
   const d = wDist({ lat: tr.dest_lat, lon: tr.dest_lon }, pos);
   return d != null && d <= wP(P, 'trackArriveM') && !(pos.state === 'En route' && +pos.speed >= 30) ? Math.round(d) : null;
 }
+/** Retour de véhicule arrivé à l'agence (même règle que la page Retours, retours_calc.js) : à moins du rayon de l'agence, pas en route vite */
+export function wReturned(rc, pos, P) {
+  if (!pos || rc.lat == null || rc.lng == null || rc.arrived_at) return null;
+  const rad = +rc.radius_m > 0 ? +rc.radius_m : (+((P || {}).returnRadiusM) > 0 ? +P.returnRadiusM : 300);
+  const d = wDist({ lat: +rc.lat, lon: +rc.lng }, pos);
+  return d != null && d <= rad && !(pos.state === 'En route' && +pos.speed >= 30) ? Math.round(d) : null;
+}
 async function watch(deps, secret, now) {
   const rest = deps.env('SUPABASE_REST') || (deps.env('SUPABASE_URL') + '/rest/v1'), svc = deps.env('SUPABASE_SERVICE_ROLE_KEY');
   if (!svc) return json(503, { error: 'Clé service absente' });
   const h = { apikey: svc, Authorization: 'Bearer ' + svc, 'Content-Type': 'application/json' };
   const r = await deps.fetch(rest + '/rpc/watch_poll', { method: 'POST', headers: h, body: JSON.stringify({ p_secret: secret }) });
   if (!r.ok) { const t = await r.text(); return /watch_unknown/.test(t) ? json(401, { error: 'watch_unknown' }) : json(502, { error: 'Base : HTTP ' + r.status }); }
-  const w = await r.json(), P = w.params || {}, pauses = w.pauses || [], tracks = w.tracks || [];
-  const keys = [...new Set(pauses.map(p => p.vehicle_key).concat(tracks.filter(t => !t.arrived_at && t.dest_lat != null).map(t => t.vehicle_key)))].filter(Boolean);
+  const w = await r.json(), P = w.params || {}, pauses = w.pauses || [], tracks = w.tracks || [], returns = w.returns || [];
+  const keys = [...new Set(pauses.map(p => p.vehicle_key).concat(tracks.filter(t => !t.arrived_at && t.dest_lat != null).map(t => t.vehicle_key))
+    .concat(returns.filter(x => !x.arrived_at && x.lat != null).map(x => x.vehicle_key)))].filter(Boolean);
   const nowIso = new Date(now).toISOString();
   if (!keys.length) return json(200, Object.assign(w, { at: nowIso, geo: false }));
   await deps.fetch(rest + '/rpc/bump_usage', { method: 'POST', headers: h, body: JSON.stringify({ p_kind: 'live' }) }).catch(() => null);
@@ -218,7 +226,12 @@ async function watch(deps, secret, now) {
     t.dist_m = t.dest_lat != null ? Math.round(wDist({ lat: t.dest_lat, lon: t.dest_lon }, g)) : null;
     if (wArrived(t, g, now, P) != null) { await patch('mission_tracks?id=eq.' + t.id + '&arrived_at=is.null', { arrived_at: nowIso }); t.arrived_at = nowIso; }
   }
-  return json(200, Object.assign(w, { at: nowIso, geo: true, pauses, tracks }));
+  for (const x of returns) {
+    const g = pos[x.vehicle_key]; if (!g) continue;
+    x.dist_m = x.lat != null ? Math.round(wDist({ lat: +x.lat, lon: +x.lng }, g)) : null;
+    if (wReturned(x, g, P) != null) { await patch('return_calls?id=eq.' + x.id + '&arrived_at=is.null', { arrived_at: nowIso }); x.arrived_at = nowIso; }
+  }
+  return json(200, Object.assign(w, { at: nowIso, geo: true, pauses, tracks, returns }));
 }
 /** Réponse : vehicles (état en direct) et events (événements Geotab des 30 dernières minutes, du plus récent au plus ancien) ;
  *  ?mode=detail&key=…&from=…&to=… : fiche d'une alerte ; ?mode=drivers&c=clé@début,… : chauffeurs depuis le début de leur contrat */

@@ -225,6 +225,7 @@ function collect() {
     if (live && live.wrote) markDirty_(localDay_(Date.now() - DAY));
     // Pauses chauffeurs : véhicule en pause qui bouge (positions Geotab du passage), alerte critique (bandeau + e-mail) même sans Ludy ouvert
     try { const m = pauseMoveStep_(live && live.status); if (m) msg.push(m); } catch (e) { msg.push('Pauses : ' + e.message); }
+    try { const m = returnArriveStep_(live && live.status); if (m) msg.push(m); } catch (e) { msg.push('Retours : ' + e.message); }
     // Siphonages suspects contrôlés (GPS pendant l'arrêt, jauge après le redémarrage) : faux signaux marqués, avec la raison
     try { const m = siphonCheckStep_(); if (m) msg.push(m); } catch (e) { msg.push('Contrôle des siphonages : ' + e.message); }
     // Véhicules encore sans boîtier Geotab (boîtier installé ou renommé après l'ajout au parc, VIN lu par le boîtier…) : nouvel essai toutes les 30 min
