@@ -17,8 +17,10 @@ function returnArriveStep_(status) {
   calls.forEach(c => {
     const a = ags[c.agency_id], d = ((status || {})[c.vehicle_key] || {}).dsi;
     if (!a || a.lat == null || a.lng == null || !d || !isFinite(+d.latitude) || !isFinite(+d.longitude) || (!+d.latitude && !+d.longitude)) return;
-    const m = svDist({ lat: +a.lat, lon: +a.lng }, { lat: +d.latitude, lon: +d.longitude }), rad = +a.return_radius_m > 0 ? +a.return_radius_m : def;
-    if (m == null || m > rad || (d.isDriving && +d.speed >= 30)) return;
+    // même règle que la page Retours et le relais des téléphones (rtArrived, site/retours_calc.js, ajouté au collecteur en 63_retours)
+    const p = { lat: +d.latitude, lon: +d.longitude, state: d.isDriving ? 'En route' : 'Garé', speed: d.isDriving ? +d.speed || 0 : 0 };
+    const rad = +a.return_radius_m > 0 ? +a.return_radius_m : def;
+    if (!rtArrived({ dist: rtDist({ lat: +a.lat, lon: +a.lng }, p), p }, rad)) return;
     sbReq_('patch', 'return_calls?id=eq.' + c.id + '&arrived_at=is.null', { arrived_at: now }, { Prefer: 'return=minimal' });
     n++;
   });
