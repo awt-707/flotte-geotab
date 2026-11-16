@@ -102,9 +102,10 @@ function geoPublishFree_(devs, linked) {
   // boîtiers de la flotte (16/11/2026, demande d'Ahmed : numéros des boîtiers installés au Maroc avec la plaque) : boîtiers associés à
   // un véhicule de Ludy, et boîtiers libres dont la dernière position Geotab est au Maroc ou dont le nom / la plaque est une plaque marocaine
   const inMa = s => s && s.lat != null && s.lat >= 20.7 && s.lat <= 35.95 && s.lng >= -17.2 && s.lng <= -0.99;
-  const fleet = devs.filter(d => L[d.id] || inMa(last[d.id]) || ma(d)).map(d => ({ id: d.id, s: String(d.serialNumber || ''), n: String(d.name || ''), p: String(d.licensePlate || ''),
+  const fl0 = devs.filter(d => L[d.id] || inMa(last[d.id]) || ma(d)), first = geoFirstFix_(fl0);
+  const fleet = fl0.map(d => ({ id: d.id, s: String(d.serialNumber || ''), n: String(d.name || ''), p: String(d.licensePlate || ''),
     v: geoVin_(d.vehicleIdentificationNumber || d.engineVehicleIdentificationNumber), t: last[d.id] ? last[d.id].t : null, on: last[d.id] ? last[d.id].on : null,
-    a: d.activeFrom || null, maroc: last[d.id] && last[d.id].lat != null ? !!inMa(last[d.id]) : null, lie: !!L[d.id] })).sort((a, b) => (b.lie - a.lie) || a.n.localeCompare(b.n));
+    a: d.activeFrom || null, b: first[d.id] || null, maroc: last[d.id] && last[d.id].lat != null ? !!inMa(last[d.id]) : null, lie: !!L[d.id] })).sort((a, b) => (b.lie - a.lie) || a.n.localeCompare(b.n));
   sbReq_('post', 'params?on_conflict=key', [
     { key: 'geotabDevices', label: 'Boîtiers Geotab non associés (calculé par le collecteur)', value: JSON.stringify({ at: new Date().toISOString(), list }), note: 'Ne pas modifier', sort: 997 },
     { key: 'geotabFleet', label: 'Boîtiers Geotab de la flotte : associés ou au Maroc (calculé par le collecteur)', value: JSON.stringify({ at: new Date().toISOString(), list: fleet }), note: 'Ne pas modifier', sort: 997 }],
@@ -140,9 +141,29 @@ function importVehiclesLink_() {
 // onglets du classeur jamais touchés. Réécrit à chaque publication de la liste des boîtiers (toutes les heures) : une ligne par boîtier
 // (associé à un véhicule de Ludy, ou dernière position au Maroc, ou plaque marocaine), lignes existantes gardées dans leur ordre
 // (un boîtier qui n'est plus dans Geotab reste, statut « Plus actif dans Geotab »), nouveaux boîtiers ajoutés à la suite par date d'activation.
+/**
+ * Date d'installation = premier bornage GPS du boîtier (16/11/2026, demande d'Ahmed) : première position Geotab (LogRecord) depuis
+ * son activation, lue une fois par boîtier (propriété GEO_FIRST {id: date}) ; 15 boîtiers au plus par passage ; aucune position :
+ * réessayé le lendemain (rien d'estimé).
+ */
+function geoFirstFix_(devs) {
+  const props = PropertiesService.getScriptProperties();
+  let F = {}; try { F = JSON.parse(props.getProperty('GEO_FIRST') || '{}') || {}; } catch (e) { F = {}; }
+  const now = Date.now(), todo = devs.filter(d => !F[d.id] || (!F[d.id].t && now - (+F[d.id].at || 0) > DAY)).slice(0, 15);
+  let changed = false;
+  todo.forEach(d => {
+    try {
+      const r = geoCall_('Get', { typeName: 'LogRecord', search: { deviceSearch: { id: d.id }, fromDate: d.activeFrom || '2015-01-01T00:00:00.000Z', toDate: new Date(now).toISOString() }, resultsLimit: 1 }) || [];
+      F[d.id] = { t: r[0] && r[0].dateTime ? r[0].dateTime : '', at: now }; changed = true;
+    } catch (e) { /* réessayé au passage suivant */ }
+  });
+  if (changed) props.setProperty('GEO_FIRST', JSON.stringify(F));
+  const out = {}; Object.keys(F).forEach(k => { if (F[k] && F[k].t) out[k] = F[k].t; });
+  return out;
+}
 const GEO_SHEET_TAB_ = 'Boîtiers Geotab (Ludy)';
 const GEO_SHEET_H_ = ['Immatriculation', 'Immatriculation provisoire', 'Marque', 'Modèle', 'N° de châssis (VIN)', 'N° de boîtier Geotab', 'Nom dans Geotab',
-  'Date d\'activation Geotab', 'Ajouté au fichier le', 'Dernier signal', 'Communique', 'Dernière position au Maroc', 'Relié à Ludy', 'Agence', 'Statut',
+  'Date d\'installation (1er bornage GPS)', 'Date d\'activation Geotab', 'Ajouté au fichier le', 'Dernier signal', 'Communique', 'Dernière position au Maroc', 'Relié à Ludy', 'Agence', 'Statut',
   'Identifiant Geotab', 'Mis à jour le'];
 function geoSheetRows_(fleet, veh, ags, old, nowTxt, fmt) {
   const byGeo = {}; veh.forEach(v => { if (v.geotab_id) byGeo[v.geotab_id] = v; });
@@ -153,7 +174,7 @@ function geoSheetRows_(fleet, veh, ags, old, nowTxt, fmt) {
   const row = f => {
     const v = byGeo[f.id] || {}, o = prev[f.id] || [];
     const first = o[FIRST] || nowTxt;
-    return [v.plate || f.p || f.n, plates(v.other_plates), v.brand || '', v.model || '', v.vin || f.v || '', f.s, f.n, f.a ? fmt(f.a) : '', first,
+    return [v.plate || f.p || f.n, plates(v.other_plates), v.brand || '', v.model || '', v.vin || f.v || '', f.s, f.n, f.b ? fmt(f.b) : '', f.a ? fmt(f.a) : '', first,
       f.t ? fmt(f.t) : '', f.on == null ? '' : f.on ? 'Oui' : 'Non', f.maroc == null ? 'non mesuré' : f.maroc ? 'Oui' : 'Non', f.lie ? 'Oui' : 'Non',
       agN[v.agency_id] || '', 'Actif', f.id, nowTxt].map(x => cshTxt_(x));
   };
@@ -176,8 +197,10 @@ function geoFleetSheet_(fleet) {
   const ss = SpreadsheetApp.openById(id);
   let sh = ss.getSheetByName(GEO_SHEET_TAB_);
   if (!sh) { sh = ss.insertSheet(GEO_SHEET_TAB_); sh.setFrozenRows(1); }
-  const n0 = Math.max(0, sh.getLastRow() - 1);
-  const old = n0 ? sh.getRange(2, 1, n0, GEO_SHEET_H_.length).getValues().map(r => r.map(x => String(x == null ? '' : x))) : [];
+  // lignes existantes relues d'après les titres de leur colonne (une colonne ajoutée dans une version suivante ne décale rien)
+  const n0 = Math.max(0, sh.getLastRow() - 1), w = Math.max(GEO_SHEET_H_.length, sh.getLastColumn ? sh.getLastColumn() : GEO_SHEET_H_.length);
+  const oh = sh.getRange(1, 1, 1, w).getValues()[0].map(x => String(x || ''));
+  const old = n0 ? sh.getRange(2, 1, n0, w).getValues().map(r => GEO_SHEET_H_.map(h => { const j = oh.indexOf(h); return j < 0 || r[j] == null ? '' : String(r[j]); })) : [];
   const fmt = t => fmtMa_(t, 'dd/MM/yyyy HH:mm'), rows = geoSheetRows_(fleet, veh, ags, old, fmt(Date.now()), fmt);
   sh.getRange(1, 1, 1, GEO_SHEET_H_.length).setValues([GEO_SHEET_H_]);
   if (rows.length) {

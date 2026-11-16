@@ -351,13 +351,13 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
-  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['suivi', 'Pauses et suivi des courses'], ['uberctl', 'Contrôle Uber'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['suivi', 'Pauses et suivi des courses'], ['uberctl', 'Contrôle Uber'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['boitiers', 'Boîtiers GPS'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
 // Dossiers du menu (demande d'Ahmed : menu allégé) : un titre qui ouvre / ferme ses volets (clic sur le titre), ouvert
 // d'office quand la page affichée en fait partie. Ressources humaines : onglets de la page #/rh. Dossier réduit à un seul
 // volet visible : lien simple. Menu rangé par ordre alphabétique (dossiers et volets des dossiers compris).
 const NAV_GROUPS = { cc: { label: 'Conduite et consommation', pages: ['chauffeurs', 'comportement', 'conduite', 'finshift', 'carburant', 'conso', 'ralenti', 'arrets'] },
-  flotte: { label: 'Flotte', pages: ['plaques', 'vehicules'] } };
+  flotte: { label: 'Flotte', pages: ['plaques', 'vehicules', 'boitiers'] } };
 const navGroupOf = k => k === 'rh' || k === 'travail' ? 'rh' : Object.keys(NAV_GROUPS).find(g => NAV_GROUPS[g].pages.includes(k));
 const navCmp = (a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' });
 // ---------- Menu personnalisé (demande d'Ahmed : retrouver ses pages sans chercher) ----------
@@ -1617,7 +1617,7 @@ async function pageReglages() {
   if (my !== ROUTING) return;   // autre page demandée pendant le chargement : ne pas l'écraser
   const alTypes = [...new Set(types.map(x => x.type))].sort();
   const SEVS = ['Critique', 'Haute', 'Moyenne', 'Info'], FREQ = { jour: 'Chaque jour (veille)', semaine: 'Chaque lundi (semaine passée)', mois: 'Le 1er du mois (mois passé)' };
-  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, cashSheetStatus: 1, geoStudy: 1, geotabDevices: 1, geotabManual: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1, mailName: 1, mailReplyTo: 1, mailFrom: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
+  const hidden = { geoServer: 1, geoUser: 1, geoDb: 1, tzRules: 1, cashSheetStatus: 1, geoStudy: 1, geotabDevices: 1, geotabManual: 1, geotabFleet: 1, geotabSheetId: 1, overByLimit: 1, overAlert: 1, vmaxAlert: 1, appSites: 1, mailName: 1, mailReplyTo: 1, mailFrom: 1 };   // les 3 derniers : bloc « Alerte de dépassement de vitesse »
   $('#page').innerHTML = `<div class="head"><h1>Réglages</h1></div>
     <h2>Limites de l'hébergement</h2><div class="sub">Offre Supabase (base, stockage, appels du temps réel). Le site lui-même (Cloudflare) n'a pas de limite. À 80 % : avertissement en bas du menu. Limites à changer dans les paramètres ci-dessous si l'offre change (Pro : 8 000 Mo, 102 400 Mo, 2 000 000 appels).</div>
     ${usageHtml(usage, S.P)}
@@ -1735,7 +1735,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, suivi: pageSuivi, uberctl: pageUberCtl, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, suivi: pageSuivi, uberctl: pageUberCtl, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, boitiers: pageBoitiers, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
