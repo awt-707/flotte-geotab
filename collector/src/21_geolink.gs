@@ -9,7 +9,7 @@
 // sinon même numéro et même région quand la lettre n'est pas lisible. Toujours un seul boîtier candidat, jamais un boîtier
 // déjà associé à un autre véhicule. Relancé toutes les 30 min tant qu'un véhicule actif n'a pas de boîtier, et après chaque import du parc.
 // Boîtiers libres (non associés, vus dans les 30 derniers jours) publiés dans le param geotabDevices pour le choix sur la page Véhicules.
-const GEO_LINK_EVERY_ = 30 * MIN;
+const GEO_LINK_EVERY_ = 30 * MIN, GEO_FLEET_EVERY_ = 60 * MIN;
 const GEO_AR_ = { 'أ': 'A', 'ا': 'A', 'إ': 'A', 'آ': 'A', 'ب': 'B', 'د': 'D', 'ه': 'H', 'ھ': 'H', 'و': 'W', 'ط': 'T', 'ج': 'J' };
 function geoArLat_(s) { return String(s || '').replace(/[؀-ۿ]/g, c => GEO_AR_[c] || '?'); }
 /** Plaques lisibles dans un texte libre (nom, plaque ou commentaire du boîtier), sous la forme de normPlate_ */
@@ -89,7 +89,7 @@ function geoRelink_() {
 function geoPublishFree_(devs, linked) {
   const L = {}; linked.forEach(id => { L[id] = 1; });
   let st = []; try { st = geoCall_('Get', { typeName: 'DeviceStatusInfo' }) || []; } catch (e) { st = []; }
-  const last = {}; st.forEach(s => { if (s && s.device) last[s.device.id] = { t: s.dateTime || null, on: s.isDeviceCommunicating !== false }; });
+  const last = {}; st.forEach(s => { if (s && s.device) last[s.device.id] = { t: s.dateTime || null, on: s.isDeviceCommunicating !== false, lat: s.latitude == null ? null : +s.latitude, lng: s.longitude == null ? null : +s.longitude }; });
   const since = Date.now() - 30 * DAY;
   // boîtiers dont le nom, la plaque ou le commentaire porte une plaque marocaine d'abord : la base Geotab compte aussi des centaines de
   // véhicules d'autres flottes (plaques françaises), qui remplissaient les 300 places de la liste et cachaient les boîtiers de la flotte
@@ -99,9 +99,18 @@ function geoPublishFree_(devs, linked) {
     .filter(x => !x.t || new Date(x.t).getTime() >= since || !st.length)
     .sort((a, b) => (b.ma - a.ma) || String(b.t || '').localeCompare(String(a.t || '')) || a.n.localeCompare(b.n)).slice(0, 300)
     .map(x => { delete x.ma; return x; });
+  // boîtiers de la flotte (16/11/2026, demande d'Ahmed : numéros des boîtiers installés au Maroc avec la plaque) : boîtiers associés à
+  // un véhicule de Ludy, et boîtiers libres dont la dernière position Geotab est au Maroc ou dont le nom / la plaque est une plaque marocaine
+  const inMa = s => s && s.lat != null && s.lat >= 20.7 && s.lat <= 35.95 && s.lng >= -17.2 && s.lng <= -0.99;
+  const fleet = devs.filter(d => L[d.id] || inMa(last[d.id]) || ma(d)).map(d => ({ id: d.id, s: String(d.serialNumber || ''), n: String(d.name || ''), p: String(d.licensePlate || ''),
+    v: geoVin_(d.vehicleIdentificationNumber || d.engineVehicleIdentificationNumber), t: last[d.id] ? last[d.id].t : null, on: last[d.id] ? last[d.id].on : null,
+    a: d.activeFrom || null, maroc: last[d.id] && last[d.id].lat != null ? !!inMa(last[d.id]) : null, lie: !!L[d.id] })).sort((a, b) => (b.lie - a.lie) || a.n.localeCompare(b.n));
   sbReq_('post', 'params?on_conflict=key', [
-    { key: 'geotabDevices', label: 'Boîtiers Geotab non associés (calculé par le collecteur)', value: JSON.stringify({ at: new Date().toISOString(), list }), note: 'Ne pas modifier', sort: 997 }],
+    { key: 'geotabDevices', label: 'Boîtiers Geotab non associés (calculé par le collecteur)', value: JSON.stringify({ at: new Date().toISOString(), list }), note: 'Ne pas modifier', sort: 997 },
+    { key: 'geotabFleet', label: 'Boîtiers Geotab de la flotte : associés ou au Maroc (calculé par le collecteur)', value: JSON.stringify({ at: new Date().toISOString(), list: fleet }), note: 'Ne pas modifier', sort: 997 }],
     { Prefer: 'resolution=merge-duplicates,return=minimal' });
+  try { PropertiesService.getScriptProperties().setProperty('GEO_FLEET_AT', String(Date.now())); } catch (e) { }
+  try { geoFleetSheet_(fleet); } catch (e) { log_('Boîtiers Geotab (Google Sheet)', e.message); }
   sbReq_('post', 'params?on_conflict=key', [{ key: 'geotabManual', label: 'Boîtiers Geotab choisis à la main (page Véhicules)', value: '{}', note: 'Rempli par la page Véhicules', sort: 998 }],
     { Prefer: 'resolution=ignore-duplicates,return=minimal' });
 }
@@ -111,8 +120,10 @@ function geoLinkStep_() {
   // choix manuel nouveau (ou changé) : appliqué au passage suivant, une fois
   const man = JSON.stringify(manual), pend = props.getProperty('GEO_LINK_MAN') !== man && Object.keys(manual).some(k => veh[k] && veh[k].geoId !== manual[k]);
   const need = Object.values(veh).some(v => v.active && !v.geoId);
-  if (!need && !pend) return '';
-  if (!pend && Date.now() - +(props.getProperty('GEO_LINK_AT') || 0) < GEO_LINK_EVERY_) return '';
+  // liste des boîtiers de la flotte (param geotabFleet) republiée au moins une fois par jour, même sans véhicule à associer
+  const stale = Date.now() - +(props.getProperty('GEO_FLEET_AT') || 0) > GEO_FLEET_EVERY_;
+  if (!need && !pend && !stale) return '';
+  if (!pend && !stale && Date.now() - +(props.getProperty('GEO_LINK_AT') || 0) < GEO_LINK_EVERY_) return '';
   props.setProperty('GEO_LINK_AT', String(Date.now())); props.setProperty('GEO_LINK_MAN', man);
   return geoRelink_();
 }
@@ -121,4 +132,59 @@ function importVehiclesLink_() {
   const n = importVehicles(true);
   let m = ''; try { PropertiesService.getScriptProperties().setProperty('GEO_LINK_AT', String(Date.now())); m = geoRelink_(); } catch (e) { log_('Association Geotab (complément)', e.message); }
   return { n, msg: m };
+}
+
+// ---------- Boîtiers Geotab dans le Google Sheet d'Ahmed (16/11/2026 : « chaque plaque avec chaque numéro de boîtier, à chaque
+// activation d'un boîtier au Maroc ça se stocke dans le fichier, tout le temps à jour ») ----------
+// Classeur = param geotabSheetId (identifiant jamais dans le dépôt), onglet « Boîtiers Geotab (Ludy) » créé s'il manque, les autres
+// onglets du classeur jamais touchés. Réécrit à chaque publication de la liste des boîtiers (toutes les heures) : une ligne par boîtier
+// (associé à un véhicule de Ludy, ou dernière position au Maroc, ou plaque marocaine), lignes existantes gardées dans leur ordre
+// (un boîtier qui n'est plus dans Geotab reste, statut « Plus actif dans Geotab »), nouveaux boîtiers ajoutés à la suite par date d'activation.
+const GEO_SHEET_TAB_ = 'Boîtiers Geotab (Ludy)';
+const GEO_SHEET_H_ = ['Immatriculation', 'Immatriculation provisoire', 'Marque', 'Modèle', 'N° de châssis (VIN)', 'N° de boîtier Geotab', 'Nom dans Geotab',
+  'Date d\'activation Geotab', 'Ajouté au fichier le', 'Dernier signal', 'Communique', 'Dernière position au Maroc', 'Relié à Ludy', 'Agence', 'Statut',
+  'Identifiant Geotab', 'Mis à jour le'];
+function geoSheetRows_(fleet, veh, ags, old, nowTxt, fmt) {
+  const byGeo = {}; veh.forEach(v => { if (v.geotab_id) byGeo[v.geotab_id] = v; });
+  const agN = {}; ags.forEach(a => { agN[a.id] = a.name; });
+  const ID = GEO_SHEET_H_.indexOf('Identifiant Geotab'), FIRST = GEO_SHEET_H_.indexOf('Ajouté au fichier le'), ST = GEO_SHEET_H_.indexOf('Statut'), UP = GEO_SHEET_H_.indexOf('Mis à jour le');
+  const prev = {}; old.forEach(r => { if (r[ID]) prev[r[ID]] = r; });
+  const plates = x => (Array.isArray(x) ? x : String(x || '').split(/[,;]\s*/)).filter(Boolean).join(', ');
+  const row = f => {
+    const v = byGeo[f.id] || {}, o = prev[f.id] || [];
+    const first = o[FIRST] || nowTxt;
+    return [v.plate || f.p || f.n, plates(v.other_plates), v.brand || '', v.model || '', v.vin || f.v || '', f.s, f.n, f.a ? fmt(f.a) : '', first,
+      f.t ? fmt(f.t) : '', f.on == null ? '' : f.on ? 'Oui' : 'Non', f.maroc == null ? 'non mesuré' : f.maroc ? 'Oui' : 'Non', f.lie ? 'Oui' : 'Non',
+      agN[v.agency_id] || '', 'Actif', f.id, nowTxt].map(x => cshTxt_(x));
+  };
+  const cur = {}; fleet.forEach(f => { cur[f.id] = f; });
+  const out = old.filter(r => r[ID]).map(r => {
+    if (cur[r[ID]]) return row(cur[r[ID]]);
+    const k = r.slice(0, GEO_SHEET_H_.length); while (k.length < GEO_SHEET_H_.length) k.push('');
+    if (k[ST] !== 'Plus actif dans Geotab') { k[ST] = 'Plus actif dans Geotab'; k[UP] = nowTxt; }
+    return k;
+  });
+  fleet.filter(f => !prev[f.id]).sort((a, b) => (!a.a - !b.a) || String(a.a || '').localeCompare(String(b.a || '')) || a.n.localeCompare(b.n)).forEach(f => out.push(row(f)));
+  return out;
+}
+function geoFleetSheet_(fleet) {
+  let id = '';
+  try { const r = dbSelect_('params', 'select=key,value&key=eq.geotabSheetId', 'key')[0]; id = String((r && r.value) || '').trim(); } catch (e) { id = ''; }
+  if (!id) return '';
+  const veh = dbSelect_('vehicles', 'select=key,plate,brand,model,vin,other_plates,agency_id,geotab_id', 'key');
+  let ags = []; try { ags = dbSelect_('agencies', 'select=id,name', 'id'); } catch (e) { ags = []; }
+  const ss = SpreadsheetApp.openById(id);
+  let sh = ss.getSheetByName(GEO_SHEET_TAB_);
+  if (!sh) { sh = ss.insertSheet(GEO_SHEET_TAB_); sh.setFrozenRows(1); }
+  const n0 = Math.max(0, sh.getLastRow() - 1);
+  const old = n0 ? sh.getRange(2, 1, n0, GEO_SHEET_H_.length).getValues().map(r => r.map(x => String(x == null ? '' : x))) : [];
+  const fmt = t => fmtMa_(t, 'dd/MM/yyyy HH:mm'), rows = geoSheetRows_(fleet, veh, ags, old, fmt(Date.now()), fmt);
+  sh.getRange(1, 1, 1, GEO_SHEET_H_.length).setValues([GEO_SHEET_H_]);
+  if (rows.length) {
+    if (rows.length + 1 > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), rows.length + 1 - sh.getMaxRows());
+    const rg = sh.getRange(2, 1, rows.length, GEO_SHEET_H_.length);
+    rg.setNumberFormat('@'); rg.setValues(rows);
+  }
+  if (n0 > rows.length) sh.getRange(2 + rows.length, 1, n0 - rows.length, GEO_SHEET_H_.length).clearContent();
+  return rows.length + ' boîtiers';
 }
