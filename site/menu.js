@@ -3,6 +3,7 @@
 // d'origine. Enregistré dans profiles.menu (menuSave, app.js) : le même menu sur tous les appareils de l'utilisateur.
 // Chargé avant app.js : utilise ses outils (menuCfg, menuSave, navEntries, navOrdered…) au moment de l'appel.
 
+let MENU_SAVE_N = 0;   // seul le dernier enregistrement affiche son résultat
 function pageMenu() {
   const my = ROUTING, cfg = menuCfg(), ents = navOrdered(navEntries(), cfg), hide = new Set(cfg.hide);
   const leaves = [].concat(...ents.map(e => e.leaves)), byId = new Map(leaves.map(l => [l.id, l]));
@@ -22,7 +23,8 @@ function pageMenu() {
       <div class="small">Glisser une ligne (⠿) ou utiliser les flèches. Un volet masqué reste accessible par la recherche du menu.</div>
       <p><button type="button" class="ghost" id="mnreset">Revenir au menu d'origine (ordre alphabétique, aucun favori)</button> <span id="mnout" class="small"></span></p></div></div>`;
   if (my !== ROUTING) return;
-  const save = async m => { const ok = await menuSave(m); if (my !== ROUTING) return; pageMenu(); const o = $('#mnout'); if (o) o.textContent = ok ? 'Enregistré.' : 'Enregistré sur cet appareil seulement (exécuter supabase/migrations/20261116000000_menu.sql pour le retrouver partout).'; };
+  // page redessinée tout de suite (réglage déjà à jour en mémoire) : un second clic rapide part du réglage qui vient d'être fait
+  const save = async m => { const p = menuSave(m), n = ++MENU_SAVE_N; pageMenu(); const ok = await p; if (my !== ROUTING || n !== MENU_SAVE_N) return; const o = $('#mnout'); if (o) o.textContent = ok ? 'Enregistré.' : 'Enregistré sur cet appareil seulement (exécuter supabase/migrations/20261116000000_menu.sql pour le retrouver partout).'; };
   const cur = () => Object.assign({}, cfg, { fav: favs.slice(), order: ents.map(e => e.id), hide: [...hide] });
   const move = (list, i, j) => { const a = list.slice(), [x] = a.splice(i, 1); a.splice(j, 0, x); return a; };
   document.querySelectorAll('[data-mn]').forEach(b => b.onclick = () => {
