@@ -42,7 +42,7 @@ test('menu : recherche, favoris, ordre, volets masqués, enregistrés pour l\'ut
     await page.waitForFunction(f => document.querySelector('[data-list="order"] li:nth-child(2)').dataset.id === f, first);
     await page.uncheck('[data-mnh="connexions"]');
     await page.waitForFunction(() => !document.querySelector('.side nav .navmain > a[href="#/connexions"]') && document.querySelector('[data-list="order"] li[data-id="connexions"].off'));   // page redessinée après l'enregistrement
-    assert.match(await page.innerText('#mnout'), /Enregistré\./);
+    await page.waitForFunction(() => /Enregistré\./.test(document.querySelector('#mnout').textContent));   // dernier enregistrement fini
     const cfg = JSON.parse(env.psql(`select menu::text from profiles where user_id = '${ADMIN}'`));
     assert.deepStrictEqual([cfg.fav, cfg.hide, cfg.order[1]], [['alertes', 'carburant'], ['connexions'], first]);
     // volet masqué : toujours trouvé par la recherche ; réglage retrouvé après rechargement

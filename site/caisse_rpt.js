@@ -214,7 +214,9 @@ async function cshTabDepot() {
       ${cshField('dpnote', 'Observations', 'text', { size: 50 })}
       ${CS.filesErr ? '' : '<label>Reçu de la banque (photo ou PDF, si déjà disponible) <input type="file" id="dpfile" accept="image/*,application/pdf"></label>'}
       <div id="dptot" class="panel"></div>
-      <p><button id="dpsave">Enregistrer le dépôt et télécharger le bordereau</button> <button class="ghost" id="dppdf">Bordereau seul (sans enregistrer)</button></p><div id="dpres"></div></div>
+      <p><button id="dpsave">Enregistrer le dépôt et télécharger le bordereau</button> <button class="ghost" id="dppdf">Bordereau seul (sans enregistrer)</button>
+        <button class="ghost" id="dpjrn">📄 Journal des encaissements (PDF)</button></p>
+      <p class="small">Journal des encaissements : pour la direction, le détail des jours cochés, shift jour et shift nuit chauffeur par chauffeur (Uber, Bolt), puis les courses privées, avec les totaux.</p><div id="dpres"></div></div>
     <div class="panel"><h3>Espèces entrées depuis le dernier dépôt</h3><p class="small">${info.lastDeposit ? 'Dernier dépôt enregistré : ' + fmtDay(info.lastDeposit) : 'Aucun dépôt enregistré avant ce jour.'}</p>
       ${table('tcshdps', [['Jour', r => fmtDay(r.day), r => r.day], ['Uber', r => cshMoney(r.uber), r => r.uber, 'n'], ['Bolt', r => cshMoney(r.bolt), r => r.bolt, 'n'], ['Courses privées', r => cshMoney(r.courses), r => r.courses, 'n'], ['Total', r => '<b>' + cshMoney(r.total) + '</b>', r => r.total, 'n']], info.since, { empty: 'Aucune entrée d\'espèces depuis le dernier dépôt', total: { fmt: x => '<b>' + cshMoney(x) + '</b>' } })}
     </div></div>
@@ -223,6 +225,7 @@ async function cshTabDepot() {
         ['Jours couverts', g => g.days.length ? esc(cshDaysTxt(g.days)) : '<span class="nm">non précisés</span>'], ['Uber', g => cshMoney(g.uber), g => g.uber, 'n'], ['Bolt', g => cshMoney(g.bolt), g => g.bolt, 'n'],
         ['Courses privées', g => cshMoney(g.courses), g => g.courses, 'n'], ['Autres caisses', g => g.other ? cshMoney(g.other) : '', g => g.other, 'n'], ['Montant déposé', g => '<b>' + cshMoney(g.total) + '</b>', g => g.total, 'n'],
         ['Banque', g => esc(g.bank || '')], ['Déposé par', g => esc(g.who || '')],
+        ['Journal', g => `<button class="ghost small" data-dpjr="${esc(g.key)}">📄 Journal</button>${g.days.length ? '' : '<div class="small">jours depuis le dépôt précédent</div>'}`],
         ['Reçu de la banque', g => CS.filesErr ? '' : (filesOf(g).length ? cshFileLinks(filesOf(g)) + ' ' + cshUpBtn('depot|' + g.key, '+ fichier') : '<span class="small red">à déposer</span> ' + cshUpBtn('depot|' + g.key)), g => filesOf(g).length]],
         groups, { empty: 'Aucun dépôt enregistré', page: true, total: { fmt: x => '<b>' + cshMoney(x) + '</b>' } })}</div>`);
   if ($('#dpday')) $('#dpday').onchange = () => { location.hash = cshHref('depot', { jour: $('#dpday').value }); };
@@ -277,8 +280,122 @@ async function cshTabDepot() {
       pageCaisse();
     } catch (x) { $('#dpres').innerHTML = msg(esc(x.message), 'err'); }
   };
+  // journal des encaissements (document pour la direction) : jours cochés, ou jours couverts par un dépôt de l'historique
+  $('#dpjrn').onclick = async () => { const d = read(); if (!d.days.length) { $('#dpres').innerHTML = msg('Cochez au moins un jour.', 'err'); return; }
+    try { cshJournalPdf(await cshJournalOf(d.days.map(r => r.day)), { ref: cshDepRef(d.day, 'projet'), day: d.day, who: d.who, bank: d.bank, total: d.total }); } catch (x) { alert(x.message); } };
+  // anciens dépôts (avant le 03/11/2026, jours pas notés dans la référence) : jours entre le dépôt précédent et ce dépôt, dits comme tels
+  document.querySelectorAll('[data-dpjr]').forEach(b => { b.onclick = async () => { const i = groups.findIndex(x => x.key === b.dataset.dpjr), g = groups[i]; if (!g) return;
+    let days = g.days, note = '';
+    if (!days.length) {
+      const prev = groups.slice(i + 1).find(x => x.day < g.day), first = CS.all.filter(m => cshLive(m) && m.flow === 'in' && (m.kind === 'encaissement' || m.kind === 'course')).reduce((x, m) => !x || m.day < x ? m.day : x, '');
+      const a = prev ? (prev.days.length ? cshAddDay(prev.days[prev.days.length - 1], 1) : cshAddDay(prev.day, 1)) : (first || g.day);
+      days = []; for (let d = a; d <= g.day && days.length < 93; d = cshAddDay(d, 1)) days.push(d);
+      note = 'Jours non notés à l\'enregistrement du dépôt : encaissements ' + (prev ? 'depuis le dépôt précédent (' + fmtDay(prev.day) + ')' : 'depuis le premier encaissement') + ' jusqu\'au jour du dépôt.';
+    }
+    try { cshJournalPdf(await cshJournalOf(days), { ref: g.ref || 'Dépôt du ' + fmtDay(g.day), day: g.day, who: g.who, bank: g.bank, total: g.total, note }); } catch (x) { alert(x.message); } }; });
   cshBindFiles();
   if (CS.flash && $('#' + CS.flash.id)) { $('#' + CS.flash.id).innerHTML = CS.flash.html; CS.flash = null; }
+}
+/** Journal des encaissements des jours donnés (chauffeurs de Ludy, plaque du contrat, shift de l'encaissement) : mouvements complets relus */
+async function cshJournalOf(days) {
+  const l = days.slice().sort(), mv = l.length ? await all('cash_moves', '*', q => (CS.agId ? q.eq('agency_id', CS.agId) : q).gte('day', l[0]).lte('day', l[l.length - 1])) : [];
+  return cshDepositJournal(mv, days, {
+    shiftOf: m => cshMoveShift(m),
+    nameOf: m => m.driver_code ? cshDrvName(m.driver_code) : m.driver_name || '',
+    plateOf: m => { const c = m.contract_num && (CS.ctr || []).find(x => x.num === m.contract_num), k = m.vehicle_key || (c && c.vehicle_key), v = k && typeof vehOf === 'function' ? vehOf(k) : null; return v ? v.plate : ''; } });
+}
+/**
+ * Journal des encaissements d'un dépôt (A4 portrait, 17/11/2026) : par jour, shift jour puis shift nuit chauffeur par chauffeur (Uber, Bolt,
+ * total), sous-total de chaque shift, courses privées (chauffeur, course, prix, encaissé), total du jour ; récapitulatif des jours et total
+ * général (= montant des jours déposés) ; visas. meta : ref (bordereau), day (date du dépôt), who, bank, total (montant déposé, pour contrôle).
+ */
+function cshJournalPdf(j, meta) {
+  if (!window.jspdf) throw new Error('bibliothèque PDF non chargée, réessayez dans un instant');
+  if (window.applyPlugin && !window.jspdf.jsPDF.API.autoTable) window.applyPlugin(window.jspdf.jsPDF);
+  const cl = v => String(v == null ? '' : v).replace(/[\u202f\u00a0]/g, ' ').replace(/\u2212/g, '-').replace(/\u2192/g, '>');   // flèche absente de la police du PDF
+  const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' }), W = 210, H = 297, M = 14;
+  const C = { ink: [20, 32, 43], mute: [93, 107, 120], soft: [243, 245, 247], head: [15, 38, 51], acc: [91, 75, 214], sh: [230, 234, 240], sub: [222, 236, 228] };
+  const col = (k, c) => doc['set' + k](c[0], c[1], c[2]), font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); col('TextColor', c || C.ink); };
+  const money = v => cl(cshMoney(v)), mz = v => v ? money(v) : '', P0 = S.P || {};
+  const daysTxt = cshDaysTxt(j.days.map(d => d.day));
+  const header = () => {
+    try { doc.addImage(RPT_LOGO, 'PNG', M, 11, 34, 8.3); } catch (e) { }
+    font('bold', 8, C.acc); doc.text('CAISSE · JOURNAL DES ENCAISSEMENTS', W - M, 14, { align: 'right' });
+    font('normal', 8, C.mute); doc.text('Édité le ' + fmtDTY(new Date().toISOString()), W - M, 18.5, { align: 'right' });
+  };
+  header();
+  font('bold', 16); doc.text('Journal des encaissements du dépôt', M, 31);
+  font('normal', 9.5, C.mute); doc.text(cl('Bordereau ' + (meta.ref || '') + (CS.agName ? ' · ' + CS.agName : '') + (meta.day ? ' · dépôt du ' + cshDow(meta.day) + ' ' + fmtDay(meta.day) : '')), M, 37);
+  doc.text(cl('Jours déposés : ' + daysTxt + (meta.bank ? ' · ' + meta.bank : '') + (meta.who ? ' · déposé par ' + meta.who : '')), M, 42, { maxWidth: W - 2 * M });
+  col('DrawColor', C.acc); doc.setLineWidth(0.6); doc.line(M, 45.5, W - M, 45.5);
+  // cartes : Uber, Bolt, courses privées, total
+  let y = 50; const cw = (W - 2 * M - 9) / 4;
+  if (meta.note) { font('italic', 8, C.mute); doc.text(doc.splitTextToSize(cl(meta.note), W - 2 * M), M, 49.5); y = 55; }
+  [['Encaissements Uber', j.uber], ['Encaissements Bolt', j.bolt], ['Courses privées', j.courses], ['Total à déposer', j.total]].forEach((c, i) => { const x = M + i * (cw + 3);
+    col('FillColor', i === 3 ? C.head : C.soft); doc.roundedRect(x, y, cw, 14, 1.6, 1.6, 'F');
+    font('normal', 6.8, i === 3 ? [190, 205, 215] : C.mute); doc.text(cl(c[0]).toUpperCase(), x + 3, y + 4.5);
+    font('bold', 11.5, i === 3 ? [255, 255, 255] : C.ink); doc.text(money(c[1]), x + 3, y + 11); });
+  y += 21;
+  const NUM = [3, 4, 5];
+  j.days.forEach(D => {
+    const body = [], kind = [];
+    const push = (r, k) => { body.push(r.map(x => typeof x === 'object' && x ? Object.assign({}, x, { content: cl(x.content) }) : cl(x))); kind.push(k); };
+    D.shifts.forEach(G => {
+      push([{ content: G.s === 'Jour' || G.s === 'Nuit' ? shiftName(G.s, P0) : 'Sans shift', colSpan: 6 }], 'sh');
+      G.rows.forEach(r => push([r.name || '—', r.contract || 'sans contrat', r.plate || '', mz(r.uber), mz(r.bolt), money(r.total) + (r.comps ? ' *' : '')], 'row'));
+      push([{ content: 'Total ' + (G.s ? 'shift ' + G.s.toLowerCase() : 'sans shift') + ' · ' + G.rows.length + ' chauffeur' + (G.rows.length > 1 ? 's' : ''), colSpan: 3 }, money(G.uber), money(G.bolt), money(G.total)], 'sub');
+    });
+    if (D.courses.length) {
+      push([{ content: 'Courses privées', colSpan: 6 }], 'sh');
+      D.courses.forEach(c => push([c.name || '—', { content: [c.ref, c.label].filter(Boolean).join(' · ') + (c.price != null && Math.abs(c.price - c.amount) > 0.004 ? ' (course ' + money(c.price) + (c.prime ? ', prime ' + money(c.prime) : '') + ')' : ''), colSpan: 4 }, money(c.amount)], 'row'));
+      push([{ content: 'Total courses privées · ' + D.courses.length + ' course' + (D.courses.length > 1 ? 's' : ''), colSpan: 5 }, money(D.courseSum)], 'sub');
+    }
+    if (!body.length) push([{ content: 'Aucun encaissement ce jour-là', colSpan: 6 }], 'row');
+    push([{ content: 'TOTAL DU ' + cshDow(D.day).toUpperCase() + ' ' + fmtDay(D.day), colSpan: 3 }, money(D.uber), money(D.bolt), money(D.total)], 'day');
+    if (y > H - 40) { doc.addPage(); header(); y = 26; }
+    font('bold', 11); col('FillColor', C.acc); doc.rect(M, y - 3.7, 1.3, 4.8, 'F'); doc.text(cl(cshDow(D.day) + ' ' + fmtDay(D.day)), M + 3.5, y);
+    const cs = {}; NUM.forEach(i => { cs[i] = { halign: 'right' }; });
+    doc.autoTable({ startY: y + 2.5, head: [['Chauffeur', 'Contrat', 'Véhicule', 'Uber', 'Bolt', 'Total'].map(cl)], body, theme: 'plain', margin: { left: M, right: M, top: 26 },
+      styles: { font: 'helvetica', fontSize: 8.2, cellPadding: 1.2, textColor: C.ink, lineColor: [226, 231, 236], lineWidth: { bottom: 0.15 } },
+      headStyles: { fillColor: C.head, textColor: 255, fontStyle: 'bold' }, columnStyles: Object.assign({ 0: { cellWidth: 52 } }, cs),
+      didParseCell: x => {
+        if (x.section === 'head' && NUM.indexOf(x.column.index) >= 0) x.cell.styles.halign = 'right';
+        if (x.section !== 'body') return;
+        const k = kind[x.row.index];
+        if (k === 'sh') { x.cell.styles.fillColor = C.sh; x.cell.styles.fontStyle = 'bold'; }
+        if (k === 'sub') { x.cell.styles.fillColor = C.sub; x.cell.styles.fontStyle = 'bold'; if (x.column.index === 0) x.cell.styles.halign = 'right'; }
+        if (k === 'day') { x.cell.styles.fillColor = C.head; x.cell.styles.textColor = 255; x.cell.styles.fontStyle = 'bold'; if (x.column.index === 0) x.cell.styles.halign = 'right'; }
+      },
+      didDrawPage: () => header() });
+    y = doc.lastAutoTable.finalY + 8;
+  });
+  // récapitulatif des jours et total général
+  if (y > H - 60) { doc.addPage(); header(); y = 26; }
+  font('bold', 11); col('FillColor', C.acc); doc.rect(M, y - 3.7, 1.3, 4.8, 'F'); doc.text('Récapitulatif', M + 3.5, y);
+  const sh = (D, s) => { const G = D.shifts.find(x => x.s === s); return G ? G.total : 0; };
+  const rec = j.days.map(D => [cshDow(D.day) + ' ' + fmtDay(D.day), money(sh(D, 'Jour')), money(sh(D, 'Nuit')), money(D.uber), money(D.bolt), money(D.courseSum), money(D.total)].map(cl));
+  rec.push(['Total (' + j.days.length + ' jour' + (j.days.length > 1 ? 's' : '') + ')', money(j.days.reduce((t, D) => t + sh(D, 'Jour'), 0)), money(j.days.reduce((t, D) => t + sh(D, 'Nuit'), 0)), money(j.uber), money(j.bolt), money(j.courses), money(j.total)].map(cl));
+  doc.autoTable({ startY: y + 2.5, head: [['Jour', 'Shift jour', 'Shift nuit', 'dont Uber', 'dont Bolt', 'Courses privées', 'Total'].map(cl)], body: rec, theme: 'striped', margin: { left: M, right: M, top: 26 },
+    styles: { font: 'helvetica', fontSize: 8.2, cellPadding: 1.25, textColor: C.ink }, headStyles: { fillColor: C.head, textColor: 255, fontStyle: 'bold' },
+    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
+    didParseCell: x => { if (x.section === 'head' && x.column.index > 0) x.cell.styles.halign = 'right'; if (x.section === 'body' && x.row.index === rec.length - 1) x.cell.styles.fontStyle = 'bold'; }, didDrawPage: () => header() });
+  y = doc.lastAutoTable.finalY + 6;
+  if (y > H - 62) { doc.addPage(); header(); y = 26; }
+  col('FillColor', C.head); doc.roundedRect(M, y, W - 2 * M, 18, 2, 2, 'F');
+  font('normal', 8, [190, 205, 215]); doc.text('TOTAL DES ENCAISSEMENTS DES JOURS DÉPOSÉS', M + 5, y + 6);
+  font('bold', 15, [255, 255, 255]); doc.text(money(j.total), W - M - 5, y + 9, { align: 'right' });
+  font('normal', 8, [225, 232, 238]); doc.text(doc.splitTextToSize(cl(cshMadWords(j.total)), W - 2 * M - 10)[0], M + 5, y + 14);
+  y += 22;
+  if (meta.total != null && Math.abs(cshN(meta.total) - j.total) > 0.004) { font('bold', 8.5, [180, 40, 40]); doc.text(cl('Montant déposé sur le bordereau : ' + money(meta.total) + ' · écart ' + money(cshR(cshN(meta.total) - j.total))), M, y + 2); y += 6; }
+  if (j.days.some(D => D.shifts.some(G => G.rows.some(r => r.comps)))) { font('normal', 7.5, C.mute); doc.text('* dont complément remis plus tard par le chauffeur (manque du shift rapporté).', M, y + 2); y += 5; }
+  // visas
+  y += 3; const sw = (W - 2 * M - 8) / 3;
+  [['Établi par', meta.who || ''], ['Responsable d\'agence', ''], ['Visa de la direction', '']].forEach((t, i) => { const x = M + i * (sw + 4);
+    col('DrawColor', [216, 222, 228]); doc.setLineWidth(0.3); doc.roundedRect(x, y, sw, 28, 1.6, 1.6, 'S');
+    font('bold', 8.5); doc.text(cl(t[0]), x + 3, y + 5.5); font('normal', 7.5, C.mute); doc.text(cl(t[1]), x + 3, y + 10); doc.text('Date et signature', x + 3, y + 25); });
+  const np = doc.getNumberOfPages();
+  for (let i = 1; i <= np; i++) { doc.setPage(i); font('normal', 7, C.mute); doc.text('Page ' + i + ' / ' + np, W - M, H - 6, { align: 'right' }); doc.text('Document généré par Ludy — joint au bordereau de dépôt ' + cl(meta.ref || ''), M, H - 6); }
+  doc.save(('journal_encaissements_' + cshFileAg() + '_' + (meta.day || today()) + '_' + String(meta.ref || '').replace(/[^A-Za-z0-9-]+/g, '_')).replace(/_+/g, '_') + '.pdf');
 }
 /** Jours cochés en texte court : « du lun. 27/10 au dim. 02/11 (7 jours) », sinon la liste */
 function cshDaysTxt(l) {

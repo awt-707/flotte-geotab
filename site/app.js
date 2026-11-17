@@ -381,9 +381,12 @@ async function menuSave(m) {
   lsSet(MENU_KEY(), m);
   navRefresh();
   // base : le menu suit l'utilisateur sur tous ses appareils (migration 20261116000000_menu.sql) ; sinon ce navigateur seulement
-  const r = await sb.rpc('menu_set', { p_menu: m }).then(x => x, e => ({ error: e }));
-  return !r.error;
+  // enregistrements à la suite, jamais deux à la fois (sinon un ancien réglage peut arriver à la base après le dernier)
+  const run = () => sb.rpc('menu_set', { p_menu: m }).then(x => !x.error, () => false);
+  MENU_SAVING = MENU_SAVING.then(run, run);
+  return MENU_SAVING;
 }
+let MENU_SAVING = Promise.resolve(true);
 /** Entrées du menu (volets visibles) : { id, label, html, leaves: [{ id, href, label, group }] } */
 function navEntries() {
   const vis = NAV.filter(n => (!ADMIN_PAGES[n[0]] || isAdmin()) && (n[0] === 'caisse' ? canEdit() : n[0] !== 'rh' || rhCan()) && canSee(n[0])), done = {}, out = [];

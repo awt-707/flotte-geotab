@@ -138,6 +138,10 @@ test('page Caisse : rapports (PDF, tableur, graphiques) et bordereau de dépôt 
     assert.match(await page.innerText('#dpdays tfoot'), /1 jour coché[\s\S]*100 MAD/);
     await page.check(`[data-dpd="${d1}"]`);
     assert.strictEqual(await page.inputValue('[data-dpam="uber"]'), '380');
+    // journal des encaissements (pour la direction) : PDF séparé du bordereau, jours cochés
+    const [jr] = await Promise.all([page.waitForEvent('download'), page.click('#dpjrn')]);
+    assert.match(jr.suggestedFilename(), /^journal_encaissements_agence_\d{4}-\d{2}-\d{2}_DEP-0-\d{8}-1_projet_?\.pdf$/);
+    assert.deepStrictEqual(await page.evaluate(async ([a, b]) => { const j = await cshJournalOf([a, b]); return [j.uber, j.courses, j.total, j.days.find(x => x.day === a).shifts[0].rows[0].name]; }, [d1, d2]), [380, 400, 780, 'ALPHA Test']);
     await page.fill('[data-dpn="0"]', '3'); await page.fill('[data-dpn="1"]', '1');   // 3 × 200 + 100 = 700 ≠ 780
     await page.click('#dpsave');
     await page.waitForFunction(() => /ne correspond pas/.test((document.querySelector('#dpres') || {}).innerText || ''));
@@ -154,6 +158,14 @@ test('page Caisse : rapports (PDF, tableur, graphiques) et bordereau de dépôt 
     assert.strictEqual(await page.inputValue('[data-dpam="courses"]'), '');
     assert.strictEqual(await page.inputValue('#dpbank'), 'Banque Test');
     assert.match(await page.innerText('#tcshdph'), /DEP-0-\d{8}-1/);
+    const [jr2] = await Promise.all([page.waitForEvent('download'), page.click('[data-dpjr]')]);
+    assert.match(jr2.suggestedFilename(), /^journal_encaissements_agence_.*_DEP-0-\d{8}-1\.pdf$/, 'journal depuis l\'historique des dépôts');
+    // ancien dépôt saisi sans jours notés : journal quand même (jours depuis le dépôt précédent)
+    env.psql(`insert into cash_moves (caisse, kind, flow, amount, day, source) values ('uber', 'depot', 'out', 10, '${d2}', 'Banque')`);
+    await page.goto(base() + '#/caisse?t=depot&r=1'); await page.waitForSelector('#tcshdph');
+    assert.match(await page.innerText('#tcshdph'), /jours depuis le dépôt précédent/);
+    const [jr3] = await Promise.all([page.waitForEvent('download'), page.locator('[data-dpjr^="M"]').click()]);
+    assert.match(jr3.suggestedFilename(), /^journal_encaissements_agence_.*\.pdf$/);
     // jours déjà déposés : signalés et décochés au dépôt suivant
     await page.goto(base() + `#/caisse?t=depot&dpdu=${d2}&dpau=${d1}`); await page.waitForSelector('#dpdays');
     assert.match(await page.innerText('#dpdays'), /déjà déposé · DEP-0-/);
@@ -340,4 +352,28 @@ test('dépôt en banque : un dépôt ne couvre jamais des espèces encaissées a
   assert.deepStrictEqual(days.map(r => [r.day, r.total, r.deposited]), [['2026-11-03', 300, 'DEP-1-20261103-1'], ['2026-11-04', 3248, null], ['2026-11-05', 180, null]]);
   assert.strictEqual(C3.cshDepLastDay(mv, '2026-11-06'), '2026-11-03', 'jours à déposer proposés à partir du 04/11');
   assert.deepStrictEqual(C3.cshDepGroups(mv)[0].days, ['2026-11-03']);
+});
+
+test('journal des encaissements du dépôt : par jour, shift jour puis nuit chauffeur par chauffeur (Uber, Bolt), courses privées, totaux = jours déposés', () => {
+  const C4 = require('../site/caisse_calc.js');
+  const mv = [
+    { id: 1, caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 300, day: '2026-11-03', shift: 'Jour', driver_name: 'Bravo', contract_num: 'K2', created_at: '2026-11-03T18:00:00Z' },
+    { id: 2, caisse: 'bolt', kind: 'encaissement', flow: 'in', amount: 40, day: '2026-11-03', shift: 'Jour', driver_name: 'Bravo', contract_num: 'K2', created_at: '2026-11-03T18:01:00Z' },
+    { id: 3, caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 200, day: '2026-11-03', shift: 'Jour', driver_name: 'Alpha', contract_num: 'K1', created_at: '2026-11-03T18:02:00Z' },
+    { id: 4, caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 50, day: '2026-11-03', shift: 'Jour', driver_name: 'Alpha', contract_num: 'K1', label: 'Complément', created_at: '2026-11-04T09:00:00Z' },
+    { id: 5, caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 500, day: '2026-11-03', shift: 'Nuit', driver_name: 'Charlie', contract_num: 'K3', created_at: '2026-11-04T06:00:00Z' },
+    { id: 6, caisse: 'courses', kind: 'course', flow: 'in', amount: 180, course_amount: 200, prime: 20, day: '2026-11-03', driver_name: 'Alpha', label: 'Gare → Aéroport', comment: 'Course DEV-2026-0012', created_at: '2026-11-03T12:00:00Z' },
+    { id: 7, caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 999, day: '2026-11-03', shift: 'Jour', driver_name: 'Delta', cancelled_at: '2026-11-03T20:00:00Z' },
+    { id: 8, caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 70, day: '2026-11-04', shift: 'Nuit', driver_name: 'Echo' },
+    { id: 9, caisse: 'uber', kind: 'encaissement', flow: 'in', amount: 1, day: '2026-11-05', shift: 'Jour', driver_name: 'Hors jours' }];
+  const j = C4.cshDepositJournal(mv, ['2026-11-04', '2026-11-03']);
+  assert.deepStrictEqual(j.days.map(d => d.day), ['2026-11-03', '2026-11-04']);
+  const d = j.days[0];
+  assert.deepStrictEqual(d.shifts.map(s => [s.s, s.uber, s.bolt, s.total]), [['Jour', 550, 40, 590], ['Nuit', 500, 0, 500]]);
+  assert.deepStrictEqual(d.shifts[0].rows.map(r => [r.name, r.contract, r.uber, r.bolt, r.total, r.comps]), [['Alpha', 'K1', 250, 0, 250, 1], ['Bravo', 'K2', 300, 40, 340, 0]]);
+  assert.deepStrictEqual(d.courses.map(c => [c.name, c.ref, c.label, c.price, c.amount]), [['Alpha', 'DEV-2026-0012', 'Gare → Aéroport', 200, 180]]);
+  assert.deepStrictEqual([d.uber, d.bolt, d.courseSum, d.total], [1050, 40, 180, 1270]);
+  assert.deepStrictEqual([j.uber, j.bolt, j.courses, j.total], [1120, 40, 180, 1340]);
+  // même total que les jours cochés du bordereau
+  assert.strictEqual(C4.cshDepositSum(C4.cshDepositDays(mv, '2026-11-03', '2026-11-05'), ['2026-11-03', '2026-11-04']).total, j.total);
 });
