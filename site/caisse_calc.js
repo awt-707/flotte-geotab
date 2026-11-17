@@ -510,6 +510,41 @@ function cshDepositDays(moves, from, to) {
   });
   return out;
 }
+/**
+ * Journal des encaissements d'un dépôt (17/11/2026, demande d'Ahmed : document séparé du bordereau, présenté à la direction à chaque
+ * dépôt) : pour chaque jour déposé, les encaissements du shift jour puis du shift nuit, chauffeur par chauffeur (Uber et Bolt, compléments
+ * compris), puis les courses privées encaissées, avec les totaux. Mêmes mouvements que cshDepositDays (espèces entrées ce jour-là) :
+ * le total du journal est celui des jours déposés. o.shiftOf(m) = shift de l'encaissement, o.nameOf(m) = nom du chauffeur, o.plateOf(m) = plaque.
+ */
+function cshDepositJournal(moves, dayList, o) {
+  o = o || {};
+  const set = new Set(dayList || []), shiftOf = o.shiftOf || (m => m.shift || ''), nameOf = o.nameOf || (m => m.driver_name || ''), plateOf = o.plateOf || (() => '');
+  const live = (moves || []).filter(m => cshLive(m) && m.flow === 'in' && (m.kind === 'encaissement' || m.kind === 'course') && set.has(m.day));
+  const days = {}, tot = { uber: 0, bolt: 0, courses: 0, total: 0 };
+  const dayOf = d => days[d] = days[d] || { day: d, shifts: {}, courses: [], uber: 0, bolt: 0, courseSum: 0, total: 0 };
+  live.slice().sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || (a.id || 0) - (b.id || 0)).forEach(m => {
+    const D = dayOf(m.day), a = cshN(m.amount);
+    if (m.kind === 'course') {
+      const ref = (String(m.comment || '').match(/\b(DEV-\d{4}-\d+)\b/) || [])[1] || '';
+      D.courses.push({ id: m.id, name: nameOf(m), label: m.label || '', ref, price: m.course_amount != null ? cshN(m.course_amount) : null, prime: cshN(m.prime), amount: a });
+      D.courseSum = cshR(D.courseSum + a); tot.courses = cshR(tot.courses + a);
+    } else {
+      const s = shiftOf(m) || '', S = D.shifts[s] = D.shifts[s] || { s, rows: {}, uber: 0, bolt: 0, total: 0 };
+      const k = m.contract_num || ('~' + (m.driver_code || cshName(m.driver_name)));
+      const r = S.rows[k] = S.rows[k] || { name: nameOf(m), contract: m.contract_num || '', plate: plateOf(m), uber: 0, bolt: 0, total: 0, n: 0, comps: 0 };
+      const pf = m.caisse === 'bolt' ? 'bolt' : 'uber';
+      r[pf] = cshR(r[pf] + a); r.total = cshR(r.total + a); r.n++; if (m.label === CSH_COMPLEMENT) r.comps++;
+      if (!r.plate) r.plate = plateOf(m);
+      S[pf] = cshR(S[pf] + a); S.total = cshR(S.total + a); D[pf] = cshR(D[pf] + a); tot[pf] = cshR(tot[pf] + a);
+    }
+    D.total = cshR(D.total + a); tot.total = cshR(tot.total + a);
+  });
+  const ORD = { Jour: 0, Nuit: 1 };
+  const out = (dayList || []).slice().sort().map(d => days[d] || { day: d, shifts: {}, courses: [], uber: 0, bolt: 0, courseSum: 0, total: 0 }).map(D => Object.assign(D, {
+    shifts: Object.values(D.shifts).sort((a, b) => (a.s in ORD ? ORD[a.s] : 2) - (b.s in ORD ? ORD[b.s] : 2))
+      .map(S => Object.assign(S, { rows: Object.values(S.rows).sort((a, b) => String(a.name).localeCompare(String(b.name))) })) }));
+  return { days: out, uber: tot.uber, bolt: tot.bolt, courses: tot.courses, total: tot.total };
+}
 /** Montant à déposer par caisse pour les jours cochés */
 function cshDepositSum(days, picked) {
   const s = { uber: 0, bolt: 0, courses: 0, total: 0 }, set = new Set(picked || []);
@@ -580,4 +615,4 @@ function cshPromos(moves, from, to) {
 
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
   cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory,
-  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepLastDay, cshDepositDays, cshDepositSum, cshDepGroups, CSH_COMPLEMENT, cshShortfalls, CSH_PROMO_ST, cshPromos, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };
+  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepLastDay, cshDepositDays, cshDepositJournal, cshDepositSum, cshDepGroups, CSH_COMPLEMENT, cshShortfalls, CSH_PROMO_ST, cshPromos, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };
