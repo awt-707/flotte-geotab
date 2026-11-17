@@ -489,7 +489,8 @@ function cshTabDep(p) {
   cshBody(cards([['Solde de la caisse dépenses', cshMoney(bal.depenses), bal.depenses < 0 ? 'crit' : 'ok'], ['Dépenses de la période', cshMoney(rows.filter(m => cshLive(m) && m.kind === 'depense').reduce((s, m) => s + cshN(m.amount), 0))],
       ['Justificatifs à fournir', f0(rows.filter(m => cshLive(m) && m.kind === 'depense' && m.driver_name && m.justif !== 'OK' && m.justif !== 'N.A').length)],
       ['Amendes de la période', cshMoney(fines.reduce((s, m) => s + cshN(m.amount), 0)) + `<div class="small">${f0(fines.length)} amende${fines.length > 1 ? 's' : ''} · ${f0(fines.filter(m => /sans justificatif/i.test(m.label)).length)} sans justificatif</div>`, fines.length ? 'warn' : '']]) +
-    `<div class="panel"><h3>Nouvelle dépense (ticket par ticket)</h3><div class="mfrow">
+    `<div class="bar">${cshBookBtns('depenses')} <span class="small">toutes les opérations de la caisse Dépenses de la période (recharges, dépenses, hors caisse), solde après chaque opération</span></div>
+    <div class="panel"><h3>Nouvelle dépense (ticket par ticket)</h3><div class="mfrow">
       ${cshField('cdd', 'Date du shift', 'date', { value: cur.day || today() })}${cshField('cds', 'Shift', 'select', { options: ['Jour', 'Nuit'], value: cur.s })}
       ${cshField('cdw', 'Chauffeur', 'text', { list: 'cshdrv', size: 22 })}${cshField('cdc', 'Catégorie', 'select', { options: CASH_DEP_CATS })}
       ${cshField('cdr', 'Type de course', 'select', { options: CASH_RIDE_TYPES })}${cshField('cda', 'Montant (MAD)', 'number', { min: 0, step: 1 })}
@@ -515,7 +516,7 @@ function cshTabDep(p) {
     if (await cshSaveDep({ day: cshVal('cdd'), shift: cshVal('cds'), driver: cshVal('cdw'), cat: cshVal('cdc'), ride: cshVal('cdr'), amount: cshVal('cda'), justif: cshVal('cdj'),
       source: cshVal('cdo'), payer: cshVal('cdp'), comment: cshVal('cdm') }, $('#cdf') && $('#cdf').files[0])) pageCaisse();
   };
-  cshBindRowActions(); cshBindMoveForm(); cshBindFiles();
+  cshBindRowActions(); cshBindMoveForm(); cshBindFiles(); cshBindBook(p);
 }
 
 /**

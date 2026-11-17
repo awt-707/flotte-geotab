@@ -128,12 +128,61 @@ function cshRepEnc(p) {
       { title: 'Soldes des caisses au ' + fmtDay(p.to), empty: '', num: [1], head: ['Caisse', 'Solde (espèces en main)'],
         rows: CASH_CAISSES.map(x => [x[1], M(bal[x[0]])]).concat([['Total', M(bal.total)]]) }] };
 }
-function cshRepEncXls(p) {
+function cshRepEncXls(p) { cshRepXls(cshRepEnc(p)); }
+
+/** Tableur d'un rapport de la caisse (résumé + un onglet par tableau, montants en nombres) */
+function cshRepXls(rep) {
   if (!window.XLSX) { alert('Bibliothèque tableur non chargée, réessayez dans un instant.'); return; }
-  const rep = cshRepEnc(p), wb = XLSX.utils.book_new(), num = v => { const s = String(v).replace(/[\s  ]/g, '').replace(/MAD$/, '').replace(',', '.').replace('−', '-'); return /^-?\d+(\.\d+)?$/.test(s) ? +s : v; };
+  const wb = XLSX.utils.book_new(), num = v => { const s = String(v).replace(/[\s  ]/g, '').replace(/MAD$/, '').replace(',', '.').replace('−', '-'); return /^-?\d+(\.\d+)?$/.test(s) ? +s : v; };
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[rep.title + ' · ' + rep.agency], [rep.period], []].concat(rep.summary.map(s => [s[0], num(s[1])]))), 'Résumé');
-  rep.tables.forEach(t => { XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([t.head].concat(t.rows.map(r => r.map(num)))), t.title.replace(/[\\/?*[\]:]/g, '').slice(0, 31)); });
+  const used = {};
+  rep.tables.forEach(t => { let n = t.title.replace(/[\\/?*[\]:]/g, '').slice(0, 31); while (used[n]) n = n.slice(0, 28) + ' ' + (++used[n]); used[n] = 1;
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([t.head].concat(t.rows.map(r => r.map(num)))), n); });
   XLSX.writeFile(wb, rep.fileName + '.xlsx');
+}
+
+// ---------- Journal d'une caisse (toutes les opérations, solde après chaque opération) ----------
+/** Rapport « Journal de la caisse … » de la période (17/11/2026, demande d'Ahmed : PDF de toutes les opérations de la caisse Dépenses) */
+function cshRepBook(caisse, p) {
+  // solde d'ouverture : mouvements (colonnes réduites) avant la période ; opérations de la période : mouvements complets
+  const mv = CS.all.filter(m => m.caisse === caisse && m.day < p.from).concat(CS.moves.filter(m => m.caisse === caisse && m.day >= p.from && m.day <= p.to));
+  const b = cshCashBook(mv, caisse, p.from, p.to), M = v => cshMoney(v), z = v => v ? M(v) : '';
+  const name = (CASH_CAISSES.find(c => c[0] === caisse) || [])[1] || caisse;
+  const drv = m => m.driver_code ? cshDrvName(m.driver_code) : m.driver_name || '';
+  const op = m => (m.kind === 'depense' ? (m.label || 'Dépense') : (CSH_KIND[m.kind] || m.kind) + (m.label && m.label !== CSH_KIND[m.kind] ? ' · ' + m.label : ''));
+  const mode = m => m.flow === 'in' ? 'Entrée' : m.flow === 'out' ? 'Sortie de caisse' : 'Hors caisse' + (m.source ? ' (' + m.source + ')' : '');
+  const noJ = b.rows.filter(r => r.m.kind === 'depense' && r.m.justif !== 'OK' && r.m.justif !== 'N.A');
+  const other = caisse === 'depenses' ? CS.moves.filter(m => cshLive(m) && m.kind === 'depense' && m.caisse !== 'depenses' && m.day >= p.from && m.day <= p.to) : [];
+  const catT = b.cats.reduce((s, c) => s + c.out + c.hors, 0);
+  const tables = [
+    { title: 'Opérations de la caisse ' + name, empty: 'Aucune opération sur la période', num: [7, 8, 9, 10],
+      head: ['Date', 'Shift', 'Opération', 'Chauffeur', 'Type de course', 'Mode / payée par', 'Justificatif', 'Entrée', 'Sortie', 'Hors caisse', 'Solde', 'Gestionnaire', 'Commentaire'],
+      rows: [['Solde au ' + fmtDay(p.from), '', 'Solde au début de la période', '', '', '', '', '', '', '', M(b.open), '', '']]
+        .concat(b.rows.map(r => [fmtDay(r.m.day), r.m.shift || '', op(r.m), drv(r.m), r.m.ride_type || '', mode(r.m), r.m.kind === 'depense' ? (r.m.justif || 'En attente') : '',
+          z(r.inn), z(r.out), z(r.hors), M(r.bal), r.m.manager_name || '', r.m.comment || '']))
+        .concat([['Total', '', f0(b.n) + ' opération' + (b.n > 1 ? 's' : ''), '', '', '', '', M(b.totalIn), M(b.totalOut), M(b.totalHors), M(b.close), '', '']]) },
+    { title: 'Dépenses par catégorie', empty: 'Aucune dépense sur la période', num: [1, 2, 3, 4], head: ['Catégorie', 'Nombre', 'Sorties de caisse', 'Hors caisse', 'Part'],
+      rows: b.cats.length ? b.cats.map(c => [c.label, f0(c.n), M(c.out), M(c.hors), catT ? rptFmt((c.out + c.hors) / catT * 100, 1) + ' %' : '']).concat([['Total', f0(b.cats.reduce((s, c) => s + c.n, 0)), M(b.cats.reduce((s, c) => s + c.out, 0)), M(b.cats.reduce((s, c) => s + c.hors, 0)), '100 %']]) : [] },
+    { title: 'Justificatifs des dépenses', empty: 'Aucune dépense sur la période', num: [1, 2], head: ['Justificatif', 'Nombre', 'Montant'], rows: b.justifs.map(j => [j.label, f0(j.n), M(j.amount)]) }];
+  if (noJ.length) tables.push({ title: 'Dépenses sans justificatif OK (à régulariser)', empty: '', num: [3], head: ['Date', 'Opération', 'Chauffeur', 'Montant', 'Justificatif', 'Commentaire'],
+    rows: noJ.map(r => [fmtDay(r.m.day), op(r.m), drv(r.m), M(r.m.amount), r.m.justif || 'En attente', r.m.comment || '']) });
+  if (other.length) tables.push({ title: 'Dépenses payées depuis une autre caisse (hors caisse ' + name + ')', empty: '', num: [4], head: ['Date', 'Opération', 'Chauffeur', 'Caisse', 'Montant', 'Commentaire'],
+    rows: other.map(m => [fmtDay(m.day), op(m), drv(m), (CASH_CAISSES.find(c => c[0] === m.caisse) || [])[1] || m.caisse, M(m.amount), m.comment || '']) });
+  if (b.cancelled.length) tables.push({ title: 'Opérations annulées (sans effet sur le solde)', empty: '', num: [3], head: ['Date', 'Opération', 'Chauffeur', 'Montant', 'Motif de l\'annulation', 'Gestionnaire'],
+    rows: b.cancelled.map(m => [fmtDay(m.day), op(m), drv(m), M(m.amount), m.cancel_reason || '', m.manager_name || '']) });
+  return { kind: 'caisse', title: 'Journal de la caisse ' + name, agency: CS.agName || 'Agence', period: cshPeriodTxt(p.from, p.to), from: p.from, to: p.to, generatedAt: new Date().toISOString(),
+    fileName: 'journal_caisse_' + caisse + '_' + cshFileAg() + '_' + p.from + '_' + p.to,
+    footer: 'Ludy · Caisse — toutes les opérations saisies dans Ludy, solde après chaque opération ; hors caisse = virement, banque ou payé par le chauffeur (sans effet sur le solde).',
+    summary: [['Solde au ' + fmtDay(p.from) + ' (début)', M(b.open)], ['Entrées (recharges, remboursements…)', M(b.totalIn)], ['Sorties de caisse', M(b.totalOut)], ['Solde au ' + fmtDay(p.to) + ' (fin)', M(b.close)],
+      ['Opérations', f0(b.n)], ['Hors caisse (banque, chauffeur)', M(b.totalHors)], ['Dépenses sans justificatif OK', f0(noJ.length) + ' · ' + M(noJ.reduce((s, r) => s + r.inn + r.out + r.hors, 0))], ['Opérations annulées', f0(b.cancelled.length)]],
+    tables };
+}
+function cshBookBtns(caisse) {
+  return `<span class="cshbook"><button type="button" class="ghost small" data-cshbook="${esc(caisse)}">📄 Journal de la caisse (PDF)</button> <button type="button" class="ghost small" data-cshbookx="${esc(caisse)}">Tableur</button></span>`;
+}
+function cshBindBook(p) {
+  document.querySelectorAll('[data-cshbook]').forEach(b => b.onclick = () => { try { reportPdf(cshRepBook(b.dataset.cshbook, p)); } catch (e) { alert('PDF impossible : ' + e.message); } });
+  document.querySelectorAll('[data-cshbookx]').forEach(b => b.onclick = () => cshRepXls(cshRepBook(b.dataset.cshbookx, p)));
 }
 
 // ---------- Compte rendu d'activité (graphiques) ----------

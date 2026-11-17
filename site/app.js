@@ -1383,7 +1383,7 @@ function reportPdf(rep) {
     font('bold', 11.5); const tt = cl(t.title); doc.text(tt, M + 3.5, y);
     if (t.rows.length) { const w = doc.getTextWidth(tt); font('normal', 8.5, C.mute); doc.text('· ' + t.rows.length + (t.rows.length > 1 ? ' lignes' : ' ligne'), M + 3.5 + w + 2.5, y); }
     if (!t.rows.length) { font('normal', 9, C.mute); doc.text(cl(t.empty), M + 3.5, y + 6); y += 9; return; }
-    const cs = {}; t.num.forEach(i => { cs[i] = { halign: 'right' }; });
+    const cs = {}; t.num.forEach(i => { cs[i] = { halign: 'right', cellWidth: 'wrap' }; });   // montants sur une ligne
     doc.autoTable({ startY: y + 2.5, head: [t.head.map(cl)], body: t.rows.map(r => r.map(cl)), theme: 'striped', margin: { left: M, right: M, top: TOP, bottom: 16 },
       styles: { font: 'helvetica', fontSize: 7.8, cellPadding: { top: 1.5, bottom: 1.5, left: 1.8, right: 1.8 }, textColor: C.ink, overflow: 'linebreak', valign: 'middle' },
       headStyles: { fillColor: C.head, textColor: 255, fontStyle: 'bold', fontSize: 7.6 }, bodyStyles: { fillColor: [255, 255, 255] }, alternateRowStyles: { fillColor: C.zebra },
@@ -1391,6 +1391,7 @@ function reportPdf(rep) {
       didParseCell: d => {
         if (d.section === 'head') { if (t.num.indexOf(d.column.index) >= 0) d.cell.styles.halign = 'right'; return; }
         const v = String(d.cell.raw), lv = LEVEL[v];
+        if (/^(Total|Solde au )/.test(String(d.row.raw[0]))) d.cell.styles.fontStyle = 'bold';   // lignes de total et de solde
         if (lv) { d.cell.styles.textColor = C[lv]; d.cell.styles.fontStyle = 'bold'; }
         else if (v === RPT_NM || v === 'prix non saisi' || v === 'km insuffisants') { d.cell.styles.textColor = C.mute; d.cell.styles.fontStyle = 'italic'; }
       } });
