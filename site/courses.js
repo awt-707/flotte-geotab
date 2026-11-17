@@ -251,7 +251,7 @@ async function crsLoadGrid() {
   CR.grid = CR.grids.find(g => g._id === 1) || CR.grids[0] || null;
 }
 function crsTabs(t) {
-  return `<div class="tabs">${[['', 'Demandes et devis'], ['planning', 'Planning des véhicules'], ['grille', 'Grille tarifaire']].map(x => `<a href="#/courses${x[0] ? '?t=' + x[0] : ''}" class="${t === x[0] ? 'on' : ''}">${x[1]}</a>`).join('')}</div>`;
+  return `<div class="tabs">${[['', 'Demandes et devis'], ['planning', 'Planning des véhicules'], ['journal', 'Journal des encaissements'], ['grille', 'Grille tarifaire']].map(x => `<a href="#/courses${x[0] ? '?t=' + x[0] : ''}" class="${t === x[0] ? 'on' : ''}">${x[1]}</a>`).join('')}</div>`;
 }
 async function pageCourses() {
   const q = qs(), my = ROUTING, t = q.get('t') || '';
@@ -262,6 +262,7 @@ async function pageCourses() {
   if (q.get('rapide')) return crsQuick(head);
   if (q.get('id') || q.get('new')) return crsEditor(q.get('id'), head);
   if (t === 'grille') return crsGridPage(head);
+  if (t === 'journal') return crsJournal(head);
   CR.list = await all('missions', 'id,number,created_at,status,agency_id,client_name,client_company,kind,category,vehicle_key,start_at,end_at,level,needs_validation,validated_at,total_ttc,deposit,submitted:data->submitted', null, ['start_at', false]).catch(e => { CR.listErr = e.message; return []; });
   if (my !== ROUTING) return;
   if (t === 'planning') return crsPlanning(head);
@@ -283,6 +284,79 @@ async function pageCourses() {
       ['Niveau', m => badge(m.level, CRS_LVL_CLS[m.level])], ['Statut', m => badge(m.status, CRS_ST_CLS[m.status]) + (m.needs_validation ? (m.validated_at ? ' <span class="small ok">validé</span>' : m.submitted ? ' <span class="small crit">envoyé pour validation</span>' : ' <span class="small warn">à envoyer pour validation</span>') : '')],
       ['Total TTC', m => m.total_ttc == null ? '' : crsMoney(m.total_ttc), m => m.total_ttc || 0, 'n']], list, { empty: CR.listErr ? 'Erreur : ' + esc(CR.listErr) : 'Aucune demande', page: true })}`;
   $('#crsf').onchange = e => { location.hash = '#/courses?s=' + encodeURIComponent(e.target.value); };
+  };
+  draw();
+  window.__rerender = () => pageCourses(); window.__repage = draw;
+}
+
+/**
+ * Journal des encaissements des courses privées (#/courses?t=journal, 17/11/2026, demande d'Ahmed : suivre les encaissements des courses
+ * et les présenter) : courses de la période (départ) et encaissements de courses saisis dans la période (Caisse > Courses privées), prix,
+ * encaissé, prime du chauffeur, part gardée, reste à encaisser, dépôt en banque ; PDF et tableur. Calcul : cshCourseJournal (caisse_calc.js).
+ */
+async function crsJournalData(p) {
+  const ag = agFilter(), A = q => ag ? q.eq('agency_id', +ag) : q;
+  const cols = 'id,number,status,agency_id,client_name,kind,driver_name,vehicle_key,start_at,total_ttc,data';
+  const [mis, mv] = await Promise.all([
+    all('missions', cols, q => A(q).gte('start_at', dayBounds(p.from).start.toISOString()).lt('start_at', dayBounds(p.to).end.toISOString()), ['start_at']),
+    all('cash_moves', '*', q => A(q).eq('caisse', 'courses').gte('day', addDays(p.from, -62)).lte('day', addDays(p.to, 62)), ['day'])]);
+  // courses encaissées dans la période mais parties avant (ou après) : lues aussi
+  const have = new Set(mis.map(m => m.id)), more = [...new Set(mv.filter(m => m.mission_id != null && m.day >= p.from && m.day <= p.to && !have.has(m.mission_id)).map(m => m.mission_id))];
+  for (let i = 0; i < more.length; i += 100) mis.push(...await all('missions', cols, q => q.in('id', more.slice(i, i + 100)), ['id']));
+  return cshCourseJournal(mis, mv, p.from, p.to, { dayOf: t => localDay(new Date(t)),
+    nameOf: m => m.driver_code ? ((S.drv && S.drv[m.driver_code]) || m.driver_name || m.driver_code) : m.driver_name || '',
+    plateOf: k => k ? ((vehOf(k) || {}).plate || k) : '' });
+}
+const CRS_J_ST = { 'À encaisser': 'crit', Partielle: 'warn', Encaissée: 'ok' };
+function crsJournalRep(j, p, agName) {
+  const M = v => v == null ? 'prix non saisi' : crsMoney(v);
+  return { kind: 'caisse', title: 'Journal des encaissements · courses privées', agency: agName, period: cshPeriodTxt(p.from, p.to), from: p.from, to: p.to, generatedAt: new Date().toISOString(),
+    fileName: 'journal_courses_privees_' + String(agName || 'toutes').replace(/[^A-Za-z0-9]+/g, '_') + '_' + p.from + '_' + p.to,
+    footer: 'Ludy · Courses privées — courses de la période et encaissements saisis dans la caisse Courses privées ; reste à encaisser = prix − encaissé − part gardée par le chauffeur.',
+    summary: [['Courses', f0(j.n)], ['Prix des courses', crsMoney(j.price)], ['Encaissé en caisse', crsMoney(j.amount)], ['Reste à encaisser', crsMoney(j.reste)],
+      ['Primes des chauffeurs', crsMoney(j.prime)], ['Part gardée par les chauffeurs', crsMoney(j.kept)], ['Primes restant à payer', crsMoney(j.primeDue)], ['Courses à encaisser', f0(j.nTodo) + (j.nPart ? ' · ' + f0(j.nPart) + ' partielle' + (j.nPart > 1 ? 's' : '') : '')],
+      ['Déposé en banque', crsMoney(j.deposited)], ['Encaissé, pas encore déposé', crsMoney(j.inCash)]],
+    tables: [
+      { title: 'Courses privées', empty: 'Aucune course sur la période', num: [7, 8, 9, 10, 11],
+        head: ['Date', 'N°', 'Client', 'Trajet', 'Chauffeur', 'Véhicule', 'Statut', 'Prix', 'Encaissé', 'Prime', 'Part gardée', 'Reste', 'Encaissement', 'Dépôt en banque'],
+        rows: j.rows.map(r => [fmtDay(r.day), r.number, r.client, r.route, r.driver, r.plate, r.status, M(r.price), crsMoney(r.amount), r.prime ? crsMoney(r.prime) : '', r.kept ? crsMoney(r.kept) : '',
+          r.reste == null ? '' : crsMoney(r.reste), r.state + (r.encDays.length ? ' · ' + r.encDays.map(fmtDay).join(', ') : ''), r.dep || (r.nEnc ? 'En caisse' : '')])
+          .concat(j.rows.length ? [['Total', '', '', '', '', '', '', crsMoney(j.price), crsMoney(j.amount), crsMoney(j.prime), crsMoney(j.kept), crsMoney(j.reste), '', '']] : []) },
+      { title: 'Par chauffeur (courses encaissées)', empty: 'Aucun encaissement sur la période', num: [1, 2, 3, 4, 5, 6],
+        head: ['Chauffeur', 'Courses', 'Prix', 'Encaissé', 'Prime', 'Part gardée', 'Prime restant à payer'],
+        rows: j.drivers.map(d => [d.name, f0(d.n), crsMoney(d.price), crsMoney(d.amount), crsMoney(d.prime), crsMoney(d.kept), crsMoney(d.primeDue)]) }] };
+}
+async function crsJournal(head) {
+  const my = ROUTING, p = period(), ag = agFilter(), agName = ag ? (S.agName && S.agName[ag]) || (S.agencies.find(a => String(a.id) === ag) || {}).name || '' : 'Toutes les agences';
+  $('#page').innerHTML = head + crsTabs('journal') + periodBar(() => pageCourses()) + '<div class="panel">Chargement…</div>';
+  let j;
+  try { j = await crsJournalData(p); } catch (e) { if (my !== ROUTING) return; $('#page').innerHTML = head + crsTabs('journal') + periodBar(() => pageCourses()) + msg('Lecture impossible : ' + esc(e.message || e), 'err'); return; }
+  if (my !== ROUTING) return;
+  const q = qs(), fs = q.get('f') || '';
+  const pick = r => !fs ? true : fs === 'todo' ? r.state !== 'Encaissée' : fs === 'enc' ? r.state === 'Encaissée' : fs === 'dep' ? !!r.dep : fs === 'cash' ? r.nEnc && !r.dep : true;
+  const rows = j.rows.filter(pick);
+  const draw = () => {
+    $('#page').innerHTML = head + crsTabs('journal') + periodBar(() => pageCourses()) +
+      cards([['Courses', f0(j.n) + ` <span class="small">${esc(agName)}</span>`], ['Prix des courses', crsMoney(j.price)], ['Encaissé en caisse', crsMoney(j.amount), 'ok'],
+        ['Reste à encaisser', crsMoney(j.reste) + `<div class="small">${f0(j.nTodo)} à encaisser${j.nPart ? ' · ' + f0(j.nPart) + ' partielle' + (j.nPart > 1 ? 's' : '') : ''}</div>`, j.reste > 0 ? 'crit' : 'ok'],
+        ['Primes des chauffeurs', crsMoney(j.prime) + `<div class="small">gardé ${crsMoney(j.kept)} · à payer ${crsMoney(j.primeDue)}</div>`],
+        ['Déposé en banque', crsMoney(j.deposited)], ['Encaissé, pas encore déposé', crsMoney(j.inCash), j.inCash > 0 ? 'warn' : '']]) +
+      `<div class="bar"><label>Afficher <select id="crjf">${[['', 'Toutes les courses'], ['todo', 'À encaisser (ou partielles)'], ['enc', 'Encaissées'], ['cash', 'Encaissées, pas encore déposées'], ['dep', 'Déposées en banque']].map(x => `<option value="${x[0]}" ${x[0] === fs ? 'selected' : ''}>${x[1]}</option>`).join('')}</select></label>
+        <button type="button" id="crjpdf">📄 Journal des encaissements (PDF)</button> <button type="button" class="ghost" id="crjxls">Tableur</button>
+        ${canEdit() ? '<a class="btn ghostb" href="#/caisse?t=courses">Encaisser une course (Caisse)</a>' : ''}</div>
+      <div class="small">Courses parties dans la période (confirmées à facturées) et encaissements de courses saisis dans la période (Caisse &gt; Courses privées), agence choisie dans le menu. Reste à encaisser = prix − encaissé − part gardée par le chauffeur ; dépôt = bordereau DEP-… dont les jours couvrent le jour de l'encaissement.</div>` +
+      table('tcrj', [['Date', r => fmtDay(r.day), r => r.day], ['N°', r => r.missionId ? `<a href="#/courses?id=${r.missionId}">${esc(r.number || '#' + r.missionId)}</a>` : esc(r.number || 'sans course Ludy'), r => r.number],
+        ['Client', r => esc(r.client)], ['Trajet', r => esc(r.route)], ['Chauffeur', r => esc(r.driver)], ['Véhicule', r => r.plate ? plate(r.plate) : ''], ['Statut', r => r.status ? badge(r.status, CRS_ST_CLS[r.status]) : ''],
+        ['Prix', r => r.price == null ? '<span class="small">prix non saisi</span>' : crsMoney(r.price) + (r.quoted != null && r.price !== r.quoted ? `<div class="small">devis ${crsMoney(r.quoted)}</div>` : ''), r => r.price || 0, 'n'],
+        ['Encaissé', r => crsMoney(r.amount), r => r.amount, 'n'], ['Prime', r => r.prime ? crsMoney(r.prime) : '', r => r.prime, 'n'], ['Part gardée', r => r.kept ? crsMoney(r.kept) : '', r => r.kept, 'n'],
+        ['Reste', r => r.reste == null ? '' : crsMoney(r.reste), r => r.reste || 0, 'n'],
+        ['Encaissement', r => badge(r.state, CRS_J_ST[r.state]) + (r.encDays.length ? '<div class="small">' + r.encDays.map(fmtDay).join(', ') + (r.manager ? ' · ' + esc(r.manager) : '') + '</div>' : ''), r => r.state],
+        ['Dépôt en banque', r => r.dep ? esc(r.dep) : r.nEnc ? '<span class="small warn">en caisse</span>' : '', r => r.dep]], rows, { empty: 'Aucune course sur la période', page: true }) +
+      `<h3>Par chauffeur</h3>` + table('tcrjd', [['Chauffeur', d => esc(d.name)], ['Courses', d => f0(d.n), d => d.n, 'n'], ['Prix', d => crsMoney(d.price), d => d.price, 'n'], ['Encaissé', d => crsMoney(d.amount), d => d.amount, 'n'],
+        ['Prime', d => crsMoney(d.prime), d => d.prime, 'n'], ['Part gardée', d => crsMoney(d.kept), d => d.kept, 'n'], ['Prime restant à payer', d => crsMoney(d.primeDue), d => d.primeDue, 'n']], j.drivers, { empty: 'Aucun encaissement sur la période' });
+    $('#crjf').onchange = e => { location.hash = '#/courses?t=journal' + (e.target.value ? '&f=' + e.target.value : ''); };
+    $('#crjpdf').onclick = () => { try { const jj = Object.assign({}, j, { rows: j.rows.filter(pick) }); reportPdf(crsJournalRep(jj, p, agName)); } catch (e) { alert('PDF impossible : ' + e.message); } };
+    $('#crjxls').onclick = () => cshRepXls(crsJournalRep(Object.assign({}, j, { rows: j.rows.filter(pick) }), p, agName));
   };
   draw();
   window.__rerender = () => pageCourses(); window.__repage = draw;

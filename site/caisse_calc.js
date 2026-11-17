@@ -613,6 +613,95 @@ function cshPromos(moves, from, to) {
   return { rows, total: sum(), paid: sum('Payée'), unpaid: sum('Non payée'), check: sum('À vérifier') };
 }
 
+/**
+ * Journal des encaissements des courses privées (17/11/2026, demande d'Ahmed : suivre les encaissements des courses et les présenter).
+ * Une ligne par course : courses Ludy (missions confirmées → facturées) dont le départ est dans la période, et encaissements de courses
+ * (caisse « courses ») saisis dans la période (avec ou sans course Ludy). Pour chaque course : prix (montant convenu à l'encaissement,
+ * sinon total TTC du devis), encaissé en caisse, prime du chauffeur, part gardée par le chauffeur, reste à encaisser
+ * (prix − encaissé − part gardée), part gardée = ce qui manque en caisse dans la limite de la prime, prime restant à payer, et dépôt en
+ * banque (bordereau DEP-… dont les jours couvrent le jour de l'encaissement). Rien d'estimé : course sans encaissement = « À encaisser ».
+ * missions : [{ id, number, status, client_name, kind, driver_name, vehicle_key, start_at, total_ttc, data }] ; moves : mouvements de la
+ * caisse (encaissements de courses de la période et des courses de la période, dépôts) ; o : { dayOf(iso), nameOf(m), plateOf(key) }.
+ */
+const CSH_CRS_OK = ['Acompte reçu', 'Confirmée', 'En cours', 'Terminée', 'Facturée'];
+function cshCourseJournal(missions, moves, from, to, o) {
+  o = o || {};
+  const dayOf = o.dayOf || (t => String(t || '').slice(0, 10)), nameOf = o.nameOf || (m => m.driver_name || ''), plateOf = o.plateOf || (k => k || '');
+  const live = (moves || []).filter(cshLive), depDay = {};
+  live.filter(m => m.kind === 'depot' && m.caisse === 'courses').forEach(m => {
+    const ref = (String(m.comment || '').match(/DEP-[\w-]+/) || [])[0] || 'dépôt du ' + m.day;
+    cshDepDaysOf(m.comment).forEach(d => { if (!depDay[d]) depDay[d] = ref; });
+  });
+  const crs = live.filter(m => m.caisse === 'courses' && m.kind === 'course'), byMis = {};
+  crs.forEach(m => { if (m.mission_id != null) (byMis[m.mission_id] = byMis[m.mission_id] || []).push(m); });
+  const mis = {}; (missions || []).forEach(m => { mis[m.id] = m; });
+  const rows = [], seen = new Set();
+  const mk = (m, mv) => {
+    const f = (m && m.data && m.data.f) || {}, enc = mv.slice().sort((a, b) => String(a.day).localeCompare(String(b.day)) || a.id - b.id);
+    // plusieurs encaissements d'une même course (reste rapporté plus tard) : prix et prime = ceux de la course (le plus grand saisi), encaissé additionné
+    const mx = k => cshR(enc.reduce((s, x) => Math.max(s, cshN(x[k])), 0));
+    const quoted = m && m.total_ttc != null ? cshR(cshN(m.total_ttc)) : null, agreed = enc.some(x => x.course_amount != null) ? mx('course_amount') : null;
+    const price = agreed != null ? agreed : quoted, amount = cshR(enc.reduce((s, x) => s + cshN(x.amount), 0)), prime = mx('prime');
+    // part gardée par le chauffeur = ce qui manque en caisse, dans la limite de sa prime ; au-delà = reste à encaisser (dû par le chauffeur)
+    const gap = price == null ? 0 : cshR(price - amount), kept = cshR(Math.max(0, Math.min(gap, prime)));
+    const route = [f.startAddr || f.startCity, f.endAddr || f.endCity || f.dest].filter(Boolean).join(' → ');
+    const encDays = [...new Set(enc.map(x => x.day))], deps = encDays.map(d => depDay[d] || null);
+    const reste = price == null ? null : cshR(gap - kept);
+    const st = !enc.length ? 'À encaisser' : reste != null && reste > 0.005 ? 'Partielle' : 'Encaissée';
+    const e0 = enc[0] || {};
+    return { key: m ? 'C' + m.id : 'M' + e0.id, missionId: m ? m.id : null, number: (m && m.number) || ((String(e0.comment || '').match(/\b(DEV-\d{4}-\d+)\b/) || [])[1] || ''),
+      day: m && m.start_at ? dayOf(m.start_at) : e0.day, status: m ? m.status : '', client: (m && m.client_name) || '', kind: (m && m.kind) || '',
+      route: route || e0.label || '', driver: enc.length ? nameOf(e0) : (m && m.driver_name) || '', plate: plateOf((m && m.vehicle_key) || e0.vehicle_key || ''),
+      quoted, price, amount, prime, kept, primeDue: cshR(prime - kept), reste, state: st, encDays, nEnc: enc.length,
+      dep: enc.length ? (deps.every(Boolean) ? [...new Set(deps)].join(', ') : '') : '', inCash: enc.length && !deps.every(Boolean) ? cshR(enc.filter(x => !depDay[x.day]).reduce((s, x) => s + cshN(x.amount), 0)) : 0,
+      manager: [...new Set(enc.map(x => x.manager_name).filter(Boolean))].join(', ') };
+  };
+  (missions || []).forEach(m => {
+    const d = m.start_at ? dayOf(m.start_at) : '', mv = byMis[m.id] || [];
+    const inP = (d >= from && d <= to) || mv.some(x => x.day >= from && x.day <= to);
+    if (!inP || (!mv.length && !CSH_CRS_OK.includes(m.status))) return;
+    rows.push(mk(m, mv)); seen.add(m.id);
+  });
+  crs.filter(m => m.day >= from && m.day <= to && (m.mission_id == null || !seen.has(m.mission_id))).forEach(m => {
+    if (m.mission_id != null && mis[m.mission_id]) return;   // course Ludy déjà comptée
+    rows.push(mk(null, [m]));
+  });
+  rows.sort((a, b) => String(a.day).localeCompare(String(b.day)) || String(a.number).localeCompare(String(b.number)) || String(a.key).localeCompare(String(b.key)));
+  const T = k => cshR(rows.reduce((s, r) => s + (cshN(r[k]) || 0), 0));
+  const drv = {};
+  rows.filter(r => r.nEnc).forEach(r => { const k = r.driver || '—', x = drv[k] = drv[k] || { name: k, n: 0, price: 0, amount: 0, prime: 0, kept: 0, primeDue: 0 };
+    x.n++; ['price', 'amount', 'prime', 'kept', 'primeDue'].forEach(f => { x[f] = cshR(x[f] + (cshN(r[f]) || 0)); }); });
+  return { rows, from, to, n: rows.length, nEnc: rows.filter(r => r.nEnc).length, nTodo: rows.filter(r => r.state === 'À encaisser').length, nPart: rows.filter(r => r.state === 'Partielle').length,
+    price: T('price'), amount: T('amount'), prime: T('prime'), kept: T('kept'), primeDue: T('primeDue'),
+    reste: cshR(rows.reduce((s, r) => s + (r.reste != null && r.reste > 0 ? r.reste : 0), 0)), deposited: cshR(T('amount') - T('inCash')), inCash: T('inCash'),
+    drivers: Object.values(drv).sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name)) };
+}
+
+/**
+ * Journal d'une caisse (17/11/2026, demande d'Ahmed : PDF de toutes les opérations de la caisse Dépenses) : solde au début de la période
+ * (mouvements avant from), chaque opération de la période dans l'ordre (jour, puis saisie) avec entrée, sortie, hors caisse (virement,
+ * payée par la banque ou le chauffeur : sans effet sur le solde) et solde après l'opération, opérations annulées à part (sans effet),
+ * totaux, solde à la fin, par catégorie et par justificatif. moves : mouvements de la caisse (tous jours, au moins jusqu'à to).
+ */
+function cshCashBook(moves, caisse, from, to) {
+  const mv = (moves || []).filter(m => m.caisse === caisse);
+  const open = cshR(mv.filter(m => m.day < from).reduce((s, m) => s + cshSigned(m), 0));
+  const per = mv.filter(m => m.day >= from && m.day <= to).sort((a, b) => String(a.day).localeCompare(String(b.day)) || (a.id || 0) - (b.id || 0));
+  let bal = open; const rows = [], cancelled = [], cats = {}, just = {};
+  per.forEach(m => {
+    if (m.cancelled_at) { cancelled.push(m); return; }
+    const a = cshR(cshN(m.amount)), inn = m.flow === 'in' ? a : 0, out = m.flow === 'out' ? a : 0, hors = m.flow !== 'in' && m.flow !== 'out' ? a : 0;
+    bal = cshR(bal + inn - out);
+    rows.push({ m, inn, out, hors, bal });
+    if (m.kind === 'depense') { const k = m.label || 'Autre', c = cats[k] = cats[k] || { label: k, n: 0, out: 0, hors: 0 }; c.n++; c.out = cshR(c.out + out); c.hors = cshR(c.hors + hors);
+      const j = m.justif || 'En attente', x = just[j] = just[j] || { label: j, n: 0, amount: 0 }; x.n++; x.amount = cshR(x.amount + a); }
+  });
+  const T = k => cshR(rows.reduce((s, r) => s + r[k], 0));
+  return { caisse, from, to, open, rows, cancelled, totalIn: T('inn'), totalOut: T('out'), totalHors: T('hors'), close: bal, n: rows.length,
+    cats: Object.values(cats).sort((a, b) => (b.out + b.hors) - (a.out + a.hors) || a.label.localeCompare(b.label)),
+    justifs: Object.values(just).sort((a, b) => b.amount - a.amount) };
+}
+
 if (typeof module !== 'undefined') module.exports = { CASH_CAISSES, cshN, cshR, cshAmount, cshNorm, cshName, cshPhone, cshDay, cshSigned, cshBalances, cshKey, cshRappro, cshPayroll,
   cshWeek, cshCA, cshDaily, cshByCategory, cshCourse, cshUberTime, cshParseUberPayments, cshParseBolt, cshPlate, CSH_PF, cshParseUberDrivers, cshMatchDriver, cshMatchAll, cshLinks, cshUberPaid, cshParseHistory,
-  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepLastDay, cshDepositDays, cshDepositJournal, cshDepositSum, cshDepGroups, CSH_COMPLEMENT, cshShortfalls, CSH_PROMO_ST, cshPromos, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };
+  cshAddDay, cshNDays, cshPresets, cshPrev, cshPct, cshSummary, cshBuckets, CSH_DENOMS, cshBillTotal, cshMadWords, cshDepositInfo, cshDepDaysOf, cshDepLastDay, cshDepositDays, cshDepositJournal, CSH_CRS_OK, cshCourseJournal, cshCashBook, cshDepositSum, cshDepGroups, CSH_COMPLEMENT, cshShortfalls, CSH_PROMO_ST, cshPromos, CASH_DEP_CATS, CASH_FINE_PAY, cshIsFine, cshFineMove };

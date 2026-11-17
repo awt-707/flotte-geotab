@@ -1391,6 +1391,7 @@ function reportPdf(rep) {
       didParseCell: d => {
         if (d.section === 'head') { if (t.num.indexOf(d.column.index) >= 0) d.cell.styles.halign = 'right'; return; }
         const v = String(d.cell.raw), lv = LEVEL[v];
+        if (/^(Total|Solde au )/.test(String(d.row.raw[0]))) d.cell.styles.fontStyle = 'bold';   // lignes de total et de solde
         if (lv) { d.cell.styles.textColor = C[lv]; d.cell.styles.fontStyle = 'bold'; }
         else if (v === RPT_NM || v === 'prix non saisi' || v === 'km insuffisants') { d.cell.styles.textColor = C.mute; d.cell.styles.fontStyle = 'italic'; }
       } });
