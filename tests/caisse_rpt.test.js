@@ -160,6 +160,12 @@ test('page Caisse : rapports (PDF, tableur, graphiques) et bordereau de dépôt 
     assert.match(await page.innerText('#tcshdph'), /DEP-0-\d{8}-1/);
     const [jr2] = await Promise.all([page.waitForEvent('download'), page.click('[data-dpjr]')]);
     assert.match(jr2.suggestedFilename(), /^journal_encaissements_agence_.*_DEP-0-\d{8}-1\.pdf$/, 'journal depuis l\'historique des dépôts');
+    // ancien dépôt saisi sans jours notés : journal quand même (jours depuis le dépôt précédent)
+    env.psql(`insert into cash_moves (caisse, kind, flow, amount, day, source) values ('uber', 'depot', 'out', 10, '${d2}', 'Banque')`);
+    await page.goto(base() + '#/caisse?t=depot&r=1'); await page.waitForSelector('#tcshdph');
+    assert.match(await page.innerText('#tcshdph'), /jours depuis le dépôt précédent/);
+    const [jr3] = await Promise.all([page.waitForEvent('download'), page.locator('[data-dpjr^="M"]').click()]);
+    assert.match(jr3.suggestedFilename(), /^journal_encaissements_agence_.*\.pdf$/);
     // jours déjà déposés : signalés et décochés au dépôt suivant
     await page.goto(base() + `#/caisse?t=depot&dpdu=${d2}&dpau=${d1}`); await page.waitForSelector('#dpdays');
     assert.match(await page.innerText('#dpdays'), /déjà déposé · DEP-0-/);

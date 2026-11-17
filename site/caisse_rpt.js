@@ -225,7 +225,7 @@ async function cshTabDepot() {
         ['Jours couverts', g => g.days.length ? esc(cshDaysTxt(g.days)) : '<span class="nm">non précisés</span>'], ['Uber', g => cshMoney(g.uber), g => g.uber, 'n'], ['Bolt', g => cshMoney(g.bolt), g => g.bolt, 'n'],
         ['Courses privées', g => cshMoney(g.courses), g => g.courses, 'n'], ['Autres caisses', g => g.other ? cshMoney(g.other) : '', g => g.other, 'n'], ['Montant déposé', g => '<b>' + cshMoney(g.total) + '</b>', g => g.total, 'n'],
         ['Banque', g => esc(g.bank || '')], ['Déposé par', g => esc(g.who || '')],
-        ['Journal', g => g.days.length ? `<button class="ghost small" data-dpjr="${esc(g.key)}">📄 Journal</button>` : '<span class="small">jours non précisés</span>'],
+        ['Journal', g => `<button class="ghost small" data-dpjr="${esc(g.key)}">📄 Journal</button>${g.days.length ? '' : '<div class="small">jours depuis le dépôt précédent</div>'}`],
         ['Reçu de la banque', g => CS.filesErr ? '' : (filesOf(g).length ? cshFileLinks(filesOf(g)) + ' ' + cshUpBtn('depot|' + g.key, '+ fichier') : '<span class="small red">à déposer</span> ' + cshUpBtn('depot|' + g.key)), g => filesOf(g).length]],
         groups, { empty: 'Aucun dépôt enregistré', page: true, total: { fmt: x => '<b>' + cshMoney(x) + '</b>' } })}</div>`);
   if ($('#dpday')) $('#dpday').onchange = () => { location.hash = cshHref('depot', { jour: $('#dpday').value }); };
@@ -283,8 +283,16 @@ async function cshTabDepot() {
   // journal des encaissements (document pour la direction) : jours cochés, ou jours couverts par un dépôt de l'historique
   $('#dpjrn').onclick = async () => { const d = read(); if (!d.days.length) { $('#dpres').innerHTML = msg('Cochez au moins un jour.', 'err'); return; }
     try { cshJournalPdf(await cshJournalOf(d.days.map(r => r.day)), { ref: cshDepRef(d.day, 'projet'), day: d.day, who: d.who, bank: d.bank, total: d.total }); } catch (x) { alert(x.message); } };
-  document.querySelectorAll('[data-dpjr]').forEach(b => { b.onclick = async () => { const g = groups.find(x => x.key === b.dataset.dpjr); if (!g) return;
-    try { cshJournalPdf(await cshJournalOf(g.days), { ref: g.ref || g.key, day: g.day, who: g.who, bank: g.bank, total: g.total }); } catch (x) { alert(x.message); } }; });
+  // anciens dépôts (avant le 03/11/2026, jours pas notés dans la référence) : jours entre le dépôt précédent et ce dépôt, dits comme tels
+  document.querySelectorAll('[data-dpjr]').forEach(b => { b.onclick = async () => { const i = groups.findIndex(x => x.key === b.dataset.dpjr), g = groups[i]; if (!g) return;
+    let days = g.days, note = '';
+    if (!days.length) {
+      const prev = groups.slice(i + 1).find(x => x.day < g.day), first = CS.all.filter(m => cshLive(m) && m.flow === 'in' && (m.kind === 'encaissement' || m.kind === 'course')).reduce((x, m) => !x || m.day < x ? m.day : x, '');
+      const a = prev ? (prev.days.length ? cshAddDay(prev.days[prev.days.length - 1], 1) : cshAddDay(prev.day, 1)) : (first || g.day);
+      days = []; for (let d = a; d <= g.day && days.length < 93; d = cshAddDay(d, 1)) days.push(d);
+      note = 'Jours non notés à l\'enregistrement du dépôt : encaissements ' + (prev ? 'depuis le dépôt précédent (' + fmtDay(prev.day) + ')' : 'depuis le premier encaissement') + ' jusqu\'au jour du dépôt.';
+    }
+    try { cshJournalPdf(await cshJournalOf(days), { ref: g.ref || 'Dépôt du ' + fmtDay(g.day), day: g.day, who: g.who, bank: g.bank, total: g.total, note }); } catch (x) { alert(x.message); } }; });
   cshBindFiles();
   if (CS.flash && $('#' + CS.flash.id)) { $('#' + CS.flash.id).innerHTML = CS.flash.html; CS.flash = null; }
 }
@@ -322,6 +330,7 @@ function cshJournalPdf(j, meta) {
   col('DrawColor', C.acc); doc.setLineWidth(0.6); doc.line(M, 45.5, W - M, 45.5);
   // cartes : Uber, Bolt, courses privées, total
   let y = 50; const cw = (W - 2 * M - 9) / 4;
+  if (meta.note) { font('italic', 8, C.mute); doc.text(doc.splitTextToSize(cl(meta.note), W - 2 * M), M, 49.5); y = 55; }
   [['Encaissements Uber', j.uber], ['Encaissements Bolt', j.bolt], ['Courses privées', j.courses], ['Total à déposer', j.total]].forEach((c, i) => { const x = M + i * (cw + 3);
     col('FillColor', i === 3 ? C.head : C.soft); doc.roundedRect(x, y, cw, 14, 1.6, 1.6, 'F');
     font('normal', 6.8, i === 3 ? [190, 205, 215] : C.mute); doc.text(cl(c[0]).toUpperCase(), x + 3, y + 4.5);
