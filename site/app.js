@@ -1773,6 +1773,7 @@ async function route() {
   if (typeof svStart === 'function') svStart();   // pauses et courses suivies : compte à rebours et alertes sur toutes les pages
   if (typeof rtwStart === 'function') rtwStart();   // retours : bandeau quand un chauffeur prévenu arrive à l'agence
   if (typeof pfwStart === 'function') pfwStart();   // Uber : bandeau rouge quand un chauffeur sous contrat se déconnecte
+  if (typeof pfPushStart === 'function') pfPushStart();   // application Ludy 1.8 : volet Uber Fleet lu et envoyé à la base
   if (MOBILE) return;
   S.timers.push(setInterval(health, 60000));
   // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)

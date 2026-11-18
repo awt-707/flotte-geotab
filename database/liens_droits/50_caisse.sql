@@ -3,7 +3,7 @@
 -- Journal unique des mouvements (cash_moves, garde cash_guard, historique cash_log), exports Uber et Bolt,
 -- fiches d'encaissement et justificatifs déposés (cash_sheets, cash_files),
 -- contrôle des courses Uber (export « Activité des courses » croisé avec le GPS Geotab : uber_trips, uber_days).
--- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_days, uber_drivers, uber_payments, uber_trips
+-- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_days, uber_drivers, uber_live, uber_live_readers, uber_payments, uber_trips
 -- Fichier produit par « node database/outils/schema.js build » depuis supabase/migrations/ : ne pas modifier à la main
 -- (ajouter une migration, puis relancer build).
 -- =============================================================================
@@ -121,9 +121,17 @@ ALTER TABLE public.uber_days ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.uber_drivers ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE public.uber_live ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.uber_live_readers ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE public.uber_payments ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.uber_trips ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY ul_read ON public.uber_live FOR SELECT TO authenticated USING ((( SELECT public.is_admin() AS is_admin) OR (vehicle_key = ANY (( SELECT public.my_vehicle_keys() AS my_vehicle_keys)::text[]))));
+
+CREATE POLICY ulr_read ON public.uber_live_readers FOR SELECT TO authenticated USING ((( SELECT public.is_admin() AS is_admin) OR (user_id = auth.uid())));
 
 -- ----------------------------------------------------------------------------- Droits et commentaires
 
@@ -142,6 +150,10 @@ GRANT ALL ON FUNCTION public.cash_log_trg() TO service_role;
 REVOKE ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) TO service_role;
+
+REVOKE ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text) TO authenticated;
+GRANT ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text) TO service_role;
 
 GRANT SELECT,INSERT,DELETE ON TABLE public.bolt_sessions TO authenticated;
 GRANT ALL ON TABLE public.bolt_sessions TO service_role;
@@ -175,6 +187,12 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.uber_days TO authenticated;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.uber_drivers TO authenticated;
 GRANT ALL ON TABLE public.uber_drivers TO service_role;
+
+GRANT ALL ON TABLE public.uber_live TO service_role;
+GRANT SELECT ON TABLE public.uber_live TO authenticated;
+
+GRANT ALL ON TABLE public.uber_live_readers TO service_role;
+GRANT SELECT ON TABLE public.uber_live_readers TO authenticated;
 
 GRANT SELECT,INSERT,DELETE ON TABLE public.uber_payments TO authenticated;
 GRANT ALL ON TABLE public.uber_payments TO service_role;

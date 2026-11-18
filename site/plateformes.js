@@ -1,6 +1,7 @@
-// Page En direct : chauffeurs Uber / Bolt en ce moment (en ligne, disponibles, en route vers le client, en course), relus toutes les 15 s.
-// Données : fleet_latest + fleet_drivers (droits de la base : administrateur = tout, gestionnaire / lecture seule = ses agences).
-// Calcul : pfSummary (plateformes_calc.js).
+// Page En direct : chauffeurs Uber en ce moment (en ligne, disponibles, en route vers le client, en course), relus toutes les 15 s.
+// Données : uber_live (migration 20261204000000_uber_ecran.sql), états lus sur l'écran Uber Fleet ouvert dans l'application Ludy 1.8,
+// sur n'importe quel ordinateur (pfPush), sans l'application de Raphael (18/11/2026, demande d'Ahmed). Droits de la base : administrateur
+// = tout, gestionnaire / lecture seule = véhicules de ses agences. Calcul : pfSummary (plateformes_calc.js).
 const PF = { latest: [], drivers: [], err: '', at: 0, busy: false, open: false };
 const PF_EVERY_MS = 15000;
 const PF_CLS = { to_pickup: 'warn', on_trip: 'ok', available: '', unknown: 'mute' };
@@ -8,11 +9,11 @@ const PF_CLS = { to_pickup: 'warn', on_trip: 'ok', available: '', unknown: 'mute
 async function pfLoad() {
   if (PF.busy) return; PF.busy = true;
   try {
-    const [l, d] = await Promise.all([
-      sb.from('fleet_latest').select('driver_id,source,status,observed_at,vehicle_label,evidence').gte('observed_at', new Date(Date.now() - 24 * 3600000).toISOString()).limit(1000),
-      PF.drivers.length && Date.now() - PF.dAt < 10 * 60000 ? { data: PF.drivers } : sb.from('fleet_drivers').select('id,name,agency_id,vehicle_key,ludy_driver_code').limit(1000)]);
-    if (l.error) throw l.error; if (d.error) throw d.error;
-    PF.latest = l.data || []; if (d.data !== PF.drivers) { PF.drivers = d.data || []; PF.dAt = Date.now(); }
+    const l = await sb.from('uber_live').select('plate_key,plate,vehicle_key,agency_id,driver_name,status,raw,observed_at,status_since').gte('observed_at', new Date(Date.now() - 24 * 3600000).toISOString()).limit(1000);
+    if (l.error) throw l.error;
+    // une ligne par plaque lue à l'écran (le « chauffeur » d'Uber Fleet est repéré par sa plaque)
+    PF.latest = (l.data || []).map(r => ({ driver_id: r.plate_key, source: 'uber', status: r.status, observed_at: r.observed_at, since: r.status_since, vehicle_label: r.plate, evidence: { raw_state: r.raw } }));
+    PF.drivers = (l.data || []).map(r => ({ id: r.plate_key, name: r.driver_name || '', agency_id: r.agency_id, vehicle_key: r.vehicle_key, ludy_driver_code: null }));
     PF.err = ''; PF.at = Date.now();
   } catch (e) { PF.err = String(e.message || e); }
   finally { PF.busy = false; }
@@ -32,7 +33,7 @@ function pfHtml() {
   const s = pfSum(), blk = (x, name) => {
     if (!x.seen) return '';
     const n = v => x.stale ? '—' : f0(v);
-    const late = x.stale ? `<div class="msg warn small">Lecture de ${name} arrêtée${x.lastAt ? ' depuis le ' + esc(fmtDTY(new Date(x.lastAt).toISOString())) : ''} : chiffres pas à jour (l'écran ${name === 'Uber' ? 'Uber Fleet' : 'Bolt'} n'est plus relu par l'application de bureau).</div>` : '';
+    const late = x.stale ? `<div class="msg warn small">Lecture de ${name} arrêtée${x.lastAt ? ' depuis le ' + esc(fmtDTY(new Date(x.lastAt).toISOString())) : ''} : chiffres pas à jour (${name === 'Uber' ? 'aucune application Ludy n\'a le volet Uber Fleet ouvert et connecté en ce moment' : 'Bolt n\'est plus relu'}).</div>` : '';
     return `<div class="pfblk"><h3>${name} en ce moment <span class="small">${x.lastAt && !x.stale ? 'lu à ' + esc(localHM(new Date(x.lastAt))) : ''}</span></h3>${late}
       ${cards([['En ligne', n(x.online), x.stale ? 'mute' : ''], ['En route vers le client', n(x.to_pickup), x.stale ? 'mute' : x.to_pickup ? 'warn' : ''], ['En course', n(x.on_trip), x.stale ? 'mute' : 'ok'],
         ['Disponibles (en attente)', n(x.available)]].concat(x.unknown && !x.stale ? [['État non reconnu', f0(x.unknown), 'mute']] : []))}
@@ -52,7 +53,7 @@ function pfHtml() {
         <td>${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${r.since_min != null ? ' · depuis ' + esc(fH(r.since_min / 60)) : ''}</td></tr>`).join('')}</tbody></table>` : ''}</div>`;
   }
   const html = blk(s.uber, 'Uber') + blk(s.bolt, 'Bolt') + offH;
-  return html ? `<div class="panel pfbox">${html}<div class="small">États lus en direct sur l'écran Uber Fleet (et Bolt) par l'application de bureau, toutes les quelques secondes ; un chauffeur qui n'est plus vu depuis 2 min n'est plus compté en ligne.</div></div>` : '';
+  return html ? `<div class="panel pfbox">${html}<div class="small">États lus toutes les 10 s sur l'écran Uber Fleet ouvert dans l'application Ludy (1.8 ou plus récente), sur n'importe quel ordinateur connecté ; un chauffeur qui n'est plus vu depuis 2 min n'est plus compté en ligne.</div></div>` : '';
 }
 /** État Uber (sinon Bolt) d'un véhicule de la carte, d'après la plaque lue sur l'écran de la plateforme ; null si pas en ligne ou pas à jour */
 const PF_SHORT = { available: 'Disponible', to_pickup: 'Vers le client', on_trip: 'En course', unknown: 'En ligne' };
@@ -213,4 +214,24 @@ function pfwStart() {
   pfwTick();
 }
 /** Changement d'utilisateur : alertes, contexte et lectures oubliés (jamais montrés à un autre compte) */
-function pfwReset() { Object.values(PFW.toasts).forEach(t => t.remove()); PFW.toasts = {}; PFW.ctx = null; PFW.primed = false; PF.latest = []; PF.drivers = []; PF.at = 0; }
+function pfwReset() { Object.values(PFW.toasts).forEach(t => t.remove()); PFW.toasts = {}; PFW.ctx = null; PFW.primed = false; PF.latest = []; PF.drivers = []; PF.at = 0; PFP.last = ''; PFP.lastAt = 0; }
+
+// ---------- Application Ludy 1.8 : relevé du volet Uber Fleet envoyé à la base (n'importe quel compte connecté) ----------
+const PFP = { timer: 0, last: '', lastAt: 0, n: 0, err: '' };
+function pfPushCan() { return appIpc() && !!(S.profile && ['admin', 'manager', 'viewer'].includes(S.profile.role)); }
+async function pfPushTick() {
+  if (!S.session || !pfPushCan()) return;
+  let v = null; try { v = await appInvoke('uber_rows'); } catch (e) { return; }   // application avant la 1.8 : commande absente
+  if (!v || !Array.isArray(v.rows) || v.age > 30) return;
+  const sig = JSON.stringify(v.rows);
+  if (sig === PFP.last && Date.now() - PFP.lastAt < 30000) return;   // rien de changé : renvoyé toutes les 30 s (chauffeurs toujours en ligne)
+  const dev = 'Application ' + ((window.LUDY_APP && window.LUDY_APP.version) || '') + ' · ' + (/Win/i.test(navigator.platform || navigator.userAgent) ? 'Windows' : /Mac/i.test(navigator.platform || navigator.userAgent) ? 'Mac' : 'autre');
+  const r = await sb.rpc('uber_live_push', { p_rows: v.rows, p_device: dev, p_url: v.url || '', p_diag: v.diag || '' }).then(x => x, e => ({ error: e }));
+  if (r.error) { PFP.err = String(r.error.message || r.error); return; }
+  PFP.last = sig; PFP.lastAt = Date.now(); PFP.n = r.data || 0; PFP.err = '';
+}
+function pfPushStart() {
+  if (PFP.timer || !appIpc()) return;
+  PFP.timer = setInterval(() => { pfPushTick(); }, 10000);
+  pfPushTick();
+}
