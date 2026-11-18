@@ -56,12 +56,17 @@ function pfDisconnects(latest, drivers, o) {
   if (!readerAt || now - readerAt > fresh) return [];
   const out = [];
   uber.forEach(r => {
-    if (r.status === 'offline') return;
-    const t = new Date(r.observed_at).getTime(), age = now - t;
-    if (!(age > fresh && age <= maxAge)) return;
+    const seen = new Date(r.observed_at).getTime();
+    let t;
+    if (r.status === 'offline') {   // « Hors ligne » écrit à l'écran : déconnecté depuis le changement d'état (lecture à jour seulement)
+      if (now - seen > fresh) return;
+      t = new Date(r.since || r.observed_at).getTime(); if (!(now - t <= maxAge)) return;
+    } else {   // plus affiché à l'écran : déconnecté depuis la dernière lecture
+      t = seen; const age = now - t; if (!(age > fresh && age <= maxAge)) return;
+    }
     const d = byId[r.driver_id] || null;
     if (o.keep && !o.keep(d, r)) return;
-    out.push({ key: 'UOFF|' + r.driver_id + '|' + r.observed_at, driverId: r.driver_id, name: (d && d.name) || '', plate: r.vehicle_label || '', lastAt: t, status: r.status, d, r });
+    out.push({ key: 'UOFF|' + r.driver_id + '|' + new Date(t).toISOString(), driverId: r.driver_id, name: (d && d.name) || '', plate: r.vehicle_label || '', lastAt: t, status: r.status, d, r });
   });
   return out.sort((a, b) => b.lastAt - a.lastAt);
 }

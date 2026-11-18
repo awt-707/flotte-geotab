@@ -49,10 +49,10 @@ test('« En direct » : un véhicule par ligne, plaques dessinées, carte affich
   const { br, page, errors } = await openBrowser();
   try {
     await login(page, '#/direct');
-    await page.waitForSelector('#tlive');
+    await page.waitForSelector('#vlist .vcard');
     const n = +env.psql('select count(*) from live_status');
-    assert.strictEqual(await page.locator('#tlive tbody tr').count(), n);
-    assert.ok(await page.locator('#tlive .plate').count() >= n);
+    assert.strictEqual(await page.locator('#vlist .vcard').count(), n);
+    assert.ok(await page.locator('#vlist .vcard .plate').count() >= n);
     assert.strictEqual(await page.locator('#map.leaflet-container').count(), 1);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
@@ -136,9 +136,9 @@ test('en direct : positions Geotab lues toutes les 5 s, les véhicules bougent s
     await page.waitForTimeout(1600);   // fin du glissement du marqueur
     const live = await page.evaluate(() => LIVE.pos);
     for (const [k, v] of Object.entries(await pos())) assert.strictEqual(v, live[k].lat + ',' + live[k].lon, k + ' : marqueur pas à la position Geotab');
-    const txt = await page.innerText('#tlive');
+    const txt = await page.innerText('#vlist');
     Object.values(live).filter(v => v.state === 'En route').forEach(v => assert.match(txt, new RegExp(v.speed + ' km/h')));
-    assert.match(txt, /\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/, 'heure de position à la seconde');
+    assert.match(txt, /Position Geotab \d{2}:\d{2}:\d{2}/, 'heure de position à la seconde');
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
@@ -150,7 +150,7 @@ test('en direct : relais Geotab pas encore installé, positions du collecteur et
     await login(page, '#/direct');
     await page.waitForFunction(() => /indisponible/.test((document.querySelector('#livest') || {}).innerText || ''), null, { timeout: 15000 });
     assert.match(await page.innerText('#livest'), /Temps réel Geotab indisponible \(Requested function was not found\) : positions du collecteur/);
-    assert.ok(await page.locator('#tlive tbody tr').count() > 0);
+    assert.ok(await page.locator('#vlist .vcard').count() > 0);
     assert.deepStrictEqual(errors.filter(e => !/404/.test(e)), []);
   } finally { await br.close(); srv.kill(); srv = await startSite(); }
 });
@@ -171,40 +171,36 @@ test('en direct : chauffeur = contrat en cours maintenant, sinon « Sans contrat
   try {
     await login(page, '#/direct');
     await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test((document.querySelector('#livest') || {}).innerText || ''), null, { timeout: 15000 });
-    const rows = await page.$$eval('#tlive tbody tr', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')));
+    const rows = await page.$$eval('#vlist .vcard', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')));
     const r99 = rows.find(t => /WW968199/.test(t)), r94 = rows.find(t => /WW968194/.test(t));
-    assert.match(r99, /Chauffeur En Cours (Jour|Nuit) LIVE1/);
+    assert.match(r99, /Chauffeur En Cours (Jour|Nuit)/i);
     assert.match(r94, /Sans contrat/); assert.doesNotMatch(r94, /Contrat Terminé|Jamais Cloture|Rendu Recemment/);
     // extract pas encore injecté pour le shift en cours (dernier import il y a 2 jours) : « Contrat dépassé » au lieu de « Sans contrat »
     env.psql("update contracts set updated_at = now() - interval '2 days' where updated_at > now() - interval '2 days'");
     await page.goto('http://localhost:8080/#/tableau'); await page.waitForSelector('#page h1');
     await page.goto('http://localhost:8080/#/direct'); await page.waitForFunction(() => { const e = document.querySelector('#livest'); return e && /Temps réel Geotab : actualisé/.test(e.innerText); }, null, { timeout: 15000 });
-    const r94b = (await page.$$eval('#tlive tbody tr', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')))).find(t => /WW968194/.test(t));
+    const r94b = (await page.$$eval('#vlist .vcard', trs => trs.map(tr => tr.innerText.replace(/\s+/g, ' ')))).find(t => /WW968194/.test(t));
     assert.match(r94b, /Contrat dépassé/); assert.doesNotMatch(r94b, /Sans contrat/);
-    assert.match(await page.innerText('#livecards'), /Contrats dépassés/);
+    assert.match(await page.innerText('#livecards'), /contrats dépassés/i);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); env.psql("delete from contracts where num in ('LIVE1', 'LIVE2', 'LIVE3', 'LIVE4', 'LIVE5')" + (open.length ? "; update contracts set end_at = null where num in ('" + open.join("','") + "')" : '')); }
 });
 
-test('en direct : alertes à l\'instant (événements Geotab et vitesse au-dessus du seuil), notification des nouvelles', async () => {
+test('en direct : alertes à l\'instant calculées (événements Geotab, vitesse) sans bandeau ni liste sur la page (seulement les déconnexions d\'Uber), fiche de l\'alerte', async () => {
   const lim = env.psql("select value from params where key = 'vmaxAlert'");
   env.psql("update params set value = '30' where key = 'vmaxAlert'");
   const { br, page, errors } = await openBrowser();
   try {
     await login(page, '#/direct');
     await page.waitForFunction(() => /Temps réel Geotab : actualisé/.test((document.querySelector('#livest') || {}).innerText || ''), null, { timeout: 15000 });
-    await page.waitForFunction(() => document.querySelectorAll('#toasts .toast').length > 0, null, { timeout: 30000 });
-    const txt = await page.innerText('#livealerts');
-    assert.match(txt, /Alertes en direct/);
-    const rows = await page.$$eval('#tlal .acard', els => els.map(el => el.innerText.replace(/\s+/g, ' ').trim()));
-    assert.ok(rows.length > 0, 'aucune alerte en direct');
-    rows.forEach(r => assert.match(r, /^\d{2}\/\d{2} \d{2}:\d{2}:\d{2} .*Voir la fiche/, r));
-    const ev = await page.evaluate(() => LIVE.alerts.map(a => a.type));
-    assert.ok(ev.some(t => t !== 'Vitesse excessive'), 'aucun événement Geotab');
-    const toast = await page.innerText('#toasts .toast');
-    assert.match(toast, /Voir le véhicule/);
-    // clic sur une alerte de vitesse : fiche avec la vitesse lue dans Geotab autour de l'instant
-    await page.click('#tlal .acard:has-text("Vitesse")');
+    await page.waitForFunction(() => LIVE.alerts.some(a => a.type === 'Vitesse excessive') && LIVE.alerts.some(a => a.type !== 'Vitesse excessive'), null, { timeout: 30000 });
+    await page.waitForTimeout(6000);   // lecture suivante du relais : nouvelles alertes éventuelles
+    // page En direct compacte : ni liste d'alertes de conduite, ni totaux du jour, ni bandeau de conduite
+    assert.strictEqual(await page.locator('#livealerts, #livetab, #syncnow').count(), 0);
+    assert.strictEqual(await page.locator('#toasts .toast:not(.pftoast)').count(), 0, 'pas de bandeau d\'alerte de conduite sur En direct');
+    assert.ok(await page.locator('.livebig #map').count() === 1 && (await page.$eval('#map', el => el.getBoundingClientRect().height)) >= 480, 'grande carte');
+    // fiche d'une alerte de vitesse (page Alertes / lien) : vitesse lue dans Geotab autour de l'instant
+    await page.evaluate(() => openAlertDetail(LIVE.alerts.find(a => a.type === 'Vitesse excessive')));
     await page.waitForSelector('#adlg[open] .adgrid', { timeout: 20000 });
     const fiche = await page.innerText('#adlg');
     assert.match(fiche, /Vitesse max/); assert.match(fiche, /Limite de la route/); assert.match(fiche, /Dépassement max/); assert.match(fiche, /Historique des relevés/); assert.match(fiche, /Rien n'est estimé/);
@@ -267,7 +263,7 @@ test('en direct : dépassement de la limite de la route au-delà du seuil régl�
     await page.waitForFunction(() => LIVE.alerts.some(a => a.type === 'Dépassement limite'), null, { timeout: 60000 });
     const a = await page.evaluate(() => { const a = LIVE.alerts.find(x => x.type === 'Dépassement limite'), v = LIVE.pos[a.vehicle_key]; return { a, v }; });
     assert.match(a.a.detail, /^\d+ km\/h pour \d+ km\/h autorisés \(seuil \+-200, soit -?\d+ km\/h\)$/);
-    assert.match(await page.innerText('#livealerts'), /Dépassement limite/);
+    assert.strictEqual(await page.locator('#livealerts').count(), 0, 'pas de liste d\'alertes de conduite sur En direct');
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); env.psql("update params set value = '' where key = 'overByLimit'"); }
 });

@@ -761,3 +761,26 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .pfchip.pf-offmove { background: #b42318; animation: svpulse 1.2s ease-in-out infinite alternate; }
 .pftoast.crit { border-left: 6px solid #b42318; }
 .pftoast .pfact { margin-top: 6px; gap: 6px; flex-wrap: wrap; }
+
+/* En direct compacte (18/11/2026) : en-tête sur une ligne, compteurs en pastilles, grande carte */
+.livehead { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin: 0 0 6px; }
+.livehead h1 { margin: 0; font-size: 22px; }
+.livetop { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.kchips, .pfbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pfname { font-weight: 700; min-width: 64px; margin-right: 4px; }
+.pfname .small { font-weight: 400; margin-left: 4px; }
+.kchip { display: inline-flex; align-items: baseline; gap: 4px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; white-space: nowrap; }
+.kchip b { font-size: 15px; }
+.kchip.ok { border-color: #18794a; } .kchip.ok b { color: #18794a; }
+.kchip.warn { border-color: #c2620a; } .kchip.warn b { color: #c2620a; }
+.kchip.crit { border-color: #b42318; background: rgba(180, 35, 24, .08); } .kchip.crit b { color: #b42318; }
+.kchip.mute { opacity: .7; }
+.kchip.crs b { color: #7b1e2e; }
+.pfbar .msg { margin: 0; padding: 3px 8px; }
+.pfdets { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.pfdets details { flex: 1 1 380px; }
+.pfdets summary { cursor: pointer; font-size: 13px; color: var(--accent, #5b4bd6); }
+.livebig { margin-top: 4px; }
+.livebig #map { height: calc(100vh - 190px); min-height: 480px; }
+.livebig .vlist { max-height: calc(100vh - 150px); min-height: 480px; }
+@media (max-width: 1100px) { .livebig #map { height: 60vh; min-height: 360px; } .livebig .vlist { max-height: none; min-height: 0; } }

@@ -3,7 +3,7 @@
 -- Journal unique des mouvements (cash_moves, garde cash_guard, historique cash_log), exports Uber et Bolt,
 -- fiches d'encaissement et justificatifs déposés (cash_sheets, cash_files),
 -- contrôle des courses Uber (export « Activité des courses » croisé avec le GPS Geotab : uber_trips, uber_days).
--- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_days, uber_drivers, uber_payments, uber_trips
+-- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_days, uber_drivers, uber_live, uber_live_log, uber_live_readers, uber_payments, uber_trips
 -- Fichier produit par « node database/outils/schema.js build » depuis supabase/migrations/ : ne pas modifier à la main
 -- (ajouter une migration, puis relancer build).
 -- =============================================================================
@@ -119,6 +119,51 @@ begin
   delete from uber_days d using (select distinct vehicle_key, (requested_at at time zone 'UTC')::date as day from _v where not same and vehicle_key is not null) x
    where d.vehicle_key = x.vehicle_key and d.day between x.day - 1 and x.day + 1;
   return jsonb_build_object('added', n_add, 'updated', n_upd, 'same', n_same, 'skipped', n_skip, 'no_vehicle', n_noveh);
+end $$;
+
+CREATE FUNCTION public.uber_live_push(p_rows jsonb, p_device text DEFAULT ''::text, p_url text DEFAULT ''::text, p_diag text DEFAULT ''::text) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare v_role text := coalesce((select role from profiles where user_id = auth.uid()), ''); r jsonb; k text; v_key text; v_ag bigint; n integer := 0;
+  o uber_live; g record;
+begin
+  if auth.uid() is null or v_role not in ('admin', 'manager', 'viewer') then raise exception 'Envoi refusé'; end if;
+  if jsonb_typeof(coalesce(p_rows, '[]'::jsonb)) <> 'array' or jsonb_array_length(coalesce(p_rows, '[]'::jsonb)) > 500 then raise exception 'Relevé invalide'; end if;
+  for r in select * from jsonb_array_elements(coalesce(p_rows, '[]'::jsonb)) loop
+    k := norm_plate(r->>'plate');
+    if length(k) < 4 or coalesce(r->>'status', '') not in ('available', 'to_pickup', 'on_trip', 'offline', 'unknown') then continue; end if;
+    select v.key, v.agency_id into v_key, v_ag from vehicles v where norm_plate(v.plate) = k or norm_plate(v.key) = k limit 1;
+    -- historique : nouvel état (ou plaque revue après plus de 5 min d'absence) = période fermée, nouvelle période ouverte
+    select * into o from uber_live where plate_key = k;
+    if o.plate_key is null or o.status <> r->>'status' or o.observed_at < now() - interval '5 minutes' then
+      update uber_live_log set ended_at = case when o.observed_at < now() - interval '5 minutes' then o.observed_at else now() end where plate_key = k and ended_at is null;
+      if o.plate_key is not null and o.observed_at < now() - interval '5 minutes' then
+        insert into uber_live_log (plate_key, plate, vehicle_key, agency_id, driver_name, status, started_at, ended_at)
+          values (k, o.plate, v_key, v_ag, o.driver_name, 'gone', o.observed_at, now());
+      end if;
+      insert into uber_live_log (plate_key, plate, vehicle_key, agency_id, driver_name, status, started_at)
+        values (k, left(r->>'plate', 30), v_key, v_ag, coalesce(nullif(left(r->>'name', 80), ''), o.driver_name), r->>'status', now());
+    end if;
+    insert into uber_live (plate_key, plate, vehicle_key, agency_id, driver_name, status, raw, observed_at, status_since, reader)
+      values (k, left(r->>'plate', 30), v_key, v_ag, nullif(left(r->>'name', 80), ''), r->>'status', left(r->>'raw', 60), now(), now(), auth.uid())
+      on conflict (plate_key) do update set plate = excluded.plate, vehicle_key = excluded.vehicle_key, agency_id = excluded.agency_id,
+        driver_name = coalesce(excluded.driver_name, uber_live.driver_name), status = excluded.status, raw = excluded.raw, observed_at = excluded.observed_at, reader = excluded.reader,
+        status_since = case when uber_live.status = excluded.status and uber_live.observed_at > now() - interval '5 minutes' then uber_live.status_since else now() end;
+    n := n + 1;
+  end loop;
+  -- plaques plus affichées depuis 2 min (lecture à jour) : période fermée à la dernière lecture, « gone » ouverte (déconnecté)
+  for g in select * from uber_live u where u.status <> 'offline' and u.observed_at < now() - interval '2 minutes' and u.observed_at > now() - interval '1 day'
+      and exists (select 1 from uber_live_log l where l.plate_key = u.plate_key and l.ended_at is null and l.status <> 'gone') loop
+    update uber_live_log set ended_at = g.observed_at where plate_key = g.plate_key and ended_at is null;
+    insert into uber_live_log (plate_key, plate, vehicle_key, agency_id, driver_name, status, started_at)
+      values (g.plate_key, g.plate, g.vehicle_key, g.agency_id, g.driver_name, 'gone', g.observed_at);
+  end loop;
+  insert into uber_live_readers (user_id, device, at, rows, url, diag) values (auth.uid(), left(coalesce(p_device, ''), 80), now(), n, left(p_url, 200), left(p_diag, 3000))
+    on conflict (user_id, device) do update set at = now(), rows = excluded.rows, url = excluded.url, diag = excluded.diag;
+  delete from uber_live where observed_at < now() - interval '3 days';
+  if random() < 0.01 then delete from uber_live_log where started_at < now() - interval '62 days'; end if;
+  return n;
 end $$;
 
 -- ----------------------------------------------------------------------------- Tables
@@ -301,6 +346,51 @@ CREATE TABLE public.uber_drivers (
     agency_id bigint
 );
 
+CREATE TABLE public.uber_live (
+    plate_key text NOT NULL,
+    plate text NOT NULL,
+    vehicle_key text,
+    agency_id bigint,
+    driver_name text,
+    status text NOT NULL,
+    raw text,
+    observed_at timestamp with time zone DEFAULT now() NOT NULL,
+    status_since timestamp with time zone DEFAULT now() NOT NULL,
+    reader uuid,
+    CONSTRAINT uber_live_status_check CHECK ((status = ANY (ARRAY['available'::text, 'to_pickup'::text, 'on_trip'::text, 'offline'::text, 'unknown'::text])))
+);
+
+CREATE TABLE public.uber_live_log (
+    id bigint NOT NULL,
+    plate_key text NOT NULL,
+    plate text,
+    vehicle_key text,
+    agency_id bigint,
+    driver_name text,
+    status text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ended_at timestamp with time zone,
+    CONSTRAINT uber_live_log_status_check CHECK ((status = ANY (ARRAY['available'::text, 'to_pickup'::text, 'on_trip'::text, 'offline'::text, 'unknown'::text, 'gone'::text])))
+);
+
+CREATE SEQUENCE public.uber_live_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.uber_live_log_id_seq OWNED BY public.uber_live_log.id;
+
+CREATE TABLE public.uber_live_readers (
+    user_id uuid NOT NULL,
+    device text NOT NULL,
+    at timestamp with time zone DEFAULT now() NOT NULL,
+    rows integer DEFAULT 0 NOT NULL,
+    url text,
+    diag text
+);
+
 CREATE TABLE public.uber_payments (
     tx text NOT NULL,
     at timestamp with time zone NOT NULL,
@@ -356,6 +446,8 @@ ALTER TABLE ONLY public.cash_moves ALTER COLUMN id SET DEFAULT nextval('public.c
 
 ALTER TABLE ONLY public.cash_sheets ALTER COLUMN id SET DEFAULT nextval('public.cash_sheets_id_seq'::regclass);
 
+ALTER TABLE ONLY public.uber_live_log ALTER COLUMN id SET DEFAULT nextval('public.uber_live_log_id_seq'::regclass);
+
 -- ----------------------------------------------------------------------------- Clés et index
 
 ALTER TABLE ONLY public.bolt_sessions
@@ -381,6 +473,15 @@ ALTER TABLE ONLY public.uber_days
 
 ALTER TABLE ONLY public.uber_drivers
     ADD CONSTRAINT uber_drivers_pkey PRIMARY KEY (uuid);
+
+ALTER TABLE ONLY public.uber_live_log
+    ADD CONSTRAINT uber_live_log_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.uber_live
+    ADD CONSTRAINT uber_live_pkey PRIMARY KEY (plate_key);
+
+ALTER TABLE ONLY public.uber_live_readers
+    ADD CONSTRAINT uber_live_readers_pkey PRIMARY KEY (user_id, device);
 
 ALTER TABLE ONLY public.uber_payments
     ADD CONSTRAINT uber_payments_pkey PRIMARY KEY (tx);
@@ -413,6 +514,16 @@ CREATE INDEX cash_moves_mission ON public.cash_moves USING btree (mission_id) WH
 CREATE INDEX cash_sheets_shift ON public.cash_sheets USING btree (agency_id, day, shift);
 
 CREATE INDEX uber_days_day ON public.uber_days USING btree (day);
+
+CREATE INDEX uber_live_log_open ON public.uber_live_log USING btree (plate_key) WHERE (ended_at IS NULL);
+
+CREATE INDEX uber_live_log_time ON public.uber_live_log USING btree (started_at);
+
+CREATE INDEX uber_live_log_veh ON public.uber_live_log USING btree (vehicle_key, started_at);
+
+CREATE INDEX uber_live_obs ON public.uber_live USING btree (observed_at);
+
+CREATE INDEX uber_live_veh ON public.uber_live USING btree (vehicle_key);
 
 CREATE INDEX uber_payments_agency ON public.uber_payments USING btree (agency_id, at);
 

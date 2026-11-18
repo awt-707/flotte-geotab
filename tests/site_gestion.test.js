@@ -79,7 +79,7 @@ test('rapport PDF téléchargé depuis la page Rapports', async () => {
 test('alerte reçue en temps réel : bandeau affiché', async () => {
   const { br, page, errors } = await openBrowser();
   try {
-    await login(page, '#/direct'); await ready(page);
+    await login(page, '#/dashboard'); await ready(page);
     // alerte d'une journée passée (recalcul) : pas de bandeau
     await page.evaluate(() => window.__onNewAlert({ id: 'RT0', day: addDays(today(), -3), time: '09:15', plate: 'WW968199', vehicle_key: '968199WW', type: 'Excès de vitesse', severity: 'Critique', detail: 'x' }));
     assert.strictEqual(await page.locator('#toasts .toast').count(), 0);
@@ -88,6 +88,12 @@ test('alerte reçue en temps réel : bandeau affiché', async () => {
     assert.match(t, /Critique/); assert.match(t, /Excès de vitesse/); assert.match(t, /WW968199/); assert.match(t, /Chauffeur RT/);
     await page.click('#toasts .toast .x');
     assert.strictEqual(await page.locator('#toasts .toast').count(), 0);
+    // page En direct : pas de bandeau pour une alerte de conduite (seulement les déconnexions d'Uber et la pause en mouvement)
+    await page.goto('http://localhost:8080/#/direct'); await ready(page);
+    await page.evaluate(() => window.__onNewAlert({ id: 'RT2', day: today(), time: '09:20', plate: 'WW968199', vehicle_key: '968199WW', type: 'Excès de vitesse', severity: 'Critique', detail: '150 km/h' }));
+    assert.strictEqual(await page.locator('#toasts .toast').count(), 0);
+    await page.evaluate(() => window.__onNewAlert({ id: 'PAUSE|9', day: today(), time: '09:21', plate: 'WW968199', vehicle_key: '968199WW', type: 'Véhicule en pause en mouvement', severity: 'Critique', detail: 'x' }));
+    assert.strictEqual(await page.locator('#toasts .toast').count(), 1);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }
 });
@@ -140,7 +146,7 @@ test('gestionnaire d\'agence : ne voit que les véhicules de son agence', async 
     assert.match(txt, /WW968194/); assert.doesNotMatch(txt, /WW968199/);
     assert.strictEqual(await page.locator('.side nav a[href="#/agences"]').count(), 0);
     await page.goto('http://localhost:8080/#/direct'); await ready(page);
-    assert.strictEqual(await page.locator('#tlive tbody tr').count(), 1);
+    assert.strictEqual(await page.locator('#vlist .vcard').count(), 1);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); srv = await startSite(); }
 });

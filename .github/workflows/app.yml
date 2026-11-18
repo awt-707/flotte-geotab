@@ -23,7 +23,7 @@ jobs:
       matrix:
         include:
           - name: Mac
-            os: macos-14
+            os: macos-15
             args: --target universal-apple-darwin --bundles dmg
             file: desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
             out: Ludy.dmg

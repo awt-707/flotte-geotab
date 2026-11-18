@@ -567,6 +567,8 @@ async function openAlerts() {
 /** Nouvelle alerte reçue en temps réel (Supabase Realtime) : bandeau dans le site, notification du navigateur si la page est en arrière-plan */
 function onNewAlert(a) {
   if (!a || !a.id || !inAgency()(a.vehicle_key)) return;
+  // page En direct : pas de bandeau pour les alertes de conduite (demande d'Ahmed, 18/11/2026) ; gardé : véhicule en pause en mouvement
+  if (pageOf() === 'direct' && !String(a.id).startsWith('PAUSE|')) { openAlerts(); return; }
   if (a.day && a.day < addDays(today(), -1)) return;   // alerte d'une journée passée (recalcul, contrats injectés en retard) : pas de bandeau
   let box = $('#toasts'); if (!box) { box = document.createElement('div'); box.id = 'toasts'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
   const t = document.createElement('div'); t.className = 'toast ' + (GRAV_CLS[a.severity] || '');
@@ -1773,6 +1775,7 @@ async function route() {
   if (typeof svStart === 'function') svStart();   // pauses et courses suivies : compte à rebours et alertes sur toutes les pages
   if (typeof rtwStart === 'function') rtwStart();   // retours : bandeau quand un chauffeur prévenu arrive à l'agence
   if (typeof pfwStart === 'function') pfwStart();   // Uber : bandeau rouge quand un chauffeur sous contrat se déconnecte
+  if (typeof pfPushStart === 'function') pfPushStart();   // application Ludy 1.8 : volet Uber Fleet lu et envoyé à la base
   if (MOBILE) return;
   S.timers.push(setInterval(health, 60000));
   // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)

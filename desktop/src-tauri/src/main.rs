@@ -45,6 +45,29 @@ fn same_site(a: &url::Url, b: &url::Url) -> bool {
 /// Adresse actuelle de chaque volet ouvert (pour le rouvrir à sa nouvelle adresse si elle change dans les Réglages)
 struct Opened(Mutex<std::collections::HashMap<String, String>>);
 
+/// Lecture d'Uber Fleet (1.8) : script injecté dans les volets externes (ne lit que *.uber.com), dernier relevé gardé ici,
+/// relu par le site Ludy (commande uber_rows) qui l'envoie à la base avec le compte connecté
+const UBER_READER: &str = include_str!("uber_reader.js");
+struct UberRows(Mutex<Option<(std::time::SystemTime, serde_json::Value)>>);
+/// Relevé envoyé par la page Uber Fleet (seulement depuis *.uber.com, capacité « uber-reader ») : 500 lignes au plus
+#[tauri::command]
+fn uber_push(state: tauri::State<UberRows>, rows: serde_json::Value, url: Option<String>, diag: Option<String>) -> Result<(), String> {
+  let n = rows.as_array().map(|a| a.len()).unwrap_or(0);
+  if !rows.is_array() || n > 500 { return Err("relevé refusé".into()); }
+  let v = serde_json::json!({ "rows": rows, "url": url.unwrap_or_default(), "diag": diag.unwrap_or_default().chars().take(3000).collect::<String>() });
+  *state.0.lock().map_err(|e| e.to_string())? = Some((std::time::SystemTime::now(), v));
+  Ok(())
+}
+/// Dernier relevé d'Uber Fleet pour le site Ludy (âge en secondes) ; rien si aucun volet Uber ne lit depuis plus de 60 s
+#[tauri::command]
+fn uber_rows(state: tauri::State<UberRows>) -> Result<serde_json::Value, String> {
+  let g = state.0.lock().map_err(|e| e.to_string())?;
+  Ok(match g.as_ref() {
+    Some((t, v)) => { let age = t.elapsed().map(|d| d.as_secs()).unwrap_or(0); if age > 60 { serde_json::Value::Null } else { let mut v = v.clone(); v["age"] = serde_json::json!(age); v } }
+    None => serde_json::Value::Null,
+  })
+}
+
 /// Identifiants des accès réservés (identifiant / mot de passe demandés par le navigateur), par site : fichier logins.json
 /// du dossier de l'application, sur cet ordinateur seulement
 fn logins_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> { app.path().app_config_dir().ok().map(|d| d.join("logins.json")) }
@@ -199,6 +222,7 @@ fn ext_pane<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap<S
   let win = app.get_window("main").ok_or("fenêtre absente")?;
   let (h2, l2, home) = (app.clone(), label.clone(), target.clone());
   let b = WebviewBuilder::new(&label, WebviewUrl::External(with_login(&app, &target)))
+    .initialization_script(UBER_READER)
     // nouvel onglet demandé par le site : dans le volet s'il reste sur le même site, sinon dans le navigateur
     .on_new_window(move |u, _f| {
       if same_site(&u, &home) { if let Some(v) = h2.get_webview(&l2) { let _ = v.navigate(u); } }
@@ -229,6 +253,7 @@ fn ext_window<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap
     .unwrap_or((1100.0, 700.0));
   WebviewWindowBuilder::new(app, label, WebviewUrl::External(with_login(app, target)))
     .title(title).inner_size(w.max(700.0), h.max(500.0)).min_inner_size(700.0, 500.0).center()
+    .initialization_script(UBER_READER)
     .on_new_window(move |u, _f| {
       if same_site(&u, &home) { if let Some(v) = h2.get_webview(&l2) { let _ = v.navigate(u); } }
       else { let _ = open_out(&h2, &u); }
@@ -286,13 +311,16 @@ fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .manage(Opened(Mutex::new(Default::default())))
-    .invoke_handler(tauri::generate_handler![ext_show, ext_hide, ext_reload, ext_status, ext_login, open_external])
+    .manage(UberRows(Mutex::new(None)))
+    .invoke_handler(tauri::generate_handler![ext_show, ext_hide, ext_reload, ext_status, ext_login, open_external, uber_push, uber_rows])
     .setup(|app| {
       let home = home();
       let origin = { let u: url::Url = home.parse().expect("adresse du site"); u.origin().ascii_serialization() };
       // seul le site Ludy peut afficher / masquer les volets externes et enregistrer leurs accès réservés
       app.add_capability(CapabilityBuilder::new("ludy-site").webview("ludy").remote(format!("{origin}/*"))
-        .permission("allow-ext-show").permission("allow-ext-hide").permission("allow-ext-reload").permission("allow-ext-status").permission("allow-ext-login").permission("allow-open-external"))?;
+        .permission("allow-ext-show").permission("allow-ext-hide").permission("allow-ext-reload").permission("allow-ext-status").permission("allow-ext-login").permission("allow-open-external").permission("allow-uber-rows"))?;
+      // volets externes sur *.uber.com : seulement l'envoi du relevé d'Uber Fleet (rien d'autre)
+      app.add_capability(CapabilityBuilder::new("uber-reader").window("ext-*").webview("ext-*").remote("https://*.uber.com/*".to_string()).permission("allow-uber-push"))?;
       let init = include_str!("init.js").replace("__VERSION__", env!("CARGO_PKG_VERSION")).replace("__UBER__", UBER).replace("__EXTWIN__", if EXT_WINDOWS { "true" } else { "false" });
       let (site, site2) = (origin.clone(), origin.clone());
       // liens « nouvel onglet » : le site dans sa vue, le reste (cartes…) dans le navigateur
