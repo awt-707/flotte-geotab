@@ -177,7 +177,7 @@ test('base : relevé envoyé par un compte connecté (plaque → véhicule de Lu
     env.psql(`insert into auth.users (id, email) values ('33333333-3333-3333-3333-333333333333', 'rh@x') on conflict do nothing;
       insert into profiles (user_id, email, role) values ('33333333-3333-3333-3333-333333333333', 'rh@x', 'rh') on conflict (user_id) do update set role = 'rh'`);
     assert.throws(() => as('33333333-3333-3333-3333-333333333333', `select public.uber_live_push('[]'::jsonb, '', '', '')`), /Envoi refusé/);
-  } finally { env.psql('truncate uber_live, uber_live_readers'); env.resetDb(); }
+  } finally { env.psql("truncate uber_live, uber_live_readers, uber_live_log; delete from profiles where user_id = '33333333-3333-3333-3333-333333333333'; delete from auth.users where id = '33333333-3333-3333-3333-333333333333'"); env.resetDb(); }
 });
 
 test('site dans l\'application 1.8 : relevé du volet Uber Fleet envoyé à la base', async () => {
