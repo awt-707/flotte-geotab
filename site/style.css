@@ -563,7 +563,7 @@ button.small:not(.ghost) { color: var(--acc-ink); }
 .rhdays { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 
 /* Fenêtres de confirmation / saisie dessinées par le site (dialog.js : application Mac, qui n'affiche pas confirm()) */
-.uidlg { position: fixed; inset: 0; z-index: 3000; background: rgba(10, 16, 22, .45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.uidlg { position: fixed; inset: 0; z-index: 3100; background: rgba(10, 16, 22, .45); display: flex; align-items: center; justify-content: center; padding: 16px; }
 .uidlg-card { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 10px 40px rgba(0, 0, 0, .3); padding: 18px; max-width: 460px; width: 100%; }
 .uidlg-text { margin-bottom: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 .uidlg-card input { width: 100%; margin-bottom: 12px; }
@@ -691,6 +691,9 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .svov.ok { background: rgba(0, 70, 40, .5); }
 .svbox { width: min(640px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: #b3141b; color: #fff; border-radius: 14px; padding: 22px 22px 18px; text-align: center; box-shadow: 0 20px 60px rgba(0, 0, 0, .45); animation: svpulse 1.2s ease-in-out infinite alternate; }
 .svov.ok .svbox { background: #0b6b45; animation: none; }
+.svbox { position: relative; }
+.svx { position: absolute; z-index: 2; top: 8px; right: 10px; width: 36px; height: 36px; padding: 0; border-radius: 50%; border: 0; background: rgba(255, 255, 255, .18); color: #fff; font-size: 24px; line-height: 36px; cursor: pointer; }
+.svx:hover, .svx:focus { background: rgba(255, 255, 255, .32); }
 @keyframes svpulse { from { box-shadow: 0 0 0 0 rgba(255, 60, 60, .7); } to { box-shadow: 0 0 0 18px rgba(255, 60, 60, 0); } }
 .svtag { font: 700 15px/1.2 var(--fc); letter-spacing: .12em; opacity: .9; }
 .svname { font: 800 clamp(26px, 6vw, 44px)/1.1 var(--fc); margin: 10px 0 6px; }

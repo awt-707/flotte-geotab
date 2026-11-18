@@ -14,7 +14,15 @@ function svWa(phone, text) {
   const u = 'https://wa.me/' + n + '?text=' + encodeURIComponent(text);
   if (!openOut(u)) window.open(u, '_blank', 'noopener');
 }
-function svMark(k) { SV.shown[k] = Date.now(); try { const o = JSON.parse(localStorage.getItem(SV_PREF) || '{}'); o[k] = Date.now(); const cut = Date.now() - 2 * 86400000; Object.keys(o).forEach(x => { if (o[x] < cut) delete o[x]; }); localStorage.setItem(SV_PREF, JSON.stringify(o)); } catch (e) { } }
+// alerte traitée ou repoussée dans un onglet Ludy : fermée aussi dans les autres onglets ouverts (18/11/2026, signalé par Ahmed)
+const SV_BC = (() => { try { return typeof BroadcastChannel === 'function' ? new BroadcastChannel('ludy-suivi') : null; } catch (e) { return null; } })();
+if (SV_BC) SV_BC.onmessage = e => { const d = e.data || {}; if (!d.k) return;
+  if (d.t === 'mark') SV.shown[d.k] = Date.now(); else if (d.t === 'snooze') SV.snooze[d.k] = +d.until || 0;
+  if (d.reload) SV.loadAt = 0;
+  if (SV.cur && SV.cur.k === d.k) svClose(false, true); else SV.queue = SV.queue.filter(x => x.k !== d.k); };
+function svSay(t, k, extra) { try { if (SV_BC) SV_BC.postMessage(Object.assign({ t, k }, extra || {})); } catch (e) { } }
+function svSnooze(k, ms) { SV.snooze[k] = Date.now() + ms; svSay('snooze', k, { until: SV.snooze[k] }); }
+function svMark(k) { svSay('mark', k); SV.shown[k] = Date.now(); try { const o = JSON.parse(localStorage.getItem(SV_PREF) || '{}'); o[k] = Date.now(); const cut = Date.now() - 2 * 86400000; Object.keys(o).forEach(x => { if (o[x] < cut) delete o[x]; }); localStorage.setItem(SV_PREF, JSON.stringify(o)); } catch (e) { } }
 function svSeen(k) { if (SV.shown[k]) return true; try { const o = JSON.parse(localStorage.getItem(SV_PREF) || '{}'); if (o[k]) { SV.shown[k] = o[k]; return true; } } catch (e) { } return false; }
 
 // ---------- données ----------
@@ -47,6 +55,10 @@ function svStart() {
   if (SV.tick) return;
   SV.tick = setInterval(() => { svEngine().catch(() => { }); }, 5000);
   setInterval(svClockTick, 1000);
+  // retour sur l'onglet : données relues tout de suite (les minuteurs d'un onglet caché sont ralentis par le navigateur), titre remis
+  document.addEventListener('visibilitychange', () => { if (document.hidden) return; svTitle(false); SV.loadAt = 0; svEngine().catch(() => { }); });
+  // son : le navigateur ne joue un son qu'après un clic de l'utilisateur sur la page
+  document.addEventListener('pointerdown', () => { try { if (SV.ac && SV.ac.state === 'suspended') SV.ac.resume(); } catch (e) { } }, true);
   svEngine().catch(() => { });
 }
 function svReset() { SV.snooze = {}; SV.pauses = []; SV.tracks = []; SV.mis = {}; SV.pos = {}; SV.loadAt = 0; SV.posAt = 0; SV.queue = []; SV.cur = null; SV.shown = {}; const o = $('#svov'); if (o) o.remove(); svBar(); }
@@ -110,13 +122,50 @@ function svToast(p, m) {
   box.prepend(t); setTimeout(() => t.remove(), 60000); svBeep();
 }
 function svPush(a) { if (SV.queue.some(x => x.k === a.k) || (SV.cur && SV.cur.k === a.k)) return; SV.queue.push(a); svNext(); }
+/** Alerte encore à montrer : pause ou suivi toujours ouvert, ni traitée ni repoussée (sinon retirée de la file) */
+function svValid(a) {
+  if (svSeen(a.k) || SV.snooze[a.k] > Date.now()) return false;
+  if (a.p) return !a.p.ended_at && svOpen().some(x => x.id === a.p.id);
+  if (a.t && a.kind !== 'arrive') return !a.t.ended_at;
+  return true;
+}
 function svNext() {
-  if (SV.cur || !SV.queue.length) return;
+  if (SV.cur) return;
+  SV.queue = SV.queue.filter(svValid);
+  if (!SV.queue.length) return;
   SV.cur = SV.queue.shift(); svShow(SV.cur);
 }
-function svClose(mark) { if (SV.cur && mark !== false) svMark(SV.cur.k); SV.cur = null; const o = $('#svov'); if (o) o.remove(); setTimeout(svNext, 300); }
+function svClose(mark, quiet) {
+  if (SV.cur && mark !== false && !quiet) svMark(SV.cur.k);
+  SV.cur = null; document.querySelectorAll('#svov').forEach(o => o.remove()); svTitle(false);
+  if (!quiet) SV.queue = SV.queue.filter(svValid);
+  setTimeout(svNext, 300);
+}
+/** Onglet Ludy caché pendant une alerte : titre de l'onglet qui clignote et notification du système (cliquer = revenir sur Ludy) */
+function svTitle(on, txt) {
+  clearInterval(SV.blink); SV.blink = 0;
+  if (SV.title0 != null && !on) { document.title = SV.title0; SV.title0 = null; }
+  if (!on) return;
+  if (SV.title0 == null) SV.title0 = document.title;
+  let i = 0; SV.blink = setInterval(() => { document.title = (i++ % 2) ? SV.title0 : '🔴 ' + txt; if (!document.hidden && SV.cur == null) svTitle(false); }, 1000);
+}
+function svNotify(a, title, body) {
+  if (!document.hidden) return;
+  svTitle(true, title);
+  try {
+    if (!window.Notification || Notification.permission !== 'granted') return;
+    const n = new Notification('Ludy · ' + title, { body, tag: a.k, requireInteraction: a.kind !== 'arrive', icon: 'icon-192.png' });
+    n.onclick = () => { try { window.focus(); } catch (e) { } n.close(); };
+    SV.notif = n;
+  } catch (e) { }
+}
+function svNotifAsk() { try { if (!MOBILE && window.Notification && Notification.permission === 'default') Notification.requestPermission().catch(() => { }); } catch (e) { } }
 function svShow(a) {
+  document.querySelectorAll('#svov').forEach(x => x.remove());
   const o = document.createElement('div'); o.id = 'svov'; o.className = 'svov ' + (a.kind === 'arrive' ? 'ok' : 'bad'); o.setAttribute('role', 'alertdialog');
+  // action d'un bouton : l'alerte se ferme toujours, même si l'enregistrement échoue (jamais d'écran bloqué)
+  const safe = (fn, after) => async () => { o.querySelectorAll('button').forEach(b => { b.disabled = true; }); try { await fn(); } catch (e) { uiNote(String(e.message || e)); } finally { after(); } };
+  const later = () => { svSnooze(a.k, 120000); svClose(false); };
   if (a.kind === 'end' || a.kind === 'move') {
     const p = a.p, late = Date.now() - svPauseEndAt(p);
     o.innerHTML = `<div class="svbox"><div class="svtag">${a.kind === 'end' ? 'FIN DE PAUSE' : 'VÉHICULE EN PAUSE EN MOUVEMENT'}</div>
@@ -131,11 +180,14 @@ function svShow(a) {
         <button class="ghost" id="svlater">Rappeler dans 2 min</button>${a.kind === 'move' ? '<button class="ghost" id="svok">Déplacement autorisé</button>' : ''}</div>
       ${a.kind === 'move' ? '<div class="svinfo small">Tant que le véhicule n\'est pas revenu à sa place, l\'alerte revient toutes les 2 min. Le collecteur envoie aussi l\'alerte par e-mail aux destinataires des alertes.</div>' : ''}</div>`;
     document.body.appendChild(o);
+    svNotify(a, a.kind === 'end' ? 'FIN DE PAUSE' : 'VÉHICULE EN PAUSE EN MOUVEMENT', (p.driver_name || '') + ' · ' + (p.plate || p.vehicle_key) + (a.kind === 'move' ? ' · ' + (a.why || '') : ''));
     $('#svwa').onclick = () => svWa(p.driver_phone, a.kind === 'end' ? svWaPauseEnd(p, Date.now()) : svWaMoved(p, a.why));
-    if ($('#svend')) $('#svend').onclick = async () => { await svEndPause(p, a.kind === 'end' ? 'Fin du compte à rebours' : 'Véhicule en mouvement'); svClose(); };
-    if ($('#svplus')) $('#svplus').onclick = async () => { await svExtend(p, 5); svClose(false); delete SV.shown[a.k]; };
-    $('#svlater').onclick = () => { SV.snooze[a.k] = Date.now() + 120000; svClose(false); };   // fin de pause ou véhicule qui roule encore : redemandé dans 2 min
-    if ($('#svok')) $('#svok').onclick = async () => { if (await ask('Déplacement autorisé : ne plus alerter pour cette pause ?')) svClose(); };
+    // pause terminée : ses autres alertes (fin de pause, déplacement) retirées, ici et dans les autres onglets
+    if ($('#svend')) $('#svend').onclick = safe(() => svEndPause(p, a.kind === 'end' ? 'Fin du compte à rebours' : 'Véhicule en mouvement'),
+      () => { ['END|', 'MOV|'].forEach(x => { if (x + p.id !== a.k) svSay('mark', x + p.id, { reload: true }); }); SV.queue = SV.queue.filter(x => !(x.p && x.p.id === p.id)); svClose(); });
+    if ($('#svplus')) $('#svplus').onclick = safe(() => svExtend(p, 5), () => { svClose(false); delete SV.shown[a.k]; });
+    $('#svlater').onclick = later;   // fin de pause ou véhicule qui roule encore : redemandé dans 2 min
+    if ($('#svok')) $('#svok').onclick = async () => { if (await ask('Déplacement autorisé : ne plus alerter pour cette pause ?')) svClose(); };   // plus d'alerte de déplacement pour cette pause
   } else {
     const t = a.t, m = SV.mis[t.mission_id] || {};
     o.innerHTML = `<div class="svbox"><div class="svtag">COURSE ARRIVÉE À DESTINATION</div>
@@ -147,11 +199,17 @@ function svShow(a) {
         <button class="svwa" id="svwac">WhatsApp au client</button><button class="svwa" id="svwad">WhatsApp au chauffeur</button>
         <button class="ghost" id="svlater">Continuer le suivi</button></div></div>`;
     document.body.appendChild(o);
-    $('#svdone').onclick = async () => { await svEndTrack(t, 'Arrivée à destination'); svClose(); };
+    svNotify(a, 'COURSE ARRIVÉE', (m.client_name || 'Course privée') + ' · ' + (t.plate || t.vehicle_key));
+    $('#svdone').onclick = safe(() => svEndTrack(t, 'Arrivée à destination'), () => svClose());
     $('#svwac').onclick = () => svWa(m.client_phone, svWaTrack(t, m, fmtDTY));
     $('#svwad').onclick = () => svWa(t.driver_phone, svWaTrack(t, m, fmtDTY));
     $('#svlater').onclick = () => svClose();
   }
+  // fermer (×, Échap) : alerte repoussée de 2 min, jamais perdue
+  const x = document.createElement('button'); x.type = 'button'; x.className = 'svx'; x.setAttribute('aria-label', 'Fermer (rappel dans 2 min)'); x.title = 'Fermer (rappel dans 2 min)'; x.textContent = '×';
+  x.onclick = a.kind === 'arrive' ? () => svClose() : later; o.querySelector('.svbox').prepend(x);
+  if (!SV.esc) { SV.esc = 1; document.addEventListener('keydown', e => { const b = e.key === 'Escape' && document.querySelector('#svov .svx'); if (b && !document.querySelector('.uidlg')) b.click(); }); }
+  setTimeout(() => { try { (o.querySelector('#svend') || o.querySelector('#svdone') || x).focus(); } catch (e) { } }, 50);
   svBeep();
 }
 /** Barre des suivis en cours (bas de l'écran, toutes les pages) */
@@ -193,7 +251,7 @@ async function svStartPause(key, minutes, who) {
     contract_num: c ? c.num : null, shift_day: sh.day, shift: sh.s, planned_min: mins, start_lat: pos && pos.lat != null ? +pos.lat : null, start_lon: pos && pos.lon != null ? +pos.lon : null };
   const { data, error } = await sb.from('driver_pauses').insert(row).select('*').single();
   if (error) throw new Error(/one_open|duplicate/.test(error.message) ? 'Ce véhicule est déjà en pause' : error.message);
-  SV.pauses.push(data); svBar(); return data;
+  SV.pauses.push(data); svBar(); svNotifAsk(); return data;
 }
 async function svEndPause(p, why) {
   const { data, error } = await sb.from('driver_pauses').update({ ended_at: new Date().toISOString(), end_reason: why || 'Terminée par le gestionnaire' }).eq('id', p.id).select('*').single();
@@ -269,7 +327,9 @@ function svPausesTab(head) {
     return { v, c, sh, used, left: Math.max(0, svP(S.P, 'pauseShiftMin') - used), g: SV.pos[v.key] };
   }).sort((a, b) => (b.c ? 1 : 0) - (a.c ? 1 : 0) || String(a.v.plate).localeCompare(String(b.v.plate)));
   const card = p => svPauseCard(p, can, now);
-  $('#page').innerHTML = head + svWatchHtml() + `
+  // onglet Ludy caché (autre onglet, autre fenêtre) : alertes par notification du système, à autoriser une fois
+  const nb = !MOBILE && window.Notification && Notification.permission !== 'granted' ? `<div class="panel row"><button class="ghost" id="svnotif">🔔 Activer les notifications du navigateur</button><span class="small">${Notification.permission === 'denied' ? 'Notifications refusées par le navigateur : les autoriser dans les réglages du site (cadenas à gauche de l\'adresse), sinon une alerte n\'apparaît que sur l\'onglet Ludy.' : 'pour voir l\'alerte « véhicule en pause en mouvement » ou « fin de pause » même quand vous êtes sur un autre onglet ou une autre application.'}</span></div>` : '';
+  $('#page').innerHTML = head + svWatchHtml() + nb + `
     <div class="panel"><h3>En pause (${open.length})</h3>${open.length ? '<div class="svcards">' + open.sort((a, b) => svPauseEndAt(a) - svPauseEndAt(b)).map(card).join('') + '</div>' : '<div class="empty">Aucun chauffeur en pause</div>'}</div>
     <div class="panel"><h3>Mettre un chauffeur en pause</h3>
       <div class="small">${esc(svP(S.P, 'pauseShiftMin'))} min de pause par chauffeur et par shift · rappel toutes les ${esc(svP(S.P, 'pauseRemindMin'))} min · alerte si le véhicule bouge de plus de ${esc(svP(S.P, 'pauseMoveM'))} m (GPS Geotab)</div>
@@ -286,6 +346,7 @@ function svPausesTab(head) {
     try { await svStartPause(x.v.key, +$('#svdur').value || 0, who); pageSuivi(true); } catch (e) { b.disabled = false; uiNote(e.message); }
   });
   svWatchBind();
+  if ($('#svnotif')) $('#svnotif').onclick = async () => { try { await Notification.requestPermission(); } catch (e) { } svPausesTab(head); };
   window.__repage = () => pageSuivi(true);
   svClockTick();
 }
