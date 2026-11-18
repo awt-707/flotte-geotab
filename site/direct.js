@@ -266,7 +266,7 @@ async function pageDirect(refresh) {
     <section id="livepause">${typeof svDirectHtml === 'function' ? svDirectHtml(rows) : ''}</section>
     <div class="livegrid">
       <section class="mapbox"><div id="map"></div>
-        <div class="maplegend"><span class="lg st-ok">En route</span><span class="lg st-warn">Arrêté, contact mis</span><span class="lg st-mute">Garé</span><span class="lg st-crit">Hors ligne / au-dessus du seuil</span><span class="pfchip pf-to_pickup">Uber · Vers le client</span><span class="pfchip pf-on_trip">Uber · En course</span><span class="pfchip pf-available">Uber · Disponible</span>
+        <div class="maplegend"><span class="lg st-ok">En route</span><span class="lg st-warn">Arrêté, contact mis</span><span class="lg st-mute">Garé</span><span class="lg st-crit">Hors ligne / au-dessus du seuil</span><span class="pfchip pf-to_pickup">Uber · Vers le client</span><span class="pfchip pf-on_trip">Uber · En course</span><span class="pfchip pf-available">Uber · Disponible</span><span class="pfchip pf-offline">Hors ligne</span><span class="pfchip pf-offmove">Hors ligne · roule</span>
           <span class="small">Flèche = sens de la marche · trait = trajet depuis l'ouverture de la page</span></div></section>
       <aside class="vlist" id="vlist" aria-label="Véhicules">${vcardsHtml(rows)}</aside>
     </div>
