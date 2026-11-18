@@ -262,6 +262,7 @@ async function pageDirect(refresh) {
     <div class="head"><h1>En direct</h1><div class="sub"><span id="livest">${liveStatusTxt()}</span></div>
       ${canEdit() ? '<button id="syncnow" class="ghost">Mettre à jour les totaux du jour</button>' : ''}</div>
     <div id="livecards">${kpisHtml(rows)}</div>
+    <section id="liveplat">${typeof pfHtml === 'function' ? pfHtml() : ''}</section>
     <section id="livepause">${typeof svDirectHtml === 'function' ? svDirectHtml(rows) : ''}</section>
     <div class="livegrid">
       <section class="mapbox"><div id="map"></div>
@@ -276,6 +277,7 @@ async function pageDirect(refresh) {
   LIVE.markers = {}; LIVE.fitted = false; drawMap(rows);
   window.__rerender = () => { if (rid === ROUTING) applyDirect(); };   // tri d'un tableau : redessiné tout de suite avec les dernières lectures
   liveDrvTick(ROUTING);
+  if (typeof pfStart === 'function') pfStart(ROUTING);   // chauffeurs Uber / Bolt en ce moment
   const b = $('#syncnow');
   if (b) b.onclick = async () => { b.disabled = true; try { await job('sync_now'); b.textContent = 'Demande envoyée (5 min max)'; } catch (e) { alert(e.message); b.disabled = false; } };
 }

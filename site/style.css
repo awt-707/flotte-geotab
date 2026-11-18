@@ -746,3 +746,8 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .vpause { margin: 4px 0; font-weight: 700; color: var(--warn); }
 .vpause.moved { color: var(--crit); }
 #livepause .svq { margin-top: 8px; }
+
+/* En direct : chauffeurs Uber / Bolt en ce moment (plateformes.js) */
+.pfbox .pfblk + .pfblk { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.pfbox h3 { margin: 0 0 8px; }
+.pfbox .pfdet summary { cursor: pointer; margin: 6px 0; }
