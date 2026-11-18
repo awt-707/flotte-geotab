@@ -1772,6 +1772,7 @@ async function route() {
   sessPing();   // connexions : page affichée envoyée tout de suite (puis toutes les minutes)
   if (typeof svStart === 'function') svStart();   // pauses et courses suivies : compte à rebours et alertes sur toutes les pages
   if (typeof rtwStart === 'function') rtwStart();   // retours : bandeau quand un chauffeur prévenu arrive à l'agence
+  if (typeof pfwStart === 'function') pfwStart();   // Uber : bandeau rouge quand un chauffeur sous contrat se déconnecte
   if (MOBILE) return;
   S.timers.push(setInterval(health, 60000));
   // changement de shift (19 h, 7 h) : répartition du planning relue ; page redessinée si « Mes véhicules » change (sauf pages de saisie)
@@ -1800,6 +1801,7 @@ sb.auth.onAuthStateChange(async (ev, session) => {
   if (changed) {   // autre utilisateur : rien de ce qui a été lu pour le précédent n'est gardé (droits par agence, planning)
     const tb = $('#toasts'); if (tb) tb.remove();   // bandeaux d'alerte du compte précédent
     if (typeof svReset === 'function') svReset();   // pauses et courses suivies d'un autre compte oubliées
+    if (typeof pfwReset === 'function') pfwReset();   // alertes « déconnecté d'Uber » de l'autre compte retirées
     sessReset();   // connexions : nouvelle session, pastille des connectés oubliée (jamais montrée à un autre compte)
     S.profile = null; S.P = null; S.rhMe = undefined; S.rhMeAt = 0; S.rhAlertN = 0; S.mine = null; S.mineKey = undefined; S.mineShift = null; S.ctrShift = {}; S.usage = undefined;
     S.health = null; S.nbal = null; S.nbcrs = null; SHELL_KEY = '';   // bas du menu : collecte et pastille Alertes oubliées, menu reconstruit

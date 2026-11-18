@@ -185,7 +185,7 @@ function vcardsHtml(rows) {
   if (!rows.length) return '<div class="empty">Aucun véhicule actif</div>';
   const pz = k => typeof svPauseOf === 'function' ? svPauseOf(k) : null;
   return rows.map(r => `<button type="button" class="vcard st-${ST_CLS(r.state)}${r.crs ? ' crs' : ''}${LIVE.fast[r.vehicle_key] ? ' fast' : ''}${pz(r.vehicle_key) ? ' paused' + (pz(r.vehicle_key).moved_at ? ' pmoved' : '') : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
-    <span class="vc-l1">${plate(r.plate)}<span class="vc-model">${esc(r.model || '')}</span><span class="vc-spd">${r.state === 'En route' ? f0(r.speed) + '<small> km/h</small>' : ''}</span></span>
+    <span class="vc-l1">${plate(r.plate)}<span class="vc-model">${esc(r.model || '')}</span>${(typeof pfVehChip === 'function' ? pfVehChip(r) : '')}<span class="vc-spd">${r.state === 'En route' ? f0(r.speed) + '<small> km/h</small>' : ''}</span></span>
     <span class="vc-l2"><span class="vc-st"><span class="sdot"></span>${esc(r.state || 'État inconnu')}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</span>${consoGauge(r)}</span>
     <span class="vc-l3">${r.crs ? crsLiveHtml(r) + ' <b>' + esc(r.crs_driver || r.driver_name || '') + '</b> <span class="small">' + esc(r.crs.client_company || r.crs.client_name || '') + '</span>'
       : r.contract_num ? `<b>${esc(r.driver_name)}</b> ${shiftBadge(r.shift)}` : noCtrHtml(r)}</span>
@@ -262,10 +262,11 @@ async function pageDirect(refresh) {
     <div class="head"><h1>En direct</h1><div class="sub"><span id="livest">${liveStatusTxt()}</span></div>
       ${canEdit() ? '<button id="syncnow" class="ghost">Mettre à jour les totaux du jour</button>' : ''}</div>
     <div id="livecards">${kpisHtml(rows)}</div>
+    <section id="liveplat">${typeof pfHtml === 'function' ? pfHtml() : ''}</section>
     <section id="livepause">${typeof svDirectHtml === 'function' ? svDirectHtml(rows) : ''}</section>
     <div class="livegrid">
       <section class="mapbox"><div id="map"></div>
-        <div class="maplegend"><span class="lg st-ok">En route</span><span class="lg st-warn">Arrêté, contact mis</span><span class="lg st-mute">Garé</span><span class="lg st-crit">Hors ligne / au-dessus du seuil</span>
+        <div class="maplegend"><span class="lg st-ok">En route</span><span class="lg st-warn">Arrêté, contact mis</span><span class="lg st-mute">Garé</span><span class="lg st-crit">Hors ligne / au-dessus du seuil</span><span class="pfchip pf-to_pickup">Uber · Vers le client</span><span class="pfchip pf-on_trip">Uber · En course</span><span class="pfchip pf-available">Uber · Disponible</span><span class="pfchip pf-offline">Hors ligne</span><span class="pfchip pf-offmove">Hors ligne · roule</span>
           <span class="small">Flèche = sens de la marche · trait = trajet depuis l'ouverture de la page</span></div></section>
       <aside class="vlist" id="vlist" aria-label="Véhicules">${vcardsHtml(rows)}</aside>
     </div>
@@ -276,6 +277,7 @@ async function pageDirect(refresh) {
   LIVE.markers = {}; LIVE.fitted = false; drawMap(rows);
   window.__rerender = () => { if (rid === ROUTING) applyDirect(); };   // tri d'un tableau : redessiné tout de suite avec les dernières lectures
   liveDrvTick(ROUTING);
+  if (typeof pfStart === 'function') pfStart(ROUTING);   // chauffeurs Uber / Bolt en ce moment
   const b = $('#syncnow');
   if (b) b.onclick = async () => { b.disabled = true; try { await job('sync_now'); b.textContent = 'Demande envoyée (5 min max)'; } catch (e) { alert(e.message); b.disabled = false; } };
 }
@@ -333,18 +335,20 @@ const VAN_SVG = '<svg class="vmk-van" viewBox="0 0 24 24" aria-hidden="true"><pa
 function vIcon(r) {
   const st = LIVE.fast[r.vehicle_key] || LIVE.over[r.vehicle_key] ? 'crit' : ST_CLS(r.state), rot = r.state === 'En route' && r.bearing != null && isFinite(+r.bearing) ? +r.bearing : null;
   const html = `<span class="vmk-pin st-${st}${r.state === 'En route' ? ' moving' : ''}${r.crs ? ' crs' : ''}">${rot != null ? `<span class="vmk-dir" style="transform:rotate(${Math.round(rot)}deg)"><i></i></span>` : ''}${VAN_SVG}</span>`
-    + `<span class="vmk-l${r.crs ? ' crs' : ''}">${r.crs ? 'Course privée · ' : ''}${esc(r.plate || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}</span>`;
+    + `<span class="vmk-l${r.crs ? ' crs' : ''}">${r.crs ? 'Course privée · ' : ''}${esc(r.plate || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${(typeof pfVehChip === 'function' ? pfVehChip(r) : '')}</span>`;
   return { html, icon: () => L.divIcon({ className: 'vmk', iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20], tooltipAnchor: [0, -22], html }) };
 }
 /** Info-bulle au survol : chauffeur sous contrat, plaque, état, vitesse */
 function tipHtml(r) {
   if (r.crs) return `<b>Course privée ${esc(r.crs.number || '')}</b><br>${esc(r.crs_driver || r.driver_name || '')}${r.crs.client_name ? ' · ' + esc(r.crs.client_company || r.crs.client_name) : ''}<br>${esc(r.plate || '')} · ${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}`;
-  return `<b>${esc(r.driver_name)}</b>${r.contract_num && r.shift ? ' · shift ' + esc(r.shift.toLowerCase()) : ''}<br>${esc(r.plate || '')} · ${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}`;
+  const ub = typeof pfVehLine === 'function' ? pfVehLine(r) : '';
+  return `<b>${esc(r.driver_name)}</b>${r.contract_num && r.shift ? ' · shift ' + esc(r.shift.toLowerCase()) : ''}<br>${esc(r.plate || '')} · ${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${ub ? '<br>' + ub : ''}`;
 }
 function popupHtml(r) {
   return `<div class="vpop">${plate(r.plate)} <span class="small">${esc(r.model || '')}</span><div><b>${esc(r.state || '')}</b>${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</div>
     ${r.crs ? `<div>${crsLiveHtml(r, true)}<br>Chauffeur : <b>${esc(r.crs_driver || '—')}</b> · jusqu'au ${esc(fmtDTY(r.crs.end_at))}</div>` : ''}
     <div>${r.contract_num ? esc(r.driver_name) + ' · ' + esc(r.shift ? 'shift ' + r.shift.toLowerCase() : '') + ' · contrat ' + esc(r.contract_num) : noCtrHtml(r)}</div>
+    ${typeof pfVehLine === 'function' && pfVehLine(r) ? '<div class="vpf">' + pfVehLine(r) + '</div>' : ''}
     <div class="small">Position ${r.live ? 'Geotab ' + esc(fmtHMS(r.last_pos_at)) : 'du collecteur ' + esc(fmtDT(r.last_pos_at))}</div>
     ${typeof svPauseOf === 'function' && canSee('suivi') ? (svPauseOf(r.vehicle_key) ? `<div class="vpause${svPauseOf(r.vehicle_key).moved_at ? ' moved' : ''}">⏸ En pause · <b class="svcd" data-end="${svPauseEndAt(svPauseOf(r.vehicle_key))}"></b>${svCan() ? ` <button class="small" data-svend="${svPauseOf(r.vehicle_key).id}">Fin de pause</button>` : ''}</div>`
       : svCan() ? `<div><button class="small svgo" data-svgo="${esc(r.vehicle_key)}">⏸ Mettre en pause</button></div>` : '') : ''}
