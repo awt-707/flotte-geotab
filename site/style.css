@@ -759,3 +759,5 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .vpf { margin-top: 2px; }
 .pfchip.pf-offline { background: #8a97a3; }
 .pfchip.pf-offmove { background: #b42318; animation: svpulse 1.2s ease-in-out infinite alternate; }
+.pftoast.crit { border-left: 6px solid #b42318; }
+.pftoast .pfact { margin-top: 6px; gap: 6px; flex-wrap: wrap; }

@@ -40,4 +40,45 @@ function pfSummary(latest, drivers, o) {
   return out;
 }
 
-if (typeof module !== 'undefined') module.exports = { PF_ST, PF_FRESH_MS, pfSummary };
+/**
+ * Chauffeurs qui viennent de se déconnecter d'Uber (18/11/2026, demande d'Ahmed : alerte rouge « chauffeur déconnecté » avec message WhatsApp).
+ * Uber Fleet ne montre que les chauffeurs connectés : un chauffeur vu en ligne et que la lecture, toujours à jour, ne voit plus depuis plus
+ * de `fresh` ms (au plus `maxAge` ms) = déconnecté. Lecture d'Uber arrêtée = personne n'est déclaré déconnecté (rien de supposé).
+ * o.keep(d, r) : garder seulement les chauffeurs dont le contrat est en cours (pas en fin de shift, pas en pause, pas rappelé à l'agence).
+ * Renvoie [{ key, driverId, name, plate, lastAt, status (dernier état vu), d, r }], clé = chauffeur + heure du dernier relevé (une alerte par déconnexion).
+ */
+function pfDisconnects(latest, drivers, o) {
+  o = o || {};
+  const now = o.now || Date.now(), fresh = o.fresh || PF_FRESH_MS, maxAge = o.maxAge || 45 * 60000, byId = {};
+  (drivers || []).forEach(d => { byId[d.id] = d; });
+  const uber = (latest || []).filter(r => r.source === 'uber');
+  const readerAt = uber.reduce((m, r) => Math.max(m, new Date(r.observed_at).getTime() || 0), 0);
+  if (!readerAt || now - readerAt > fresh) return [];
+  const out = [];
+  uber.forEach(r => {
+    if (r.status === 'offline') return;
+    const t = new Date(r.observed_at).getTime(), age = now - t;
+    if (!(age > fresh && age <= maxAge)) return;
+    const d = byId[r.driver_id] || null;
+    if (o.keep && !o.keep(d, r)) return;
+    out.push({ key: 'UOFF|' + r.driver_id + '|' + r.observed_at, driverId: r.driver_id, name: (d && d.name) || '', plate: r.vehicle_label || '', lastAt: t, status: r.status, d, r });
+  });
+  return out.sort((a, b) => b.lastAt - a.lastAt);
+}
+/** Message au chauffeur (français puis darija) : se reconnecter à Uber ou appeler l'agence */
+function pfWaOff(x, hm, dur, durAr) {
+  const nm = x.name || '', pl = x.plate || '', h = hm(x.lastAt), d = dur(x.now - x.lastAt), da = durAr ? durAr(x.now - x.lastAt) : d;
+  return '🔴 *DÉCONNECTÉ D\'UBER*\n' + (nm ? 'Bonjour ' + nm + ',\n' : 'Bonjour,\n') +
+    'Vous n\'êtes plus connecté à Uber depuis ' + h + ' (' + d + ')' + (pl ? ' avec le véhicule ' + pl : '') + '.\n' +
+    'Merci de vous reconnecter tout de suite, ou d\'appeler l\'agence si vous avez un problème.\n\n' +
+    '🔴 *خرجتي من Uber*\n' + (nm ? 'السلام ' + nm + '،\n' : 'السلام،\n') +
+    'راك ماشي متصل ب Uber من ' + h + ' (' + da + ')' + (pl ? ' بالطوموبيل ' + pl : '') + '.\n' +
+    'عافاك رجع دخل دابا، ولا عيط للوكالة إلا كان شي مشكل.';
+}
+/** Message à partager (responsable, groupe) : qui, quel véhicule, depuis quand, ce que dit le GPS */
+function pfShareOff(x, hm, dur) {
+  return '🔴 Chauffeur déconnecté d\'Uber : ' + (x.name || 'chauffeur') + (x.plate ? ' · ' + x.plate : '') + ' · plus connecté depuis ' + hm(x.lastAt) + ' (' + dur(x.now - x.lastAt) + ')' +
+    (x.ctr ? ' · contrat ' + x.ctr : '') + (x.geo ? ' · GPS : ' + x.geo : '') + (x.phone ? ' · tél. ' + x.phone : '');
+}
+
+if (typeof module !== 'undefined') module.exports = { PF_ST, PF_FRESH_MS, pfSummary, pfDisconnects, pfWaOff, pfShareOff };
