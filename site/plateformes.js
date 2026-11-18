@@ -43,7 +43,36 @@ function pfHtml() {
   const html = blk(s.uber, 'Uber') + blk(s.bolt, 'Bolt');
   return html ? `<div class="panel pfbox">${html}<div class="small">États lus en direct sur l'écran Uber Fleet (et Bolt) par l'application de bureau, toutes les quelques secondes ; un chauffeur qui n'est plus vu depuis 2 min n'est plus compté en ligne.</div></div>` : '';
 }
+/** État Uber (sinon Bolt) d'un véhicule de la carte, d'après la plaque lue sur l'écran de la plateforme ; null si pas en ligne ou pas à jour */
+const PF_SHORT = { available: 'Disponible', to_pickup: 'Vers le client', on_trip: 'En course', unknown: 'En ligne' };
+function pfVeh(plateTxt, key) {
+  if (!PF.at || !PF.latest.length) return null;
+  const ks = [normPlate(plateTxt), normPlate(key)].filter(Boolean), now = Date.now();
+  let best = null;
+  PF.latest.forEach(r => {
+    if (!r.vehicle_label || !ks.includes(normPlate(r.vehicle_label)) || r.status === 'offline') return;
+    const t = new Date(r.observed_at).getTime(); if (!(now - t <= PF_FRESH_MS)) return;
+    const st = PF_ST[r.status] ? r.status : 'unknown';
+    if (!best || (r.source === 'uber' && best.source !== 'uber') || (r.source === best.source && t > best.at)) {
+      const d = PF.drivers.find(x => x.id === r.driver_id);
+      best = { source: r.source, status: st, label: PF_ST[st], short: PF_SHORT[st], at: t,
+        name: (d && d.ludy_driver_code && S.drv && S.drv[d.ludy_driver_code]) || (d && d.name) || '' };
+    }
+  });
+  return best;
+}
+/** Pastille de la carte et des cartes véhicules : « Uber · En course » */
+function pfVehChip(r) {
+  const v = pfVeh(r.plate, r.vehicle_key); if (!v) return '';
+  return `<span class="pfchip pf-${v.status}">${v.source === 'bolt' ? 'Bolt' : 'Uber'} · ${esc(v.short)}</span>`;
+}
+function pfVehLine(r) {
+  const v = pfVeh(r.plate, r.vehicle_key); if (!v) return '';
+  return `${v.source === 'bolt' ? 'Bolt' : 'Uber'} : <b>${esc(v.label)}</b>${v.name ? ' · ' + esc(v.name) : ''} <span class="small">(lu à ${esc(localHM(new Date(v.at)))})</span>`;
+}
 function pfPaint() {
+  // carte et cartes véhicules d'En direct : pastilles Uber mises à jour avec la lecture
+  if (typeof MAP !== 'undefined' && MAP && typeof liveRows === 'function' && $('#map')) { try { liveRows().forEach(placeMarker); const vl = $('#vlist'); if (vl) vl.innerHTML = vcardsHtml(liveRows()); } catch (e) { } }
   const el = $('#liveplat'); if (!el) return;
   el.querySelectorAll('details.pfdet').forEach(d => { PF.open = PF.open || {}; PF.open[d.dataset.pf] = d.open; });
   el.innerHTML = pfHtml();

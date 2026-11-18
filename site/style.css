@@ -751,3 +751,9 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .pfbox .pfblk + .pfblk { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 .pfbox h3 { margin: 0 0 8px; }
 .pfbox .pfdet summary { cursor: pointer; margin: 6px 0; }
+.pfchip { display: inline-block; margin-left: 6px; padding: 2px 6px; border-radius: 4px; font: 700 11px/1.3 var(--fc); color: #fff; background: #5d6b78; vertical-align: middle; white-space: nowrap; }
+.pfchip.pf-on_trip { background: #18794a; }
+.pfchip.pf-to_pickup { background: #c2620a; }
+.pfchip.pf-available { background: #2563a8; }
+.vmk-l .pfchip { margin-left: 6px; font-size: 11px; }
+.vpf { margin-top: 2px; }

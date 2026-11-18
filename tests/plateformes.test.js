@@ -31,6 +31,9 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     create table if not exists public.fleet_latest (identity_id uuid, driver_id uuid, source text, status text, observed_at timestamptz, vehicle_label text, evidence jsonb default '{}');
     grant select on public.fleet_drivers, public.fleet_latest to authenticated;
     truncate public.fleet_drivers, public.fleet_latest;
+    insert into vehicles (key, plate, model, active) values ('030070WW', 'WW030070', 'RAV4', 'OUI'), ('030071WW', 'WW030071', 'RAV4', 'OUI'), ('030075WW', 'WW030075', 'RAV4', 'OUI');
+    insert into live_status (vehicle_key, plate, model, state, speed, lat, lon, updated_at) values ('030070WW', 'WW030070', 'RAV4', 'En route', 42, 31.62, -8.01, now()),
+      ('030071WW', 'WW030071', 'RAV4', 'En route', 30, 31.63, -8.02, now()), ('030075WW', 'WW030075', 'RAV4', 'Garé', 0, 31.64, -8.03, now());
     insert into public.fleet_drivers (id, name, agency_id) values ('00000000-0000-0000-0000-00000000000a', 'ALPHA Test', null), ('00000000-0000-0000-0000-00000000000b', 'BETA Test', null), ('00000000-0000-0000-0000-00000000000c', 'GAMMA Test', null);
     insert into public.fleet_latest (driver_id, source, status, observed_at, vehicle_label) values
       ('00000000-0000-0000-0000-00000000000a', 'uber', 'on_trip', now() - interval '5 seconds', '030070WW'),
@@ -46,10 +49,18 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     assert.match(t, /Uber en ce moment[\s\S]*3\s*En ligne\s*1\s*En route vers le client\s*1\s*En course\s*1\s*Disponibles/);
     await page.click('#liveplat details summary');
     assert.match(await page.innerText('#liveplat table'), /BETA Test[\s\S]*030071WW[\s\S]*En route vers le client[\s\S]*ALPHA Test[\s\S]*En course[\s\S]*GAMMA Test[\s\S]*Disponible/);
+    // carte et cartes véhicules : état Uber du véhicule (plaque lue sur l'écran Uber Fleet)
+    await page.waitForFunction(() => /Uber · En course/.test((document.querySelector('.vcard[data-vk="030070WW"]') || {}).innerText || ''));
+    assert.match(await page.innerText('.vcard[data-vk="030071WW"]'), /Uber · Vers le client/);
+    assert.doesNotMatch(await page.innerText('.vcard[data-vk="030075WW"]'), /Uber ·/, 'véhicule pas en ligne sur Uber : rien');
+    const lbl = await page.evaluate(() => LIVE.markers['030070WW'].getElement().innerText);
+    assert.match(lbl, /WW030070 · 42 km\/h\s*Uber · En course/);
+    assert.match(await page.evaluate(() => LIVE.markers['030071WW'].getTooltip().getContent()), /Uber : <b>En route vers le client<\/b> · BETA Test/);
     // lecture arrêtée : plus aucun relevé depuis 10 min
     env.psql("update public.fleet_latest set observed_at = now() - interval '10 minutes'");
     await page.evaluate(async () => { await pfLoad(); pfPaint(); });
     assert.match(await page.innerText('#liveplat'), /Lecture de Uber arrêtée depuis le [\s\S]*chiffres pas à jour[\s\S]*—\s*En ligne/);
+    assert.doesNotMatch(await page.innerText('.vcard[data-vk="030070WW"]'), /Uber ·/, 'lecture arrêtée : plus de pastille sur la carte');
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.psql("drop table if exists public.fleet_latest, public.fleet_drivers; notify pgrst, 'reload schema';"); env.resetDb(); }
 });
