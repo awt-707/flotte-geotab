@@ -73,7 +73,9 @@ function processLive(j) {
   const cut = (Date.parse(j.at) || now) - 30 * MIN;   // 30 dernières minutes à l'heure du relais
   LIVE.alerts = LIVE.alerts.filter(a => new Date(a.at).getTime() >= cut).sort((x, y) => String(y.at).localeCompare(String(x.at)));
   // à l'ouverture de la page : les alertes des 30 dernières minutes sont listées sans notification
-  if (LIVE.primed) fresh.forEach(a => onNewAlert(Object.assign({ time: fmtHMS(a.at).slice(6), link: '#/vehicule?k=' + encodeURIComponent(a.vehicle_key) }, a)));
+  // alertes de conduite (vitesse) : plus de bandeau sur la page En direct (18/11/2026, demande d'Ahmed : seulement les déconnexions d'Uber) ;
+  // le véhicule reste en rouge sur la carte, l'alerte est dans la page Alertes
+  void fresh;
   LIVE.primed = true;
 }
 /** Contrat en cours sur le véhicule à l'instant t (même règle que le collecteur : contrat qui couvre t, sinon le plus proche
@@ -172,14 +174,16 @@ function consoGauge(r) {
 }
 
 // ---------- Rendu ----------
+/** Compteurs de la flotte, sur une ligne (page En direct compacte, 18/11/2026, demande d'Ahmed) */
 function kpisHtml(rows) {
-  const n = s => rows.filter(r => r.state === s).length, off = n('Boîtier hors ligne') + n('Pas de réponse Geotab'), ctr = rows.filter(r => r.contract_num).length;
-  return cards([['En route', n('En route'), 'ok'], ['Arrêtés contact mis', n('Arrêté, contact mis'), n('Arrêté, contact mis') ? 'warn' : ''], ['Garés', n('Garé')],
-    ['Boîtiers hors ligne', off, off ? 'crit' : ''], ['Sous contrat', ctr + ' / ' + rows.length],
-    ...(rows.some(r => r.crs) ? [['En course privée', rows.filter(r => r.crs).length, 'crs']] : []),
-    ...(typeof svPauseOf === 'function' && rows.some(r => svPauseOf(r.vehicle_key)) ? [['En pause', rows.filter(r => svPauseOf(r.vehicle_key)).length, 'warn']] : []),
-    ...(typeof svPauseOf === 'function' && rows.some(r => (svPauseOf(r.vehicle_key) || {}).moved_at) ? [['En pause et en mouvement', rows.filter(r => (svPauseOf(r.vehicle_key) || {}).moved_at).length, 'crit']] : []),
-    ...(rows.some(r => r.no_ctr === 'depasse') ? [['Contrats dépassés (extract à injecter)', rows.filter(r => r.no_ctr === 'depasse').length, 'warn']] : []), ['Alertes (30 min)', LIVE.alerts.filter(a => inAgency()(a.vehicle_key)).length, LIVE.alerts.length ? 'high' : '']]);
+  const n = st => rows.filter(r => r.state === st).length, off = n('Boîtier hors ligne') + n('Pas de réponse Geotab'), ctr = rows.filter(r => r.contract_num).length;
+  const chip = (v, label, cls) => `<span class="kchip ${cls || ''}"><b>${v}</b> ${label}</span>`;
+  const pz = typeof svPauseOf === 'function' ? rows.filter(r => svPauseOf(r.vehicle_key)) : [];
+  return `<div class="kchips"><span class="pfname">Flotte</span>${chip(n('En route'), 'en route', 'ok')}${chip(n('Arrêté, contact mis'), 'arrêtés contact mis', n('Arrêté, contact mis') ? 'warn' : '')}${chip(n('Garé'), 'garés')}`
+    + `${off ? chip(off, 'boîtiers hors ligne', 'crit') : ''}${chip(ctr + ' / ' + rows.length, 'sous contrat')}`
+    + `${rows.some(r => r.crs) ? chip(rows.filter(r => r.crs).length, 'en course privée', 'crs') : ''}${pz.length ? chip(pz.length, 'en pause', 'warn') : ''}`
+    + `${pz.some(r => svPauseOf(r.vehicle_key).moved_at) ? chip(pz.filter(r => svPauseOf(r.vehicle_key).moved_at).length, 'en pause et en mouvement', 'crit') : ''}`
+    + `${rows.some(r => r.no_ctr === 'depasse') ? chip(rows.filter(r => r.no_ctr === 'depasse').length, 'contrats dépassés (extract à injecter)', 'warn') : ''}</div>`;
 }
 function vcardsHtml(rows) {
   if (!rows.length) return '<div class="empty">Aucun véhicule actif</div>';
@@ -253,33 +257,28 @@ async function pageDirect(refresh) {
   const ok = inAgency(), rid = ROUTING;
   [LIVE.rows] = await Promise.all([all('live_status', '*', null, ['plate']), loadLiveContracts(), refresh && LIVE.base ? null : loadConsoBase().catch(() => { LIVE.base = {}; })]);
   LIVE.rows = LIVE.rows.filter(r => ok(r.vehicle_key));
-  if (refresh) { if ($('#tlive') && MAP) applyDirect(); return; }   // relecture : jamais de page redessinée (l'utilisateur a pu changer de page)
+  if (refresh) { if ($('#vlist') && MAP) applyDirect(); return; }   // relecture : jamais de page redessinée (l'utilisateur a pu changer de page)
   if (rid !== ROUTING) return;   // autre page demandée pendant le chargement
   const rows = liveRows(), last = LIVE.rows.reduce((m, r) => Math.max(m, new Date(r.updated_at || 0).getTime()), 0);
   // compteurs déjà lus gardés (page rouverte, menu recliqué) : le cadran reste affiché en attendant la lecture suivante
   LIVE.drv = LIVE.drv || {}; LIVE.drvErr = ''; LIVE.drvFallback = ''; LIVE.trails = {};
   $('#page').innerHTML = `
-    <div class="head"><h1>En direct</h1><div class="sub"><span id="livest">${liveStatusTxt()}</span></div>
-      ${canEdit() ? '<button id="syncnow" class="ghost">Mettre à jour les totaux du jour</button>' : ''}</div>
-    <div id="livecards">${kpisHtml(rows)}</div>
-    <section id="liveplat">${typeof pfHtml === 'function' ? pfHtml() : ''}</section>
-    <section id="livepause">${typeof svDirectHtml === 'function' ? svDirectHtml(rows) : ''}</section>
-    <div class="livegrid">
+    <div class="livehead"><h1>En direct</h1><span class="small" id="livest">${liveStatusTxt()}</span></div>
+    <div class="livetop"><div id="livecards">${kpisHtml(rows)}</div>
+      <section id="liveplat">${typeof pfHtml === 'function' ? pfHtml() : ''}</section></div>
+    <div class="livegrid livebig">
       <section class="mapbox"><div id="map"></div>
         <div class="maplegend"><span class="lg st-ok">En route</span><span class="lg st-warn">Arrêté, contact mis</span><span class="lg st-mute">Garé</span><span class="lg st-crit">Hors ligne / au-dessus du seuil</span><span class="pfchip pf-to_pickup">Uber · Vers le client</span><span class="pfchip pf-on_trip">Uber · En course</span><span class="pfchip pf-available">Uber · Disponible</span><span class="pfchip pf-offline">Hors ligne</span><span class="pfchip pf-offmove">Hors ligne · roule</span>
           <span class="small">Flèche = sens de la marche · trait = trajet depuis l'ouverture de la page</span></div></section>
       <aside class="vlist" id="vlist" aria-label="Véhicules">${vcardsHtml(rows)}</aside>
     </div>
-    <section id="livealerts">${liveAlertsHtml()}</section>
-    <section id="livedrv">${liveDriversHtml(rows)}</section>
-    <section><div class="sechead"><h2>Totaux du jour par véhicule</h2><span class="small">${last ? 'Trajets terminés (contact coupé), calculés par le collecteur, mis à jour le ' + fmtDTY(last) + '.' : 'Le collecteur n\'a pas encore tourné.'}</span></div>
-      <div id="livetab">${vehTableHtml(rows)}</div></section>`;
+    <section id="livepause">${typeof svDirectHtml === 'function' ? svDirectHtml(rows) : ''}</section>
+    <section id="livedrv">${liveDriversHtml(rows)}</section>`;
   LIVE.markers = {}; LIVE.fitted = false; drawMap(rows);
   window.__rerender = () => { if (rid === ROUTING) applyDirect(); };   // tri d'un tableau : redessiné tout de suite avec les dernières lectures
   liveDrvTick(ROUTING);
   if (typeof pfStart === 'function') pfStart(ROUTING);   // chauffeurs Uber / Bolt en ce moment
-  const b = $('#syncnow');
-  if (b) b.onclick = async () => { b.disabled = true; try { await job('sync_now'); b.textContent = 'Demande envoyée (5 min max)'; } catch (e) { alert(e.message); b.disabled = false; } };
+  void last;
 }
 function applyDirect() {
   const rows = liveRows(), set = (sel, html) => { const el = $(sel); if (el) el.innerHTML = html; };
@@ -287,7 +286,7 @@ function applyDirect() {
   // pauses : liste redessinée à chaque lecture ; formulaire de mise en pause gardé tant qu'il est utilisé
   if (typeof svDirectHtml === 'function') { const f = $('#livepauseform'), busy = f && f.contains(document.activeElement);
     if (busy) set('#livepauselist', svDirectList(svOpen().sort((a, b) => svPauseEndAt(a) - svPauseEndAt(b)), svCan())); else set('#livepause', svDirectHtml(rows));
-    if (typeof svClockTick === 'function') svClockTick(); } set('#livetab', vehTableHtml(rows)); set('#livealerts', liveAlertsHtml()); set('#livedrv', liveDriversHtml(rows));
+    if (typeof svClockTick === 'function') svClockTick(); } set('#livedrv', liveDriversHtml(rows));
   const st = $('#livest'); if (st) st.innerHTML = liveStatusTxt();
   if (MAP) rows.forEach(placeMarker);
 }

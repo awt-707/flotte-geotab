@@ -3,7 +3,7 @@
 -- Journal unique des mouvements (cash_moves, garde cash_guard, historique cash_log), exports Uber et Bolt,
 -- fiches d'encaissement et justificatifs déposés (cash_sheets, cash_files),
 -- contrôle des courses Uber (export « Activité des courses » croisé avec le GPS Geotab : uber_trips, uber_days).
--- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_days, uber_drivers, uber_live, uber_live_readers, uber_payments, uber_trips
+-- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_days, uber_drivers, uber_live, uber_live_log, uber_live_readers, uber_payments, uber_trips
 -- Fichier produit par « node database/outils/schema.js build » depuis supabase/migrations/ : ne pas modifier à la main
 -- (ajouter une migration, puis relancer build).
 -- =============================================================================
@@ -123,6 +123,8 @@ ALTER TABLE public.uber_drivers ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.uber_live ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE public.uber_live_log ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE public.uber_live_readers ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.uber_payments ENABLE ROW LEVEL SECURITY;
@@ -130,6 +132,8 @@ ALTER TABLE public.uber_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.uber_trips ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY ul_read ON public.uber_live FOR SELECT TO authenticated USING ((( SELECT public.is_admin() AS is_admin) OR (vehicle_key = ANY (( SELECT public.my_vehicle_keys() AS my_vehicle_keys)::text[]))));
+
+CREATE POLICY ull_read ON public.uber_live_log FOR SELECT TO authenticated USING ((( SELECT public.is_admin() AS is_admin) OR (vehicle_key = ANY (( SELECT public.my_vehicle_keys() AS my_vehicle_keys)::text[]))));
 
 CREATE POLICY ulr_read ON public.uber_live_readers FOR SELECT TO authenticated USING ((( SELECT public.is_admin() AS is_admin) OR (user_id = auth.uid())));
 
@@ -190,6 +194,12 @@ GRANT ALL ON TABLE public.uber_drivers TO service_role;
 
 GRANT ALL ON TABLE public.uber_live TO service_role;
 GRANT SELECT ON TABLE public.uber_live TO authenticated;
+
+GRANT ALL ON TABLE public.uber_live_log TO service_role;
+GRANT SELECT ON TABLE public.uber_live_log TO authenticated;
+
+GRANT ALL ON SEQUENCE public.uber_live_log_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.uber_live_log_id_seq TO service_role;
 
 GRANT ALL ON TABLE public.uber_live_readers TO service_role;
 GRANT SELECT ON TABLE public.uber_live_readers TO authenticated;

@@ -44,10 +44,10 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     const srv = await startSite(), { br, page, errors } = await openBrowser();
   try {
     await login(page, '#/direct');
-    await page.waitForSelector('#liveplat .pfblk');
+    await page.waitForSelector('#liveplat .pfbar .kchip');
     const t = await page.innerText('#liveplat');
-    assert.match(t, /Uber en ce moment[\s\S]*4\s*En ligne\s*1\s*En route vers le client\s*1\s*En course\s*2\s*Disponibles/);
-    await page.click('#liveplat details summary');
+    assert.match(t, /Uber lu à \d\d:\d\d\s*4\s*en ligne\s*1\s*vers le client\s*1\s*en course\s*2\s*disponibles/);
+    await page.click('#liveplat details[data-pf="uber"] summary');
     assert.match(await page.innerText('#liveplat table'), /BETA Test[\s\S]*WW030071[\s\S]*En route vers le client[\s\S]*ALPHA Test[\s\S]*En course[\s\S]*GAMMA Test[\s\S]*Disponible/);
     // carte et cartes véhicules : état Uber du véhicule (plaque lue sur l'écran Uber Fleet)
     await page.waitForFunction(() => /Uber · En course/.test((document.querySelector('.vcard[data-vk="030070WW"]') || {}).innerText || ''));
@@ -59,11 +59,13 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     // sous contrat, pas en ligne : « Hors ligne », en rouge s'il roule ; chauffeur en ligne avec un autre véhicule : jamais « hors ligne »
     await page.waitForFunction(() => /Hors ligne · roule/.test((document.querySelector('.vcard[data-vk="030076WW"]') || {}).innerText || ''));
     assert.match(await page.innerText('.vcard[data-vk="030077WW"]'), /Uber · Disponible/);
-    assert.match(await page.innerText('#liveplat'), /Sous contrat mais déconnectés d'Uber et de Bolt\s*1\s*Déconnectés \(sous contrat\)\s*1\s*Déconnectés et qui roulent[\s\S]*WW030076[\s\S]*DELTA Test[\s\S]*En route · 55 km\/h/);
+    assert.match(await page.innerText('#liveplat'), /1\s*déconnectés sous contrat\s*1\s*déconnectés qui roulent/);
+    await page.click('#liveplat details[data-pf="off"] summary');
+    assert.match(await page.innerText('#liveplat details[data-pf="off"]'), /Sous contrat mais déconnectés d'Uber et de Bolt \(1\)[\s\S]*WW030076[\s\S]*DELTA Test[\s\S]*En route · 55 km\/h/);
     // lecture arrêtée : plus aucun relevé depuis 10 min
     env.psql("update uber_live set observed_at = now() - interval '10 minutes'");
     await page.evaluate(async () => { await pfLoad(); pfPaint(); });
-    assert.match(await page.innerText('#liveplat'), /Lecture de Uber arrêtée depuis le [\s\S]*chiffres pas à jour[\s\S]*—\s*En ligne/);
+    assert.match(await page.innerText('#liveplat'), /Lecture arrêtée depuis \d\d:\d\d : chiffres pas à jour/);
     assert.doesNotMatch(await page.innerText('.vcard[data-vk="030070WW"]'), /Uber ·/, 'lecture arrêtée : plus de pastille sur la carte');
     assert.doesNotMatch(await page.innerText('.vcard[data-vk="030076WW"]'), /Hors ligne/, 'lecture arrêtée : jamais « hors ligne » supposé');
     assert.deepStrictEqual(errors, []);
@@ -162,6 +164,15 @@ test('base : relevé envoyé par un compte connecté (plaque → véhicule de Lu
     as(ADMIN, `select public.uber_live_push('[{"plate":"WW030070","status":"on_trip"},{"plate":"86120-T-1","status":"offline"}]'::jsonb, 'Application 1.8.0 · Mac', '', '')`);
     assert.strictEqual(env.psql("select string_agg(plate || '|' || (status_since < now() - interval '10 minutes'), ',' order by plate) from uber_live where plate <> '99999-A-9'"), '86120-T-1|false,WW030070|true');
     assert.strictEqual(env.psql("select count(*) from uber_live_readers"), '2', 'un relevé par compte et par appareil');
+    // historique : même état = même période ; changement d'état = période fermée, nouvelle ouverte
+    assert.strictEqual(env.psql("select string_agg(plate || '|' || status || '|' || (ended_at is null), ',' order by plate, id) from uber_live_log where plate <> '99999-A-9'"),
+      '86120-T-1|available|false,86120-T-1|offline|true,WW030070|on_trip|true');
+    // plaque plus affichée depuis 2 min (lecture à jour d'une autre plaque) : déconnexion notée à la dernière lecture
+    env.psql("update uber_live set observed_at = now() - interval '4 minutes' where plate = 'WW030070'");
+    as(ADMIN, `select public.uber_live_push('[{"plate":"86120-T-1","status":"offline"}]'::jsonb, 'Application 1.8.0 · Mac', '', '')`);
+    assert.strictEqual(env.psql("select string_agg(status || '|' || (ended_at is null) || '|' || (started_at < now() - interval '3 minutes'), ',' order by id) from uber_live_log where plate = 'WW030070'"),
+      'on_trip|false|false,gone|true|true', 'déconnecté depuis la dernière lecture (il y a 4 min)');
+    assert.strictEqual(as(MGR, 'select count(*) from uber_live_log'), '2', 'historique lu selon les agences');
     assert.throws(() => env.psql(`begin; set local role anon; select public.uber_live_push('[]'::jsonb, '', '', ''); commit;`), /permission denied|refus/);
     env.psql(`insert into auth.users (id, email) values ('33333333-3333-3333-3333-333333333333', 'rh@x') on conflict do nothing;
       insert into profiles (user_id, email, role) values ('33333333-3333-3333-3333-333333333333', 'rh@x', 'rh') on conflict (user_id) do update set role = 'rh'`);

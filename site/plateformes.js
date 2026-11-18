@@ -9,14 +9,33 @@ const PF_CLS = { to_pickup: 'warn', on_trip: 'ok', available: '', unknown: 'mute
 async function pfLoad() {
   if (PF.busy) return; PF.busy = true;
   try {
-    const l = await sb.from('uber_live').select('plate_key,plate,vehicle_key,agency_id,driver_name,status,raw,observed_at,status_since').gte('observed_at', new Date(Date.now() - 24 * 3600000).toISOString()).limit(1000);
-    if (l.error) throw l.error;
-    // une ligne par plaque lue à l'écran (le « chauffeur » d'Uber Fleet est repéré par sa plaque)
-    PF.latest = (l.data || []).map(r => ({ driver_id: r.plate_key, source: 'uber', status: r.status, observed_at: r.observed_at, since: r.status_since, vehicle_label: r.plate, evidence: { raw_state: r.raw } }));
-    PF.drivers = (l.data || []).map(r => ({ id: r.plate_key, name: r.driver_name || '', agency_id: r.agency_id, vehicle_key: r.vehicle_key, ludy_driver_code: null }));
+    const since = new Date(Date.now() - 24 * 3600000).toISOString(), fresh = Date.now() - PF_FRESH_MS;
+    const l = await sb.from('uber_live').select('plate_key,plate,vehicle_key,agency_id,driver_name,status,raw,observed_at,status_since').gte('observed_at', since).limit(1000);
+    const own = l.error ? [] : (l.data || []);
+    if (own.some(r => new Date(r.observed_at).getTime() >= fresh) || !(await pfLoadOld(since))) {
+      // lecture de l'application Ludy 1.8 (une ligne par plaque lue à l'écran d'Uber Fleet)
+      if (l.error) throw l.error;
+      PF.src = 'ludy';
+      PF.latest = own.map(r => ({ driver_id: r.plate_key, source: 'uber', status: r.status, observed_at: r.observed_at, since: r.status_since, vehicle_label: r.plate, evidence: { raw_state: r.raw } }));
+      PF.drivers = own.map(r => ({ id: r.plate_key, name: r.driver_name || '', agency_id: r.agency_id, vehicle_key: r.vehicle_key, ludy_driver_code: null }));
+    }
     PF.err = ''; PF.at = Date.now();
   } catch (e) { PF.err = String(e.message || e); }
   finally { PF.busy = false; }
+}
+/**
+ * Repli, tant qu'aucune application Ludy 1.8 ne lit Uber Fleet : relevés de l'application de bureau de Raphael (fleet_latest), seulement
+ * s'ils sont à jour ; source affichée sur la page. Renvoie vrai si utilisés.
+ */
+async function pfLoadOld(since) {
+  try {
+    const l = await sb.from('fleet_latest').select('driver_id,source,status,observed_at,vehicle_label,evidence').gte('observed_at', since).limit(1000);
+    if (l.error || !(l.data || []).some(r => Date.now() - new Date(r.observed_at).getTime() <= PF_FRESH_MS)) return false;
+    const d = await sb.from('fleet_drivers').select('id,name,agency_id,vehicle_key,ludy_driver_code').limit(1000);
+    if (d.error) return false;
+    PF.src = 'raphael'; PF.latest = l.data; PF.drivers = d.data || [];
+    return true;
+  } catch (e) { return false; }
 }
 /** Chauffeur dans l'agence choisie (menu) : agence de sa fiche, sinon agence du véhicule lu sur l'écran d'Uber */
 function pfKeep() {
@@ -27,33 +46,34 @@ function pfKeep() {
 function pfSum() {
   return pfSummary(PF.latest, PF.drivers, { keep: pfKeep(), nameOf: (d, r) => (d && d.ludy_driver_code && S.drv && S.drv[d.ludy_driver_code]) || (d && d.name) || 'Chauffeur non relié' });
 }
+/** Bandeau compact d'En direct : Uber (et Bolt s'il a des chauffeurs en ligne), déconnectés sous contrat ; détails repliés */
 function pfHtml() {
-  if (PF.err) return /permission|does not exist|relation|schema cache|not find|42P01|PGRST20/i.test(PF.err) ? '' : `<div class="panel small">Chauffeurs Uber / Bolt en ce moment : lecture impossible (${esc(PF.err)}).</div>`;
-  if (!PF.at) return '<div class="panel small">Chauffeurs Uber / Bolt en ce moment : lecture…</div>';
-  const s = pfSum(), blk = (x, name) => {
-    if (!x.seen) return '';
-    const n = v => x.stale ? '—' : f0(v);
-    const late = x.stale ? `<div class="msg warn small">Lecture de ${name} arrêtée${x.lastAt ? ' depuis le ' + esc(fmtDTY(new Date(x.lastAt).toISOString())) : ''} : chiffres pas à jour (${name === 'Uber' ? 'aucune application Ludy n\'a le volet Uber Fleet ouvert et connecté en ce moment' : 'Bolt n\'est plus relu'}).</div>` : '';
-    return `<div class="pfblk"><h3>${name} en ce moment <span class="small">${x.lastAt && !x.stale ? 'lu à ' + esc(localHM(new Date(x.lastAt))) : ''}</span></h3>${late}
-      ${cards([['En ligne', n(x.online), x.stale ? 'mute' : ''], ['En route vers le client', n(x.to_pickup), x.stale ? 'mute' : x.to_pickup ? 'warn' : ''], ['En course', n(x.on_trip), x.stale ? 'mute' : 'ok'],
-        ['Disponibles (en attente)', n(x.available)]].concat(x.unknown && !x.stale ? [['État non reconnu', f0(x.unknown), 'mute']] : []))}
-      ${!x.stale && x.list.length ? `<details class="pfdet" data-pf="${x.source}" ${PF.open && PF.open[x.source] ? 'open' : ''}><summary>Voir les ${f0(x.list.length)} chauffeurs en ligne</summary>
-        <table class="tbl"><thead><tr><th>Chauffeur</th><th>Véhicule</th><th>État</th></tr></thead><tbody>${x.list.map(c => `<tr><td>${esc(c.name)}</td><td>${c.plate ? plate(c.plate) : ''}</td>
-          <td>${badge(c.label, PF_CLS[c.status])}${c.status === 'unknown' && c.raw ? ' <span class="small">' + esc(c.raw) + '</span>' : ''}</td></tr>`).join('')}</tbody></table></details>` : ''}</div>`;
-  };
+  if (PF.err) return /permission|does not exist|relation|schema cache|not find|42P01|PGRST20/i.test(PF.err) ? '' : `<div class="pfbar small">Uber : lecture impossible (${esc(PF.err)})</div>`;
+  if (!PF.at) return '<div class="pfbar small">Uber : lecture…</div>';
+  const s = pfSum(), u = s.uber, b = s.bolt;
+  const chip = (n, label, cls) => `<span class="kchip ${cls || ''}"><b>${n}</b> ${label}</span>`;
+  if (!u.seen && !b.seen) return `<div class="pfbar"><span class="pfname">Uber</span><span class="small">aucune lecture d'Uber Fleet : ouvrir le volet Uber Fleet dans l'application Ludy (1.8) sur un ordinateur</span></div>`;
+  const src = PF.src === 'raphael' ? ' · source : application de bureau de Raphael' : '';
+  let html = '';
+  if (u.stale) html += `<div class="pfbar"><span class="pfname">Uber</span><span class="msg warn small">Lecture arrêtée${u.lastAt ? ' depuis ' + esc(localHM(new Date(u.lastAt))) : ''} : chiffres pas à jour (aucune application Ludy n'a le volet Uber Fleet ouvert et connecté)</span></div>`;
+  else html += `<div class="pfbar"><span class="pfname">Uber <span class="small">lu à ${esc(localHM(new Date(u.lastAt)))}${src}</span></span>
+    ${chip(f0(u.online), 'en ligne')}${chip(f0(u.to_pickup), 'vers le client', u.to_pickup ? 'warn' : '')}${chip(f0(u.on_trip), 'en course', 'ok')}${chip(f0(u.available), 'disponibles')}${u.unknown ? chip(f0(u.unknown), 'état non reconnu', 'mute') : ''}
+    <span id="pfoffchip"></span></div>`;
+  if (b.seen && !b.stale && b.online) html += `<div class="pfbar"><span class="pfname">Bolt</span>${chip(f0(b.online), 'en ligne')}${chip(f0(b.to_pickup), 'vers le client', b.to_pickup ? 'warn' : '')}${chip(f0(b.on_trip), 'en course', 'ok')}${chip(f0(b.available), 'disponibles')}</div>`;
   // véhicules sous contrat (page En direct) pas connectés : ni Uber ni Bolt en ligne, lecture d'Uber Fleet à jour
-  let offH = '';
-  if (typeof liveRows === 'function' && $('#map') && pfUberFresh()) {
-    const off = liveRows().filter(r => { const v = pfVeh(r.plate, r.vehicle_key, r); return v && v.status === 'offline'; })
-      .sort((a, b) => (b.state === 'En route') - (a.state === 'En route') || String(a.plate).localeCompare(String(b.plate)));
-    const mv = off.filter(r => r.state === 'En route').length;
-    offH = `<div class="pfblk"><h3>Sous contrat mais déconnectés d'Uber et de Bolt</h3>
-      ${cards([['Déconnectés (sous contrat)', f0(off.length), off.length ? 'warn' : 'ok'], ['Déconnectés et qui roulent', f0(mv), mv ? 'crit' : 'ok']])}
-      ${off.length ? `<table class="tbl"><thead><tr><th>Véhicule</th><th>Chauffeur (contrat)</th><th>Geotab</th></tr></thead><tbody>${off.map(r => `<tr${r.state === 'En route' ? ' class="crit"' : ''}><td>${plate(r.plate)}</td><td>${esc(r.driver_name || '')}</td>
-        <td>${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${r.since_min != null ? ' · depuis ' + esc(fH(r.since_min / 60)) : ''}</td></tr>`).join('')}</tbody></table>` : ''}</div>`;
-  }
-  const html = blk(s.uber, 'Uber') + blk(s.bolt, 'Bolt') + offH;
-  return html ? `<div class="panel pfbox">${html}<div class="small">États lus toutes les 10 s sur l'écran Uber Fleet ouvert dans l'application Ludy (1.8 ou plus récente), sur n'importe quel ordinateur connecté ; un chauffeur qui n'est plus vu depuis 2 min n'est plus compté en ligne.</div></div>` : '';
+  let off = [];
+  if (typeof liveRows === 'function' && $('#map') && pfUberFresh()) off = liveRows().filter(r => { const v = pfVeh(r.plate, r.vehicle_key, r); return v && v.status === 'offline'; })
+    .sort((x, y) => (y.state === 'En route') - (x.state === 'En route') || String(x.plate).localeCompare(String(y.plate)));
+  const mv = off.filter(r => r.state === 'En route').length;
+  if (!u.stale) html = html.replace('<span id="pfoffchip"></span>', chip(f0(off.length), 'déconnectés sous contrat', off.length ? 'warn' : '') + (mv ? chip(f0(mv), 'déconnectés qui roulent', 'crit') : ''));
+  const det = [];
+  if (!u.stale && u.list.length) det.push(`<details class="pfdet" data-pf="uber" ${PF.open && PF.open.uber ? 'open' : ''}><summary>Chauffeurs en ligne sur Uber (${f0(u.list.length)})</summary>
+    <table class="tbl"><thead><tr><th>Chauffeur</th><th>Véhicule</th><th>État</th></tr></thead><tbody>${u.list.map(c => `<tr><td>${esc(c.name)}</td><td>${c.plate ? plate(c.plate) : ''}</td>
+      <td>${badge(c.label, PF_CLS[c.status])}${c.status === 'unknown' && c.raw ? ' <span class="small">' + esc(c.raw) + '</span>' : ''}</td></tr>`).join('')}</tbody></table></details>`);
+  if (off.length) det.push(`<details class="pfdet" data-pf="off" ${PF.open && PF.open.off ? 'open' : ''}><summary>Sous contrat mais déconnectés d'Uber et de Bolt (${f0(off.length)})</summary>
+    <table class="tbl"><thead><tr><th>Véhicule</th><th>Chauffeur (contrat)</th><th>Geotab</th></tr></thead><tbody>${off.map(r => `<tr${r.state === 'En route' ? ' class="crit"' : ''}><td>${plate(r.plate)}</td><td>${esc(r.driver_name || '')}</td>
+      <td>${esc(r.state || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${r.since_min != null ? ' · depuis ' + esc(fH(r.since_min / 60)) : ''}</td></tr>`).join('')}</tbody></table></details>`);
+  return html + (det.length ? `<div class="pfdets">${det.join('')}</div>` : '');
 }
 /** État Uber (sinon Bolt) d'un véhicule de la carte, d'après la plaque lue sur l'écran de la plateforme ; null si pas en ligne ou pas à jour */
 const PF_SHORT = { available: 'Disponible', to_pickup: 'Vers le client', on_trip: 'En course', unknown: 'En ligne' };
