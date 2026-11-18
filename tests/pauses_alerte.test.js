@@ -87,3 +87,60 @@ test('site, En direct : mise en pause depuis la page, alerte de déplacement ré
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
+
+test('alerte de pause : onglet caché (titre + notification du système), × et Échap = rappel, deux onglets Ludy, pause terminée = plus aucune alerte', async () => {
+  env.resetDb();
+  const start = new Date(Date.now() - 3 * 3600000).toISOString(), end = new Date(Date.now() + 6 * 3600000).toISOString();
+  env.psql(`insert into vehicles (key, plate, model, active) values ('968199WW', 'WW968199', 'STARIA', 'OUI');
+    insert into drivers (code, name, phone) values ('C1', 'ALPHA Test', '0612345678');
+    insert into contracts (num, client_code, name, plate, vehicle_key, start_at, end_at) values ('K1', 'C1', 'ALPHA Test', 'WW968199', '968199WW', '${start}', '${end}');
+    insert into live_status (vehicle_key, plate, model, state, lat, lon, updated_at) values ('968199WW', 'WW968199', 'STARIA', 'Garé', 33.5731, -7.5898, now());
+    insert into driver_pauses (vehicle_key, plate, driver_code, driver_name, driver_phone, contract_num, shift_day, shift, planned_min, start_lat, start_lon, agency_id)
+      values ('968199WW', 'WW968199', 'C1', 'ALPHA Test', '0612345678', 'K1', current_date, 'Jour', 1, 33.5731, -7.5898, null);
+    update driver_pauses set started_at = now() - interval '10 minutes';`);
+  // le véhicule roule pendant la pause (et la pause d'1 min est déjà dépassée : deux alertes en file)
+  const pos = { key: '968199WW', plate: 'WW968199', state: 'En route', speed: 45, lat: 33.5831, lon: -7.5898 };
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    const ctx = page.context();
+    await ctx.addInitScript(() => {
+      window.__uiDialogs = true; window.__notes = [];
+      // onglet caché (l'utilisateur est sur un autre onglet) et notifications autorisées
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => !!window.__hidden });
+      window.Notification = function (t, o) { window.__notes.push(t + ' | ' + (o && o.body)); this.close = () => { }; };
+      window.Notification.permission = 'granted'; window.Notification.requestPermission = () => Promise.resolve('granted');
+    });
+    await ctx.route('**/functions/v1/geotab-live**', r => r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify(/mode=/.test(r.request().url()) ? {} : { at: new Date().toISOString(), vehicles: [Object.assign({}, pos, { at: new Date().toISOString() })], events: [] }) }));
+    await page.goto('http://localhost:8080/#/dashboard');
+    await page.evaluate(() => { window.__hidden = true; });
+    await page.fill('#le', 'admin@x'); await page.fill('#lp', 'secret123'); await page.click('#lf button[type=submit]');
+    await page.waitForSelector('#svov.bad', { timeout: 20000 });
+    await page.waitForFunction(() => window.__notes.length > 0 && /^🔴 /.test(document.title), null, { timeout: 5000 });
+    assert.match(await page.evaluate(() => window.__notes[0]), /^Ludy · (VÉHICULE EN PAUSE EN MOUVEMENT|FIN DE PAUSE) \| ALPHA Test · WW968199/);
+    // retour sur l'onglet : titre remis
+    await page.evaluate(() => { window.__hidden = false; document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForFunction(() => !/^🔴 /.test(document.title));
+    // × : fermée (rappel dans 2 min), la suivante s'affiche ; Échap aussi
+    const k1 = await page.evaluate(() => SV.cur.k);
+    await page.click('#svov .svx');
+    await page.waitForFunction(k => SV.cur && SV.cur.k !== k, k1);
+    assert.ok(await page.evaluate(k => SV.snooze[k] > Date.now() + 100000, k1));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('#svov'));
+    // second onglet Ludy : même alerte ; « Terminer la pause » dans l'un ferme l'alerte dans l'autre, aucune alerte ne revient
+    const p2 = await ctx.newPage();
+    await p2.goto('http://localhost:8080/#/dashboard');
+    await page.evaluate(() => { Object.keys(SV.snooze).forEach(k => { SV.snooze[k] = 0; }); });
+    await p2.waitForSelector('#svov.bad', { timeout: 20000 });
+    await page.waitForSelector('#svov.bad', { timeout: 20000 });
+    await p2.click('#svend');
+    await page.waitForFunction(() => !document.querySelector('#svov'), null, { timeout: 10000 });
+    await p2.waitForFunction(() => !document.querySelector('#svov'));
+    assert.match(env.psql('select ended_at is not null from driver_pauses'), /^t$/);
+    await page.evaluate(() => { Object.keys(SV.snooze).forEach(k => { SV.snooze[k] = 0; }); });
+    await page.waitForTimeout(7000);
+    assert.strictEqual(await page.locator('#svov').count() + await p2.locator('#svov').count(), 0, 'pause terminée : plus aucune alerte, dans aucun onglet');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
+});
