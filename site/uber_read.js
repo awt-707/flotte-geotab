@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-19a';
+  var V = '2026-11-19b';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -117,36 +117,126 @@
     }
     return '';
   }
-  function read(doc, net) {
-    var best = [], src = '';
-    var recent = (net || []).filter(function (x) { return Date.now() - x.at < 90000; });
+  // ---- carte en temps réel d'Uber Fleet (constaté le 19/11/2026) ----
+  // /api/GetDriverLiveLocation : data.driverLocations = chauffeurs en ligne (driverId.value, vehicleId.value, supplyActivityState,
+  // driverStatus, latitude, longitude) et data.driverStats (onlineDrivers, totalDriversInScope, activityStateCounts) ; ni nom ni plaque.
+  // Nom et téléphone : fiches « driver-card » de la liste (data-tracking-payload driverUUID / vehicleUUID). Plaque : toute réponse
+  // d'Uber Fleet qui relie un identifiant de véhicule ou de chauffeur à une plaque (gardé dans la page, localStorage « ludyUberMap »).
+  function uberSt(v) {
+    var t = String(v || '').toUpperCase();
+    if (!t) return null;
+    if (/OFFLINE/.test(t)) return 'offline';
+    if (/NOT_DISPATCHABLE|UNDISPATCHABLE/.test(t)) return null;
+    if (/ON_?TRIP|IN_?TRIP|ONTRIP|DROP_?OFF|WITH_RIDER|TRIP_IN_PROGRESS|ACTIVE_TRIP/.test(t)) return 'on_trip';
+    if (/EN_?ROUTE|ENROUTE|PICK_?UP|ARRIV|ACCEPT|DISPATCHED(?!ABLE)|WAITING/.test(t)) return 'to_pickup';
+    if (/DISPATCHABLE|ONLINE|AVAILABLE|OPEN/.test(t)) return 'available';
+    return null;
+  }
+  function idOf(v) { if (typeof v === 'string') return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(v) ? v.toLowerCase() : ''; if (v && typeof v === 'object' && typeof v.value === 'string') return idOf(v.value); return ''; }
+  function idsIn(o) {
+    var out = [];
+    for (var k in o) { var x = idOf(o[k]); if (x && /id$|uuid/i.test(k)) out.push(x); }
+    for (var k2 in o) { var c = o[k2]; if (c && typeof c === 'object' && !Array.isArray(c) && !(typeof c.value === 'string')) for (var k3 in c) { var y = idOf(c[k3]); if (y && /id$|uuid/i.test(k3)) out.push(y); } }
+    return out;
+  }
+  /** Plaques et noms rattachés aux identifiants Uber dans une réponse (objets qui ne portent qu'une plaque) */
+  function indexJson(j, map) {
+    var stack = [[j, 0]], n = 0, hit = 0;
+    while (stack.length && n < 80000) {
+      var it = stack.pop(), o = it[0], d = it[1]; n++;
+      if (!o || typeof o !== 'object' || d > 16) continue;
+      if (Array.isArray(o)) { for (var i = 0; i < o.length; i++) stack.push([o[i], d + 1]); continue; }
+      var p = findPlate(o, 0);
+      if (p) {
+        var ids = idsIn(o), nm = findName(o);
+        ids.forEach(function (id) { if (map.p[id] !== p) { map.p[id] = p; hit++; } if (nm && !map.n[id]) map.n[id] = nm; });
+      }
+      for (var k in o) if (o[k] && typeof o[k] === 'object') stack.push([o[k], d + 1]);
+    }
+    return hit;
+  }
+  /** Fiches de la liste des chauffeurs : identifiants, nom, téléphone (et plaque si elle y est écrite) */
+  function cardsOf(doc) {
+    var out = {}, cs = doc.querySelectorAll ? doc.querySelectorAll('[data-testid="driver-card"]') : [];
+    for (var i = 0; i < cs.length; i++) {
+      var c = cs[i], pl = {};
+      try { pl = JSON.parse(c.getAttribute('data-tracking-payload') || '{}'); } catch (e) { }
+      var did = idOf(pl.driverUUID); if (!did) continue;
+      var img = c.querySelector('img[alt]'), lab = c.querySelector('[data-baseweb="typo-labelsmall"]');
+      var name = String((lab && lab.textContent) || (img && img.getAttribute('alt')) || '').replace(/\s+/g, ' ').trim();
+      var tel = (String(c.textContent || '').match(/\+\d{3}\s?\d[\d ]{6,}/) || [''])[0].replace(/\s+/g, ' ').trim();
+      out[did] = { name: name.slice(0, 80), phone: tel, veh: idOf(pl.vehicleUUID), plate: plateOf(c.textContent || ''), st: String(pl.driverStatus || '') };
+    }
+    return out;
+  }
+  function liveOf(net) {
+    for (var i = net.length - 1; i >= 0; i--) {
+      var x = net[i]; if (!/GetDriverLiveLocation/i.test(x.url) || Date.now() - x.at > 90000) continue;
+      try { var j = JSON.parse(x.text); if (j && j.data && Array.isArray(j.data.driverLocations)) return { at: x.at, list: j.data.driverLocations, stats: j.data.driverStats || null }; } catch (e) { }
+    }
+    return null;
+  }
+  function read(doc, net, map) {
+    net = net || []; map = map || { p: {}, n: {} };
+    var live = liveOf(net), cards = cardsOf(doc), lines = [], b = { n: 9000 };
+    if (live) {
+      var rows = [], miss = [], states = {};
+      live.list.forEach(function (x) {
+        var did = idOf(x.driverId), vid = idOf(x.vehicleId), raw = String(x.supplyActivityState || x.driverStatus || '');
+        states[raw] = (states[raw] || 0) + 1;
+        var st = uberSt(x.supplyActivityState) || uberSt(x.driverStatus) || 'unknown', cd = cards[did] || {};
+        var plate = map.p[vid] || map.p[did] || (cd.veh && map.p[cd.veh]) || cd.plate || '';
+        var name = cd.name || map.n[did] || '';
+        if (!plate) { miss.push((name || did.slice(0, 8)) + ' · véhicule ' + (vid || '?').slice(0, 8)); return; }
+        rows.push({ plate: plate, status: st, raw: raw.replace(/^SUPPLY_ACTIVITY_STATE_|^MONITORING_SUPPLY_STATUS_/, '').slice(0, 60), name: name, phone: cd.phone || '',
+          lat: typeof x.latitude === 'number' ? x.latitude : null, lng: typeof x.longitude === 'number' ? x.longitude : null });
+      });
+      var full = miss.length === 0;
+      if (!full || V.slice(-1) === 'b') {
+        lines.push('LUDY ' + V + ' · en ligne (Uber) : ' + live.list.length + ' · plaques trouvées : ' + rows.length + ' · sans plaque : ' + miss.length + ' · fiches de la liste : ' + Object.keys(cards).length + ' · correspondances : ' + Object.keys(map.p).length);
+        lines.push('ÉTATS ' + JSON.stringify(states));
+        if (live.stats) lines.push('STATS ' + JSON.stringify(live.stats).slice(0, 1500));
+        if (miss.length) lines.push('SANS PLAQUE ' + miss.slice(0, 30).join(' | '));
+        var seenU = {};
+        net.filter(function (x) { return !/tc2\.uber\.com|GetDriverLiveLocation|xp-parameters|bug-report|events\/ack/.test(x.url); }).reverse()
+          .filter(function (x) { var k = x.url + x.op; if (seenU[k]) return false; seenU[k] = 1; return true; }).slice(0, 5)
+          .forEach(function (x) { var j; try { j = JSON.parse(x.text); } catch (e) { return; } lines.push('== ' + x.url + (x.op ? ' [' + x.op + ']' : '') + ' ' + x.text.length + ' o\n' + shape(j, 0, b)); });
+      }
+      return { rows: rows, full: full, src: 'GetDriverLiveLocation', diag: lines.join('\n').slice(0, 19000), stats: live.stats };
+    }
+    // pas de données de la carte : repli sur les autres réponses, puis sur la page affichée (lecture partielle)
+    var best = [], src = '', recent = net.filter(function (x) { return Date.now() - x.at < 90000; });
     for (var i = recent.length - 1; i >= 0; i--) {
       var j; try { j = JSON.parse(recent[i].text); } catch (e) { continue; }
       var r = rowsOf(j); if (r.length > best.length) { best = r; src = recent[i].url + (recent[i].op ? ' ' + recent[i].op : ''); }
     }
-    var full = best.length >= 3, rows = best;
-    if (!full) { var d = domRows(doc); if (d.length > rows.length) { rows = d; src = 'page affichée'; } }
-    var diag = '';
-    if (!full) {
-      var b = { n: 14000 }, seenU = {}, lines = [];
-      (net || []).slice(-25).forEach(function (x) { lines.push(new Date(x.at).toISOString().slice(11, 19) + ' ' + x.url + (x.op ? ' [' + x.op + ']' : '') + ' ' + x.text.length + ' o'); });
-      var big = recent.slice().sort(function (a, c) { return c.text.length - a.text.length; }).filter(function (x) { var k = x.url + x.op; if (seenU[k]) return false; seenU[k] = 1; return true; }).slice(0, 4);
-      big.forEach(function (x) { var j; try { j = JSON.parse(x.text); } catch (e) { return; } lines.push('== ' + x.url + (x.op ? ' [' + x.op + ']' : '') + '\n' + shape(j, 0, b)); });
-      diag = 'LUDY ' + V + ' · réponses captées : ' + (net || []).length + '\n' + lines.join('\n') + '\n== LIGNE DE LA PAGE\n' + domSample(doc);
-    }
-    return { rows: rows, full: full, src: src, diag: diag.slice(0, 19000) };
+    var d = domRows(doc); if (d.length > best.length) { best = d; src = 'page affichée'; }
+    var seen2 = {}, lines2 = [];
+    net.slice(-25).forEach(function (x) { lines2.push(new Date(x.at).toISOString().slice(11, 19) + ' ' + x.url + (x.op ? ' [' + x.op + ']' : '') + ' ' + x.text.length + ' o'); });
+    recent.slice().sort(function (a, c) { return c.text.length - a.text.length; }).filter(function (x) { var k = x.url + x.op; if (seen2[k]) return false; seen2[k] = 1; return true; }).slice(0, 4)
+      .forEach(function (x) { var j; try { j = JSON.parse(x.text); } catch (e) { return; } lines2.push('== ' + x.url + (x.op ? ' [' + x.op + ']' : '') + '\n' + shape(j, 0, b)); });
+    return { rows: best, full: false, src: src, diag: ('LUDY ' + V + ' · réponses captées : ' + net.length + '\n' + lines2.join('\n') + '\n== LIGNE DE LA PAGE\n' + domSample(doc)).slice(0, 19000) };
   }
-  if (typeof module !== 'undefined') { module.exports = { rowsOf: rowsOf, read: read, stOf: stOf, plateOf: plateOf, shape: shape, V: V }; return; }
+  if (typeof module !== 'undefined') { module.exports = { rowsOf: rowsOf, read: read, stOf: stOf, plateOf: plateOf, shape: shape, uberSt: uberSt, indexJson: indexJson, V: V }; return; }
   if (typeof window === 'undefined' || !/(^|\.)uber\.com$/i.test(location.hostname)) return;
   if (window.__ludyURv === V) return;
   window.__ludyURv = V;
   clearInterval(window.__ludyURt);
+  // correspondances identifiant Uber → plaque / nom, gardées pour cette page (localStorage d'Uber Fleet, sur cet ordinateur seulement)
+  var MAP = { p: {}, n: {} };
+  try { var sv = JSON.parse(localStorage.getItem('ludyUberMap') || '{}'); if (sv && sv.p) MAP = { p: sv.p || {}, n: sv.n || {} }; } catch (e) { }
+  var dirty = false;
+  function idx(e) { try { if (!/tc2\.uber\.com/.test(e.url) && indexJson(JSON.parse(e.text), MAP)) dirty = true; } catch (er) { } }
+  var NET = window.__ludyNet = window.__ludyNet || [];
+  NET.forEach(idx);
+  if (!NET.__ludyIdx) { var push0 = NET.push; NET.push = function () { for (var i = 0; i < arguments.length; i++) idx(arguments[i]); return push0.apply(this, arguments); }; NET.__ludyIdx = 1; }
   function tick() {
     try {
       var inv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
       if (!inv || !document.body) return;
-      var r = read(document, window.__ludyNet || []);
-      inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: (r.full ? '' : r.diag) || (r.src ? 'source : ' + r.src : ''), full: r.full }).catch(function () { });
+      if (dirty) { dirty = false; try { localStorage.setItem('ludyUberMap', JSON.stringify(MAP)); } catch (e) { } }
+      var r = read(document, NET, MAP);
+      inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: r.diag || (r.src ? 'source : ' + r.src : ''), full: r.full }).catch(function () { });
     } catch (e) { }
   }
   window.__ludyURt = setInterval(tick, 10000);

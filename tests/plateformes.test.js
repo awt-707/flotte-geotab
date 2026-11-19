@@ -150,26 +150,37 @@ test('lecture de l\'écran Uber Fleet (application 1.8) : libellés d\'état et 
   assert.match(fs.readFileSync(path.join(__dirname, '../desktop/src-tauri/build.rs'), 'utf8'), /"uber_push", "uber_rows"/);
 });
 
-test('lecture 1.9 (site/uber_read.js) : liste complète lue dans les données de la carte d\'Uber Fleet ; sinon partielle avec la structure des données', () => {
+test('lecture 1.9 (site/uber_read.js) : carte en temps réel d\'Uber Fleet (GetDriverLiveLocation), plaques retrouvées, noms des fiches ; sinon partielle', () => {
   const U = require('../site/uber_read.js');
-  const doc = { querySelectorAll: () => [] };
-  const roster = { data: { supply: [
-    { uuid: 'a', firstName: 'ALPHA', lastName: 'Test', status: 'ONLINE', vehicle: { licensePlate: 'WW030070' } },
-    { uuid: 'b', name: 'BETA Test', driverStatus: 'ON_TRIP', vehicle: { plate: '86120-T-1' } },
-    { uuid: 'c', name: 'GAMMA Test', state: 'EN_ROUTE_TO_PICKUP', vehicle: { licensePlate: '030071WW' } },
-    { uuid: 'd', name: 'DELTA Test', status: 'OFFLINE', vehicle: { licensePlate: 'WW030072' } },
-    { uuid: 'e', name: 'Sans plaque', status: 'ONLINE' }, { uuid: 'f', name: 'Etat inconnu', status: 'ZZZ', vehicle: { licensePlate: 'WW030073' } }] } };
-  const net = [{ url: 'https://fleethub.uber.com/graphql', op: 'LiveMap', at: Date.now(), text: JSON.stringify(roster) }];
-  const r = U.read(doc, net);
+  const id = n => n + '97b48f1d-06da-4c89-8310-fe49bfd8b16a'.slice(1);
+  const vid = n => n + '317d21e1-79fb-4a0a-8e30-f5582739ac91'.slice(1);
+  const loc = (n, st) => ({ waypointsLocation: [], driverId: { value: id(n) }, latitude: 31.62, longitude: -8.0, course: 67, driverStatus: 'MONITORING_SUPPLY_STATUS_ONLINE', vehicleId: { value: vid(n) }, supplyActivityState: st });
+  const live = { status: 'success', data: { driverLocations: [loc('1', 'SUPPLY_ACTIVITY_STATE_ONLINE_DISPATCHABLE'), loc('2', 'SUPPLY_ACTIVITY_STATE_ON_TRIP'), loc('3', 'SUPPLY_ACTIVITY_STATE_EN_ROUTE_TO_PICKUP')],
+    driverStats: { onlineDrivers: 3, totalDriversInScope: 70 } } };
+  const net = [{ url: 'https://fleethub.uber.com/api/GetDriverLiveLocation', op: '', at: Date.now(), text: JSON.stringify(live) }];
+  // fiches de la liste (nom, téléphone) simulées
+  const card = (n, name) => ({ getAttribute: () => JSON.stringify({ driverUUID: id(n), vehicleUUID: vid(n), driverStatus: 'ONLINE' }), textContent: name + '+212 600000000',
+    querySelector: q => q.includes('labelsmall') ? { textContent: name } : null });
+  const doc = { querySelectorAll: q => q.includes('driver-card') ? [card('1', 'ALPHA Test'), card('2', 'BETA Test')] : [] };
+  // plaques : réponse d'Uber Fleet qui relie les véhicules à leur plaque (deux sur trois)
+  const map = { p: {}, n: {} };
+  U.indexJson({ data: { vehicles: [{ vehicleUUID: vid('1'), licensePlate: 'WW 030070' }, { uuid: { value: vid('2') }, plate: '86120-T-1' }] } }, map);
+  let r = U.read(doc, net, map);
+  assert.strictEqual(r.full, false, 'un chauffeur en ligne sans plaque : liste pas complète (personne supposé hors ligne)');
+  assert.deepStrictEqual(r.rows.map(x => x.plate + '|' + x.status + '|' + x.name + '|' + x.phone), ['WW030070|available|ALPHA Test|+212 600000000', '86120-T-1|on_trip|BETA Test|+212 600000000']);
+  assert.match(r.diag, /en ligne \(Uber\) : 3 · plaques trouvées : 2 · sans plaque : 1/);
+  U.indexJson({ vehicle: { id: vid('3'), licensePlate: '030071WW' } }, map);
+  r = U.read(doc, net, map);
   assert.strictEqual(r.full, true);
-  assert.deepStrictEqual(r.rows.map(x => x.plate + '|' + x.status + '|' + x.name).sort(),
-    ['030071WW', '86120-T-1|on_trip|BETA Test', 'WW030070|available|ALPHA Test', 'WW030072|offline|DELTA Test'].map(x => x === '030071WW' ? 'WW030071|to_pickup|GAMMA Test' : x).sort());
-  assert.strictEqual(r.diag, '');
-  // vieille réponse (plus de 90 s) ou moins de 3 chauffeurs : lecture partielle, structure des données jointe
-  const r2 = U.read(doc, [{ url: 'https://fleethub.uber.com/api/x', op: '', at: Date.now(), text: JSON.stringify({ items: [{ id: 1, colour: 'green' }] }) }, Object.assign({}, net[0], { at: Date.now() - 120000 })]);
+  assert.deepStrictEqual(r.rows.map(x => x.plate + '|' + x.status), ['WW030070|available', '86120-T-1|on_trip', 'WW030071|to_pickup']);
+  // réponse trop vieille (plus de 90 s) : plus de liste complète
+  assert.strictEqual(U.read(doc, [Object.assign({}, net[0], { at: Date.now() - 120000 })], map).full, false);
+  assert.deepStrictEqual(['SUPPLY_ACTIVITY_STATE_ONLINE_DISPATCHABLE', 'SUPPLY_ACTIVITY_STATE_OFFLINE', 'SUPPLY_ACTIVITY_STATE_ON_TRIP', 'SUPPLY_ACTIVITY_STATE_EN_ROUTE', 'X'].map(U.uberSt), ['available', 'offline', 'on_trip', 'to_pickup', null]);
+  // autre format : structure jointe pour régler la lecture
+  const r2 = U.read({ querySelectorAll: () => [] }, [{ url: 'https://fleethub.uber.com/api/x', op: '', at: Date.now(), text: JSON.stringify({ items: [{ id: 1, colour: 'green' }] }) }]);
   assert.strictEqual(r2.full, false); assert.deepStrictEqual(r2.rows, []);
-  assert.match(r2.diag, /^LUDY \S+ · réponses captées : 2/); assert.match(r2.diag, /== https:\/\/fleethub\.uber\.com\/api\/x\n\{items:\[1: \{id:1,colour:"green"\}\]\}/);
-  assert.deepStrictEqual(['ONLINE', 'DRIVER_STATUS_ONLINE', 'OFFLINE', 'ON_TRIP', 'EN_ROUTE', 'Disponible', 'unavailable', 'green'].map(U.stOf), ['available', 'available', 'offline', 'on_trip', 'to_pickup', 'available', null, null]);
+  assert.match(r2.diag, /^LUDY \S+ · réponses captées : 1/); assert.match(r2.diag, /\{items:\[1: \{id:1,colour:"green"\}\]\}/);
+  assert.deepStrictEqual(['ONLINE', 'OFFLINE', 'ON_TRIP', 'Disponible', 'unavailable'].map(U.stOf), ['available', 'offline', 'on_trip', 'available', null]);
 });
 
 test('base : relevé envoyé par un compte connecté (plaque → véhicule de Ludy, état depuis…), lu selon les agences, refusé sans compte Ludy', () => {
