@@ -1,6 +1,7 @@
 // Page En direct : chauffeurs Uber en ce moment (en ligne, disponibles, en route vers le client, en course), relus toutes les 15 s.
 // Données : uber_live (migration 20261204000000_uber_ecran.sql), états lus sur l'écran Uber Fleet ouvert dans l'application Ludy 1.8,
-// sur n'importe quel ordinateur (pfPush), sans l'application de Raphael (18/11/2026, demande d'Ahmed). Droits de la base : administrateur
+// sur n'importe quel ordinateur (pfPush), sans l'application de Raphael (18/11/2026, demande d'Ahmed ; plus aucun repli sur ses données
+// depuis le 19/11). Application 1.9 : liste complète lue dans les données de la carte d'Uber Fleet (site/uber_read.js, pfReaderSend). Droits de la base : administrateur
 // = tout, gestionnaire / lecture seule = véhicules de ses agences. Calcul : pfSummary (plateformes_calc.js).
 const PF = { latest: [], drivers: [], err: '', at: 0, busy: false, open: false };
 const PF_EVERY_MS = 15000;
@@ -9,33 +10,20 @@ const PF_CLS = { to_pickup: 'warn', on_trip: 'ok', available: '', unknown: 'mute
 async function pfLoad() {
   if (PF.busy) return; PF.busy = true;
   try {
+    // lecture de l'application Ludy (une ligne par plaque lue sur Uber Fleet) ; aucune autre source (19/11/2026, demande d'Ahmed)
     const since = new Date(Date.now() - 24 * 3600000).toISOString(), fresh = Date.now() - PF_FRESH_MS;
-    const l = await sb.from('uber_live').select('plate_key,plate,vehicle_key,agency_id,driver_name,status,raw,observed_at,status_since').gte('observed_at', since).limit(1000);
-    const own = l.error ? [] : (l.data || []);
-    if (own.some(r => new Date(r.observed_at).getTime() >= fresh) || !(await pfLoadOld(since))) {
-      // lecture de l'application Ludy 1.8 (une ligne par plaque lue à l'écran d'Uber Fleet)
-      if (l.error) throw l.error;
-      PF.src = 'ludy';
-      PF.latest = own.map(r => ({ driver_id: r.plate_key, source: 'uber', status: r.status, observed_at: r.observed_at, since: r.status_since, vehicle_label: r.plate, evidence: { raw_state: r.raw } }));
-      PF.drivers = own.map(r => ({ id: r.plate_key, name: r.driver_name || '', agency_id: r.agency_id, vehicle_key: r.vehicle_key, ludy_driver_code: null }));
-    }
+    const l = await sb.from('uber_live').select('plate_key,plate,vehicle_key,agency_id,driver_name,status,raw,observed_at,status_since,complete').gte('observed_at', since).limit(1000);
+    if (l.error) throw l.error;
+    const own = l.data || [];
+    PF.src = 'ludy';
+    // liste complète lue dans les données de la carte d'Uber Fleet (application 1.9) : comptes, déconnexions, hors ligne ;
+    // sinon (1.8, ou carte pas ouverte) : seulement les chauffeurs affichés, jamais comptés ni signalés déconnectés
+    PF.full = own.some(r => r.complete && new Date(r.observed_at).getTime() >= fresh);
+    PF.latest = own.map(r => ({ driver_id: r.plate_key, source: 'uber', status: r.status, observed_at: r.observed_at, since: r.status_since, vehicle_label: r.plate, full: !!r.complete, evidence: { raw_state: r.raw } }));
+    PF.drivers = own.map(r => ({ id: r.plate_key, name: r.driver_name || '', agency_id: r.agency_id, vehicle_key: r.vehicle_key, ludy_driver_code: null }));
     PF.err = ''; PF.at = Date.now();
   } catch (e) { PF.err = String(e.message || e); }
   finally { PF.busy = false; }
-}
-/**
- * Repli, tant qu'aucune application Ludy 1.8 ne lit Uber Fleet : relevés de l'application de bureau de Raphael (fleet_latest), seulement
- * s'ils sont à jour ; source affichée sur la page. Renvoie vrai si utilisés.
- */
-async function pfLoadOld(since) {
-  try {
-    const l = await sb.from('fleet_latest').select('driver_id,source,status,observed_at,vehicle_label,evidence').gte('observed_at', since).limit(1000);
-    if (l.error || !(l.data || []).some(r => Date.now() - new Date(r.observed_at).getTime() <= PF_FRESH_MS)) return false;
-    const d = await sb.from('fleet_drivers').select('id,name,agency_id,vehicle_key,ludy_driver_code').limit(1000);
-    if (d.error) return false;
-    PF.src = 'raphael'; PF.latest = l.data; PF.drivers = d.data || [];
-    return true;
-  } catch (e) { return false; }
 }
 /** Chauffeur dans l'agence choisie (menu) : agence de sa fiche, sinon agence du véhicule lu sur l'écran d'Uber */
 function pfKeep() {
@@ -44,7 +32,7 @@ function pfKeep() {
   return (d, r) => d && d.agency_id != null ? String(d.agency_id) === a : vAg[normPlate(r.vehicle_label)] === a;
 }
 function pfSum() {
-  return pfSummary(PF.latest, PF.drivers, { keep: pfKeep(), nameOf: (d, r) => (d && d.ludy_driver_code && S.drv && S.drv[d.ludy_driver_code]) || (d && d.name) || 'Chauffeur non relié' });
+  return pfSummary(PF.latest.filter(r => r.full), PF.drivers, { keep: pfKeep(), nameOf: (d, r) => (d && d.ludy_driver_code && S.drv && S.drv[d.ludy_driver_code]) || (d && d.name) || 'Chauffeur non relié' });
 }
 /** Bandeau compact d'En direct : Uber (et Bolt s'il a des chauffeurs en ligne), déconnectés sous contrat ; détails repliés */
 function pfHtml() {
@@ -52,8 +40,9 @@ function pfHtml() {
   if (!PF.at) return '<div class="pfbar small">Uber : lecture…</div>';
   const s = pfSum(), u = s.uber, b = s.bolt;
   const chip = (n, label, cls) => `<span class="kchip ${cls || ''}"><b>${n}</b> ${label}</span>`;
-  if (!u.seen && !b.seen) return `<div class="pfbar"><span class="pfname">Uber</span><span class="small">aucune lecture d'Uber Fleet : ouvrir le volet Uber Fleet dans l'application Ludy (1.8) sur un ordinateur</span></div>`;
-  const src = PF.src === 'raphael' ? ' · source : application de bureau de Raphael' : '';
+  const fresh = Date.now() - PF_FRESH_MS, part = PF.latest.filter(r => !r.full && r.status !== 'offline' && new Date(r.observed_at).getTime() >= fresh);
+  if (!PF.latest.some(r => r.full)) return `<div class="pfbar"><span class="pfname">Uber</span><span class="small">${part.length ? f0(part.length) + ' chauffeur(s) lu(s) à l\'écran · ' : ''}comptes complets : ouvrir la « Carte en temps réel » d'Uber Fleet dans l'application Ludy 1.9 (sur un ordinateur connecté à Uber Fleet)</span></div>`;
+  const src = '';
   let html = '';
   if (u.stale) html += `<div class="pfbar"><span class="pfname">Uber</span><span class="msg warn small">Lecture arrêtée${u.lastAt ? ' depuis ' + esc(localHM(new Date(u.lastAt))) : ''} : chiffres pas à jour (aucune application Ludy n'a le volet Uber Fleet ouvert et connecté)</span></div>`;
   else html += `<div class="pfbar"><span class="pfname">Uber <span class="small">lu à ${esc(localHM(new Date(u.lastAt)))}${src}</span></span>
@@ -77,8 +66,8 @@ function pfHtml() {
 }
 /** État Uber (sinon Bolt) d'un véhicule de la carte, d'après la plaque lue sur l'écran de la plateforme ; null si pas en ligne ou pas à jour */
 const PF_SHORT = { available: 'Disponible', to_pickup: 'En route vers le lieu de prise en charge', on_trip: 'Course en cours', unknown: 'En ligne' };
-/** Lecture de l'écran Uber Fleet à jour (un relevé de moins de 2 min, toutes agences) */
-function pfUberFresh() { const now = Date.now(); return PF.latest.some(r => r.source === 'uber' && now - new Date(r.observed_at).getTime() <= PF_FRESH_MS); }
+/** Lecture complète d'Uber Fleet à jour (liste complète des chauffeurs lue il y a moins de 2 min, toutes agences) */
+function pfUberFresh() { const now = Date.now(); return PF.latest.some(r => r.source === 'uber' && r.full && now - new Date(r.observed_at).getTime() <= PF_FRESH_MS); }
 /**
  * État du véhicule sur Uber (sinon Bolt). Véhicule sous contrat que la lecture d'Uber Fleet, à jour, ne voit pas et qui n'est pas en
  * ligne sur Bolt : « Hors ligne » (Uber Fleet ne montre que les chauffeurs connectés : rien n'est supposé au-delà). Lecture arrêtée : null.
@@ -169,7 +158,8 @@ async function pfwTick() {
     await pfLoad(); if (PF.err) return;
     const ctx = await pfwContext(), a = agFilter(), now = Date.now();
     const ctrOf = (d, r) => { const k = pfwVehKey(r.vehicle_label); return (k && ctx.cur[k]) || (d && d.ludy_driver_code && ctx.curDrv[d.ludy_driver_code]) || null; };
-    const list = pfDisconnects(PF.latest, PF.drivers, { now, keep: (d, r) => {
+    if (!PF.full) return;   // lecture partielle : aucune déconnexion supposée
+    const list = pfDisconnects(PF.latest.filter(r => r.full), PF.drivers, { now, keep: (d, r) => {
       const c = ctrOf(d, r); if (!c) return false;                                   // pas de contrat en cours : fin de shift, rien à signaler
       if (new Date(c.start_at).getTime() > new Date(r.observed_at).getTime()) return false;
       if (ctx.ret.has(c.num) || ctx.paused.has(c.vehicle_key)) return false;          // rappelé à l'agence, ou en pause
@@ -243,15 +233,29 @@ async function pfPushTick() {
   if (!S.session || !pfPushCan()) return;
   let v = null; try { v = await appInvoke('uber_rows'); } catch (e) { return; }   // application avant la 1.8 : commande absente
   if (!v || !Array.isArray(v.rows) || v.age > 30) return;
-  const sig = JSON.stringify(v.rows);
+  const sig = JSON.stringify(v.rows) + (v.full ? '|full' : '');
   if (sig === PFP.last && Date.now() - PFP.lastAt < 30000) return;   // rien de changé : renvoyé toutes les 30 s (chauffeurs toujours en ligne)
   const dev = 'Application ' + ((window.LUDY_APP && window.LUDY_APP.version) || '') + ' · ' + (/Win/i.test(navigator.platform || navigator.userAgent) ? 'Windows' : /Mac/i.test(navigator.platform || navigator.userAgent) ? 'Mac' : 'autre');
-  const r = await sb.rpc('uber_live_push', { p_rows: v.rows, p_device: dev, p_url: v.url || '', p_diag: v.diag || '' }).then(x => x, e => ({ error: e }));
+  const r = await sb.rpc('uber_live_push', { p_rows: v.rows, p_device: dev, p_url: v.url || '', p_diag: v.diag || '', p_full: !!v.full }).then(x => x, e => ({ error: e }));
   if (r.error) { PFP.err = String(r.error.message || r.error); return; }
   PFP.last = sig; PFP.lastAt = Date.now(); PFP.n = r.data || 0; PFP.err = '';
+}
+/**
+ * Application 1.9 : code de lecture (site/uber_read.js) envoyé au volet Uber Fleet toutes les minutes (il ne s'installe qu'une fois par
+ * version ; volet rouvert ou rechargé = renvoyé). Application 1.8 : commande absente, la lecture de l'application reste seule (partielle).
+ */
+const PFR = { code: '', at: 0 };
+async function pfReaderSend() {
+  if (!S.session || !pfPushCan()) return;
+  try {
+    if (!PFR.code || Date.now() - PFR.at > 3600000) { const r = await fetch('uber_read.js', { cache: 'no-cache' }); if (!r.ok) return; PFR.code = await r.text(); PFR.at = Date.now(); }
+    await appInvoke('uber_eval', { code: PFR.code });
+  } catch (e) { }
 }
 function pfPushStart() {
   if (PFP.timer || !appIpc()) return;
   PFP.timer = setInterval(() => { pfPushTick(); }, 10000);
+  PFP.rtimer = setInterval(() => { pfReaderSend(); }, 60000);
+  setTimeout(pfReaderSend, 3000);
   pfPushTick();
 }

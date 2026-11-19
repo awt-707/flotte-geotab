@@ -45,18 +45,32 @@ fn same_site(a: &url::Url, b: &url::Url) -> bool {
 /// Adresse actuelle de chaque volet ouvert (pour le rouvrir à sa nouvelle adresse si elle change dans les Réglages)
 struct Opened(Mutex<std::collections::HashMap<String, String>>);
 
-/// Lecture d'Uber Fleet (1.8) : script injecté dans les volets externes (ne lit que *.uber.com), dernier relevé gardé ici,
+/// Lecture d'Uber Fleet (1.8, données de la carte lues depuis la 1.9) : script injecté dans les volets externes (ne lit que *.uber.com), dernier relevé gardé ici,
 /// relu par le site Ludy (commande uber_rows) qui l'envoie à la base avec le compte connecté
 const UBER_READER: &str = include_str!("uber_reader.js");
 struct UberRows(Mutex<Option<(std::time::SystemTime, serde_json::Value)>>);
-/// Relevé envoyé par la page Uber Fleet (seulement depuis *.uber.com, capacité « uber-reader ») : 500 lignes au plus
+/// Relevé envoyé par la page Uber Fleet (seulement depuis *.uber.com, capacité « uber-reader ») : 500 lignes au plus ;
+/// « full » (1.9) = liste complète des chauffeurs lue dans les données de la carte d'Uber Fleet (sinon : seulement ce qui est affiché)
 #[tauri::command]
-fn uber_push(state: tauri::State<UberRows>, rows: serde_json::Value, url: Option<String>, diag: Option<String>) -> Result<(), String> {
+fn uber_push(state: tauri::State<UberRows>, rows: serde_json::Value, url: Option<String>, diag: Option<String>, full: Option<bool>) -> Result<(), String> {
   let n = rows.as_array().map(|a| a.len()).unwrap_or(0);
   if !rows.is_array() || n > 500 { return Err("relevé refusé".into()); }
-  let v = serde_json::json!({ "rows": rows, "url": url.unwrap_or_default(), "diag": diag.unwrap_or_default().chars().take(3000).collect::<String>() });
+  let v = serde_json::json!({ "rows": rows, "url": url.unwrap_or_default(), "diag": diag.unwrap_or_default().chars().take(20000).collect::<String>(), "full": full.unwrap_or(false) });
   *state.0.lock().map_err(|e| e.to_string())? = Some((std::time::SystemTime::now(), v));
   Ok(())
+}
+/// Lecture d'Uber Fleet mise à jour par le site Ludy (1.9) : le site envoie le code de lecture (site/uber_read.js), exécuté dans les
+/// volets ouverts sur *.uber.com seulement ; la lecture se règle avec le site, sans réinstaller l'application. Renvoie le nombre de volets.
+#[tauri::command]
+async fn uber_eval<R: Runtime>(app: AppHandle<R>, code: String) -> Result<usize, String> {
+  if code.len() > 200_000 { return Err("code trop long".into()); }
+  let mut n = 0;
+  for v in app.webviews().values() {
+    if !v.label().starts_with("ext-") { continue; }
+    let uber = v.url().ok().and_then(|u| u.host_str().map(|h| h == "uber.com" || h.ends_with(".uber.com"))).unwrap_or(false);
+    if uber && v.eval(&code).is_ok() { n += 1; }
+  }
+  Ok(n)
 }
 /// Dernier relevé d'Uber Fleet pour le site Ludy (âge en secondes) ; rien si aucun volet Uber ne lit depuis plus de 60 s
 #[tauri::command]
@@ -312,13 +326,13 @@ fn main() {
     .plugin(tauri_plugin_opener::init())
     .manage(Opened(Mutex::new(Default::default())))
     .manage(UberRows(Mutex::new(None)))
-    .invoke_handler(tauri::generate_handler![ext_show, ext_hide, ext_reload, ext_status, ext_login, open_external, uber_push, uber_rows])
+    .invoke_handler(tauri::generate_handler![ext_show, ext_hide, ext_reload, ext_status, ext_login, open_external, uber_push, uber_rows, uber_eval])
     .setup(|app| {
       let home = home();
       let origin = { let u: url::Url = home.parse().expect("adresse du site"); u.origin().ascii_serialization() };
       // seul le site Ludy peut afficher / masquer les volets externes et enregistrer leurs accès réservés
       app.add_capability(CapabilityBuilder::new("ludy-site").webview("ludy").remote(format!("{origin}/*"))
-        .permission("allow-ext-show").permission("allow-ext-hide").permission("allow-ext-reload").permission("allow-ext-status").permission("allow-ext-login").permission("allow-open-external").permission("allow-uber-rows"))?;
+        .permission("allow-ext-show").permission("allow-ext-hide").permission("allow-ext-reload").permission("allow-ext-status").permission("allow-ext-login").permission("allow-open-external").permission("allow-uber-rows").permission("allow-uber-eval"))?;
       // volets externes sur *.uber.com : seulement l'envoi du relevé d'Uber Fleet (rien d'autre)
       app.add_capability(CapabilityBuilder::new("uber-reader").window("ext-*").webview("ext-*").remote("https://*.uber.com/*".to_string()).permission("allow-uber-push"))?;
       let init = include_str!("init.js").replace("__VERSION__", env!("CARGO_PKG_VERSION")).replace("__UBER__", UBER).replace("__EXTWIN__", if EXT_WINDOWS { "true" } else { "false" });

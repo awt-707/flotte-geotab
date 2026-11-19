@@ -155,9 +155,9 @@ REVOKE ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) TO service_role;
 
-REVOKE ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text) TO authenticated;
-GRANT ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text) TO service_role;
+REVOKE ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text, p_full boolean) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text, p_full boolean) TO authenticated;
+GRANT ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text, p_full boolean) TO service_role;
 
 GRANT SELECT,INSERT,DELETE ON TABLE public.bolt_sessions TO authenticated;
 GRANT ALL ON TABLE public.bolt_sessions TO service_role;
