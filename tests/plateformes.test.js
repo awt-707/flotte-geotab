@@ -54,7 +54,11 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     assert.match(await page.innerText('.vcard[data-vk="030071WW"]'), /Uber · En route vers le lieu de prise en charge/);
     assert.doesNotMatch(await page.innerText('.vcard[data-vk="030075WW"]'), /Uber ·/, 'véhicule pas en ligne sur Uber : rien');
     const lbl = await page.evaluate(() => LIVE.markers['030070WW'].getElement().innerText);
-    assert.match(lbl, /WW030070 · 42 km\/h\s*Uber · Course en cours/);
+    assert.match(lbl, /WW030070 · 42 km\/h\s*Uber$/, 'carte : pastille courte');
+    assert.strictEqual(await page.evaluate(() => LIVE.markers['030070WW'].getElement().querySelector('.pfchip').className), 'pfchip pf-on_trip', 'couleur de l\'état');
+    assert.strictEqual(await page.evaluate(() => LIVE.markers['030070WW'].getElement().querySelector('.pfchip').title), 'Uber · Course en cours');
+    // colonne de droite : aucune fiche plus large que la colonne
+    assert.strictEqual(await page.evaluate(() => { const l = document.querySelector('#vlist'); return l.scrollWidth <= l.clientWidth + 1; }), true, 'pas de défilement horizontal');
     assert.match(await page.evaluate(() => LIVE.markers['030071WW'].getTooltip().getContent()), /Uber : <b>En route vers le lieu de prise en charge<\/b> · BETA Test/);
     // sous contrat, pas en ligne : « Hors ligne », en rouge s'il roule ; chauffeur en ligne avec un autre véhicule : jamais « hors ligne »
     await page.waitForFunction(() => /Hors ligne · roule/.test((document.querySelector('.vcard[data-vk="030076WW"]') || {}).innerText || ''));
@@ -68,6 +72,12 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     assert.match(await page.innerText('#liveplat'), /Lecture arrêtée depuis \d\d:\d\d : chiffres pas à jour/);
     assert.doesNotMatch(await page.innerText('.vcard[data-vk="030070WW"]'), /Uber ·/, 'lecture arrêtée : plus de pastille sur la carte');
     assert.doesNotMatch(await page.innerText('.vcard[data-vk="030076WW"]'), /Hors ligne/, 'lecture arrêtée : jamais « hors ligne » supposé');
+    // photo du chauffeur lue sur Uber Fleet, à droite de la fiche du véhicule
+    await page.route('https://*.cloudfront.net/**', r => r.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64') }));
+    env.psql("update uber_live set photo_url = 'https://d1w2poirtb3as9.cloudfront.net/a.jpeg', observed_at = now() where plate = 'WW030070'");
+    await page.evaluate(async () => { await pfLoad(); pfPaint(); });
+    await page.waitForSelector('.vcard[data-vk="030070WW"] img.vc-photo');
+    assert.strictEqual(await page.locator('.vcard[data-vk="030071WW"] img.vc-photo').count(), 0, 'sans photo : rien');
     // lecture partielle seulement (application 1.8 : chauffeur ouvert à l'écran) : pas de comptes, jamais « hors ligne » supposé
     env.psql("update uber_live set observed_at = now(), complete = false");
     await page.evaluate(async () => { await pfLoad(); pfPaint(); });
@@ -76,7 +86,7 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     assert.doesNotMatch(await page.innerText('.vcard[data-vk="030076WW"]'), /Hors ligne/, 'lecture partielle : jamais « hors ligne » supposé');
     assert.doesNotMatch(await page.innerText('#liveplat'), /Raphael/);
     assert.deepStrictEqual(errors, []);
-  } finally { await br.close(); srv.kill(); env.psql('truncate uber_live, uber_live_readers'); env.resetDb(); }
+  } finally { await br.close(); srv.kill(); env.psql('truncate uber_live, uber_live_readers, uber_catalog'); env.resetDb(); }
 });
 
 test('déconnexion d\'Uber : chauffeur vu puis plus vu (lecture à jour), contrat en cours ; lecture arrêtée = personne ; messages WhatsApp', () => {
@@ -123,7 +133,7 @@ test('page : bandeau rouge « chauffeur déconnecté d\'Uber » (WhatsApp, parta
     await page.waitForSelector('.pftoast.ok');
     assert.match(await page.innerText('.pftoast.ok'), /Reconnecté à Uber[\s\S]*ALPHA Test/);
     assert.deepStrictEqual(errors, []);
-  } finally { await br.close(); srv.kill(); env.psql('truncate uber_live, uber_live_readers'); env.resetDb(); }
+  } finally { await br.close(); srv.kill(); env.psql('truncate uber_live, uber_live_readers, uber_catalog'); env.resetDb(); }
 });
 
 test('lecture de l\'écran Uber Fleet (application 1.8) : libellés d\'état et plaques de chaque ligne, rien sans plaque ni état reconnu', async () => {
@@ -160,7 +170,7 @@ test('lecture 1.9 (site/uber_read.js) : carte en temps réel d\'Uber Fleet (GetD
   const net = [{ url: 'https://fleethub.uber.com/api/GetDriverLiveLocation', op: '', at: Date.now(), text: JSON.stringify(live) }];
   // fiches de la liste (nom, téléphone) simulées
   const card = (n, name) => ({ getAttribute: () => JSON.stringify({ driverUUID: id(n), vehicleUUID: vid(n), driverStatus: 'ONLINE' }), textContent: name + '+212 600000000',
-    querySelector: q => q.includes('labelsmall') ? { textContent: name } : null });
+    querySelector: q => q.includes('labelsmall') ? { textContent: name } : q.includes('img') ? { getAttribute: a => a === 'src' ? 'https://d1w2poirtb3as9.cloudfront.net/p' + n + '.jpeg' : name } : null });
   const doc = { querySelectorAll: q => q.includes('driver-card') ? [card('1', 'ALPHA Test'), card('2', 'BETA Test')] : [] };
   // plaques : réponse d'Uber Fleet qui relie les véhicules à leur plaque (deux sur trois)
   const map = { p: {}, n: {} };
@@ -168,6 +178,7 @@ test('lecture 1.9 (site/uber_read.js) : carte en temps réel d\'Uber Fleet (GetD
   let r = U.read(doc, net, map);
   assert.strictEqual(r.full, false, 'un chauffeur en ligne sans plaque : liste pas complète (personne supposé hors ligne)');
   assert.deepStrictEqual(r.rows.map(x => x.plate + '|' + x.status + '|' + x.name + '|' + x.phone), ['WW030070|available|ALPHA Test|+212 600000000', '86120-T-1|on_trip|BETA Test|+212 600000000']);
+  assert.strictEqual(r.rows[0].photo, 'https://d1w2poirtb3as9.cloudfront.net/p1.jpeg', 'photo de la fiche');
   assert.match(r.diag, /en ligne \(Uber\) : 3 · plaques trouvées : 2 · sans plaque : 1/);
   U.indexJson({ vehicle: { id: vid('3'), licensePlate: '030071WW' } }, map);
   r = U.read(doc, net, map);
@@ -221,11 +232,19 @@ test('base : relevé envoyé par un compte connecté (plaque → véhicule de Lu
     as(ADMIN, `select public.uber_live_push('[{"plate":"WW030070","status":"available"}]'::jsonb, 'Application 1.8.0 · Mac', '', '')`);
     assert.strictEqual(env.psql("select count(*) from uber_live_log where status = 'gone'"), '0');
     assert.strictEqual(env.psql("select string_agg(plate || '|' || complete, ',' order by plate) from uber_live"), '86120-T-1|false,WW030070|false');
+    // photo du chauffeur (adresse cloudfront seulement) et catalogue d'exploration (lu par l'administrateur seulement)
+    as(ADMIN, `select public.uber_live_push('[{"plate":"WW030070","status":"available","photo":"https://d1w2poirtb3as9.cloudfront.net/a.jpeg?Expires=1"},{"plate":"86120-T-1","status":"on_trip","photo":"https://evil.example/x.jpg"}]'::jsonb, 'Application 1.9.0 · Mac', '', '', true)`);
+    assert.strictEqual(env.psql("select string_agg(plate || '|' || coalesce(photo_url, '-'), ',' order by plate) from uber_live"), '86120-T-1|-,WW030070|https://d1w2poirtb3as9.cloudfront.net/a.jpeg?Expires=1');
+    assert.strictEqual(as(MGR, `select public.uber_catalog_push('[{"k":"GET /api/GetDriverLiveLocation","url":"/api/GetDriverLiveLocation","m":"GET","n":3,"first":1795000000000,"at":1795000001000,"size":12000,"res":"{status:\\"success\\"}"}]'::jsonb)`), '1');
+    as(MGR, `select public.uber_catalog_push('[{"k":"GET /api/GetDriverLiveLocation","n":9,"res":""}]'::jsonb)`);
+    assert.strictEqual(env.psql("select n || '|' || res from uber_catalog"), '9|{status:"success"}', 'réponse gardée, compteur mis à jour');
+    assert.strictEqual(as(MGR, 'select count(*) from uber_catalog'), '0', 'catalogue : administrateur seulement');
+    assert.strictEqual(as(ADMIN, 'select count(*) from uber_catalog'), '1');
     assert.throws(() => env.psql(`begin; set local role anon; select public.uber_live_push('[]'::jsonb, '', '', ''); commit;`), /permission denied|refus/);
     env.psql(`insert into auth.users (id, email) values ('33333333-3333-3333-3333-333333333333', 'rh@x') on conflict do nothing;
       insert into profiles (user_id, email, role) values ('33333333-3333-3333-3333-333333333333', 'rh@x', 'rh') on conflict (user_id) do update set role = 'rh'`);
     assert.throws(() => as('33333333-3333-3333-3333-333333333333', `select public.uber_live_push('[]'::jsonb, '', '', '')`), /Envoi refusé/);
-  } finally { env.psql("truncate uber_live, uber_live_readers, uber_live_log; delete from profiles where user_id = '33333333-3333-3333-3333-333333333333'; delete from auth.users where id = '33333333-3333-3333-3333-333333333333'"); env.resetDb(); }
+  } finally { env.psql("truncate uber_live, uber_live_readers, uber_live_log, uber_catalog; delete from profiles where user_id = '33333333-3333-3333-3333-333333333333'; delete from auth.users where id = '33333333-3333-3333-3333-333333333333'"); env.resetDb(); }
 });
 
 test('site dans l\'application 1.8 : relevé du volet Uber Fleet envoyé à la base', async () => {
@@ -237,16 +256,20 @@ test('site dans l\'application 1.8 : relevé du volet Uber Fleet envoyé à la b
     await page.addInitScript(() => {
       window.LUDY_APP = { version: '1.8.0', embed: true, ext: true, open: true };
       window.__evals = [];
-      window.__TAURI_INTERNALS__ = { invoke: (cmd, a) => { if (cmd === 'uber_eval') window.__evals.push(a.code); return Promise.resolve(cmd === 'uber_rows' ? { rows: [{ plate: 'WW030070', status: 'to_pickup', name: 'ALPHA Test', raw: 'En route vers le lieu de prise en charge' }], url: 'https://fleethub.uber.com/x', diag: '', age: 3, full: true } : cmd === 'uber_eval' ? 1 : null); } };
+      window.__TAURI_INTERNALS__ = { invoke: (cmd, a) => { if (cmd === 'uber_eval') window.__evals.push(a.code); return Promise.resolve(cmd === 'uber_rows' ? { rows: [{ plate: 'WW030070', status: 'to_pickup', name: 'ALPHA Test', raw: 'En route vers le lieu de prise en charge' }], url: 'https://fleethub.uber.com/x',
+        diag: 'CAT ' + JSON.stringify([{ k: 'PAGE /orgs/:id/drivers', url: '/orgs/:id/drivers', m: 'PAGE', n: 1, res: 'COLONNES Chauffeur | Statut' }]) + '\nLUDY test', age: 3, full: true } : cmd === 'uber_eval' ? 1 : null); } };
     });
     await login(page, '#/dashboard');
     for (let i = 0; i < 40 && env.psql('select count(*) from uber_live') !== '1'; i++) await page.waitForTimeout(250);
     assert.strictEqual(env.psql("select plate || '|' || vehicle_key || '|' || status || '|' || driver_name from uber_live"), 'WW030070|030070WW|to_pickup|ALPHA Test');
     assert.match(env.psql('select device from uber_live_readers'), /^Application 1\.8\.0 · /);
     assert.strictEqual(env.psql("select complete::text from uber_live_readers"), 'true', 'liste complète notée');
+    for (let i = 0; i < 40 && env.psql('select count(*) from uber_catalog') !== '1'; i++) await page.waitForTimeout(250);
+    assert.strictEqual(env.psql("select k || '|' || res from uber_catalog"), 'PAGE /orgs/:id/drivers|COLONNES Chauffeur | Statut', 'exploration d\'Uber Fleet enregistrée');
+    assert.strictEqual(env.psql('select diag from uber_live_readers'), 'LUDY test', 'catalogue retiré du diagnostic');
     // 1.9 : code de lecture (site/uber_read.js) envoyé au volet Uber Fleet
     await page.waitForFunction(() => window.__evals.length > 0, null, { timeout: 15000 });
     assert.match(await page.evaluate(() => window.__evals[0]), /__ludyURv/);
     assert.deepStrictEqual(errors.filter(e => !/LUDY_APP|__TAURI/.test(e)), []);
-  } finally { await br.close(); srv.kill(); env.psql('truncate uber_live, uber_live_readers'); env.resetDb(); }
+  } finally { await br.close(); srv.kill(); env.psql('truncate uber_live, uber_live_readers, uber_catalog'); env.resetDb(); }
 });

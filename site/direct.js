@@ -188,14 +188,15 @@ function kpisHtml(rows) {
 function vcardsHtml(rows) {
   if (!rows.length) return '<div class="empty">Aucun véhicule actif</div>';
   const pz = k => typeof svPauseOf === 'function' ? svPauseOf(k) : null;
-  return rows.map(r => `<button type="button" class="vcard st-${ST_CLS(r.state)}${r.crs ? ' crs' : ''}${LIVE.fast[r.vehicle_key] ? ' fast' : ''}${pz(r.vehicle_key) ? ' paused' + (pz(r.vehicle_key).moved_at ? ' pmoved' : '') : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
-    <span class="vc-l1">${plate(r.plate)}<span class="vc-model">${esc(r.model || '')}</span>${(typeof pfVehChip === 'function' ? pfVehChip(r) : '')}<span class="vc-spd">${r.state === 'En route' ? f0(r.speed) + '<small> km/h</small>' : ''}</span></span>
+  return rows.map(r => `<button type="button" class="vcard${typeof pfVehPhoto === 'function' && pfVehPhoto(r) ? ' hasph' : ''} st-${ST_CLS(r.state)}${r.crs ? ' crs' : ''}${LIVE.fast[r.vehicle_key] ? ' fast' : ''}${pz(r.vehicle_key) ? ' paused' + (pz(r.vehicle_key).moved_at ? ' pmoved' : '') : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
+    <span class="vc-l1">${plate(r.plate)}<span class="vc-model">${esc(r.model || '')}</span><span class="vc-spd">${r.state === 'En route' ? f0(r.speed) + '<small> km/h</small>' : ''}</span></span>
+    ${typeof pfVehChip === 'function' && pfVehChip(r) ? '<span class="vc-lu">' + pfVehChip(r) + '</span>' : ''}
     <span class="vc-l2"><span class="vc-st"><span class="sdot"></span>${esc(r.state || 'État inconnu')}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</span>${consoGauge(r)}</span>
     <span class="vc-l3">${r.crs ? crsLiveHtml(r) + ' <b>' + esc(r.crs_driver || r.driver_name || '') + '</b> <span class="small">' + esc(r.crs.client_company || r.crs.client_name || '') + '</span>'
       : r.contract_num ? `<b>${esc(r.driver_name)}</b> ${shiftBadge(r.shift)}` : noCtrHtml(r)}</span>
     ${typeof svVehLine === 'function' ? svVehLine(r.vehicle_key) : ''}
     <span class="vc-l4">${r.live ? 'Position Geotab ' + esc(fmtHMS(r.last_pos_at).slice(6)) + ' · <span class="ago" data-t="' + esc(r.last_pos_at || '') + '">' + ago(r.last_pos_at) + '</span>'
-      : r.last_pos_at ? 'Position du collecteur ' + esc(fmtDT(r.last_pos_at)) : 'Aucune position'}</span></button>`).join('');
+      : r.last_pos_at ? 'Position du collecteur ' + esc(fmtDT(r.last_pos_at)) : 'Aucune position'}</span>${typeof pfVehPhoto === 'function' ? pfVehPhoto(r) : ''}</button>`).join('');
 }
 function liveAlertsHtml() {
   const list = LIVE.alerts.filter(a => inAgency()(a.vehicle_key));
@@ -334,7 +335,7 @@ const VAN_SVG = '<svg class="vmk-van" viewBox="0 0 24 24" aria-hidden="true"><pa
 function vIcon(r) {
   const st = LIVE.fast[r.vehicle_key] || LIVE.over[r.vehicle_key] ? 'crit' : ST_CLS(r.state), rot = r.state === 'En route' && r.bearing != null && isFinite(+r.bearing) ? +r.bearing : null;
   const html = `<span class="vmk-pin st-${st}${r.state === 'En route' ? ' moving' : ''}${r.crs ? ' crs' : ''}">${rot != null ? `<span class="vmk-dir" style="transform:rotate(${Math.round(rot)}deg)"><i></i></span>` : ''}${VAN_SVG}</span>`
-    + `<span class="vmk-l${r.crs ? ' crs' : ''}">${r.crs ? 'Course privée · ' : ''}${esc(r.plate || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${(typeof pfVehChip === 'function' ? pfVehChip(r) : '')}</span>`;
+    + `<span class="vmk-l${r.crs ? ' crs' : ''}">${r.crs ? 'Course privée · ' : ''}${esc(r.plate || '')}${r.state === 'En route' ? ' · ' + f0(r.speed) + ' km/h' : ''}${(typeof pfVehChip === 'function' ? pfVehChip(r, true) : '')}</span>`;
   return { html, icon: () => L.divIcon({ className: 'vmk', iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20], tooltipAnchor: [0, -22], html }) };
 }
 /** Info-bulle au survol : chauffeur sous contrat, plaque, état, vitesse */
