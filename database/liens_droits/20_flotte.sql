@@ -114,6 +114,9 @@ GRANT ALL ON FUNCTION public.import_fuel_card(p_rows jsonb) TO service_role;
 REVOKE ALL ON FUNCTION public.key_stats() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.key_stats() TO service_role;
 
+REVOKE ALL ON FUNCTION public.ludy_purge_live_logs(p_keep interval) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.ludy_purge_live_logs(p_keep interval) TO service_role;
+
 REVOKE ALL ON FUNCTION public.mark_notified(p_ids text[]) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.mark_notified(p_ids text[]) TO service_role;
 

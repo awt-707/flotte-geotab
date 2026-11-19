@@ -752,12 +752,13 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .pfbox h3 { margin: 0 0 8px; }
 .pfbox .pfdet summary { cursor: pointer; margin: 6px 0; }
 .pfchip { display: inline-block; margin-left: 6px; padding: 2px 6px; border-radius: 4px; font: 700 11px/1.3 var(--fc); color: #fff; background: #5d6b78; vertical-align: middle; white-space: nowrap; }
-.pfchip.pf-on_trip { background: #18794a; }
-.pfchip.pf-to_pickup { background: #c2620a; }
-.pfchip.pf-available { background: #2563a8; }
+/* couleurs d'Uber Fleet : Disponible gris, En route vers le lieu de prise en charge vert, Course en cours bleu */
+.pfchip.pf-on_trip { background: #1f5fbf; }
+.pfchip.pf-to_pickup { background: #18794a; }
+.pfchip.pf-available { background: #6b7280; }
 .vmk-l .pfchip { margin-left: 6px; font-size: 11px; }
 .vpf { margin-top: 2px; }
-.pfchip.pf-offline { background: #8a97a3; }
+.pfchip.pf-offline { background: transparent; color: #5d6b78; border: 1px solid #8a97a3; }
 .pfchip.pf-offmove { background: #b42318; animation: svpulse 1.2s ease-in-out infinite alternate; }
 .pftoast.crit { border-left: 6px solid #b42318; }
 .pftoast .pfact { margin-top: 6px; gap: 6px; flex-wrap: wrap; }
@@ -776,6 +777,9 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .kchip.crit { border-color: #b42318; background: rgba(180, 35, 24, .08); } .kchip.crit b { color: #b42318; }
 .kchip.mute { opacity: .7; }
 .kchip.crs b { color: #7b1e2e; }
+.kchip.pf-available { border-color: #6b7280; } .kchip.pf-available b { color: #6b7280; }
+.kchip.pf-to_pickup { border-color: #18794a; } .kchip.pf-to_pickup b { color: #18794a; }
+.kchip.pf-on_trip { border-color: #1f5fbf; } .kchip.pf-on_trip b { color: #1f5fbf; }
 .pfbar .msg { margin: 0; padding: 3px 8px; }
 .pfdets { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .pfdets details { flex: 1 1 380px; }

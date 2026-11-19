@@ -6,7 +6,7 @@ const { execSync } = require('child_process'), fs = require('fs'), path = requir
 const ADMIN = '11111111-1111-1111-1111-111111111111', MGR = '22222222-2222-2222-2222-222222222222';
 const as = (uid, sql) => env.psql(`begin; set local role authenticated; set local request.jwt.claims = '{"sub":"${uid}","role":"authenticated"}'; ${sql}; commit;`);
 /** Lignes d'uber_live (plaque, état, il y a s secondes, état depuis s2 secondes) */
-const ul = rows => rows.map(r => `insert into uber_live (plate_key, plate, vehicle_key, agency_id, driver_name, status, observed_at, status_since) values ('${r[0].replace(/[^0-9]/g, '') + r[0].replace(/[^A-Z]/g, '')}', '${r[0]}', ${r[1] ? `'${r[1]}'` : 'null'}, null, ${r[2] ? `'${r[2]}'` : 'null'}, '${r[3]}', now() - interval '${r[4]} seconds', now() - interval '${r[5] == null ? r[4] : r[5]} seconds');`).join('\n');
+const ul = rows => rows.map(r => `insert into uber_live (plate_key, plate, vehicle_key, agency_id, driver_name, status, observed_at, status_since, complete) values ('${r[0].replace(/[^0-9]/g, '') + r[0].replace(/[^A-Z]/g, '')}', '${r[0]}', ${r[1] ? `'${r[1]}'` : 'null'}, null, ${r[2] ? `'${r[2]}'` : 'null'}, '${r[3]}', now() - interval '${r[4]} seconds', now() - interval '${r[5] == null ? r[4] : r[5]} seconds', true);`).join('\n');
 
 test('comptes par plateforme : en ligne, vers le client, en course, disponibles ; chauffeur plus vu = pas compté ; lecture arrêtée = pas à jour', () => {
   const now = Date.parse('2026-11-18T18:20:00Z'), ago = s => new Date(now - s * 1000).toISOString();
@@ -46,16 +46,16 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     await login(page, '#/direct');
     await page.waitForSelector('#liveplat .pfbar .kchip');
     const t = await page.innerText('#liveplat');
-    assert.match(t, /Uber lu à \d\d:\d\d\s*4\s*en ligne\s*1\s*vers le client\s*1\s*en course\s*2\s*disponibles/);
+    assert.match(t, /Uber lu à \d\d:\d\d\s*4\s*en ligne\s*2\s*Disponible\s*1\s*En route vers le lieu de prise en charge\s*1\s*Course en cours/);
     await page.click('#liveplat details[data-pf="uber"] summary');
-    assert.match(await page.innerText('#liveplat table'), /BETA Test[\s\S]*WW030071[\s\S]*En route vers le client[\s\S]*ALPHA Test[\s\S]*En course[\s\S]*GAMMA Test[\s\S]*Disponible/);
+    assert.match(await page.innerText('#liveplat table'), /BETA Test[\s\S]*WW030071[\s\S]*En route vers le lieu de prise en charge[\s\S]*ALPHA Test[\s\S]*Course en cours[\s\S]*GAMMA Test[\s\S]*Disponible/);
     // carte et cartes véhicules : état Uber du véhicule (plaque lue sur l'écran Uber Fleet)
-    await page.waitForFunction(() => /Uber · En course/.test((document.querySelector('.vcard[data-vk="030070WW"]') || {}).innerText || ''));
-    assert.match(await page.innerText('.vcard[data-vk="030071WW"]'), /Uber · Vers le client/);
+    await page.waitForFunction(() => /Uber · Course en cours/.test((document.querySelector('.vcard[data-vk="030070WW"]') || {}).innerText || ''));
+    assert.match(await page.innerText('.vcard[data-vk="030071WW"]'), /Uber · En route vers le lieu de prise en charge/);
     assert.doesNotMatch(await page.innerText('.vcard[data-vk="030075WW"]'), /Uber ·/, 'véhicule pas en ligne sur Uber : rien');
     const lbl = await page.evaluate(() => LIVE.markers['030070WW'].getElement().innerText);
-    assert.match(lbl, /WW030070 · 42 km\/h\s*Uber · En course/);
-    assert.match(await page.evaluate(() => LIVE.markers['030071WW'].getTooltip().getContent()), /Uber : <b>En route vers le client<\/b> · BETA Test/);
+    assert.match(lbl, /WW030070 · 42 km\/h\s*Uber · Course en cours/);
+    assert.match(await page.evaluate(() => LIVE.markers['030071WW'].getTooltip().getContent()), /Uber : <b>En route vers le lieu de prise en charge<\/b> · BETA Test/);
     // sous contrat, pas en ligne : « Hors ligne », en rouge s'il roule ; chauffeur en ligne avec un autre véhicule : jamais « hors ligne »
     await page.waitForFunction(() => /Hors ligne · roule/.test((document.querySelector('.vcard[data-vk="030076WW"]') || {}).innerText || ''));
     assert.match(await page.innerText('.vcard[data-vk="030077WW"]'), /Uber · Disponible/);
@@ -68,6 +68,13 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     assert.match(await page.innerText('#liveplat'), /Lecture arrêtée depuis \d\d:\d\d : chiffres pas à jour/);
     assert.doesNotMatch(await page.innerText('.vcard[data-vk="030070WW"]'), /Uber ·/, 'lecture arrêtée : plus de pastille sur la carte');
     assert.doesNotMatch(await page.innerText('.vcard[data-vk="030076WW"]'), /Hors ligne/, 'lecture arrêtée : jamais « hors ligne » supposé');
+    // lecture partielle seulement (application 1.8 : chauffeur ouvert à l'écran) : pas de comptes, jamais « hors ligne » supposé
+    env.psql("update uber_live set observed_at = now(), complete = false");
+    await page.evaluate(async () => { await pfLoad(); pfPaint(); });
+    assert.match(await page.innerText('#liveplat'), /chauffeur\(s\) lu\(s\) à l'écran · comptes complets : ouvrir la « Carte en temps réel » d'Uber Fleet dans l'application Ludy 1\.9/);
+    assert.match(await page.innerText('.vcard[data-vk="030070WW"]'), /Uber · Course en cours/, 'état lu : affiché');
+    assert.doesNotMatch(await page.innerText('.vcard[data-vk="030076WW"]'), /Hors ligne/, 'lecture partielle : jamais « hors ligne » supposé');
+    assert.doesNotMatch(await page.innerText('#liveplat'), /Raphael/);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.psql('truncate uber_live, uber_live_readers'); env.resetDb(); }
 });
@@ -143,6 +150,28 @@ test('lecture de l\'écran Uber Fleet (application 1.8) : libellés d\'état et 
   assert.match(fs.readFileSync(path.join(__dirname, '../desktop/src-tauri/build.rs'), 'utf8'), /"uber_push", "uber_rows"/);
 });
 
+test('lecture 1.9 (site/uber_read.js) : liste complète lue dans les données de la carte d\'Uber Fleet ; sinon partielle avec la structure des données', () => {
+  const U = require('../site/uber_read.js');
+  const doc = { querySelectorAll: () => [] };
+  const roster = { data: { supply: [
+    { uuid: 'a', firstName: 'ALPHA', lastName: 'Test', status: 'ONLINE', vehicle: { licensePlate: 'WW030070' } },
+    { uuid: 'b', name: 'BETA Test', driverStatus: 'ON_TRIP', vehicle: { plate: '86120-T-1' } },
+    { uuid: 'c', name: 'GAMMA Test', state: 'EN_ROUTE_TO_PICKUP', vehicle: { licensePlate: '030071WW' } },
+    { uuid: 'd', name: 'DELTA Test', status: 'OFFLINE', vehicle: { licensePlate: 'WW030072' } },
+    { uuid: 'e', name: 'Sans plaque', status: 'ONLINE' }, { uuid: 'f', name: 'Etat inconnu', status: 'ZZZ', vehicle: { licensePlate: 'WW030073' } }] } };
+  const net = [{ url: 'https://fleethub.uber.com/graphql', op: 'LiveMap', at: Date.now(), text: JSON.stringify(roster) }];
+  const r = U.read(doc, net);
+  assert.strictEqual(r.full, true);
+  assert.deepStrictEqual(r.rows.map(x => x.plate + '|' + x.status + '|' + x.name).sort(),
+    ['030071WW', '86120-T-1|on_trip|BETA Test', 'WW030070|available|ALPHA Test', 'WW030072|offline|DELTA Test'].map(x => x === '030071WW' ? 'WW030071|to_pickup|GAMMA Test' : x).sort());
+  assert.strictEqual(r.diag, '');
+  // vieille réponse (plus de 90 s) ou moins de 3 chauffeurs : lecture partielle, structure des données jointe
+  const r2 = U.read(doc, [{ url: 'https://fleethub.uber.com/api/x', op: '', at: Date.now(), text: JSON.stringify({ items: [{ id: 1, colour: 'green' }] }) }, Object.assign({}, net[0], { at: Date.now() - 120000 })]);
+  assert.strictEqual(r2.full, false); assert.deepStrictEqual(r2.rows, []);
+  assert.match(r2.diag, /^LUDY \S+ · réponses captées : 2/); assert.match(r2.diag, /== https:\/\/fleethub\.uber\.com\/api\/x\n\{items:\[1: \{id:1,colour:"green"\}\]\}/);
+  assert.deepStrictEqual(['ONLINE', 'DRIVER_STATUS_ONLINE', 'OFFLINE', 'ON_TRIP', 'EN_ROUTE', 'Disponible', 'unavailable', 'green'].map(U.stOf), ['available', 'available', 'offline', 'on_trip', 'to_pickup', 'available', null, null]);
+});
+
 test('base : relevé envoyé par un compte connecté (plaque → véhicule de Ludy, état depuis…), lu selon les agences, refusé sans compte Ludy', () => {
   env.resetDb();
   try {
@@ -154,14 +183,14 @@ test('base : relevé envoyé par un compte connecté (plaque → véhicule de Lu
       insert into vehicles (key, plate, model, active, agency_id) values ('030070WW', 'WW030070', 'RAV4', 'OUI', 1), ('86120T1', '86120-T-1', 'STARIA', 'OUI', 2);`);
     const rows = JSON.stringify([{ plate: 'WW030070', status: 'on_trip', name: 'ALPHA Test', raw: 'Course en cours' }, { plate: '86120-T-1', status: 'available' },
       { plate: '99999-A-9', status: 'to_pickup' }, { plate: 'X', status: 'available' }, { plate: '12345-B-6', status: 'bizarre' }]);
-    assert.strictEqual(as(MGR, `select public.uber_live_push('${rows}'::jsonb, 'Application 1.8.0 · Windows', 'https://fleethub.uber.com/orgs/x/livemap', '')`), '3', 'plaque illisible et état inconnu ignorés');
+    assert.strictEqual(as(MGR, `select public.uber_live_push('${rows}'::jsonb, 'Application 1.8.0 · Windows', 'https://fleethub.uber.com/orgs/x/livemap', '', true)`), '3', 'plaque illisible et état inconnu ignorés');
     assert.strictEqual(env.psql("select string_agg(plate || '|' || coalesce(vehicle_key, '-') || '|' || coalesce(agency_id::text, '-') || '|' || status, ',' order by plate) from uber_live"),
       '86120-T-1|86120T1|2|available,99999-A-9|-|-|to_pickup,WW030070|030070WW|1|on_trip');
     assert.strictEqual(as(MGR, 'select count(*) from uber_live'), '1', 'gestionnaire de Rabat : ses véhicules seulement');
     assert.strictEqual(as(ADMIN, 'select count(*) from uber_live'), '3');
     // même état relu : « depuis » gardé ; autre état : remis à maintenant
     env.psql("update uber_live set status_since = now() - interval '20 minutes'");
-    as(ADMIN, `select public.uber_live_push('[{"plate":"WW030070","status":"on_trip"},{"plate":"86120-T-1","status":"offline"}]'::jsonb, 'Application 1.8.0 · Mac', '', '')`);
+    as(ADMIN, `select public.uber_live_push('[{"plate":"WW030070","status":"on_trip"},{"plate":"86120-T-1","status":"offline"}]'::jsonb, 'Application 1.8.0 · Mac', '', '', true)`);
     assert.strictEqual(env.psql("select string_agg(plate || '|' || (status_since < now() - interval '10 minutes'), ',' order by plate) from uber_live where plate <> '99999-A-9'"), '86120-T-1|false,WW030070|true');
     assert.strictEqual(env.psql("select count(*) from uber_live_readers"), '2', 'un relevé par compte et par appareil');
     // historique : même état = même période ; changement d'état = période fermée, nouvelle ouverte
@@ -169,10 +198,18 @@ test('base : relevé envoyé par un compte connecté (plaque → véhicule de Lu
       '86120-T-1|available|false,86120-T-1|offline|true,WW030070|on_trip|true');
     // plaque plus affichée depuis 2 min (lecture à jour d'une autre plaque) : déconnexion notée à la dernière lecture
     env.psql("update uber_live set observed_at = now() - interval '4 minutes' where plate = 'WW030070'");
-    as(ADMIN, `select public.uber_live_push('[{"plate":"86120-T-1","status":"offline"}]'::jsonb, 'Application 1.8.0 · Mac', '', '')`);
+    as(ADMIN, `select public.uber_live_push('[{"plate":"86120-T-1","status":"offline"}]'::jsonb, 'Application 1.8.0 · Mac', '', '', true)`);
     assert.strictEqual(env.psql("select string_agg(status || '|' || (ended_at is null) || '|' || (started_at < now() - interval '3 minutes'), ',' order by id) from uber_live_log where plate = 'WW030070'"),
       'on_trip|false|false,gone|true|true', 'déconnecté depuis la dernière lecture (il y a 4 min)');
     assert.strictEqual(as(MGR, 'select count(*) from uber_live_log'), '2', 'historique lu selon les agences');
+    // lecture partielle (chauffeur ouvert à l'écran) : état noté, jamais de « gone » (une plaque qui disparaît de l'écran n'est pas déconnectée)
+    env.psql("truncate uber_live, uber_live_log");
+    as(ADMIN, `select public.uber_live_push('[{"plate":"WW030070","status":"available"}]'::jsonb, 'Application 1.8.0 · Mac', '', '')`);
+    env.psql("update uber_live set observed_at = now() - interval '4 minutes'");
+    as(ADMIN, `select public.uber_live_push('[{"plate":"86120-T-1","status":"on_trip"}]'::jsonb, 'Application 1.8.0 · Mac', '', '')`);
+    as(ADMIN, `select public.uber_live_push('[{"plate":"WW030070","status":"available"}]'::jsonb, 'Application 1.8.0 · Mac', '', '')`);
+    assert.strictEqual(env.psql("select count(*) from uber_live_log where status = 'gone'"), '0');
+    assert.strictEqual(env.psql("select string_agg(plate || '|' || complete, ',' order by plate) from uber_live"), '86120-T-1|false,WW030070|false');
     assert.throws(() => env.psql(`begin; set local role anon; select public.uber_live_push('[]'::jsonb, '', '', ''); commit;`), /permission denied|refus/);
     env.psql(`insert into auth.users (id, email) values ('33333333-3333-3333-3333-333333333333', 'rh@x') on conflict do nothing;
       insert into profiles (user_id, email, role) values ('33333333-3333-3333-3333-333333333333', 'rh@x', 'rh') on conflict (user_id) do update set role = 'rh'`);
@@ -188,12 +225,17 @@ test('site dans l\'application 1.8 : relevé du volet Uber Fleet envoyé à la b
     // application simulée : commandes de l'application (uber_rows renvoie le dernier relevé de la page Uber Fleet)
     await page.addInitScript(() => {
       window.LUDY_APP = { version: '1.8.0', embed: true, ext: true, open: true };
-      window.__TAURI_INTERNALS__ = { invoke: (cmd) => Promise.resolve(cmd === 'uber_rows' ? { rows: [{ plate: 'WW030070', status: 'to_pickup', name: 'ALPHA Test', raw: 'En route vers le lieu de prise en charge' }], url: 'https://fleethub.uber.com/x', diag: '', age: 3 } : null) };
+      window.__evals = [];
+      window.__TAURI_INTERNALS__ = { invoke: (cmd, a) => { if (cmd === 'uber_eval') window.__evals.push(a.code); return Promise.resolve(cmd === 'uber_rows' ? { rows: [{ plate: 'WW030070', status: 'to_pickup', name: 'ALPHA Test', raw: 'En route vers le lieu de prise en charge' }], url: 'https://fleethub.uber.com/x', diag: '', age: 3, full: true } : cmd === 'uber_eval' ? 1 : null); } };
     });
     await login(page, '#/dashboard');
     for (let i = 0; i < 40 && env.psql('select count(*) from uber_live') !== '1'; i++) await page.waitForTimeout(250);
     assert.strictEqual(env.psql("select plate || '|' || vehicle_key || '|' || status || '|' || driver_name from uber_live"), 'WW030070|030070WW|to_pickup|ALPHA Test');
     assert.match(env.psql('select device from uber_live_readers'), /^Application 1\.8\.0 · /);
+    assert.strictEqual(env.psql("select complete::text from uber_live_readers"), 'true', 'liste complète notée');
+    // 1.9 : code de lecture (site/uber_read.js) envoyé au volet Uber Fleet
+    await page.waitForFunction(() => window.__evals.length > 0, null, { timeout: 15000 });
+    assert.match(await page.evaluate(() => window.__evals[0]), /__ludyURv/);
     assert.deepStrictEqual(errors.filter(e => !/LUDY_APP|__TAURI/.test(e)), []);
   } finally { await br.close(); srv.kill(); env.psql('truncate uber_live, uber_live_readers'); env.resetDb(); }
 });

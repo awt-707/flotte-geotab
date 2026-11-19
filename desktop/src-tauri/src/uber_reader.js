@@ -73,8 +73,44 @@
   if (typeof module !== 'undefined') { module.exports = { urRead: urRead, urState: urState, urPlate: urPlate }; return; }
   if (typeof window === 'undefined' || !/(^|\.)uber\.com$/i.test(location.hostname)) return;
   window.__ludyUberRead = urRead;
+  // 1.9 : réponses JSON reçues par la page (données de la carte en temps réel : chauffeurs, états, véhicules), gardées dès le chargement
+  // pour la lecture envoyée par le site Ludy (site/uber_read.js) ; rien n'est envoyé ailleurs que dans l'application Ludy
+  if (!window.__ludyNetHook) {
+    window.__ludyNetHook = 1;
+    var NET = window.__ludyNet = window.__ludyNet || [];
+    var keep = function (url, op, text) {
+      try {
+        text = String(text || ''); if (!text || text.length > 3000000) return;
+        var c = text.replace(/^\s+/, '').charAt(0); if (c !== '{' && c !== '[') return;
+        NET.push({ url: String(url || '').split('?')[0].slice(0, 300), op: op || '', at: Date.now(), text: text });
+        while (NET.length > 40) NET.shift();
+      } catch (e) { }
+    };
+    var opOf = function (b) { try { var m = String(b || '').match(/"operationName"\s*:\s*"([^"]{1,80})"/); return m ? m[1] : ''; } catch (e) { return ''; } };
+    try {
+      var of = window.fetch;
+      if (of) window.fetch = function (a, o) {
+        var p = of.apply(this, arguments);
+        try {
+          var u = a && a.url ? a.url : String(a), op = opOf(o && o.body);
+          p.then(function (r) { try { if (/json/i.test(r.headers.get('content-type') || '')) r.clone().text().then(function (t) { keep(u, op, t); }, function () { }); } catch (e) { } }, function () { });
+        } catch (e) { }
+        return p;
+      };
+    } catch (e) { }
+    try {
+      var xo = XMLHttpRequest.prototype.open, xs = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function (m, u) { this.__lu = u; return xo.apply(this, arguments); };
+      XMLHttpRequest.prototype.send = function (b) {
+        var x = this, op = opOf(b);
+        try { x.addEventListener('load', function () { try { var t = x.responseType === 'json' ? JSON.stringify(x.response) : (!x.responseType || x.responseType === 'text') ? x.responseText : ''; keep(x.__lu, op, t); } catch (e) { } }); } catch (e) { }
+        return xs.apply(this, arguments);
+      };
+    } catch (e) { }
+  }
   function tick() {
     try {
+      if (window.__ludyURv) return;   // lecture du site Ludy en place (1.9) : c'est elle qui envoie
       var inv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
       if (!inv || !document.body) return;
       var rows = urRead(document);
