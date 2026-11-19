@@ -185,18 +185,31 @@ function kpisHtml(rows) {
     + `${pz.some(r => svPauseOf(r.vehicle_key).moved_at) ? chip(pz.filter(r => svPauseOf(r.vehicle_key).moved_at).length, 'en pause et en mouvement', 'crit') : ''}`
     + `${rows.some(r => r.no_ctr === 'depasse') ? chip(rows.filter(r => r.no_ctr === 'depasse').length, 'contrats dépassés (extract à injecter)', 'warn') : ''}</div>`;
 }
+/**
+ * Fiche d'un véhicule (colonne de droite d'En direct ; refaite le 19/11/2026, demande d'Ahmed : poste de travail principal).
+ * À gauche : plaque et modèle, état Uber (termes d'Uber Fleet), état Geotab et depuis quand, chauffeur et shift, pause, dernière
+ * position. À droite, colonne fixe : photo du chauffeur lue sur Uber Fleet, vitesse, cadran de consommation du contrat.
+ */
 function vcardsHtml(rows) {
   if (!rows.length) return '<div class="empty">Aucun véhicule actif</div>';
   const pz = k => typeof svPauseOf === 'function' ? svPauseOf(k) : null;
-  return rows.map(r => `<button type="button" class="vcard${typeof pfVehPhoto === 'function' && pfVehPhoto(r) ? ' hasph' : ''} st-${ST_CLS(r.state)}${r.crs ? ' crs' : ''}${LIVE.fast[r.vehicle_key] ? ' fast' : ''}${pz(r.vehicle_key) ? ' paused' + (pz(r.vehicle_key).moved_at ? ' pmoved' : '') : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
-    <span class="vc-l1">${plate(r.plate)}<span class="vc-model">${esc(r.model || '')}</span><span class="vc-spd">${r.state === 'En route' ? f0(r.speed) + '<small> km/h</small>' : ''}</span></span>
-    ${typeof pfVehChip === 'function' && pfVehChip(r) ? '<span class="vc-lu">' + pfVehChip(r) + '</span>' : ''}
-    <span class="vc-l2"><span class="vc-st"><span class="sdot"></span>${esc(r.state || 'État inconnu')}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</span>${consoGauge(r)}</span>
-    <span class="vc-l3">${r.crs ? crsLiveHtml(r) + ' <b>' + esc(r.crs_driver || r.driver_name || '') + '</b> <span class="small">' + esc(r.crs.client_company || r.crs.client_name || '') + '</span>'
-      : r.contract_num ? `<b>${esc(r.driver_name)}</b> ${shiftBadge(r.shift)}` : noCtrHtml(r)}</span>
-    ${typeof svVehLine === 'function' ? svVehLine(r.vehicle_key) : ''}
-    <span class="vc-l4">${r.live ? 'Position Geotab ' + esc(fmtHMS(r.last_pos_at).slice(6)) + ' · <span class="ago" data-t="' + esc(r.last_pos_at || '') + '">' + ago(r.last_pos_at) + '</span>'
-      : r.last_pos_at ? 'Position du collecteur ' + esc(fmtDT(r.last_pos_at)) : 'Aucune position'}</span>${typeof pfVehPhoto === 'function' ? pfVehPhoto(r) : ''}</button>`).join('');
+  return rows.map(r => {
+    const ub = typeof pfVehChip === 'function' ? pfVehChip(r) : '', ph = typeof pfVehPhoto === 'function' ? pfVehPhoto(r) : '', g = consoGauge(r);
+    const spd = r.state === 'En route' ? `<span class="vc-spd">${f0(r.speed)}<small>km/h</small></span>` : '';
+    const drv = r.crs ? crsLiveHtml(r) + ' <b>' + esc(r.crs_driver || r.driver_name || '') + '</b> <span class="small">' + esc(r.crs.client_company || r.crs.client_name || '') + '</span>'
+      : r.contract_num ? `<b class="vc-name">${esc(r.driver_name)}</b> ${shiftBadge(r.shift)}` : noCtrHtml(r);
+    return `<button type="button" class="vcard st-${ST_CLS(r.state)}${r.crs ? ' crs' : ''}${LIVE.fast[r.vehicle_key] ? ' fast' : ''}${pz(r.vehicle_key) ? ' paused' + (pz(r.vehicle_key).moved_at ? ' pmoved' : '') : ''}${LIVE.sel === r.vehicle_key ? ' on' : ''}" data-vk="${esc(r.vehicle_key)}">
+    <span class="vc-main">
+      <span class="vc-l1">${plate(r.plate)}<span class="vc-model">${esc(r.model || '')}</span></span>
+      ${ub ? '<span class="vc-lu">' + ub + '</span>' : ''}
+      <span class="vc-l2"><span class="vc-st"><span class="sdot"></span>${esc(r.state || 'État inconnu')}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</span></span>
+      <span class="vc-l3">${drv}</span>
+      ${typeof svVehLine === 'function' ? svVehLine(r.vehicle_key) : ''}
+      <span class="vc-l4">${r.live ? 'Position Geotab ' + esc(fmtHMS(r.last_pos_at).slice(6)) + ' · <span class="ago" data-t="' + esc(r.last_pos_at || '') + '">' + ago(r.last_pos_at) + '</span>'
+        : r.last_pos_at ? 'Position du collecteur ' + esc(fmtDT(r.last_pos_at)) : 'Aucune position'}</span>
+    </span>
+    ${ph || spd || g ? `<span class="vc-side">${ph}${spd}${g}</span>` : ''}</button>`;
+  }).join('');
 }
 function liveAlertsHtml() {
   const list = LIVE.alerts.filter(a => inAgency()(a.vehicle_key));
