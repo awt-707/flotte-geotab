@@ -250,6 +250,14 @@ async function pfPushTick() {
     if (line !== PFP.cat) { try { const c = await sb.rpc('uber_catalog_push', { p_items: JSON.parse(line.slice(4)) }); if (!c.error) PFP.cat = line; } catch (e) { } }
   }
   v.diag = diag;
+  // plaque écrite sans lettres dans Uber Fleet (« 968211 ») : rapprochée du seul véhicule de Ludy qui a exactement ces chiffres
+  const vl = (S.vehList || []).concat(Object.values(S.vehParc || {}));
+  v.rows = v.rows.map(x => {
+    const d = String(x.plate || '').trim(); if (!/^\d{5,6}$/.test(d)) return x;
+    const m = [...new Set(vl.filter(z => String(z.plate || '').replace(/\D/g, '') === d).map(z => z.plate))];
+    return m.length === 1 ? Object.assign({}, x, { plate: m[0] }) : x;
+  });
+  PFP.got = Date.now();
   const sig = JSON.stringify(v.rows) + (v.full ? '|full' : '');
   if (sig === PFP.last && Date.now() - PFP.lastAt < 30000) return;   // rien de changé : renvoyé toutes les 30 s (chauffeurs toujours en ligne)
   const dev = 'Application ' + ((window.LUDY_APP && window.LUDY_APP.version) || '') + ' · ' + (/Win/i.test(navigator.platform || navigator.userAgent) ? 'Windows' : /Mac/i.test(navigator.platform || navigator.userAgent) ? 'Mac' : 'autre');
@@ -265,12 +273,29 @@ const PFR = { code: '', at: 0 };
 async function pfReaderSend() {
   if (!S.session || !pfPushCan()) return;
   try {
-    if (!PFR.code || Date.now() - PFR.at > 3600000) { const r = await fetch('uber_read.js', { cache: 'no-cache' }); if (!r.ok) return; PFR.code = await r.text(); PFR.at = Date.now(); }
+    if (!PFR.code || Date.now() - PFR.at > 300000) { const r = await fetch('uber_read.js', { cache: 'no-cache' }); if (!r.ok) return; PFR.code = await r.text(); PFR.at = Date.now(); }
     await appInvoke('uber_eval', { code: PFR.code });
   } catch (e) { }
 }
+/**
+ * Uber Fleet ouvert en arrière-plan (19/11/2026, demande d'Ahmed : « Ludy se connecte directement en arrière-plan sur la carte
+ * d'Uber ») : application Mac (volets dans la fenêtre), aucune lecture reçue depuis 25 s, page d'un volet externe pas affichée : le
+ * volet Uber Fleet (adresse réglée : la carte en temps réel) est ouvert puis aussitôt caché ; la lecture continue caché (uber_read.js).
+ * Windows : volets dans leur propre fenêtre, ouverts par l'utilisateur. Une seule fois par minute au plus.
+ */
+function pfAutoOpen() {
+  if (appMode() !== 'ext' || appExtWin() || !pfPushCan() || /^x-/.test(pageOf())) return;
+  const wait = window.__pfAutoMs || 25000;
+  if (Date.now() - (PFP.got || PFP.start || 0) < wait || Date.now() - (PFP.opened || 0) < Math.max(wait, 60000)) return;
+  const site = extSites().find(x => x.id === 'uber') || extSites().find(x => /^https:\/\/([a-z0-9-]+\.)*uber\.com\//.test(x.url));
+  if (!site) return;
+  PFP.opened = Date.now();
+  appInvoke('ext_show', { id: site.id, url: site.url, x: 0, y: 0, w: 100, h: 100 }).then(() => { if (!/^x-/.test(pageOf())) return appInvoke('ext_hide'); }).catch(() => { });
+}
 function pfPushStart() {
   if (PFP.timer || !appIpc()) return;
+  PFP.start = Date.now();
+  PFP.atimer = setInterval(() => { pfAutoOpen(); }, window.__pfAutoMs ? 500 : 10000);
   PFP.timer = setInterval(() => { pfPushTick(); }, 10000);
   PFP.rtimer = setInterval(() => { pfReaderSend(); }, 60000);
   setTimeout(pfReaderSend, 3000);

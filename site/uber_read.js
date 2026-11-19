@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-19e';
+  var V = '2026-11-19f';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -37,7 +37,7 @@
   /** Plaque dans un objet et ses sous-objets proches (véhicule rattaché au chauffeur) */
   function findPlate(o, d) {
     if (!o || typeof o !== 'object' || d > 3) return '';
-    for (var k in o) { var v = o[k]; if (K_PLATE.test(k) && typeof v === 'string') { var p = plateOf(v); if (p) return p; } }
+    for (var k in o) { var v = o[k]; if (K_PLATE.test(k) && typeof v === 'string') { var p = plateOf(v) || (/^\s*\d{5,6}\s*$/.test(v) ? v.trim() : ''); if (p) return p; } }
     for (var k2 in o) { var v2 = o[k2]; if (v2 && typeof v2 === 'object' && !Array.isArray(v2)) { var p2 = findPlate(v2, d + 1); if (p2) return p2; } }
     return '';
   }
@@ -183,7 +183,7 @@
     net = net || []; map = map || { p: {}, n: {} };
     var live = liveOf(net), cards = cardsOf(doc), lines = [], b = { n: 9000 };
     if (live) {
-      var rows = [], miss = [], missIds = [], states = {};
+      var rows = [], miss = [], missIds = [], noPhoto = [], states = {};
       live.list.forEach(function (x) {
         var did = idOf(x.driverId), vid = idOf(x.vehicleId), raw = String(x.supplyActivityState || x.driverStatus || '');
         states[raw] = (states[raw] || 0) + 1;
@@ -191,6 +191,7 @@
         var plate = map.p[vid] || map.p[did] || (cd.veh && map.p[cd.veh]) || cd.plate || '';
         var name = cd.name || map.n[did] || '';
         if (!plate) { miss.push((name || did.slice(0, 8)) + ' · véhicule ' + (vid || '?').slice(0, 8)); missIds.push([did, vid]); return; }
+        if (!(cd.photo || (map.ph && map.ph[did]))) noPhoto.push([did, vid]);
         rows.push({ plate: plate, status: st, raw: raw.replace(/^SUPPLY_ACTIVITY_STATE_|^MONITORING_SUPPLY_STATUS_/, '').slice(0, 60), name: name, phone: cd.phone || '', photo: cd.photo || (map.ph && map.ph[did]) || '', driver: did,
           lat: typeof x.latitude === 'number' ? x.latitude : null, lng: typeof x.longitude === 'number' ? x.longitude : null });
       });
@@ -205,7 +206,7 @@
           .filter(function (x) { var k = x.url + x.op; if (seenU[k]) return false; seenU[k] = 1; return true; }).slice(0, 5)
           .forEach(function (x) { var j; try { j = JSON.parse(x.text); } catch (e) { return; } lines.push('== ' + x.url + (x.op ? ' [' + x.op + ']' : '') + ' ' + x.text.length + ' o\n' + shape(j, 0, b)); });
       }
-      return { rows: rows, full: full, src: 'GetDriverLiveLocation', diag: lines.join('\n').slice(0, 19000), stats: live.stats, missIds: missIds };
+      return { rows: rows, full: full, src: 'GetDriverLiveLocation', diag: lines.join('\n').slice(0, 19000), stats: live.stats, missIds: missIds, noPhoto: noPhoto };
     }
     // pas de données de la carte : repli sur les autres réponses, puis sur la page affichée (lecture partielle)
     var best = [], src = '', recent = net.filter(function (x) { return Date.now() - x.at < 90000; });
@@ -246,13 +247,15 @@
   } catch (e) { }
   clearInterval(window.__ludyURt);
   // correspondances identifiant Uber → plaque / nom, gardées pour cette page (localStorage d'Uber Fleet, sur cet ordinateur seulement)
-  var MAP = { p: {}, n: {}, ph: {} };
-  try { var sv = JSON.parse(localStorage.getItem('ludyUberMap') || '{}'); if (sv && sv.p) MAP = { p: sv.p || {}, n: sv.n || {}, ph: sv.ph || {} }; } catch (e) { }
+  var MAP = window.__ludyMap || { p: {}, n: {}, ph: {} };
+  if (!window.__ludyMap) try { var sv = JSON.parse(localStorage.getItem('ludyUberMap') || '{}'); if (sv && sv.p) MAP = { p: sv.p || {}, n: sv.n || {}, ph: sv.ph || {} }; } catch (e) { }
+  MAP.ph = MAP.ph || {}; window.__ludyMap = MAP;
   var dirty = false;
   function idx(e) { try { if (!/tc2\.uber\.com/.test(e.url) && indexJson(JSON.parse(e.text), MAP)) dirty = true; } catch (er) { } }
   var NET = window.__ludyNet = window.__ludyNet || [];
   NET.forEach(idx);
-  if (!NET.__ludyIdx) { var push0 = NET.push; NET.push = function () { for (var i = 0; i < arguments.length; i++) idx(arguments[i]); return push0.apply(this, arguments); }; NET.__ludyIdx = 1; }
+  window.__ludyIdxFn = idx;   // nouvelle version de la lecture : c'est elle qui range les réponses suivantes
+  if (!NET.__ludyIdx) { var push0 = NET.push; NET.push = function () { for (var i = 0; i < arguments.length; i++) { try { window.__ludyIdxFn && window.__ludyIdxFn(arguments[i]); } catch (e) { } } return push0.apply(this, arguments); }; NET.__ludyIdx = 1; }
   // ---- exploration d'Uber Fleet (19/11/2026, demande d'Ahmed : comprendre Uber Fleet de A à Z et ce qu'on peut en extraire) ----
   // Catalogue de ce que la page charge : chaque adresse (identifiants remplacés par :id), opération GraphQL, requête (texte de la requête,
   // variables), squelette de la réponse, et chaque page visitée (texte affiché, titres des colonnes). Envoyé à Ludy (table uber_catalog,
@@ -293,7 +296,7 @@
     if (!org || !list || !list.length) return;
     for (var i = 0; i < list.length; i++) {
       var did = list[i][0], vid = list[i][1];
-      if (!did || (ASKED[did] && Date.now() - ASKED[did] < 600000)) continue;
+      if (!did || (ASKED[did] && Date.now() - ASKED[did] < 1800000)) continue;
       ASKED[did] = Date.now();
       var g = window.__ludyGql || {}, h = { 'content-type': 'application/json', 'x-csrf-token': 'x' };
       for (var k in (g.headers || {})) h[k] = g.headers[k];
@@ -311,6 +314,7 @@
         try {
           var u = a && a.url ? a.url : String(a), m = (o && o.method) || (a && a.method) || 'GET', b = o && typeof o.body === 'string' ? o.body : '';
           var gop = catOp(b); if (gop === 'GetLivemapSupply' && !(o && o.__ludy)) window.__ludyGql = { url: u, body: b, headers: hdrs((o && o.headers) || (a && a.headers)) };
+          if (/GetDriverLiveLocation/i.test(u) && b && !(o && o.__ludy)) { try { localStorage.setItem('ludyUberLiveReq', JSON.stringify({ url: String(u).split('?')[0], body: b, headers: hdrs((o && o.headers) || (a && a.headers)), at: Date.now() })); } catch (e) { } }
           p.then(function (r) { try { if (/json|text\/plain/i.test(r.headers.get('content-type') || '')) r.clone().text().then(function (t) { catAdd(m, u, b, t); }, function () { }); } catch (e) { } }, function () { });
         } catch (e) { }
         return p;
@@ -349,17 +353,34 @@
     });
     return out.length ? 'CAT ' + JSON.stringify(out) + '\n' : '';
   }
+  /**
+   * Carte en temps réel lue par Ludy lui-même (19/11/2026, demande d'Ahmed : « Ludy se connecte en arrière-plan à la carte d'Uber ») :
+   * quand la page d'Uber Fleet ne relit plus la carte depuis 12 s (autre page d'Uber Fleet ouverte, volet caché), la même demande que la
+   * carte (GetDriverLiveLocation, relevée telle quelle quand la carte a été ouverte une fois sur cet ordinateur) est envoyée par Ludy.
+   */
+  function selfLive() {
+    var last = 0; for (var i = NET.length - 1; i >= 0; i--) if (/GetDriverLiveLocation/i.test(NET[i].url)) { last = NET[i].at; break; }
+    if (Date.now() - last < 12000 || (window.__ludySelfAt && Date.now() - window.__ludySelfAt < 9000)) return;
+    var q = null; try { q = JSON.parse(localStorage.getItem('ludyUberLiveReq') || 'null'); } catch (e) { }
+    if (!q || !q.body || !q.url) return;
+    var org = (location.pathname.match(/\/orgs\/([0-9a-f-]{36})/i) || [])[1] || '';
+    if (org && q.body.indexOf(org) < 0) return;   // autre organisation Uber : rien
+    window.__ludySelfAt = Date.now();
+    var h = { 'content-type': 'application/json', 'x-csrf-token': 'x' }; for (var k in (q.headers || {})) h[k] = q.headers[k];
+    try { window.fetch(q.url, { method: 'POST', headers: h, body: q.body, credentials: 'include', __ludy: 1 }).catch(function () { }); } catch (e) { }
+  }
   function tick() {
     try {
       var inv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
       if (!inv || !document.body) return;
+      selfLive();
       catPage();
       if (dirty) { dirty = false; try { localStorage.setItem('ludyUberMap', JSON.stringify(MAP)); } catch (e) { } }
       var r = read(document, NET, MAP);
-      if (r.missIds && r.missIds.length) askMissing(r.missIds);
+      askMissing((r.missIds || []).concat(r.noPhoto || []));
       inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: catBatch() + (r.diag || (r.src ? 'source : ' + r.src : '')).slice(0, 7000), full: r.full }).catch(function () { });
     } catch (e) { }
   }
-  window.__ludyURt = setInterval(tick, 10000);
+  window.__ludyURt = setInterval(tick, 5000);
   setTimeout(tick, 1500);
 })();

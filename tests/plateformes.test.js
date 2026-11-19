@@ -186,6 +186,9 @@ test('lecture 1.9 (site/uber_read.js) : carte en temps réel d\'Uber Fleet (GetD
   assert.deepStrictEqual(r.rows.map(x => x.plate + '|' + x.status), ['WW030070|available', '86120-T-1|on_trip', 'WW030071|to_pickup']);
   // réponse trop vieille (plus de 90 s) : plus de liste complète
   assert.strictEqual(U.read(doc, [Object.assign({}, net[0], { at: Date.now() - 120000 })], map).full, false);
+  const m2 = { p: {}, n: {} }; U.indexJson({ getLivemapSupply: { uuid: id('4'), driver: { uuid: id('4'), firstName: 'DELTA', lastName: 'Test', pictureUrl: 'https://d1w2poirtb3as9.cloudfront.net/d.jpeg' }, vehicle: { uuid: vid('4'), licensePlate: '968211' } } }, m2);
+  assert.strictEqual(m2.p[vid('4')], '968211', 'plaque écrite sans lettres dans Uber Fleet : gardée (Ludy la rapproche par les chiffres)');
+  assert.strictEqual(m2.ph[id('4')], 'https://d1w2poirtb3as9.cloudfront.net/d.jpeg', 'photo de la fiche');
   assert.deepStrictEqual(['SUPPLY_ACTIVITY_STATE_ONLINE_DISPATCHABLE', 'SUPPLY_ACTIVITY_STATE_OFFLINE', 'SUPPLY_ACTIVITY_STATE_ON_TRIP', 'SUPPLY_ACTIVITY_STATE_EN_ROUTE', 'X'].map(U.uberSt), ['available', 'offline', 'on_trip', 'to_pickup', null]);
   // autre format : structure jointe pour régler la lecture
   const r2 = U.read({ querySelectorAll: () => [] }, [{ url: 'https://fleethub.uber.com/api/x', op: '', at: Date.now(), text: JSON.stringify({ items: [{ id: 1, colour: 'green' }] }) }]);
@@ -256,7 +259,7 @@ test('site dans l\'application 1.8 : relevé du volet Uber Fleet envoyé à la b
     await page.addInitScript(() => {
       window.LUDY_APP = { version: '1.8.0', embed: true, ext: true, open: true };
       window.__evals = [];
-      window.__TAURI_INTERNALS__ = { invoke: (cmd, a) => { if (cmd === 'uber_eval') window.__evals.push(a.code); return Promise.resolve(cmd === 'uber_rows' ? { rows: [{ plate: 'WW030070', status: 'to_pickup', name: 'ALPHA Test', raw: 'En route vers le lieu de prise en charge' }], url: 'https://fleethub.uber.com/x',
+      window.__TAURI_INTERNALS__ = { invoke: (cmd, a) => { if (cmd === 'uber_eval') window.__evals.push(a.code); return Promise.resolve(cmd === 'uber_rows' ? { rows: [{ plate: '030070', status: 'to_pickup', name: 'ALPHA Test', raw: 'En route vers le lieu de prise en charge' }], url: 'https://fleethub.uber.com/x',
         diag: 'CAT ' + JSON.stringify([{ k: 'PAGE /orgs/:id/drivers', url: '/orgs/:id/drivers', m: 'PAGE', n: 1, res: 'COLONNES Chauffeur | Statut' }]) + '\nLUDY test', age: 3, full: true } : cmd === 'uber_eval' ? 1 : null); } };
     });
     await login(page, '#/dashboard');
@@ -272,4 +275,25 @@ test('site dans l\'application 1.8 : relevé du volet Uber Fleet envoyé à la b
     assert.match(await page.evaluate(() => window.__evals[0]), /__ludyURv/);
     assert.deepStrictEqual(errors.filter(e => !/LUDY_APP|__TAURI/.test(e)), []);
   } finally { await br.close(); srv.kill(); env.psql('truncate uber_live, uber_live_readers, uber_catalog'); env.resetDb(); }
+});
+
+test('application Mac : Uber Fleet ouvert caché en arrière-plan quand aucune lecture n\'arrive', async () => {
+  env.resetDb();
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await page.addInitScript(() => {
+      window.LUDY_APP = { version: '1.9.0', uber: 'https://fleethub.uber.com/orgs/x/livemap', embed: true, ext: true, open: true }; window.__pfAutoMs = 1500; window.__calls = [];
+      window.__TAURI_INTERNALS__ = { invoke: (cmd, a) => { window.__calls.push([cmd, a]); return Promise.resolve(cmd === 'uber_rows' ? null : cmd === 'uber_eval' ? 0 : null); } };
+    });
+    await login(page, '#/dashboard');
+    await page.waitForFunction(() => window.__calls.some(c => c[0] === 'ext_hide'), null, { timeout: 15000 });
+    const calls = await page.evaluate(() => window.__calls.filter(c => /^ext_/.test(c[0])));
+    assert.strictEqual(calls[0][0], 'ext_show'); assert.strictEqual(calls[0][1].id, 'uber'); assert.match(calls[0][1].url, /^https:\/\/([a-z0-9-]+\.)*uber\.com\//);
+    assert.strictEqual(calls[1][0], 'ext_hide', 'aussitôt caché');
+    // lecture reçue : plus d'ouverture
+    await page.evaluate(() => { PFP.got = Date.now(); PFP.opened = 0; window.__calls = []; });
+    await page.waitForTimeout(1200);
+    assert.strictEqual(await page.evaluate(() => window.__calls.filter(c => c[0] === 'ext_show').length), 0);
+    assert.deepStrictEqual(errors.filter(e => !/LUDY_APP|__TAURI/.test(e)), []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
 });

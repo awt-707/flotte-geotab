@@ -155,8 +155,16 @@ async function loadConsoBase() {
 /** Cadran vert → rouge : consommation du contrat en cours (compteurs Geotab depuis son début, relus toutes les 30 s) comparée à la moyenne du modèle */
 /** Compteurs Geotab du contrat affiché (relais ?mode=drivers) ; ceux d'un contrat précédent du véhicule ne sont jamais repris */
 function liveDrv(r) {
-  const d = r && r.contract_num && LIVE.drv[r.vehicle_key];
-  return d && (!r.ctr_start || !d.from || Math.abs(new Date(d.from) - new Date(r.ctr_start)) < 2 * MIN) ? d : null;
+  const d = r && LIVE.drv[r.vehicle_key], from = r && drvFrom(r);
+  return d && from && (!d.from || Math.abs(new Date(d.from) - new Date(from)) < 2 * MIN) ? d : null;
+}
+/**
+ * Début de la période du cadran de consommation : début du contrat en cours ; véhicule sans contrat (extract pas encore injecté,
+ * « Contrat dépassé », ou sans contrat) : début du shift en cours (19/11/2026, demande d'Ahmed : cadran toujours affiché).
+ */
+function drvFrom(r) {
+  if (r.contract_num && r.ctr_start) return r.ctr_start;
+  const cur = shiftAt(Date.now(), S.P); return cur ? shiftStart(cur, S.P).toISOString() : null;
 }
 function consoGauge(r) {
   const d = liveDrv(r), base = (LIVE.base || {})[r.model];
@@ -165,8 +173,9 @@ function consoGauge(r) {
   const v = ok ? l / km * 100 : null, ratio = ok ? v / base : null;
   const zone = !ok ? 'mute' : ratio <= 1 ? 'ok' : ratio <= 1.15 ? 'warn' : 'crit';
   const ang = ok ? Math.max(0, Math.min(180, (ratio - 0.6) / 0.8 * 180)) : 90, rad = (180 - ang) * Math.PI / 180, nx = 28 + 20 * Math.cos(rad), ny = 28 - 20 * Math.sin(rad);
-  const tip = ok ? `Consommation depuis le début du contrat : ${f1(v)} L/100 km sur ${f1(km)} km (moyenne des ${r.model} sur 30 jours : ${f1(base)} L/100). Compteurs Geotab.`
-    : km != null && km < 10 ? 'Moins de 10 km depuis le début du contrat' : 'Consommation non mesurée (compteur Geotab absent)';
+  const per = r.contract_num && r.ctr_start ? 'depuis le début du contrat' : 'depuis le début du shift (' + localHM(new Date(drvFrom(r))) + ', véhicule sans contrat en cours)';
+  const tip = ok ? `Consommation ${per} : ${f1(v)} L/100 km sur ${f1(km)} km (moyenne des ${r.model} sur 30 jours : ${f1(base)} L/100). Compteurs Geotab.`
+    : km != null && km < 10 ? 'Moins de 10 km ' + per : base ? 'Consommation non mesurée (compteur Geotab absent)' : 'Moyenne du modèle non mesurée (moins de 200 km sur 30 jours)';
   return `<span class="cgauge z-${zone}" title="${esc(tip)}"><svg viewBox="0 0 56 32" aria-hidden="true">
       <path d="M8.0 28.0A20 20 0 0 1 27.3 8.0" class="cg-ok"/><path d="M28.7 8.0A20 20 0 0 1 38.6 11.0" class="cg-warn"/><path d="M39.8 11.8A20 20 0 0 1 48.0 28.0" class="cg-crit"/>
       <line x1="28" y1="28" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" class="cg-needle"/><circle cx="28" cy="28" r="2.6" class="cg-hub"/></svg>
@@ -326,12 +335,12 @@ async function liveTick(my) {
 async function liveDrvTick(my) {
   if (document.hidden || my !== ROUTING || LIVE.drvBusy) return;
   if (liveIdle() && Date.now() - (LIVE.drvLast || 0) < DRV_IDLE_SEC * 1000) return;
-  const rows = liveRows().filter(r => r.contract_num && r.ctr_start);
+  const rows = liveRows().filter(r => drvFrom(r));
   if (!rows.length) return;
   LIVE.drvLast = Date.now();
   LIVE.drvBusy = true;
   try {
-    const j = await relay({ mode: 'drivers', c: rows.map(r => r.vehicle_key + '@' + new Date(r.ctr_start).toISOString()).join(',') });
+    const j = await relay({ mode: 'drivers', c: rows.map(r => r.vehicle_key + '@' + new Date(drvFrom(r)).toISOString()).join(',') });
     // gardés même si la page a été redessinée entre-temps (compteurs rattachés au véhicule et au début du contrat)
     LIVE.drv = j.drivers || {}; LIVE.drvAt = Date.now(); LIVE.drvGeoAt = j.at; LIVE.drvErr = '';
   } catch (e) {
