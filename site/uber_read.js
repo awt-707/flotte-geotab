@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-19b';
+  var V = '2026-11-19c';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -221,6 +221,26 @@
   if (typeof window === 'undefined' || !/(^|\.)uber\.com$/i.test(location.hostname)) return;
   if (window.__ludyURv === V) return;
   window.__ludyURv = V;
+  // Uber Fleet arrête de relire la carte quand sa page est cachée (volet masqué derrière Ludy, fenêtre réduite) : la page se croit
+  // toujours affichée et au premier plan, pour que la lecture continue pendant qu'on travaille sur Ludy (19/11/2026)
+  try {
+    var dp = Document.prototype;
+    Object.defineProperty(dp, 'hidden', { configurable: true, get: function () { return false; } });
+    Object.defineProperty(dp, 'visibilityState', { configurable: true, get: function () { return 'visible'; } });
+    try { Object.defineProperty(dp, 'webkitHidden', { configurable: true, get: function () { return false; } }); } catch (e) { }
+    dp.hasFocus = function () { return true; };
+    if (!window.__ludyVis) {
+      window.__ludyVis = 1;
+      var stop = function (e) { if (!window.__ludyVisFire) e.stopImmediatePropagation(); };
+      window.addEventListener('visibilitychange', stop, true);
+      window.addEventListener('webkitvisibilitychange', stop, true);
+      window.addEventListener('blur', stop, true);
+      window.addEventListener('pagehide', stop, true);
+    }
+    // page déjà mise en pause : elle se croit de nouveau affichée
+    window.__ludyVisFire = 1;
+    try { document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('focus')); } finally { window.__ludyVisFire = 0; }
+  } catch (e) { }
   clearInterval(window.__ludyURt);
   // correspondances identifiant Uber → plaque / nom, gardées pour cette page (localStorage d'Uber Fleet, sur cet ordinateur seulement)
   var MAP = { p: {}, n: {} };
