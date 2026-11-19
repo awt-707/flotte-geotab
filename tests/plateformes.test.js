@@ -46,16 +46,16 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     await login(page, '#/direct');
     await page.waitForSelector('#liveplat .pfbar .kchip');
     const t = await page.innerText('#liveplat');
-    assert.match(t, /Uber lu à \d\d:\d\d\s*4\s*en ligne\s*1\s*vers le client\s*1\s*en course\s*2\s*disponibles/);
+    assert.match(t, /Uber lu à \d\d:\d\d\s*4\s*en ligne\s*2\s*Disponible\s*1\s*En route vers le lieu de prise en charge\s*1\s*Course en cours/);
     await page.click('#liveplat details[data-pf="uber"] summary');
-    assert.match(await page.innerText('#liveplat table'), /BETA Test[\s\S]*WW030071[\s\S]*En route vers le client[\s\S]*ALPHA Test[\s\S]*En course[\s\S]*GAMMA Test[\s\S]*Disponible/);
+    assert.match(await page.innerText('#liveplat table'), /BETA Test[\s\S]*WW030071[\s\S]*En route vers le lieu de prise en charge[\s\S]*ALPHA Test[\s\S]*Course en cours[\s\S]*GAMMA Test[\s\S]*Disponible/);
     // carte et cartes véhicules : état Uber du véhicule (plaque lue sur l'écran Uber Fleet)
-    await page.waitForFunction(() => /Uber · En course/.test((document.querySelector('.vcard[data-vk="030070WW"]') || {}).innerText || ''));
-    assert.match(await page.innerText('.vcard[data-vk="030071WW"]'), /Uber · Vers le client/);
+    await page.waitForFunction(() => /Uber · Course en cours/.test((document.querySelector('.vcard[data-vk="030070WW"]') || {}).innerText || ''));
+    assert.match(await page.innerText('.vcard[data-vk="030071WW"]'), /Uber · En route vers le lieu de prise en charge/);
     assert.doesNotMatch(await page.innerText('.vcard[data-vk="030075WW"]'), /Uber ·/, 'véhicule pas en ligne sur Uber : rien');
     const lbl = await page.evaluate(() => LIVE.markers['030070WW'].getElement().innerText);
-    assert.match(lbl, /WW030070 · 42 km\/h\s*Uber · En course/);
-    assert.match(await page.evaluate(() => LIVE.markers['030071WW'].getTooltip().getContent()), /Uber : <b>En route vers le client<\/b> · BETA Test/);
+    assert.match(lbl, /WW030070 · 42 km\/h\s*Uber · Course en cours/);
+    assert.match(await page.evaluate(() => LIVE.markers['030071WW'].getTooltip().getContent()), /Uber : <b>En route vers le lieu de prise en charge<\/b> · BETA Test/);
     // sous contrat, pas en ligne : « Hors ligne », en rouge s'il roule ; chauffeur en ligne avec un autre véhicule : jamais « hors ligne »
     await page.waitForFunction(() => /Hors ligne · roule/.test((document.querySelector('.vcard[data-vk="030076WW"]') || {}).innerText || ''));
     assert.match(await page.innerText('.vcard[data-vk="030077WW"]'), /Uber · Disponible/);

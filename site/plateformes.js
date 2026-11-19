@@ -57,9 +57,9 @@ function pfHtml() {
   let html = '';
   if (u.stale) html += `<div class="pfbar"><span class="pfname">Uber</span><span class="msg warn small">Lecture arrêtée${u.lastAt ? ' depuis ' + esc(localHM(new Date(u.lastAt))) : ''} : chiffres pas à jour (aucune application Ludy n'a le volet Uber Fleet ouvert et connecté)</span></div>`;
   else html += `<div class="pfbar"><span class="pfname">Uber <span class="small">lu à ${esc(localHM(new Date(u.lastAt)))}${src}</span></span>
-    ${chip(f0(u.online), 'en ligne')}${chip(f0(u.to_pickup), 'vers le client', u.to_pickup ? 'warn' : '')}${chip(f0(u.on_trip), 'en course', 'ok')}${chip(f0(u.available), 'disponibles')}${u.unknown ? chip(f0(u.unknown), 'état non reconnu', 'mute') : ''}
+    ${chip(f0(u.online), 'en ligne')}${chip(f0(u.available), 'Disponible', 'pf-available')}${chip(f0(u.to_pickup), 'En route vers le lieu de prise en charge', 'pf-to_pickup')}${chip(f0(u.on_trip), 'Course en cours', 'pf-on_trip')}${u.unknown ? chip(f0(u.unknown), 'état non reconnu', 'mute') : ''}
     <span id="pfoffchip"></span></div>`;
-  if (b.seen && !b.stale && b.online) html += `<div class="pfbar"><span class="pfname">Bolt</span>${chip(f0(b.online), 'en ligne')}${chip(f0(b.to_pickup), 'vers le client', b.to_pickup ? 'warn' : '')}${chip(f0(b.on_trip), 'en course', 'ok')}${chip(f0(b.available), 'disponibles')}</div>`;
+  if (b.seen && !b.stale && b.online) html += `<div class="pfbar"><span class="pfname">Bolt</span>${chip(f0(b.online), 'en ligne')}${chip(f0(b.available), 'Disponible', 'pf-available')}${chip(f0(b.to_pickup), 'En route vers le lieu de prise en charge', 'pf-to_pickup')}${chip(f0(b.on_trip), 'Course en cours', 'pf-on_trip')}</div>`;
   // véhicules sous contrat (page En direct) pas connectés : ni Uber ni Bolt en ligne, lecture d'Uber Fleet à jour
   let off = [];
   if (typeof liveRows === 'function' && $('#map') && pfUberFresh()) off = liveRows().filter(r => { const v = pfVeh(r.plate, r.vehicle_key, r); return v && v.status === 'offline'; })
@@ -76,7 +76,7 @@ function pfHtml() {
   return html + (det.length ? `<div class="pfdets">${det.join('')}</div>` : '');
 }
 /** État Uber (sinon Bolt) d'un véhicule de la carte, d'après la plaque lue sur l'écran de la plateforme ; null si pas en ligne ou pas à jour */
-const PF_SHORT = { available: 'Disponible', to_pickup: 'Vers le client', on_trip: 'En course', unknown: 'En ligne' };
+const PF_SHORT = { available: 'Disponible', to_pickup: 'En route vers le lieu de prise en charge', on_trip: 'Course en cours', unknown: 'En ligne' };
 /** Lecture de l'écran Uber Fleet à jour (un relevé de moins de 2 min, toutes agences) */
 function pfUberFresh() { const now = Date.now(); return PF.latest.some(r => r.source === 'uber' && now - new Date(r.observed_at).getTime() <= PF_FRESH_MS); }
 /**
@@ -108,7 +108,7 @@ function pfVeh(plateTxt, key, row) {
   }
   return off();
 }
-/** Pastille de la carte et des cartes véhicules : « Uber · En course » */
+/** Pastille de la carte et des cartes véhicules : « Uber · Course en cours » */
 function pfVehChip(r) {
   const v = pfVeh(r.plate, r.vehicle_key, r); if (!v) return '';
   return `<span class="pfchip pf-${v.status}${v.status === 'offline' && r.state === 'En route' ? ' pf-offmove' : ''}">${v.source === 'bolt' ? 'Bolt' : 'Uber'} · ${esc(v.short)}</span>`;

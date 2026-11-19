@@ -3,7 +3,7 @@
 // d'Uber Fleet (et l'API Bolt) par l'application de bureau, rangés dans la base (`fleet_latest` : dernier état de chaque chauffeur,
 // `fleet_drivers` : nom, agence). Calculs purs, testés sous Node. Rien d'estimé : un chauffeur que la lecture ne voit plus depuis
 // plus de `fresh` ms n'est plus compté en ligne ; lecture arrêtée = chiffres « pas à jour », jamais devinés.
-const PF_ST = { available: 'Disponible', to_pickup: 'En route vers le client', on_trip: 'En course', unknown: 'État non reconnu', offline: 'Hors ligne' };
+const PF_ST = { available: 'Disponible', to_pickup: 'En route vers le lieu de prise en charge', on_trip: 'Course en cours', unknown: 'État non reconnu', offline: 'Hors ligne' };
 const PF_ORD = { to_pickup: 0, on_trip: 1, available: 2, unknown: 3, offline: 4 };
 const PF_FRESH_MS = 2 * 60000;
 
