@@ -19,7 +19,7 @@ const DOMAINS = {
     about: ['Véhicules et parc (plaques, agences, sociétés), changements de plaque, données Geotab finalisées ou en direct',
       '(trajets, ralentis, arrêts moteur, événements, carburant, jauge), alertes, journal par contrat, tickets de carte carburant.'],
     tables: ['vehicles', 'parc', 'plate_changes', 'vehicle_days', 'trips', 'idles', 'engine_stops', 'events', 'fuel', 'levels', 'alerts', 'journal', 'live_status', 'fuel_card_tx'],
-    functions: ['finalize_vdays', 'put_rows', 'purge_before', 'replace_alerts', 'replace_journal', 'alert_counts', 'driver_rule_counts', 'rekey_vehicle',
+    functions: ['finalize_vdays', 'put_rows', 'purge_before', 'ludy_purge_live_logs', 'replace_alerts', 'replace_journal', 'alert_counts', 'driver_rule_counts', 'rekey_vehicle',
       'key_stats', 'parc_agency_for', 'parc_agency_trg', 'vehicles_agency_trg', 'import_fuel_card', 'mark_notified'] },
   '30': { file: 'chauffeurs_contrats', title: 'Chauffeurs et contrats de location',
     about: ['Contrats injectés depuis l\'extract (import_contracts) et chauffeurs qui en sont déduits (refresh_drivers).'],
