@@ -169,12 +169,14 @@ begin
       insert into uber_live_log (plate_key, plate, vehicle_key, agency_id, driver_name, status, started_at)
         values (k, left(r->>'plate', 30), v_key, v_ag, coalesce(nullif(left(r->>'name', 80), ''), o.driver_name), r->>'status', now());
     end if;
-    insert into uber_live (plate_key, plate, vehicle_key, agency_id, driver_name, status, raw, observed_at, status_since, reader, complete, photo_url)
+    insert into uber_live (plate_key, plate, vehicle_key, agency_id, driver_name, status, raw, observed_at, status_since, reader, complete, photo_url, perf)
       values (k, left(r->>'plate', 30), v_key, v_ag, nullif(left(r->>'name', 80), ''), r->>'status', left(r->>'raw', 60), now(), now(), auth.uid(), v_full,
-        case when coalesce(r->>'photo', '') ~ '^https://[a-z0-9-]+\.cloudfront\.net/' then left(r->>'photo', 1500) end)
+        case when coalesce(r->>'photo', '') ~ '^https://[a-z0-9-]+\.cloudfront\.net/' then left(r->>'photo', 1500) end,
+        case when jsonb_typeof(r->'perf') = 'object' then (select jsonb_object_agg(e.key, e.value) from jsonb_each(r->'perf') e
+          where e.key in ('e', 'cash', 'h', 't', 'a', 'c', 'first', 'last', 'at') and jsonb_typeof(e.value) = 'number') end)
       on conflict (plate_key) do update set plate = excluded.plate, vehicle_key = excluded.vehicle_key, agency_id = excluded.agency_id,
         driver_name = coalesce(excluded.driver_name, uber_live.driver_name), status = excluded.status, raw = excluded.raw, observed_at = excluded.observed_at, reader = excluded.reader,
-        complete = excluded.complete, photo_url = coalesce(excluded.photo_url, uber_live.photo_url),
+        complete = excluded.complete, photo_url = coalesce(excluded.photo_url, uber_live.photo_url), perf = coalesce(excluded.perf, uber_live.perf),
         status_since = case when uber_live.status = excluded.status and uber_live.observed_at > now() - interval '5 minutes' then uber_live.status_since else now() end;
     n := n + 1;
   end loop;
@@ -402,6 +404,7 @@ CREATE TABLE public.uber_live (
     reader uuid,
     complete boolean DEFAULT false NOT NULL,
     photo_url text,
+    perf jsonb,
     CONSTRAINT uber_live_status_check CHECK ((status = ANY (ARRAY['available'::text, 'to_pickup'::text, 'on_trip'::text, 'offline'::text, 'unknown'::text])))
 );
 

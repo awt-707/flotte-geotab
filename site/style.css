@@ -818,3 +818,11 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .vmk-l .pfchip { font-size: 10px; padding: 1px 6px; border-radius: 999px; }
 @media (max-width: 1100px) { .livebig { grid-template-columns: minmax(0, 1fr); } }
 .pfchip.pf-offline.pf-offmove { color: #fff; background: #b42318; border-color: #b42318; }
+
+/* fiche véhicule : chiffres Geotab (km, carburant) et Uber du jour (revenus, en ligne, acceptation, courses) */
+.vc-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-top: 2px; }
+.vk { display: flex; flex-direction: column; min-width: 0; padding: 4px 6px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); }
+.vk b { font: 700 13.5px/1.2 var(--fc); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.vk small { font-size: 10.5px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vk.uber { background: rgba(31, 95, 191, .06); border-color: rgba(31, 95, 191, .25); }
+.vk.uber.bad b { color: var(--crit); }

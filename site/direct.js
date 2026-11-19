@@ -199,6 +199,26 @@ function kpisHtml(rows) {
  * À gauche : plaque et modèle, état Uber (termes d'Uber Fleet), état Geotab et depuis quand, chauffeur et shift, pause, dernière
  * position. À droite, colonne fixe : photo du chauffeur lue sur Uber Fleet, vitesse, cadran de consommation du contrat.
  */
+/**
+ * Chiffres de la fiche (19/11/2026, demande d'Ahmed) : Geotab = km parcourus et carburant consommé depuis le début du contrat (sinon du
+ * shift) ; Uber = revenus totaux, heures en ligne, taux d'acceptation, courses de la journée d'Uber (04:00 → 04:00). Rien sans mesure.
+ */
+function vcKpis(r) {
+  const d = liveDrv(r), p = typeof pfVehPerf === 'function' ? pfVehPerf(r) : null, cells = [];
+  const per = r.contract_num && r.ctr_start ? 'depuis le début du contrat' : 'depuis le début du shift';
+  const cell = (v, l, tip, cls) => `<span class="vk${cls ? ' ' + cls : ''}" title="${esc(tip)}"><b>${v}</b><small>${l}</small></span>`;
+  if (d && d.km != null) cells.push(cell(f0(d.km) + ' km', 'parcourus', 'Kilomètres ' + per + ' (compteur Geotab)'));
+  if (d && d.fuel_l != null) cells.push(cell(f1(d.fuel_l) + ' L', 'carburant', 'Carburant consommé ' + per + ' (compteur Geotab)'));
+  if (p) {
+    const hh = p.h != null ? Math.floor(p.h) + ' h ' + String(Math.round((p.h % 1) * 60)).padStart(2, '0') : null;
+    const tip = 'Uber, journée du jour (04:00 → 04:00), lu à ' + localHM(new Date(p.at));
+    if (p.e != null) cells.push(cell(f0(p.e) + ' MAD', 'revenus Uber', 'Revenus totaux · ' + tip + (p.cash != null ? ' · dont espèces ' + f0(p.cash) + ' MAD' : ''), 'uber'));
+    if (hh) cells.push(cell(hh, 'en ligne', 'Heures en ligne · ' + tip, 'uber'));
+    if (p.a != null) cells.push(cell(f0(p.a * 100) + ' %', 'acceptation', 'Taux d\'acceptation · ' + tip + (p.c != null ? ' · annulation ' + f0(p.c * 100) + ' %' : ''), 'uber' + (p.a < 0.8 ? ' bad' : '')));
+    if (p.t != null) cells.push(cell(f0(p.t), 'courses', 'Courses effectuées · ' + tip, 'uber'));
+  }
+  return cells.length ? `<span class="vc-kpis">${cells.join('')}</span>` : '';
+}
 function vcardsHtml(rows) {
   if (!rows.length) return '<div class="empty">Aucun véhicule actif</div>';
   const pz = k => typeof svPauseOf === 'function' ? svPauseOf(k) : null;
@@ -213,6 +233,7 @@ function vcardsHtml(rows) {
       ${ub ? '<span class="vc-lu">' + ub + '</span>' : ''}
       <span class="vc-l2"><span class="vc-st"><span class="sdot"></span>${esc(r.state || 'État inconnu')}${r.since_min != null ? ' · depuis ' + fH(r.since_min / 60) : ''}</span></span>
       <span class="vc-l3">${drv}</span>
+      ${vcKpis(r)}
       ${typeof svVehLine === 'function' ? svVehLine(r.vehicle_key) : ''}
       <span class="vc-l4">${r.live ? 'Position Geotab ' + esc(fmtHMS(r.last_pos_at).slice(6)) + ' · <span class="ago" data-t="' + esc(r.last_pos_at || '') + '">' + ago(r.last_pos_at) + '</span>'
         : r.last_pos_at ? 'Position du collecteur ' + esc(fmtDT(r.last_pos_at)) : 'Aucune position'}</span>

@@ -12,14 +12,14 @@ async function pfLoad() {
   try {
     // lecture de l'application Ludy (une ligne par plaque lue sur Uber Fleet) ; aucune autre source (19/11/2026, demande d'Ahmed)
     const since = new Date(Date.now() - 24 * 3600000).toISOString(), fresh = Date.now() - PF_FRESH_MS;
-    const l = await sb.from('uber_live').select('plate_key,plate,vehicle_key,agency_id,driver_name,status,raw,observed_at,status_since,complete,photo_url').gte('observed_at', since).limit(1000);
+    const l = await sb.from('uber_live').select('plate_key,plate,vehicle_key,agency_id,driver_name,status,raw,observed_at,status_since,complete,photo_url,perf').gte('observed_at', since).limit(1000);
     if (l.error) throw l.error;
     const own = l.data || [];
     PF.src = 'ludy';
     // liste complète lue dans les données de la carte d'Uber Fleet (application 1.9) : comptes, déconnexions, hors ligne ;
     // sinon (1.8, ou carte pas ouverte) : seulement les chauffeurs affichés, jamais comptés ni signalés déconnectés
     PF.full = own.some(r => r.complete && new Date(r.observed_at).getTime() >= fresh);
-    PF.latest = own.map(r => ({ driver_id: r.plate_key, source: 'uber', status: r.status, observed_at: r.observed_at, since: r.status_since, vehicle_label: r.plate, full: !!r.complete, photo: r.photo_url || '', evidence: { raw_state: r.raw } }));
+    PF.latest = own.map(r => ({ driver_id: r.plate_key, source: 'uber', status: r.status, observed_at: r.observed_at, since: r.status_since, vehicle_label: r.plate, full: !!r.complete, photo: r.photo_url || '', perf: r.perf || null, evidence: { raw_state: r.raw } }));
     PF.drivers = own.map(r => ({ id: r.plate_key, name: r.driver_name || '', agency_id: r.agency_id, vehicle_key: r.vehicle_key, ludy_driver_code: null }));
     PF.err = ''; PF.at = Date.now();
   } catch (e) { PF.err = String(e.message || e); }
@@ -83,7 +83,7 @@ function pfVeh(plateTxt, key, row) {
     const st = PF_ST[r.status] ? r.status : 'unknown';
     if (!best || (r.source === 'uber' && best.source !== 'uber') || (r.source === best.source && t > best.at)) {
       const d = PF.drivers.find(x => x.id === r.driver_id);
-      best = { source: r.source, status: st, label: PF_ST[st], short: PF_SHORT[st], at: t, photo: r.photo || '',
+      best = { source: r.source, status: st, label: PF_ST[st], short: PF_SHORT[st], at: t, photo: r.photo || '', perf: r.perf || null,
         name: (d && d.ludy_driver_code && S.drv && S.drv[d.ludy_driver_code]) || (d && d.name) || '' };
     }
   });
@@ -104,6 +104,14 @@ function pfPhotoHtml(photo, name, cls) {
 function pfVehPhoto(r) { const v = pfVeh(r.plate, r.vehicle_key, r); return v && v.photo ? pfPhotoHtml(v.photo, v.name || r.driver_name, 'vc-photo') : ''; }
 // photo expirée ou refusée : retirée (pas d'image cassée)
 document.addEventListener('error', e => { const t = e.target; if (t && t.tagName === 'IMG' && /(^| )(pfphoto|vc-photo)( |$)/.test(t.className)) t.remove(); }, true);
+/**
+ * Performances du jour d'Uber du chauffeur en ligne sur ce véhicule (revenus totaux, heures en ligne, taux d'acceptation, courses),
+ * lues dans Uber Fleet (journée d'Uber 04:00 → 04:00) ; null si rien de lu depuis 2 h (jamais estimé)
+ */
+function pfVehPerf(r) {
+  const v = pfVeh(r.plate, r.vehicle_key, r); if (!v || !v.perf) return null;
+  const p = v.perf; return p.at && Date.now() - p.at < 2 * 3600000 ? p : null;
+}
 /** Pastille de la carte et des cartes véhicules : « Uber · Course en cours » */
 function pfVehChip(r, compact) {
   const v = pfVeh(r.plate, r.vehicle_key, r); if (!v) return '';
