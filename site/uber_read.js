@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-19e';
+  var V = '2026-11-19g';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -37,7 +37,7 @@
   /** Plaque dans un objet et ses sous-objets proches (véhicule rattaché au chauffeur) */
   function findPlate(o, d) {
     if (!o || typeof o !== 'object' || d > 3) return '';
-    for (var k in o) { var v = o[k]; if (K_PLATE.test(k) && typeof v === 'string') { var p = plateOf(v); if (p) return p; } }
+    for (var k in o) { var v = o[k]; if (K_PLATE.test(k) && typeof v === 'string') { var p = plateOf(v) || (/^\s*\d{5,6}\s*$/.test(v) ? v.trim() : ''); if (p) return p; } }
     for (var k2 in o) { var v2 = o[k2]; if (v2 && typeof v2 === 'object' && !Array.isArray(v2)) { var p2 = findPlate(v2, d + 1); if (p2) return p2; } }
     return '';
   }
@@ -179,11 +179,54 @@
     }
     return null;
   }
+  // ---- performances du jour d'Uber (19/11/2026, demande d'Ahmed : revenus, taux d'acceptation, temps en ligne sur la fiche) ----
+  // GraphQL GetPerformanceReport (page Performances d'Uber Fleet) : par chauffeur, journée d'Uber (04:00 → 04:00) : revenus totaux,
+  // espèces collectées, heures en ligne, courses, taux d'acceptation et d'annulation, première / dernière connexion.
+  var PERF = (typeof window !== 'undefined' && window.__ludyPerf) || {};
+  if (typeof window !== 'undefined') window.__ludyPerf = PERF;
+  function perfIndex(j) {
+    var l = j && j.data && j.data.getPerformanceReport, n = 0;
+    if (!Array.isArray(l)) return 0;
+    l.forEach(function (x) {
+      if (!x || x.__typename !== 'DriverPerformanceDetail' || !idOf(x.uuid)) return;
+      PERF[idOf(x.uuid)] = { e: num2(x.totalEarnings), cash: num2(x.cashEarnings), h: num2(x.hoursOnline), t: num2(x.totalTrips), a: num2(x.driverAcceptanceRate),
+        c: num2(x.driverCancellationRate), first: num2(x.firstOnlineTime), last: num2(x.lastOnlineTime), at: Date.now() };
+      n++;
+    });
+    return n;
+  }
+  function num2(v) { var n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? Math.round(n * 1000) / 1000 : null; }
+  function perfOf(did) { var p = PERF[did]; return p && Date.now() - p.at < 20 * 60000 ? p : null; }
+  /** Jour d'Uber (04:00 → 04:00, heure du Maroc UTC+1) d'un instant */
+  function uberDay(t) { return Math.floor((t + 3600000 - 4 * 3600000) / 86400000); }
+  /** Demande des performances rejouée pour les chauffeurs en ligne, dates décalées au jour d'Uber en cours (toutes les 2 min) */
+  function perfAsk(ids) {
+    if (!ids.length || (window.__ludyPerfAt && Date.now() - window.__ludyPerfAt < 120000)) return;
+    var q = null; try { q = JSON.parse(localStorage.getItem('ludyUberPerfReq') || 'null'); } catch (e) { }
+    if (!q || !q.body) return;
+    var j; try { j = JSON.parse(q.body); } catch (e) { return; }
+    var shift = (uberDay(Date.now()) - uberDay(q.at)) * 86400000;
+    var walk = function (o) {
+      for (var k in o) {
+        var v = o[k];
+        if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v) && shift) { var d = new Date(v); if (isFinite(d)) o[k] = new Date(d.getTime() + shift).toISOString(); }
+        else if (typeof v === 'string' && /^\d{13}$/.test(v) && shift) o[k] = String(+v + shift);
+        else if (typeof v === 'number' && v > 1e12 && v < 1e13 && shift) o[k] = v + shift;
+        else if (v && typeof v === 'object') walk(v);
+      }
+    };
+    walk(j.variables || {});
+    var req = j.variables && j.variables.performanceReportRequest;
+    (req && req.dimensionFilterClause || []).forEach(function (c) { if (c && c.dimensionName === 'vs:driver') c.expressions = ids.slice(0, 80); });
+    window.__ludyPerfAt = Date.now();
+    var h = { 'content-type': 'application/json', 'x-csrf-token': 'x' }; for (var k2 in (q.headers || {})) h[k2] = q.headers[k2];
+    try { window.fetch(q.url || '/graphql', { method: 'POST', headers: h, body: JSON.stringify(j), credentials: 'include', __ludy: 1 }).catch(function () { }); } catch (e) { }
+  }
   function read(doc, net, map) {
     net = net || []; map = map || { p: {}, n: {} };
     var live = liveOf(net), cards = cardsOf(doc), lines = [], b = { n: 9000 };
     if (live) {
-      var rows = [], miss = [], missIds = [], states = {};
+      var rows = [], miss = [], missIds = [], noPhoto = [], states = {};
       live.list.forEach(function (x) {
         var did = idOf(x.driverId), vid = idOf(x.vehicleId), raw = String(x.supplyActivityState || x.driverStatus || '');
         states[raw] = (states[raw] || 0) + 1;
@@ -191,7 +234,8 @@
         var plate = map.p[vid] || map.p[did] || (cd.veh && map.p[cd.veh]) || cd.plate || '';
         var name = cd.name || map.n[did] || '';
         if (!plate) { miss.push((name || did.slice(0, 8)) + ' · véhicule ' + (vid || '?').slice(0, 8)); missIds.push([did, vid]); return; }
-        rows.push({ plate: plate, status: st, raw: raw.replace(/^SUPPLY_ACTIVITY_STATE_|^MONITORING_SUPPLY_STATUS_/, '').slice(0, 60), name: name, phone: cd.phone || '', photo: cd.photo || (map.ph && map.ph[did]) || '', driver: did,
+        if (!(cd.photo || (map.ph && map.ph[did]))) noPhoto.push([did, vid]);
+        rows.push({ plate: plate, status: st, raw: raw.replace(/^SUPPLY_ACTIVITY_STATE_|^MONITORING_SUPPLY_STATUS_/, '').slice(0, 60), name: name, phone: cd.phone || '', photo: cd.photo || (map.ph && map.ph[did]) || '', driver: did, perf: perfOf(did),
           lat: typeof x.latitude === 'number' ? x.latitude : null, lng: typeof x.longitude === 'number' ? x.longitude : null });
       });
       var full = miss.length === 0;
@@ -205,7 +249,7 @@
           .filter(function (x) { var k = x.url + x.op; if (seenU[k]) return false; seenU[k] = 1; return true; }).slice(0, 5)
           .forEach(function (x) { var j; try { j = JSON.parse(x.text); } catch (e) { return; } lines.push('== ' + x.url + (x.op ? ' [' + x.op + ']' : '') + ' ' + x.text.length + ' o\n' + shape(j, 0, b)); });
       }
-      return { rows: rows, full: full, src: 'GetDriverLiveLocation', diag: lines.join('\n').slice(0, 19000), stats: live.stats, missIds: missIds };
+      return { rows: rows, full: full, src: 'GetDriverLiveLocation', diag: lines.join('\n').slice(0, 19000), stats: live.stats, missIds: missIds, noPhoto: noPhoto };
     }
     // pas de données de la carte : repli sur les autres réponses, puis sur la page affichée (lecture partielle)
     var best = [], src = '', recent = net.filter(function (x) { return Date.now() - x.at < 90000; });
@@ -220,7 +264,7 @@
       .forEach(function (x) { var j; try { j = JSON.parse(x.text); } catch (e) { return; } lines2.push('== ' + x.url + (x.op ? ' [' + x.op + ']' : '') + '\n' + shape(j, 0, b)); });
     return { rows: best, full: false, src: src, diag: ('LUDY ' + V + ' · réponses captées : ' + net.length + '\n' + lines2.join('\n') + '\n== LIGNE DE LA PAGE\n' + domSample(doc)).slice(0, 19000) };
   }
-  if (typeof module !== 'undefined') { module.exports = { rowsOf: rowsOf, read: read, stOf: stOf, plateOf: plateOf, shape: shape, uberSt: uberSt, indexJson: indexJson, V: V }; return; }
+  if (typeof module !== 'undefined') { module.exports = { rowsOf: rowsOf, read: read, stOf: stOf, plateOf: plateOf, shape: shape, uberSt: uberSt, indexJson: indexJson, perfIndex: perfIndex, uberDay: uberDay, V: V }; return; }
   if (typeof window === 'undefined' || !/(^|\.)uber\.com$/i.test(location.hostname)) return;
   if (window.__ludyURv === V) return;
   window.__ludyURv = V;
@@ -246,13 +290,15 @@
   } catch (e) { }
   clearInterval(window.__ludyURt);
   // correspondances identifiant Uber → plaque / nom, gardées pour cette page (localStorage d'Uber Fleet, sur cet ordinateur seulement)
-  var MAP = { p: {}, n: {}, ph: {} };
-  try { var sv = JSON.parse(localStorage.getItem('ludyUberMap') || '{}'); if (sv && sv.p) MAP = { p: sv.p || {}, n: sv.n || {}, ph: sv.ph || {} }; } catch (e) { }
+  var MAP = window.__ludyMap || { p: {}, n: {}, ph: {} };
+  if (!window.__ludyMap) try { var sv = JSON.parse(localStorage.getItem('ludyUberMap') || '{}'); if (sv && sv.p) MAP = { p: sv.p || {}, n: sv.n || {}, ph: sv.ph || {} }; } catch (e) { }
+  MAP.ph = MAP.ph || {}; window.__ludyMap = MAP;
   var dirty = false;
-  function idx(e) { try { if (!/tc2\.uber\.com/.test(e.url) && indexJson(JSON.parse(e.text), MAP)) dirty = true; } catch (er) { } }
+  function idx(e) { try { if (/tc2\.uber\.com/.test(e.url)) return; var j = JSON.parse(e.text); perfIndex(j); if (indexJson(j, MAP)) dirty = true; } catch (er) { } }
   var NET = window.__ludyNet = window.__ludyNet || [];
   NET.forEach(idx);
-  if (!NET.__ludyIdx) { var push0 = NET.push; NET.push = function () { for (var i = 0; i < arguments.length; i++) idx(arguments[i]); return push0.apply(this, arguments); }; NET.__ludyIdx = 1; }
+  window.__ludyIdxFn = idx;   // nouvelle version de la lecture : c'est elle qui range les réponses suivantes
+  if (!NET.__ludyIdx) { var push0 = NET.push; NET.push = function () { for (var i = 0; i < arguments.length; i++) { try { window.__ludyIdxFn && window.__ludyIdxFn(arguments[i]); } catch (e) { } } return push0.apply(this, arguments); }; NET.__ludyIdx = 1; }
   // ---- exploration d'Uber Fleet (19/11/2026, demande d'Ahmed : comprendre Uber Fleet de A à Z et ce qu'on peut en extraire) ----
   // Catalogue de ce que la page charge : chaque adresse (identifiants remplacés par :id), opération GraphQL, requête (texte de la requête,
   // variables), squelette de la réponse, et chaque page visitée (texte affiché, titres des colonnes). Envoyé à Ludy (table uber_catalog,
@@ -274,7 +320,7 @@
       }
       if (reqBody && !c.req) {
         var rb = String(reqBody), jq = null; try { jq = JSON.parse(rb); } catch (e) { }
-        c.req = jq ? (jq.query ? 'QUERY ' + String(jq.query).replace(/\s+/g, ' ').slice(0, 2500) + ' VARS ' + JSON.stringify(jq.variables || {}).slice(0, 600) : shape(jq, 0, { n: 1200 })) : rb.slice(0, 800);
+        c.req = jq ? (jq.query ? 'QUERY ' + String(jq.query).replace(/\s+/g, ' ').slice(0, 2500) + ' VARS ' + JSON.stringify(jq.variables || {}).slice(0, 2500) : shape(jq, 0, { n: 1200 })) : rb.slice(0, 800);
         c.sends = 3;
       }
     } catch (e) { }
@@ -293,7 +339,7 @@
     if (!org || !list || !list.length) return;
     for (var i = 0; i < list.length; i++) {
       var did = list[i][0], vid = list[i][1];
-      if (!did || (ASKED[did] && Date.now() - ASKED[did] < 600000)) continue;
+      if (!did || (ASKED[did] && Date.now() - ASKED[did] < 1800000)) continue;
       ASKED[did] = Date.now();
       var g = window.__ludyGql || {}, h = { 'content-type': 'application/json', 'x-csrf-token': 'x' };
       for (var k in (g.headers || {})) h[k] = g.headers[k];
@@ -311,6 +357,8 @@
         try {
           var u = a && a.url ? a.url : String(a), m = (o && o.method) || (a && a.method) || 'GET', b = o && typeof o.body === 'string' ? o.body : '';
           var gop = catOp(b); if (gop === 'GetLivemapSupply' && !(o && o.__ludy)) window.__ludyGql = { url: u, body: b, headers: hdrs((o && o.headers) || (a && a.headers)) };
+          if (gop === 'GetPerformanceReport' && !(o && o.__ludy) && /vs:driver/.test(b)) { try { localStorage.setItem('ludyUberPerfReq', JSON.stringify({ url: String(u).split('?')[0], body: b, headers: hdrs((o && o.headers) || (a && a.headers)), at: Date.now() })); } catch (e) { } }
+          if (/GetDriverLiveLocation/i.test(u) && b && !(o && o.__ludy)) { try { localStorage.setItem('ludyUberLiveReq', JSON.stringify({ url: String(u).split('?')[0], body: b, headers: hdrs((o && o.headers) || (a && a.headers)), at: Date.now() })); } catch (e) { } }
           p.then(function (r) { try { if (/json|text\/plain/i.test(r.headers.get('content-type') || '')) r.clone().text().then(function (t) { catAdd(m, u, b, t); }, function () { }); } catch (e) { } }, function () { });
         } catch (e) { }
         return p;
@@ -349,17 +397,35 @@
     });
     return out.length ? 'CAT ' + JSON.stringify(out) + '\n' : '';
   }
+  /**
+   * Carte en temps réel lue par Ludy lui-même (19/11/2026, demande d'Ahmed : « Ludy se connecte en arrière-plan à la carte d'Uber ») :
+   * quand la page d'Uber Fleet ne relit plus la carte depuis 12 s (autre page d'Uber Fleet ouverte, volet caché), la même demande que la
+   * carte (GetDriverLiveLocation, relevée telle quelle quand la carte a été ouverte une fois sur cet ordinateur) est envoyée par Ludy.
+   */
+  function selfLive() {
+    var last = 0; for (var i = NET.length - 1; i >= 0; i--) if (/GetDriverLiveLocation/i.test(NET[i].url)) { last = NET[i].at; break; }
+    if (Date.now() - last < 12000 || (window.__ludySelfAt && Date.now() - window.__ludySelfAt < 9000)) return;
+    var q = null; try { q = JSON.parse(localStorage.getItem('ludyUberLiveReq') || 'null'); } catch (e) { }
+    if (!q || !q.body || !q.url) return;
+    var org = (location.pathname.match(/\/orgs\/([0-9a-f-]{36})/i) || [])[1] || '';
+    if (org && q.body.indexOf(org) < 0) return;   // autre organisation Uber : rien
+    window.__ludySelfAt = Date.now();
+    var h = { 'content-type': 'application/json', 'x-csrf-token': 'x' }; for (var k in (q.headers || {})) h[k] = q.headers[k];
+    try { window.fetch(q.url, { method: 'POST', headers: h, body: q.body, credentials: 'include', __ludy: 1 }).catch(function () { }); } catch (e) { }
+  }
   function tick() {
     try {
       var inv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
       if (!inv || !document.body) return;
+      selfLive();
       catPage();
       if (dirty) { dirty = false; try { localStorage.setItem('ludyUberMap', JSON.stringify(MAP)); } catch (e) { } }
       var r = read(document, NET, MAP);
-      if (r.missIds && r.missIds.length) askMissing(r.missIds);
+      askMissing((r.missIds || []).concat(r.noPhoto || []));
+      perfAsk((r.rows || []).map(function (x) { return x.driver; }).filter(Boolean));
       inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: catBatch() + (r.diag || (r.src ? 'source : ' + r.src : '')).slice(0, 7000), full: r.full }).catch(function () { });
     } catch (e) { }
   }
-  window.__ludyURt = setInterval(tick, 10000);
+  window.__ludyURt = setInterval(tick, 5000);
   setTimeout(tick, 1500);
 })();
