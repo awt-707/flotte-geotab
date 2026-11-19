@@ -3,7 +3,7 @@
 -- Journal unique des mouvements (cash_moves, garde cash_guard, historique cash_log), exports Uber et Bolt,
 -- fiches d'encaissement et justificatifs déposés (cash_sheets, cash_files),
 -- contrôle des courses Uber (export « Activité des courses » croisé avec le GPS Geotab : uber_trips, uber_days).
--- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_days, uber_drivers, uber_live, uber_live_log, uber_live_readers, uber_payments, uber_trips
+-- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_catalog, uber_days, uber_drivers, uber_live, uber_live_log, uber_live_readers, uber_payments, uber_trips
 -- Fichier produit par « node database/outils/schema.js build » depuis supabase/migrations/ : ne pas modifier à la main
 -- (ajouter une migration, puis relancer build).
 -- =============================================================================
@@ -121,6 +121,29 @@ begin
   return jsonb_build_object('added', n_add, 'updated', n_upd, 'same', n_same, 'skipped', n_skip, 'no_vehicle', n_noveh);
 end $$;
 
+CREATE FUNCTION public.uber_catalog_push(p_items jsonb) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare v_role text := coalesce((select role from profiles where user_id = auth.uid()), ''); it jsonb; n integer := 0;
+begin
+  if auth.uid() is null or v_role not in ('admin', 'manager', 'viewer') then raise exception 'Envoi refusé'; end if;
+  if jsonb_typeof(coalesce(p_items, '[]'::jsonb)) <> 'array' or jsonb_array_length(coalesce(p_items, '[]'::jsonb)) > 200 then raise exception 'Envoi invalide'; end if;
+  for it in select * from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) loop
+    if coalesce(it->>'k', '') = '' then continue; end if;
+    if (select count(*) from uber_catalog) >= 3000 and not exists (select 1 from uber_catalog where k = left(it->>'k', 300)) then continue; end if;
+    insert into uber_catalog (k, url, op, method, n, first_at, last_at, size, req, res, by_user, updated_at)
+      values (left(it->>'k', 300), left(it->>'url', 300), left(it->>'op', 100), left(it->>'m', 10),
+        least(coalesce((it->>'n')::numeric, 0), 1e9)::integer,
+        to_timestamp(least(greatest(coalesce((it->>'first')::numeric, 0), 0), 4e12) / 1000), to_timestamp(least(greatest(coalesce((it->>'at')::numeric, 0), 0), 4e12) / 1000),
+        least(coalesce((it->>'size')::numeric, 0), 1e9)::integer, left(it->>'req', 4000), left(it->>'res', 6000), auth.uid(), now())
+      on conflict (k) do update set n = greatest(uber_catalog.n, excluded.n), last_at = greatest(uber_catalog.last_at, excluded.last_at), size = excluded.size,
+        req = coalesce(nullif(excluded.req, ''), uber_catalog.req), res = coalesce(nullif(excluded.res, ''), uber_catalog.res), by_user = excluded.by_user, updated_at = now();
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
 CREATE FUNCTION public.uber_live_push(p_rows jsonb, p_device text DEFAULT ''::text, p_url text DEFAULT ''::text, p_diag text DEFAULT ''::text, p_full boolean DEFAULT false) RETURNS integer
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
@@ -146,11 +169,12 @@ begin
       insert into uber_live_log (plate_key, plate, vehicle_key, agency_id, driver_name, status, started_at)
         values (k, left(r->>'plate', 30), v_key, v_ag, coalesce(nullif(left(r->>'name', 80), ''), o.driver_name), r->>'status', now());
     end if;
-    insert into uber_live (plate_key, plate, vehicle_key, agency_id, driver_name, status, raw, observed_at, status_since, reader, complete)
-      values (k, left(r->>'plate', 30), v_key, v_ag, nullif(left(r->>'name', 80), ''), r->>'status', left(r->>'raw', 60), now(), now(), auth.uid(), v_full)
+    insert into uber_live (plate_key, plate, vehicle_key, agency_id, driver_name, status, raw, observed_at, status_since, reader, complete, photo_url)
+      values (k, left(r->>'plate', 30), v_key, v_ag, nullif(left(r->>'name', 80), ''), r->>'status', left(r->>'raw', 60), now(), now(), auth.uid(), v_full,
+        case when coalesce(r->>'photo', '') ~ '^https://[a-z0-9-]+\.cloudfront\.net/' then left(r->>'photo', 1500) end)
       on conflict (plate_key) do update set plate = excluded.plate, vehicle_key = excluded.vehicle_key, agency_id = excluded.agency_id,
         driver_name = coalesce(excluded.driver_name, uber_live.driver_name), status = excluded.status, raw = excluded.raw, observed_at = excluded.observed_at, reader = excluded.reader,
-        complete = excluded.complete,
+        complete = excluded.complete, photo_url = coalesce(excluded.photo_url, uber_live.photo_url),
         status_since = case when uber_live.status = excluded.status and uber_live.observed_at > now() - interval '5 minutes' then uber_live.status_since else now() end;
     n := n + 1;
   end loop;
@@ -326,6 +350,21 @@ CREATE SEQUENCE public.cash_sheets_id_seq
 
 ALTER SEQUENCE public.cash_sheets_id_seq OWNED BY public.cash_sheets.id;
 
+CREATE TABLE public.uber_catalog (
+    k text NOT NULL,
+    url text,
+    op text,
+    method text,
+    n integer DEFAULT 0 NOT NULL,
+    first_at timestamp with time zone,
+    last_at timestamp with time zone,
+    size integer,
+    req text,
+    res text,
+    by_user uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE public.uber_days (
     vehicle_key text NOT NULL,
     day date NOT NULL,
@@ -362,6 +401,7 @@ CREATE TABLE public.uber_live (
     status_since timestamp with time zone DEFAULT now() NOT NULL,
     reader uuid,
     complete boolean DEFAULT false NOT NULL,
+    photo_url text,
     CONSTRAINT uber_live_status_check CHECK ((status = ANY (ARRAY['available'::text, 'to_pickup'::text, 'on_trip'::text, 'offline'::text, 'unknown'::text])))
 );
 
@@ -473,6 +513,9 @@ ALTER TABLE ONLY public.cash_moves
 
 ALTER TABLE ONLY public.cash_sheets
     ADD CONSTRAINT cash_sheets_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.uber_catalog
+    ADD CONSTRAINT uber_catalog_pkey PRIMARY KEY (k);
 
 ALTER TABLE ONLY public.uber_days
     ADD CONSTRAINT uber_days_pkey PRIMARY KEY (vehicle_key, day);
