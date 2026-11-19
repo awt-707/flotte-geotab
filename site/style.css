@@ -789,19 +789,32 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .livebig .vlist { max-height: calc(100vh - 150px); min-height: 480px; }
 @media (max-width: 1100px) { .livebig #map { height: 60vh; min-height: 360px; } .livebig .vlist { max-height: none; min-height: 0; } }
 
-/* photo du chauffeur lue sur Uber Fleet (En direct, 19/11/2026) */
-.vcard.hasph { position: relative; padding-right: 64px; }
-.vcard .vc-photo { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid var(--line); background: var(--panel); }
-.pfphoto { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; vertical-align: middle; margin-right: 6px; }
-
-/* En direct : colonne des véhicules sans débordement (19/11/2026) ; état Uber sur sa propre ligne */
+/* ---------- En direct : fiche véhicule (19/11/2026) ---------- */
 .livegrid > * { min-width: 0; }
-.vlist { overflow-x: hidden; }
-.vcard { width: 100%; min-width: 0; overflow: hidden; }
-.vc-l1 { min-width: 0; flex-wrap: nowrap; }
-.vc-l1 .vc-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.vc-l1 .vc-spd { margin-left: auto; white-space: nowrap; }
+.livebig { grid-template-columns: minmax(0, 1fr) 380px; }
+.vlist { overflow-x: hidden; gap: 10px; padding: 2px 4px 2px 2px; }
+.vcard { flex: none; flex-direction: row; align-items: stretch; gap: 12px; width: 100%; min-width: 0; padding: 12px 12px 11px 14px;
+  border-left-width: 4px; box-shadow: 0 1px 2px rgba(15, 38, 51, .06); }
+.vc-main { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+.vc-l1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.vc-l1 .plate { flex: none; }
+.vc-l1 .vc-model { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vc-lu { display: flex; min-width: 0; }
-.vc-lu .pfchip { margin-left: 0; white-space: normal; line-height: 1.35; }
-.vc-l3, .vc-l4 { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.vmk-l .pfchip { font-size: 10px; padding: 1px 5px; }
+.vc-lu .pfchip { margin-left: 0; white-space: normal; line-height: 1.3; font-size: 11.5px; padding: 3px 8px; border-radius: 999px; }
+.vc-l2 { display: block; font-size: 13.5px; }
+.vc-st { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vc-l3 { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; min-height: 20px; min-width: 0; }
+.vc-l3 .vc-name { font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.vc-l4 { font-size: 11.5px; color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vc-side { flex: none; width: 76px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 6px; text-align: center; }
+.vc-side .vc-photo { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid var(--c, var(--line)); background: var(--bg); }
+.vc-side .vc-spd { margin: 0; display: flex; flex-direction: column; align-items: center; font: 700 22px/1 var(--fc); }
+.vc-side .vc-spd small { font: 500 11px/1.2 var(--f); color: var(--mute); }
+.vc-side .cgauge { margin: 0; }
+.vc-side .cgauge svg { width: 60px; height: 34px; }
+.vc-side .cg-v { font-size: 13px; white-space: nowrap; }
+.pfphoto { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; vertical-align: middle; margin-right: 6px; }
+/* carte : étiquette courte (plaque, vitesse, pastille Uber) */
+.vmk-l .pfchip { font-size: 10px; padding: 1px 6px; border-radius: 999px; }
+@media (max-width: 1100px) { .livebig { grid-template-columns: minmax(0, 1fr); } }
+.pfchip.pf-offline.pf-offmove { color: #fff; background: #b42318; border-color: #b42318; }

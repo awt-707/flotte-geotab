@@ -137,7 +137,7 @@ test('en direct : positions Geotab lues toutes les 5 s, les véhicules bougent s
     const live = await page.evaluate(() => LIVE.pos);
     for (const [k, v] of Object.entries(await pos())) assert.strictEqual(v, live[k].lat + ',' + live[k].lon, k + ' : marqueur pas à la position Geotab');
     const txt = await page.innerText('#vlist');
-    Object.values(live).filter(v => v.state === 'En route').forEach(v => assert.match(txt, new RegExp(v.speed + ' km/h')));
+    Object.values(live).filter(v => v.state === 'En route').forEach(v => assert.match(txt, new RegExp(v.speed + '\\s*km/h')));
     assert.match(txt, /Position Geotab \d{2}:\d{2}:\d{2}/, 'heure de position à la seconde');
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); }

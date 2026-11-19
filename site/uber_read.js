@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-19d';
+  var V = '2026-11-19e';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -190,7 +190,7 @@
         var st = uberSt(x.supplyActivityState) || uberSt(x.driverStatus) || 'unknown', cd = cards[did] || {};
         var plate = map.p[vid] || map.p[did] || (cd.veh && map.p[cd.veh]) || cd.plate || '';
         var name = cd.name || map.n[did] || '';
-        if (!plate) { miss.push((name || did.slice(0, 8)) + ' · véhicule ' + (vid || '?').slice(0, 8)); missIds.push(did); return; }
+        if (!plate) { miss.push((name || did.slice(0, 8)) + ' · véhicule ' + (vid || '?').slice(0, 8)); missIds.push([did, vid]); return; }
         rows.push({ plate: plate, status: st, raw: raw.replace(/^SUPPLY_ACTIVITY_STATE_|^MONITORING_SUPPLY_STATUS_/, '').slice(0, 60), name: name, phone: cd.phone || '', photo: cd.photo || (map.ph && map.ph[did]) || '', driver: did,
           lat: typeof x.latitude === 'number' ? x.latitude : null, lng: typeof x.longitude === 'number' ? x.longitude : null });
       });
@@ -286,20 +286,19 @@
    * chauffeur et par 10 min. La réponse passe par la même lecture (plaque, nom, photo gardés).
    */
   var ASKED = {};
-  function askMissing(ids) {
-    var g = window.__ludyGql; if (!g || !ids || !ids.length) return;
+  // requête de la fiche d'un chauffeur sur la carte en temps réel (relevée le 19/11/2026 dans Uber Fleet, opération GetLivemapSupply)
+  var Q_SUPPLY = 'query GetLivemapSupply($orgUUID: String!, $driverUUID: String!, $vehicleUUID: String) { getLivemapSupply( orgUUID: $orgUUID driverUUID: $driverUUID vehicleUUID: $vehicleUUID ) { uuid driver { uuid firstName lastName phoneNumber countryCode pictureUrl __typename } vehicle { uuid year make model licensePlate __typename } __typename } }';
+  function askMissing(list) {
     var org = (location.pathname.match(/\/orgs\/([0-9a-f-]{36})/i) || [])[1] || '';
-    for (var i = 0; i < ids.length; i++) {
-      var id = ids[i]; if (ASKED[id] && Date.now() - ASKED[id] < 600000) continue;
-      var body = null;
-      try {
-        var j = JSON.parse(g.body), done = false;
-        var swap = function (o) { for (var k in o) { var v = o[k]; if (typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(v) && v.toLowerCase() !== org.toLowerCase()) { o[k] = id; done = true; } else if (v && typeof v === 'object') swap(v); } };
-        swap(j.variables || {}); if (done) body = JSON.stringify(j);
-      } catch (e) { }
-      ASKED[id] = Date.now();
-      if (!body) return;
-      try { window.fetch(g.url, { method: 'POST', headers: g.headers, body: body, credentials: 'include', __ludy: 1 }).catch(function () { }); } catch (e) { }
+    if (!org || !list || !list.length) return;
+    for (var i = 0; i < list.length; i++) {
+      var did = list[i][0], vid = list[i][1];
+      if (!did || (ASKED[did] && Date.now() - ASKED[did] < 600000)) continue;
+      ASKED[did] = Date.now();
+      var g = window.__ludyGql || {}, h = { 'content-type': 'application/json', 'x-csrf-token': 'x' };
+      for (var k in (g.headers || {})) h[k] = g.headers[k];
+      var body = JSON.stringify({ operationName: 'GetLivemapSupply', variables: { orgUUID: org, driverUUID: did, vehicleUUID: vid || null }, query: Q_SUPPLY });
+      try { window.fetch(g.url || '/graphql', { method: 'POST', headers: h, body: body, credentials: 'include', __ludy: 1 }).catch(function () { }); } catch (e) { }
       return;
     }
   }
