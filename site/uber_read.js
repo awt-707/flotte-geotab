@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-19g';
+  var V = '2026-11-20a';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -406,12 +406,21 @@
     var last = 0; for (var i = NET.length - 1; i >= 0; i--) if (/GetDriverLiveLocation/i.test(NET[i].url)) { last = NET[i].at; break; }
     if (Date.now() - last < 12000 || (window.__ludySelfAt && Date.now() - window.__ludySelfAt < 9000)) return;
     var q = null; try { q = JSON.parse(localStorage.getItem('ludyUberLiveReq') || 'null'); } catch (e) { }
-    if (!q || !q.body || !q.url) return;
     var org = (location.pathname.match(/\/orgs\/([0-9a-f-]{36})/i) || [])[1] || '';
-    if (org && q.body.indexOf(org) < 0) return;   // autre organisation Uber : rien
+    if (q && q.body && org && q.body.indexOf(org) < 0) q = null;   // demande d'une autre organisation Uber : pas reprise
+    // aucune demande gardée (carte jamais affichée depuis la version f, volet ouvert caché au démarrage) : la demande de la carte,
+    // relevée le 19/11/2026 dans le catalogue (chauffeurs en ligne de l'organisation, avec leurs états et positions)
+    if ((!q || !q.body) && org) q = { url: '/api/GetDriverLiveLocation', headers: {}, body: JSON.stringify({ orgId: { uuid: { value: org } }, driverIds: [],
+      filters: { allowedActivityStates: [], allowedStatuses: ['MONITORING_SUPPLY_STATUS_ONLINE'] },
+      responseSelector: { includeStats: true, locationDetailsOptions: { fieldMask: { paths: ['latitude', 'longitude', 'course', 'locationUpdatedTime', 'driverStatus', 'vehicleId', 'supplyActivityState', 'waypointsLocation', 'dropOffLocation'] } } },
+      searchFields: [], searchText: '' }) };
+    if (!q || !q.body) { window.__ludySelfRes = 'pas de relecture : organisation Uber inconnue (page ' + location.pathname.slice(0, 60) + ')'; return; }
     window.__ludySelfAt = Date.now();
     var h = { 'content-type': 'application/json', 'x-csrf-token': 'x' }; for (var k in (q.headers || {})) h[k] = q.headers[k];
-    try { window.fetch(q.url, { method: 'POST', headers: h, body: q.body, credentials: 'include', __ludy: 1 }).catch(function () { }); } catch (e) { }
+    try {
+      window.fetch(q.url, { method: 'POST', headers: h, body: q.body, credentials: 'include', __ludy: 1 })
+        .then(function (r) { window.__ludySelfRes = 'relecture ' + new Date().toISOString().slice(11, 19) + ' : HTTP ' + r.status + (r.ok ? '' : ' (connexion à Uber Fleet à refaire ?)'); }, function (e) { window.__ludySelfRes = 'relecture en échec : ' + String(e && e.message || e).slice(0, 80); });
+    } catch (e) { window.__ludySelfRes = 'relecture impossible : ' + String(e && e.message || e).slice(0, 80); }
   }
   function tick() {
     try {
@@ -423,7 +432,7 @@
       var r = read(document, NET, MAP);
       askMissing((r.missIds || []).concat(r.noPhoto || []));
       perfAsk((r.rows || []).map(function (x) { return x.driver; }).filter(Boolean));
-      inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: catBatch() + (r.diag || (r.src ? 'source : ' + r.src : '')).slice(0, 7000), full: r.full }).catch(function () { });
+      inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: catBatch() + ((window.__ludySelfRes ? 'RELECTURE ' + window.__ludySelfRes + '\n' : '') + (r.diag || (r.src ? 'source : ' + r.src : ''))).slice(0, 7000), full: r.full }).catch(function () { });
     } catch (e) { }
   }
   window.__ludyURt = setInterval(tick, 5000);
