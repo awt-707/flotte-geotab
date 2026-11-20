@@ -310,3 +310,35 @@ test('application Mac : Uber Fleet ouvert caché en arrière-plan quand aucune l
     assert.deepStrictEqual(errors.filter(e => !/LUDY_APP|__TAURI/.test(e)), []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
+
+test('revenus Uber du shift : enregistrés par chauffeur (clés connues seulement, plaque en chiffres reliée), lus selon les agences, tableau en bas d\'En direct', async () => {
+  env.resetDb();
+  env.psql(`insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin';
+    insert into profiles (user_id, email, role) values ('${MGR}', 'mgr@x', 'manager') on conflict (user_id) do update set role = 'manager';
+    insert into agencies (id, name) overriding system value values (1, 'Rabat'), (2, 'Marrakech');
+    insert into user_agencies (user_id, agency_id) values ('${MGR}', 1);
+    insert into vehicles (key, plate, model, active, agency_id) values ('968211WW', 'WW968211', 'SONATA', 'OUI', 1), ('86120T1', '86120-T-1', 'STARIA', 'OUI', 2);
+    insert into live_status (vehicle_key, plate, model, state, speed, lat, lon, updated_at) values ('968211WW', 'WW968211', 'SONATA', 'En route', 30, 31.62, -8.01, now());`);
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/direct');
+    await page.waitForSelector('#liveubshift');
+    const sh = await page.evaluate(() => pfShiftNow());
+    assert.match(sh.key, /^shift:\d{4}-\d{2}-\d{2}:(Jour|Nuit)$/);
+    const items = JSON.stringify([{ d: '97b48f1d-06da-4c89-8310-fe49bfd8b16a', n: 'ALPHA Test', p: '968211', e: 983, cash: 184, h: 7.22, t: 6, a: 0.75, c: 0.05, hot: 4.5, hto: 1.2, x: 'pas gardé' },
+      { d: 'a3dcb299-8a4d-438a-97f7-8d5df6c657b4', n: 'BETA Test', p: '86120-T-1', e: 400, h: 4, t: 3, a: 1 }, { d: 'pas-un-uuid', e: 5 }]);
+    assert.strictEqual(as(MGR, `select public.uber_perf_push('${sh.key}', '${sh.from}', '${items}'::jsonb)`), '2', 'identifiant invalide ignoré');
+    assert.strictEqual(env.psql("select string_agg(driver_name || '|' || coalesce(vehicle_key, '-') || '|' || plate || '|' || (data ? 'x')::text, ',' order by driver_name) from uber_perf"),
+      'ALPHA Test|968211WW|WW968211|false,BETA Test|86120T1|86120-T-1|false', 'plaque en chiffres reliée au seul véhicule aux mêmes chiffres');
+    assert.strictEqual(as(MGR, 'select count(*) from uber_perf'), '1', 'gestionnaire de Rabat : ses véhicules seulement');
+    assert.throws(() => as(MGR, `select public.uber_perf_push('jour', null, '[]'::jsonb)`), /Période invalide/);
+    await page.evaluate(async () => { await pfShiftLoad(); pfShiftPaint(); });
+    const t = (await page.innerText('#liveubshift')).replace(/\s+/g, ' ');
+    assert.match(t, /Uber · revenus du shift/);
+    assert.match(t, /ALPHA Test WW968211 983 MAD 184 MAD 6 7 h 13 4 h 30 1 h 12 136 MAD 75 % 5 %/);
+    assert.match(t, /BETA Test 86120-T-1 400 MAD/);
+    assert.match(t, /Total \(2 chauffeurs\) 1[\s  ]?383 MAD/);
+    assert.strictEqual(await page.locator('#tubshift td.bad').count(), 1, 'acceptation sous 80 % en rouge');
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.psql('truncate uber_perf'); env.resetDb(); }
+});

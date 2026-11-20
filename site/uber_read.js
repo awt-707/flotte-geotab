@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-20b';
+  var V = '2026-11-20c';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -146,7 +146,9 @@
       var it = stack.pop(), o = it[0], d = it[1]; n++;
       if (!o || typeof o !== 'object' || d > 16) continue;
       if (Array.isArray(o)) { for (var i = 0; i < o.length; i++) stack.push([o[i], d + 1]); continue; }
-      var pic = typeof o.pictureUrl === 'string' && /^https:\/\/[a-z0-9-]+\.cloudfront\.net\//i.test(o.pictureUrl) ? o.pictureUrl : '';
+      var nid = idOf(o.uuid) || (o.driverUuid && idOf(o.driverUuid.uuid || o.driverUuid));
+      if (nid && (typeof o.firstName === 'string' || typeof o.lastName === 'string')) { var nm0 = ((o.firstName || '') + ' ' + (o.lastName || '')).trim(); if (nm0 && map.n[nid] !== nm0) { map.n[nid] = nm0.slice(0, 80); hit++; } }
+      var pic = typeof o.pictureUrl === 'string' && /^https:\/\/[a-z0-9-]+\.cloudfront\.net\//i.test(o.pictureUrl) ? o.pictureUrl : (typeof o.picUrl === 'string' && /^https:\/\/[a-z0-9-]+\.cloudfront\.net\//i.test(o.picUrl) ? o.picUrl : '');
       if (pic) { var pid = idOf(o.uuid) || idOf(o.id); if (pid) { map.ph = map.ph || {}; if (map.ph[pid] !== pic) { map.ph[pid] = pic.slice(0, 1500); hit++; } } }
       var p = findPlate(o, 0);
       if (p) {
@@ -203,6 +205,60 @@
   var Q_PERF = 'query GetPerformanceReport($performanceReportRequest: PerformanceReportRequest__Input!) { getPerformanceReport(performanceReportRequest: $performanceReportRequest) { uuid totalEarningsLabel totalEarnings earningsPerHourLabel tripsPerOnlineHour hoursOnline totalTrips hoursOnJob hoursOnTrip hoursToTrip hoursAvailableForTrip ... on DriverPerformanceDetail { cashEarningsLabel cashEarnings driverAcceptanceRate driverCancellationRate firstOnlineTime lastOnlineTime firstTripTime lastTripTime __typename } ... on VehiclePerformanceDetail { utilization vehicleIncentiveTarget vehicleIncentiveCompleted vehicleIncentiveEnrollmentStatus vehicleIncentiveUnit vehicleAcceptanceRate __typename } __typename } }';
   var PERF_METRICS = ['vs:TotalEarningsLabel', 'vs:TotalEarnings', 'vs:EarningsPerHourLabel', 'vs:TripsPerOnlineHour', 'vs:HoursOnline', 'vs:HoursOnTrip', 'vs:HoursOnJob', 'vs:TotalTrips', 'vs:CashEarningsLabel',
     'vs:CashEarnings', 'vs:DriverAcceptanceRate', 'vs:DriverCancellationRate', 'vs:FirstOnlineTime', 'vs:LastOnlineTime', 'vs:FirstTripTime', 'vs:LastTripTime'];
+  /**
+   * Performances du shift en cours (20/11/2026, demande d'Ahmed : « combien ils ont gagné dans le shift », chauffeur par chauffeur) :
+   * même demande que la page Performances, période = début du shift (donné par le site Ludy : window.__ludyShift) → maintenant,
+   * pour chaque chauffeur vu en ligne depuis le début du shift ; réponse sous un autre nom (shift:) pour ne pas se mêler à la journée.
+   */
+  var SHIFTP = (typeof window !== 'undefined' && window.__ludyShiftPerf) || { key: '', at: 0, sends: 0, items: [] };
+  if (typeof window !== 'undefined') window.__ludyShiftPerf = SHIFTP;
+  // chauffeur → plaque et nom vus sur la carte (gardés pour les chauffeurs passés hors ligne pendant le shift)
+  var DRVP = {}; try { DRVP = JSON.parse(localStorage.getItem('ludyUberDrvPlate') || '{}') || {}; } catch (e) { DRVP = {}; }
+  function drvPlateAdd(rows) {
+    var ch = false; (rows || []).forEach(function (x) { if (x.driver && x.plate && (!DRVP[x.driver] || DRVP[x.driver].p !== x.plate || (x.name && DRVP[x.driver].n !== x.name))) { DRVP[x.driver] = { p: x.plate, n: x.name || (DRVP[x.driver] || {}).n || '' }; ch = true; } });
+    if (ch) try { localStorage.setItem('ludyUberDrvPlate', JSON.stringify(DRVP)); } catch (e) { }
+  }
+  function seenAdd(ids) {
+    var o = {}; try { o = JSON.parse(localStorage.getItem('ludyUberSeen') || '{}') || {}; } catch (e) { }
+    var now = Date.now(); ids.forEach(function (id) { if (id) o[id] = now; });
+    Object.keys(o).forEach(function (k) { if (now - o[k] > 20 * 3600000) delete o[k]; });
+    try { localStorage.setItem('ludyUberSeen', JSON.stringify(o)); } catch (e) { }
+    return o;
+  }
+  function shiftPerfAsk(seen, map) {
+    var sh = window.__ludyShift; if (!sh || !sh.key || !sh.from) return;
+    if (window.__ludyShiftAt && Date.now() - window.__ludyShiftAt < 120000 && SHIFTP.key === sh.key) return;
+    var org = (location.pathname.match(/\/orgs\/([0-9a-f-]{36})/i) || [])[1] || ''; if (!org) return;
+    var from = +new Date(sh.from), ids = Object.keys(seen).filter(function (k) { return seen[k] >= from; }).slice(0, 80);
+    if (!ids.length || !(from > 0)) return;
+    window.__ludyShiftAt = Date.now();
+    var body = JSON.stringify({ operationName: 'GetPerformanceReport', query: Q_PERF.replace('{ getPerformanceReport(', '{ shift: getPerformanceReport('), variables: { performanceReportRequest: {
+      orgUUID: org, dimensions: ['vs:driver'], dimensionFilterClause: [{ dimensionName: 'vs:driver', operator: 'OPERATOR_IN', expressions: ids }], metrics: PERF_METRICS,
+      timeRange: { startsAt: { value: from }, endsAt: { value: Math.floor(Date.now() / 60000) * 60000 } } } } });
+    try {
+      window.fetch('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': 'x' }, body: body, credentials: 'include', __ludy: 1 })
+        .then(function (r) { return r.json(); }).then(function (j) {
+          var l = j && j.data && j.data.shift; if (!Array.isArray(l)) { window.__ludyShiftRes = 'shift : réponse inattendue ' + JSON.stringify(j).slice(0, 160); return; }
+          SHIFTP.key = sh.key; SHIFTP.from = sh.from; SHIFTP.at = Date.now(); SHIFTP.sends = 3;
+          SHIFTP.items = l.filter(function (x) { return x && x.__typename === 'DriverPerformanceDetail' && idOf(x.uuid); }).map(function (x) {
+            var d = idOf(x.uuid);
+            var dp = DRVP[d] || {};
+            return { d: d, n: map.n[d] || dp.n || '', p: map.p[d] || dp.p || '', e: num2(x.totalEarnings), cash: num2(x.cashEarnings), h: num2(x.hoursOnline), t: num2(x.totalTrips),
+              a: num2(x.driverAcceptanceRate), c: num2(x.driverCancellationRate), hot: num2(x.hoursOnTrip), hto: num2(x.hoursToTrip), hav: num2(x.hoursAvailableForTrip),
+              first: num2(x.firstOnlineTime), last: num2(x.lastOnlineTime) };
+          });
+          window.__ludyShiftRes = 'shift : ' + SHIFTP.items.length + ' chauffeur(s) lu(s)';
+        }, function (e) { window.__ludyShiftRes = 'shift : échec ' + String(e && e.message || e).slice(0, 80); });
+    } catch (e) { }
+  }
+  /** Ligne « PERF » du diagnostic (l'application garde 20 000 caractères au plus : reportée si le catalogue prend déjà la place) */
+  function shiftPerfLine(used) {
+    if (!(SHIFTP.sends > 0) || !SHIFTP.items.length) return '';
+    var l = 'PERF ' + JSON.stringify({ period: SHIFTP.key, from: SHIFTP.from, items: SHIFTP.items }) + '\n';
+    if (used + l.length > 19000) return '';
+    SHIFTP.sends--;
+    return l;
+  }
   function perfAsk(ids) {
     if (!ids.length || (window.__ludyPerfAt && Date.now() - window.__ludyPerfAt < 120000)) return;
     var q = null; try { q = JSON.parse(localStorage.getItem('ludyUberPerfReq') || 'null'); } catch (e) { }
@@ -443,7 +499,9 @@
       var r = read(document, NET, MAP);
       askMissing((r.missIds || []).concat(r.noPhoto || []));
       perfAsk((r.rows || []).map(function (x) { return x.driver; }).filter(Boolean));
-      inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: catBatch() + ((window.__ludySelfRes ? 'RELECTURE ' + window.__ludySelfRes + '\n' : '') + (r.diag || (r.src ? 'source : ' + r.src : ''))).slice(0, 7000), full: r.full }).catch(function () { });
+      drvPlateAdd(r.rows);
+      if (r.src === 'GetDriverLiveLocation') shiftPerfAsk(seenAdd((r.rows || []).map(function (x) { return x.driver; }).concat((r.missIds || []).map(function (x) { return x[0]; }))), MAP);
+      inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: (function (c) { return c + shiftPerfLine(c.length + 7200); })(catBatch()) + ((window.__ludySelfRes ? 'RELECTURE ' + window.__ludySelfRes + '\n' : '') + (window.__ludyShiftRes ? 'SHIFT ' + window.__ludyShiftRes + '\n' : '') + (r.diag || (r.src ? 'source : ' + r.src : ''))).slice(0, 7000), full: r.full }).catch(function () { });
     } catch (e) { }
   }
   window.__ludyURt = setInterval(tick, 5000);

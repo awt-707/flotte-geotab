@@ -317,7 +317,8 @@ async function pageDirect(refresh) {
       <aside class="vlist" id="vlist" aria-label="Véhicules">${vcardsHtml(rows)}</aside>
     </div>
     <section id="livepause">${typeof svDirectHtml === 'function' ? svDirectHtml(rows) : ''}</section>
-    <section id="livedrv">${liveDriversHtml(rows)}</section>`;
+    <section id="livedrv">${liveDriversHtml(rows)}</section>
+    <section id="liveubshift">${typeof pfShiftHtml === 'function' ? pfShiftHtml() : ''}</section>`;
   LIVE.markers = {}; LIVE.fitted = false; drawMap(rows);
   window.__rerender = () => { if (rid === ROUTING) applyDirect(); };   // tri d'un tableau : redessiné tout de suite avec les dernières lectures
   liveDrvTick(ROUTING);

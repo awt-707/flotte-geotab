@@ -135,6 +135,9 @@ function pfPaint() {
 /** Lancé par la page En direct : lecture tout de suite puis toutes les 15 s tant que la page est affichée et visible */
 function pfStart(my) {
   pfLoad().then(() => { if (my === ROUTING) pfPaint(); });
+  pfShiftLoad().then(() => { if (my === ROUTING) pfShiftPaint(); });
+  clearInterval(PFS.timer);
+  PFS.timer = setInterval(() => { if (my !== ROUTING || !$('#liveubshift')) { clearInterval(PFS.timer); return; } if (!document.hidden) pfShiftLoad().then(() => { if (my === ROUTING) pfShiftPaint(); }); }, 60000);
   clearInterval(PF.timer);
   PF.timer = setInterval(() => {
     if (my !== ROUTING || !$('#liveplat')) { clearInterval(PF.timer); return; }
@@ -245,7 +248,7 @@ function pfwStart() {
 function pfwReset() { Object.values(PFW.toasts).forEach(t => t.remove()); PFW.toasts = {}; PFW.ctx = null; PFW.primed = false; PF.latest = []; PF.drivers = []; PF.at = 0; PFP.last = ''; PFP.lastAt = 0; }
 
 // ---------- Application Ludy 1.8 : relevé du volet Uber Fleet envoyé à la base (n'importe quel compte connecté) ----------
-const PFP = { timer: 0, last: '', lastAt: 0, n: 0, err: '', cat: '' };
+const PFP = { timer: 0, last: '', lastAt: 0, n: 0, err: '', cat: '', perf: '' };
 function pfPushCan() { return appIpc() && !!(S.profile && ['admin', 'manager', 'viewer'].includes(S.profile.role)); }
 async function pfPushTick() {
   if (!S.session || !pfPushCan()) return;
@@ -256,6 +259,11 @@ async function pfPushTick() {
   if (diag.startsWith('CAT ')) {
     const nl = diag.indexOf('\n'), line = nl < 0 ? diag : diag.slice(0, nl); diag = nl < 0 ? '' : diag.slice(nl + 1);
     if (line !== PFP.cat) { try { const c = await sb.rpc('uber_catalog_push', { p_items: JSON.parse(line.slice(4)) }); if (!c.error) PFP.cat = line; } catch (e) { } }
+  }
+  // revenus du shift lus dans Uber Fleet (ligne « PERF {period, from, items} »)
+  if (diag.startsWith('PERF ')) {
+    const nl = diag.indexOf('\n'), line = nl < 0 ? diag : diag.slice(0, nl); diag = nl < 0 ? '' : diag.slice(nl + 1);
+    if (line !== PFP.perf) { try { const o = JSON.parse(line.slice(5)); const c = await sb.rpc('uber_perf_push', { p_period: o.period, p_from: o.from, p_items: o.items }); if (!c.error) PFP.perf = line; } catch (e) { } }
   }
   v.diag = diag;
   // plaque écrite sans lettres dans Uber Fleet (« 968211 ») : rapprochée du seul véhicule de Ludy qui a exactement ces chiffres
@@ -282,7 +290,8 @@ async function pfReaderSend() {
   if (!S.session || !pfPushCan()) return;
   try {
     if (!PFR.code || Date.now() - PFR.at > 300000) { const r = await fetch('uber_read.js', { cache: 'no-cache' }); if (!r.ok) return; PFR.code = await r.text(); PFR.at = Date.now(); }
-    await appInvoke('uber_eval', { code: PFR.code });
+    const sh = pfShiftNow();
+    await appInvoke('uber_eval', { code: (sh ? 'window.__ludyShift=' + JSON.stringify({ key: sh.key, from: sh.from }) + ';\n' : '') + PFR.code });
   } catch (e) { }
 }
 /**
@@ -309,3 +318,49 @@ function pfPushStart() {
   setTimeout(pfReaderSend, 3000);
   pfPushTick();
 }
+
+// ---------- Revenus Uber du shift, chauffeur par chauffeur (20/11/2026, demande d'Ahmed : en bas d'En direct, « combien ils ont gagné ») ----------
+/** Shift en cours (créneau horaire : jour shiftDay → shiftNight, nuit ensuite ; une nuit appartient au jour où elle commence) */
+function pfShiftNow() {
+  if (typeof shiftAt !== 'function') return null;
+  const cur = shiftAt(Date.now(), S.P); if (!cur) return null;
+  return { key: 'shift:' + cur.day + ':' + cur.s, from: shiftStart(cur, S.P).toISOString(), label: shiftDayName(cur) };
+}
+const PFS = { rows: [], at: 0, err: '', busy: false, key: '' };
+function pfShiftLoad() {
+  if (PFS.busy) return PFS.p.then(() => pfShiftLoad());   // lecture en cours : attendue, puis relue (données à jour)
+  PFS.busy = true;
+  return (PFS.p = pfShiftRead());
+}
+async function pfShiftRead() {
+  const sh = pfShiftNow(); if (!sh) { PFS.busy = false; return; }
+  try {
+    const r = await sb.from('uber_perf').select('driver_id,driver_name,plate,vehicle_key,data,updated_at,period_from').eq('period', sh.key).limit(500);
+    if (r.error) throw r.error;
+    PFS.rows = r.data || []; PFS.key = sh.key; PFS.at = Date.now(); PFS.err = '';
+  } catch (e) { PFS.err = String(e.message || e); } finally { PFS.busy = false; }
+}
+/** Tableau en bas d'En direct : par chauffeur, revenus, espèces, courses, temps en ligne / en course / vers le client, revenus par heure, acceptation */
+function pfShiftHtml() {
+  const sh = pfShiftNow(); if (!sh) return '';
+  if (PFS.err) return /does not exist|relation|schema cache|PGRST20|42P01/i.test(PFS.err) ? '' : `<div class="sechead"><h2>Uber · ${esc(sh.label)}</h2></div>${msg('Lecture impossible : ' + esc(PFS.err), 'warn')}`;
+  const ok = typeof inAgency === 'function' ? inAgency() : () => true, a = typeof agFilter === 'function' ? agFilter() : '';
+  const rows = PFS.key === sh.key ? PFS.rows.filter(r => r.vehicle_key ? ok(r.vehicle_key) : !a) : [];
+  const head = `<div class="sechead"><h2>Uber · revenus du shift · ${esc(sh.label)}</h2><span class="small">Lu dans Uber Fleet (page Performances, du début du shift ${esc(localHM(new Date(sh.from)))} à maintenant), relu toutes les 2 min par l'application Ludy${rows.length ? ' · dernière lecture ' + esc(localHM(new Date(Math.max(...rows.map(r => +new Date(r.updated_at)))))) : ''}.</span></div>`;
+  if (!rows.length) return head + `<div class="empty">Aucun chiffre Uber pour ce shift pour l'instant (application Ludy ouverte et connectée à Uber Fleet nécessaire).</div>`;
+  const D = r => r.data || {}, hm = h => h == null ? '' : Math.floor(h) + ' h ' + String(Math.round((h % 1) * 60)).padStart(2, '0');
+  const sum = k => rows.reduce((t, r) => t + (typeof D(r)[k] === 'number' ? D(r)[k] : 0), 0);
+  const list = rows.slice().sort((x, y) => (D(y).e || 0) - (D(x).e || 0));
+  const pct = v => v == null ? '' : f0(v * 100) + ' %';
+  const tr = r => { const d = D(r), eph = d.e != null && d.h > 0 ? d.e / d.h : null;
+    return `<tr><td>${esc(r.driver_name || 'Chauffeur Uber')}</td><td>${r.plate ? plate(r.plate) : '<span class="nm">non lue</span>'}</td><td class="n"><b>${d.e != null ? f0(d.e) + ' MAD' : ''}</b></td>
+      <td class="n">${d.cash != null ? f0(d.cash) + ' MAD' : ''}</td><td class="n">${d.t != null ? f0(d.t) : ''}</td><td class="n">${hm(d.h)}</td><td class="n">${hm(d.hot)}</td><td class="n">${hm(d.hto)}</td>
+      <td class="n">${eph != null ? f0(eph) + ' MAD' : ''}</td><td class="n${d.a != null && d.a < 0.8 ? ' bad' : ''}">${pct(d.a)}</td><td class="n">${pct(d.c)}</td>
+      <td class="small">${d.last ? esc(localHM(new Date(d.last))) : ''}</td></tr>`; };
+  const tE = sum('e'), tH = sum('h');
+  return head + `<div class="tblwrap"><table class="tbl" id="tubshift"><thead><tr><th>Chauffeur</th><th>Véhicule</th><th class="n">Revenus</th><th class="n">dont espèces</th><th class="n">Courses</th>
+    <th class="n">En ligne</th><th class="n">En course</th><th class="n">Vers le client</th><th class="n">Revenus / h en ligne</th><th class="n">Acceptation</th><th class="n">Annulation</th><th>Dernière connexion</th></tr></thead>
+    <tbody>${list.map(tr).join('')}</tbody><tfoot><tr><td><b>Total (${f0(rows.length)} chauffeurs)</b></td><td></td><td class="n"><b>${f0(tE)} MAD</b></td><td class="n">${f0(sum('cash'))} MAD</td><td class="n">${f0(sum('t'))}</td>
+    <td class="n">${hm(tH)}</td><td class="n">${hm(sum('hot'))}</td><td class="n">${hm(sum('hto'))}</td><td class="n">${tH > 0 ? f0(tE / tH) + ' MAD' : ''}</td><td></td><td></td><td></td></tr></tfoot></table></div>`;
+}
+function pfShiftPaint() { const el = $('#liveubshift'); if (el) el.innerHTML = pfShiftHtml(); }

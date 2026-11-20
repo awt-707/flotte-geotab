@@ -3,7 +3,7 @@
 -- Journal unique des mouvements (cash_moves, garde cash_guard, historique cash_log), exports Uber et Bolt,
 -- fiches d'encaissement et justificatifs déposés (cash_sheets, cash_files),
 -- contrôle des courses Uber (export « Activité des courses » croisé avec le GPS Geotab : uber_trips, uber_days).
--- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_catalog, uber_days, uber_drivers, uber_live, uber_live_log, uber_live_readers, uber_payments, uber_trips
+-- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_catalog, uber_days, uber_drivers, uber_live, uber_live_log, uber_live_readers, uber_payments, uber_perf, uber_trips
 -- Fichier produit par « node database/outils/schema.js build » depuis supabase/migrations/ : ne pas modifier à la main
 -- (ajouter une migration, puis relancer build).
 -- =============================================================================
@@ -195,6 +195,39 @@ begin
   if random() < 0.01 then delete from uber_live_log where started_at < now() - interval '62 days'; end if;
   return n;
 end $$;
+
+CREATE FUNCTION public.uber_perf_push(p_period text, p_from timestamp with time zone, p_items jsonb) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+declare v_role text := coalesce((select role from profiles where user_id = auth.uid()), ''); it jsonb; k text; d text; v_key text; v_ag bigint; v_plate text; n integer := 0;
+begin
+  if auth.uid() is null or v_role not in ('admin', 'manager', 'viewer') then raise exception 'Envoi refusé'; end if;
+  if coalesce(p_period, '') !~ '^shift:\d{4}-\d{2}-\d{2}:(Jour|Nuit)$' then raise exception 'Période invalide'; end if;
+  if jsonb_typeof(coalesce(p_items, '[]'::jsonb)) <> 'array' or jsonb_array_length(coalesce(p_items, '[]'::jsonb)) > 200 then raise exception 'Envoi invalide'; end if;
+  for it in select * from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) loop
+    d := lower(coalesce(it->>'d', ''));
+    if d !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then continue; end if;
+    -- véhicule de Ludy : plaque lue dans Uber Fleet (chiffres puis lettres) ; plaque écrite sans lettres = seul véhicule aux mêmes chiffres
+    v_plate := nullif(left(it->>'p', 30), ''); k := norm_plate(v_plate); v_key := null; v_ag := null;
+    if length(k) >= 4 then
+      select v.key, v.agency_id into v_key, v_ag from vehicles v where norm_plate(v.plate) = k or norm_plate(v.key) = k limit 1;
+      if v_key is null and k ~ '^\d{5,6}$' and (select count(*) from vehicles v where regexp_replace(v.plate, '\D', '', 'g') = k) = 1 then
+        select v.key, v.agency_id, v.plate into v_key, v_ag, v_plate from vehicles v where regexp_replace(v.plate, '\D', '', 'g') = k;
+      end if;
+    end if;
+    insert into uber_perf (driver_id, period, period_from, driver_name, plate, vehicle_key, agency_id, data, updated_at)
+      values (d, p_period, p_from, nullif(left(it->>'n', 80), ''), v_plate, v_key, v_ag,
+        coalesce((select jsonb_object_agg(e.key, e.value) from jsonb_each(it) e
+          where e.key in ('e', 'cash', 'h', 't', 'a', 'c', 'hot', 'hto', 'hav', 'first', 'last') and jsonb_typeof(e.value) = 'number'), '{}'::jsonb), now())
+      on conflict (driver_id, period) do update set period_from = excluded.period_from, driver_name = coalesce(excluded.driver_name, uber_perf.driver_name),
+        plate = coalesce(excluded.plate, uber_perf.plate), vehicle_key = coalesce(excluded.vehicle_key, uber_perf.vehicle_key),
+        agency_id = coalesce(excluded.agency_id, uber_perf.agency_id), data = excluded.data, updated_at = now();
+    n := n + 1;
+  end loop;
+  if random() < 0.02 then delete from uber_perf where updated_at < now() - interval '62 days'; end if;
+  return n;
+end $_$;
 
 -- ----------------------------------------------------------------------------- Tables
 
@@ -461,6 +494,18 @@ CREATE TABLE public.uber_payments (
     agency_id bigint
 );
 
+CREATE TABLE public.uber_perf (
+    driver_id text NOT NULL,
+    period text NOT NULL,
+    period_from timestamp with time zone,
+    driver_name text,
+    plate text,
+    vehicle_key text,
+    agency_id bigint,
+    data jsonb DEFAULT '{}'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE public.uber_trips (
     uuid text NOT NULL,
     agency_id bigint,
@@ -538,6 +583,9 @@ ALTER TABLE ONLY public.uber_live_readers
 ALTER TABLE ONLY public.uber_payments
     ADD CONSTRAINT uber_payments_pkey PRIMARY KEY (tx);
 
+ALTER TABLE ONLY public.uber_perf
+    ADD CONSTRAINT uber_perf_pkey PRIMARY KEY (driver_id, period);
+
 ALTER TABLE ONLY public.uber_trips
     ADD CONSTRAINT uber_trips_pkey PRIMARY KEY (uuid);
 
@@ -582,6 +630,8 @@ CREATE INDEX uber_payments_agency ON public.uber_payments USING btree (agency_id
 CREATE INDEX uber_payments_at ON public.uber_payments USING btree (at);
 
 CREATE INDEX uber_payments_driver ON public.uber_payments USING btree (driver_uuid, at);
+
+CREATE INDEX uber_perf_period ON public.uber_perf USING btree (period);
 
 CREATE INDEX uber_trips_at ON public.uber_trips USING btree (requested_at);
 
