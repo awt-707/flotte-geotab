@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-20c';
+  var V = '2026-11-20d';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -259,6 +259,94 @@
     SHIFTP.sends--;
     return l;
   }
+  /**
+   * Courses une par une (20/11/2026, demande d'Ahmed : « les courses de la journée chauffeur par chauffeur », « les rapports d'Uber ») :
+   * toutes les 15 min, Ludy demande à Uber Fleet le rapport « Activité des courses » (comme Rapports > Générer un rapport), depuis
+   * 3 h avant la fin du rapport précédent (premier rapport : 12 h avant le début du shift) jusqu'à maintenant, attend qu'il soit prêt,
+   * le télécharge et envoie au site Ludy les lignes nouvelles ou changées (lignes « TRIPS », un lot affiché 25 s pour que le site le
+   * relève) ; le site les importe comme l'import manuel (Contrôle Uber > Import).
+   */
+  var RPT = '/api/vs-sp-reports-management/';
+  var TRP = (typeof window !== 'undefined' && window.__ludyTrips) || { phase: 'idle', at: 0, rid: '', end: 0, start: 0, q: [], cur: null, curAt: 0, n: 0, res: '' };
+  if (typeof window !== 'undefined') window.__ludyTrips = TRP;
+  function hsh(t) { var h = 5381; for (var i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+  /** CSV (guillemets, BOM, ; ou ,) → tableau de lignes */
+  function csvRows(t) {
+    t = String(t || '').replace(/^﻿/, '');
+    var first = t.slice(0, t.indexOf('\n') < 0 ? t.length : t.indexOf('\n')), sep = (first.split(';').length > first.split(',').length) ? ';' : ',';
+    var out = [], row = [], cell = '', q = false;
+    for (var i = 0; i < t.length; i++) {
+      var c = t[i];
+      if (q) { if (c === '"') { if (t[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; continue; }
+      if (c === '"') q = true; else if (c === sep) { row.push(cell); cell = ''; } else if (c === '\n') { row.push(cell.replace(/\r$/, '')); out.push(row); row = []; cell = ''; } else cell += c;
+    }
+    if (cell || row.length) { row.push(cell.replace(/\r$/, '')); out.push(row); }
+    return out;
+  }
+  function rptPost(name, body) {
+    return window.fetch(RPT + name, { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': 'x' }, body: JSON.stringify(body), credentials: 'include', __ludy: 1 })
+      .then(function (r) { if (!r.ok) throw new Error(name + ' HTTP ' + r.status); return r.json(); });
+  }
+  function tripsStep() {
+    var org = (location.pathname.match(/\/orgs\/([0-9a-f-]{36})/i) || [])[1] || ''; if (!org || TRP.busy) return;
+    var now = Date.now(), oid = { uuid: { value: org } };
+    if (TRP.phase === 'idle') {
+      if (now - TRP.at < 15 * 60000) return;
+      var end = 0; try { end = +localStorage.getItem('ludyUberTripsEnd') || 0; } catch (e) { }
+      var sh = window.__ludyShift, shf = sh && sh.from ? +new Date(sh.from) : now - 12 * 3600000;
+      var start = end > now - 48 * 3600000 ? end - 3 * 3600000 : shf - 12 * 3600000;
+      start = Math.max(start, now - 30 * 3600000); end = now;
+      TRP.at = now; TRP.busy = 1;
+      rptPost('GenerateReport', { orgId: oid, reportType: 'REPORT_TYPE_TRIP_ACTIVITY', startDate: { value: new Date(start).toISOString().slice(0, 10) }, endDate: { value: new Date(end).toISOString().slice(0, 10) },
+        visibility: '', unixTimeRangeOverride: { startTimeUnixMillis: { value: String(start) }, endTimeUnixMillis: { value: String(end) } }, childOrgUuids: [oid] })
+        .then(function (j) {
+          var id = j && j.data && j.data.reportId && j.data.reportId.uuid && j.data.reportId.uuid.value;
+          if (!id) throw new Error('rapport non créé ' + JSON.stringify(j).slice(0, 120));
+          TRP.rid = id; TRP.start = start; TRP.end = end; TRP.phase = 'wait'; TRP.wait = Date.now(); TRP.res = 'rapport demandé ' + new Date(end).toISOString().slice(11, 16);
+        }).catch(function (e) { TRP.res = 'rapport : ' + String(e && e.message || e).slice(0, 120); }).then(function () { TRP.busy = 0; });
+      return;
+    }
+    if (TRP.phase === 'wait') {
+      if (now - TRP.wait > 15 * 60000) { TRP.phase = 'idle'; TRP.res = 'rapport pas prêt après 15 min'; return; }
+      if (TRP.polled && now - TRP.polled < 20000) return;
+      TRP.polled = now; TRP.busy = 1;
+      rptPost('GetReports', { orgId: oid, pageOptions: { pageToken: { value: '' }, pageSize: { value: 20 } }, filters: [] })
+        .then(function (j) {
+          var l = (j && j.data && j.data.reports) || [], r = l.filter(function (x) { return x && x.id && x.id.uuid && x.id.uuid.value === TRP.rid; })[0];
+          if (!r) return;
+          if (/FAIL/.test(r.status || '')) { TRP.phase = 'idle'; TRP.res = 'rapport en échec : ' + (r.failedReason || r.status); return; }
+          if (!/COMPLETED/.test(r.status || '')) return;
+          return rptPost('DownloadReport', { orgId: oid, reportId: { uuid: { value: TRP.rid } } }).then(function (d) {
+            var u = d && d.data && d.data.signedUrl && d.data.signedUrl.value; if (!u) throw new Error('lien du rapport absent');
+            return window.fetch(u, { __ludy: 1 }).then(function (r2) { if (!r2.ok) throw new Error('téléchargement HTTP ' + r2.status); return r2.text(); });
+          }).then(function (t) {
+            if (/^PK/.test(t)) throw new Error('fichier compressé (zip) : lecture à prévoir');
+            var rows = csvRows(t), h = -1;
+            for (var i = 0; i < Math.min(rows.length, 30); i++) if (rows[i].length > 5 && rows[i].some(function (c) { return /uuid/i.test(c); })) { h = i; break; }
+            if (h < 0) throw new Error('colonnes introuvables : ' + JSON.stringify(rows.slice(0, 2)).slice(0, 300));
+            var sent = {}; try { sent = JSON.parse(localStorage.getItem('ludyUberTripSent') || '{}') || {}; } catch (e) { }
+            var all = ++TRP.n % 4 === 0, fresh = [], hd = rows[h].map(function (c) { return String(c).slice(0, 60); });
+            rows.slice(h + 1).forEach(function (r3) {
+              if (r3.length < 5) return; var c = r3.map(function (x) { return String(x).slice(0, 160); }), k = hsh(c.join('\u0001'));
+              if (!all && sent[k]) return; sent[k] = Date.now(); fresh.push(c);
+            });
+            Object.keys(sent).forEach(function (k) { if (Date.now() - sent[k] > 3 * 86400000) delete sent[k]; });
+            try { localStorage.setItem('ludyUberTripSent', JSON.stringify(sent)); localStorage.setItem('ludyUberTripsEnd', String(TRP.end)); } catch (e) { }
+            var b = [], len = 0, flush = function () { if (b.length) TRP.q.push({ id: TRP.rid.slice(0, 8) + '-' + TRP.q.length + '-' + Date.now().toString(36), h: hd, r: b }); b = []; len = 0; };
+            fresh.forEach(function (c) { var l2 = JSON.stringify(c).length; if (len + l2 > 8000) flush(); b.push(c); len += l2; });
+            flush();
+            TRP.phase = 'idle'; TRP.res = 'rapport du ' + new Date(TRP.start).toISOString().slice(0, 16).replace('T', ' ') + ' au ' + new Date(TRP.end).toISOString().slice(11, 16) + ' UTC : ' + (rows.length - h - 1) + ' course(s), ' + fresh.length + ' à envoyer';
+          });
+        }).catch(function (e) { TRP.phase = 'idle'; TRP.res = 'rapport : ' + String(e && e.message || e).slice(0, 160); }).then(function () { TRP.busy = 0; });
+    }
+  }
+  /** Lot de courses à relever par le site (chaque lot affiché 25 s) */
+  function tripsLine(used) {
+    if (!TRP.cur || Date.now() - TRP.curAt > 25000) { TRP.cur = TRP.q.shift() || null; TRP.curAt = Date.now(); }
+    if (!TRP.cur) return '';
+    var l = 'TRIPS ' + JSON.stringify(TRP.cur) + '\n';
+    return used + l.length > 19500 ? '' : l;
+  }
   function perfAsk(ids) {
     if (!ids.length || (window.__ludyPerfAt && Date.now() - window.__ludyPerfAt < 120000)) return;
     var q = null; try { q = JSON.parse(localStorage.getItem('ludyUberPerfReq') || 'null'); } catch (e) { }
@@ -331,7 +419,7 @@
       .forEach(function (x) { var j; try { j = JSON.parse(x.text); } catch (e) { return; } lines2.push('== ' + x.url + (x.op ? ' [' + x.op + ']' : '') + '\n' + shape(j, 0, b)); });
     return { rows: best, full: false, src: src, diag: ('LUDY ' + V + ' · réponses captées : ' + net.length + '\n' + lines2.join('\n') + '\n== LIGNE DE LA PAGE\n' + domSample(doc)).slice(0, 19000) };
   }
-  if (typeof module !== 'undefined') { module.exports = { rowsOf: rowsOf, read: read, stOf: stOf, plateOf: plateOf, shape: shape, uberSt: uberSt, indexJson: indexJson, perfIndex: perfIndex, uberDay: uberDay, V: V }; return; }
+  if (typeof module !== 'undefined') { module.exports = { rowsOf: rowsOf, read: read, stOf: stOf, plateOf: plateOf, shape: shape, uberSt: uberSt, indexJson: indexJson, perfIndex: perfIndex, uberDay: uberDay, csvRows: csvRows, V: V }; return; }
   if (typeof window === 'undefined' || !/(^|\.)uber\.com$/i.test(location.hostname)) return;
   if (window.__ludyURv === V) return;
   window.__ludyURv = V;
@@ -454,12 +542,12 @@
     } catch (e) { }
   }
   /** Lot à envoyer (au plus ~12 000 caractères) : ce qui a changé, envoyé 3 fois (une réception manquée par Ludy est rattrapée) */
-  function catBatch() {
-    var out = [], len = 0;
+  function catBatch(max) {
+    var out = [], len = 0; max = max || 12000;
     Object.keys(CAT).forEach(function (k) {
       var c = CAT[k]; if (!(c.sends > 0)) return;
       var it = { k: c.k, url: c.url, op: c.op, m: c.m, n: c.n, first: c.first, at: c.at, size: c.size || 0, req: c.req || '', res: c.res || '' }, s1 = JSON.stringify(it);
-      if (len + s1.length > 12000) return;
+      if (len + s1.length > max) return;
       out.push(it); len += s1.length; c.sends--;
     });
     return out.length ? 'CAT ' + JSON.stringify(out) + '\n' : '';
@@ -501,7 +589,11 @@
       perfAsk((r.rows || []).map(function (x) { return x.driver; }).filter(Boolean));
       drvPlateAdd(r.rows);
       if (r.src === 'GetDriverLiveLocation') shiftPerfAsk(seenAdd((r.rows || []).map(function (x) { return x.driver; }).concat((r.missIds || []).map(function (x) { return x[0]; }))), MAP);
-      inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: (function (c) { return c + shiftPerfLine(c.length + 7200); })(catBatch()) + ((window.__ludySelfRes ? 'RELECTURE ' + window.__ludySelfRes + '\n' : '') + (window.__ludyShiftRes ? 'SHIFT ' + window.__ludyShiftRes + '\n' : '') + (r.diag || (r.src ? 'source : ' + r.src : ''))).slice(0, 7000), full: r.full }).catch(function () { });
+      try { tripsStep(); } catch (e) { TRP.res = 'rapport : ' + String(e && e.message || e).slice(0, 80); }
+      // diagnostic (20 000 caractères au plus) : CAT (catalogue), PERF (shift), TRIPS (courses), puis l'état de la lecture
+      var dg = catBatch(TRP.q.length || TRP.cur ? 4000 : 12000); dg += shiftPerfLine(dg.length + 9500); dg += tripsLine(dg.length + 1200);
+      dg += ((window.__ludySelfRes ? 'RELECTURE ' + window.__ludySelfRes + '\n' : '') + (window.__ludyShiftRes ? 'SHIFT ' + window.__ludyShiftRes + '\n' : '') + (TRP.res ? 'COURSES ' + TRP.res + (TRP.q.length ? ' · ' + TRP.q.length + ' lot(s) en attente' : '') + '\n' : '') + (r.diag || (r.src ? 'source : ' + r.src : ''))).slice(0, Math.max(1000, 19800 - dg.length));
+      inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: dg, full: r.full }).catch(function () { });
     } catch (e) { }
   }
   window.__ludyURt = setInterval(tick, 5000);
