@@ -3,7 +3,7 @@
 -- Journal unique des mouvements (cash_moves, garde cash_guard, historique cash_log), exports Uber et Bolt,
 -- fiches d'encaissement et justificatifs déposés (cash_sheets, cash_files),
 -- contrôle des courses Uber (export « Activité des courses » croisé avec le GPS Geotab : uber_trips, uber_days).
--- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_catalog, uber_days, uber_drivers, uber_live, uber_live_log, uber_live_readers, uber_payments, uber_trips
+-- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_catalog, uber_days, uber_drivers, uber_live, uber_live_log, uber_live_readers, uber_payments, uber_perf, uber_trips
 -- Fichier produit par « node database/outils/schema.js build » depuis supabase/migrations/ : ne pas modifier à la main
 -- (ajouter une migration, puis relancer build).
 -- =============================================================================
@@ -131,6 +131,8 @@ ALTER TABLE public.uber_live_readers ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.uber_payments ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE public.uber_perf ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE public.uber_trips ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY uc_read ON public.uber_catalog FOR SELECT TO authenticated USING (( SELECT public.is_admin() AS is_admin));
@@ -140,6 +142,8 @@ CREATE POLICY ul_read ON public.uber_live FOR SELECT TO authenticated USING ((( 
 CREATE POLICY ull_read ON public.uber_live_log FOR SELECT TO authenticated USING ((( SELECT public.is_admin() AS is_admin) OR (vehicle_key = ANY (( SELECT public.my_vehicle_keys() AS my_vehicle_keys)::text[]))));
 
 CREATE POLICY ulr_read ON public.uber_live_readers FOR SELECT TO authenticated USING ((( SELECT public.is_admin() AS is_admin) OR (user_id = auth.uid())));
+
+CREATE POLICY up_read ON public.uber_perf FOR SELECT TO authenticated USING ((( SELECT public.is_admin() AS is_admin) OR (vehicle_key = ANY (( SELECT public.my_vehicle_keys() AS my_vehicle_keys)::text[]))));
 
 -- ----------------------------------------------------------------------------- Droits et commentaires
 
@@ -159,13 +163,29 @@ REVOKE ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) TO service_role;
 
+REVOKE ALL ON FUNCTION public.ma_offset_min(p_at timestamp with time zone, p_rules jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.ma_offset_min(p_at timestamp with time zone, p_rules jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.ma_offset_min(p_at timestamp with time zone, p_rules jsonb) TO service_role;
+
 REVOKE ALL ON FUNCTION public.uber_catalog_push(p_items jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.uber_catalog_push(p_items jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.uber_catalog_push(p_items jsonb) TO service_role;
 
+REVOKE ALL ON FUNCTION public.uber_demand(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.uber_demand(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.uber_demand(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint) TO service_role;
+
 REVOKE ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text, p_full boolean) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text, p_full boolean) TO authenticated;
 GRANT ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text, p_full boolean) TO service_role;
+
+REVOKE ALL ON FUNCTION public.uber_perf_push(p_period text, p_from timestamp with time zone, p_items jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.uber_perf_push(p_period text, p_from timestamp with time zone, p_items jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.uber_perf_push(p_period text, p_from timestamp with time zone, p_items jsonb) TO service_role;
+
+REVOKE ALL ON FUNCTION public.uber_zones(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint, p_cell numeric) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.uber_zones(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint, p_cell numeric) TO authenticated;
+GRANT ALL ON FUNCTION public.uber_zones(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint, p_cell numeric) TO service_role;
 
 GRANT SELECT,INSERT,DELETE ON TABLE public.bolt_sessions TO authenticated;
 GRANT ALL ON TABLE public.bolt_sessions TO service_role;
@@ -217,6 +237,9 @@ GRANT SELECT ON TABLE public.uber_live_readers TO authenticated;
 
 GRANT SELECT,INSERT,DELETE ON TABLE public.uber_payments TO authenticated;
 GRANT ALL ON TABLE public.uber_payments TO service_role;
+
+GRANT ALL ON TABLE public.uber_perf TO service_role;
+GRANT SELECT ON TABLE public.uber_perf TO authenticated;
 
 GRANT ALL ON TABLE public.uber_trips TO service_role;
 GRANT SELECT,DELETE ON TABLE public.uber_trips TO authenticated;

@@ -57,7 +57,7 @@ function cacheNew(o) {
   return C;
 }
 // Fonctions de lecture seule (appel POST, rien n'est modifié) ; toute autre fonction de la base vide le cache
-const CACHE_RO_RPC = { alert_counts: 1, driver_rule_counts: 1, shift_plan: 1, usage_stats: 1, plan_can_edit: 1, session_ping: 1 };
+const CACHE_RO_RPC = { alert_counts: 1, uber_zones: 1, uber_demand: 1, driver_rule_counts: 1, shift_plan: 1, usage_stats: 1, plan_can_edit: 1, session_ping: 1 };
 /** Requête vers la base qui peut modifier une donnée gardée (insert, update, delete, fonction qui écrit) */
 function cacheWrites(url, method) {
   if (/^(GET|HEAD)$/i.test(method || 'GET')) return false;

@@ -18,7 +18,9 @@ async function pfLoad() {
     PF.src = 'ludy';
     // liste complète lue dans les données de la carte d'Uber Fleet (application 1.9) : comptes, déconnexions, hors ligne ;
     // sinon (1.8, ou carte pas ouverte) : seulement les chauffeurs affichés, jamais comptés ni signalés déconnectés
-    PF.full = own.some(r => r.complete && new Date(r.observed_at).getTime() >= fresh);
+    // la dernière lecture doit être complète (une lecture partielle plus récente = comptes et déconnexions suspendus)
+    const newest = own.reduce((m, r) => Math.max(m, new Date(r.observed_at).getTime() || 0), 0);
+    PF.full = own.some(r => r.complete && new Date(r.observed_at).getTime() >= Math.max(fresh, newest - 15000));
     PF.latest = own.map(r => ({ driver_id: r.plate_key, source: 'uber', status: r.status, observed_at: r.observed_at, since: r.status_since, vehicle_label: r.plate, full: !!r.complete, photo: r.photo_url || '', perf: r.perf || null, evidence: { raw_state: r.raw } }));
     PF.drivers = own.map(r => ({ id: r.plate_key, name: r.driver_name || '', agency_id: r.agency_id, vehicle_key: r.vehicle_key, ludy_driver_code: null }));
     PF.err = ''; PF.at = Date.now();
@@ -135,6 +137,9 @@ function pfPaint() {
 /** Lancé par la page En direct : lecture tout de suite puis toutes les 15 s tant que la page est affichée et visible */
 function pfStart(my) {
   pfLoad().then(() => { if (my === ROUTING) pfPaint(); });
+  pfShiftLoad().then(() => { if (my === ROUTING) pfShiftPaint(); });
+  clearInterval(PFS.timer);
+  PFS.timer = setInterval(() => { if (my !== ROUTING || !$('#liveubshift')) { clearInterval(PFS.timer); return; } if (!document.hidden) pfShiftLoad().then(() => { if (my === ROUTING) pfShiftPaint(); }); }, 60000);
   clearInterval(PF.timer);
   PF.timer = setInterval(() => {
     if (my !== ROUTING || !$('#liveplat')) { clearInterval(PF.timer); return; }
@@ -245,18 +250,40 @@ function pfwStart() {
 function pfwReset() { Object.values(PFW.toasts).forEach(t => t.remove()); PFW.toasts = {}; PFW.ctx = null; PFW.primed = false; PF.latest = []; PF.drivers = []; PF.at = 0; PFP.last = ''; PFP.lastAt = 0; }
 
 // ---------- Application Ludy 1.8 : relevé du volet Uber Fleet envoyé à la base (n'importe quel compte connecté) ----------
-const PFP = { timer: 0, last: '', lastAt: 0, n: 0, err: '', cat: '' };
+const PFP = { timer: 0, last: '', lastAt: 0, n: 0, err: '', cat: '', perf: '', trips: new Set(), tripsNote: '' };
 function pfPushCan() { return appIpc() && !!(S.profile && ['admin', 'manager', 'viewer'].includes(S.profile.role)); }
+/**
+ * Courses du rapport « Activité des courses » demandé par Ludy à Uber Fleet (20/11/2026) : un lot de lignes relevé une fois, importé
+ * comme l'import manuel de Contrôle Uber (import_uber_trips : administrateur, gestionnaire = véhicules de ses agences ; réimport sans
+ * doublon). Renvoie le résultat de l'import (noté dans le diagnostic de la lecture).
+ */
+async function pfTripsImport(txt) {
+  let o; try { o = JSON.parse(txt); } catch (e) { return ''; }
+  if (!o || !o.id || PFP.trips.has(o.id)) return '';
+  PFP.trips.add(o.id);
+  if (!S.profile || !['admin', 'manager'].includes(S.profile.role)) return '';
+  const res = ubcParseTrips([o.h || []].concat(o.r || []));
+  if (res.error) return new Date().toISOString().slice(11, 16) + ' : ' + res.error + ' · en-têtes : ' + JSON.stringify(o.h || []).slice(0, 400);
+  if (!res.rows.length) return '';
+  const { data, error } = await sb.rpc('import_uber_trips', { p_rows: res.rows }).then(x => x, e => ({ error: e }));
+  if (error) { PFP.trips.delete(o.id); return new Date().toISOString().slice(11, 16) + ' : import refusé ' + String(error.message || error).slice(0, 160); }
+  PFT.at = 0;   // courses du shift relues au prochain dessin
+  return new Date().toISOString().slice(11, 16) + ' : ' + res.rows.length + ' course(s) · ' + ['added', 'updated', 'same', 'skipped', 'no_vehicle'].map(k => k + ' ' + ((data || {})[k] || 0)).join(', ');
+}
 async function pfPushTick() {
   if (!S.session || !pfPushCan()) return;
   let v = null; try { v = await appInvoke('uber_rows'); } catch (e) { return; }   // application avant la 1.8 : commande absente
   if (!v || !Array.isArray(v.rows) || v.age > 30) return;
-  // exploration d'Uber Fleet (site/uber_read.js) : première ligne « CAT [...] » = catalogue de ce que la page d'Uber Fleet charge
-  let diag = String(v.diag || '');
-  if (diag.startsWith('CAT ')) {
+  // lignes en tête du diagnostic (site/uber_read.js) : « CAT [...] » = catalogue de ce que la page d'Uber Fleet charge,
+  // « PERF {period, from, items} » = revenus du shift, « TRIPS {id, h, r} » = lot de courses du rapport « Activité des courses »
+  let diag = String(v.diag || ''), note = '';
+  for (let guard = 0; guard < 4 && /^(CAT|PERF|TRIPS) /.test(diag); guard++) {
     const nl = diag.indexOf('\n'), line = nl < 0 ? diag : diag.slice(0, nl); diag = nl < 0 ? '' : diag.slice(nl + 1);
-    if (line !== PFP.cat) { try { const c = await sb.rpc('uber_catalog_push', { p_items: JSON.parse(line.slice(4)) }); if (!c.error) PFP.cat = line; } catch (e) { } }
+    if (line.startsWith('CAT ')) { if (line !== PFP.cat) { try { const c = await sb.rpc('uber_catalog_push', { p_items: JSON.parse(line.slice(4)) }); if (!c.error) PFP.cat = line; } catch (e) { } } }
+    else if (line.startsWith('PERF ')) { if (line !== PFP.perf) { try { const o = JSON.parse(line.slice(5)); const c = await sb.rpc('uber_perf_push', { p_period: o.period, p_from: o.from, p_items: o.items }); if (!c.error) PFP.perf = line; } catch (e) { } } }
+    else { const r2 = await pfTripsImport(line.slice(6)); if (r2) note = r2; }
   }
+  if (note || PFP.tripsNote) { PFP.tripsNote = note || PFP.tripsNote; diag = 'IMPORT ' + PFP.tripsNote + '\n' + diag; }
   v.diag = diag;
   // plaque écrite sans lettres dans Uber Fleet (« 968211 ») : rapprochée du seul véhicule de Ludy qui a exactement ces chiffres
   const vl = (S.vehList || []).concat(Object.values(S.vehParc || {}));
@@ -282,7 +309,8 @@ async function pfReaderSend() {
   if (!S.session || !pfPushCan()) return;
   try {
     if (!PFR.code || Date.now() - PFR.at > 300000) { const r = await fetch('uber_read.js', { cache: 'no-cache' }); if (!r.ok) return; PFR.code = await r.text(); PFR.at = Date.now(); }
-    await appInvoke('uber_eval', { code: PFR.code });
+    const sh = pfShiftNow();
+    await appInvoke('uber_eval', { code: (sh ? 'window.__ludyShift=' + JSON.stringify({ key: sh.key, from: sh.from }) + ';\n' : '') + PFR.code });
   } catch (e) { }
 }
 /**
@@ -308,4 +336,93 @@ function pfPushStart() {
   PFP.rtimer = setInterval(() => { pfReaderSend(); }, 60000);
   setTimeout(pfReaderSend, 3000);
   pfPushTick();
+}
+
+// ---------- Revenus Uber du shift, chauffeur par chauffeur (20/11/2026, demande d'Ahmed : en bas d'En direct, « combien ils ont gagné ») ----------
+/** Shift en cours (créneau horaire : jour shiftDay → shiftNight, nuit ensuite ; une nuit appartient au jour où elle commence) */
+function pfShiftNow() {
+  if (typeof shiftAt !== 'function') return null;
+  const cur = shiftAt(Date.now(), S.P); if (!cur) return null;
+  return { key: 'shift:' + cur.day + ':' + cur.s, from: shiftStart(cur, S.P).toISOString(), label: shiftDayName(cur) };
+}
+const PFS = { rows: [], at: 0, err: '', busy: false, key: '' };
+function pfShiftLoad() {
+  if (PFS.busy) return PFS.p.then(() => pfShiftLoad());   // lecture en cours : attendue, puis relue (données à jour)
+  PFS.busy = true;
+  return (PFS.p = pfShiftRead());
+}
+async function pfShiftRead() {
+  const sh = pfShiftNow(); if (!sh) { PFS.busy = false; return; }
+  try {
+    const r = await sb.from('uber_perf').select('driver_id,driver_name,plate,vehicle_key,data,updated_at,period_from').eq('period', sh.key).limit(500);
+    if (r.error) throw r.error;
+    PFS.rows = r.data || []; PFS.key = sh.key; PFS.at = Date.now(); PFS.err = '';
+  } catch (e) { PFS.err = String(e.message || e); } finally { PFS.busy = false; }
+  // courses une par une du shift (rapport « Activité des courses » importé par Ludy, ou import manuel de Contrôle Uber)
+  try {
+    const t = await sb.from('uber_trips').select('uuid,driver_uuid,driver_name,plate,vehicle_key,requested_at,dropoff_at,pickup_addr,drop_addr,km,status,payment,product')
+      .gte('requested_at', sh.from).order('requested_at', { ascending: true }).limit(1000);
+    if (t.error) throw t.error;
+    PFT.rows = t.data || []; PFT.key = sh.key; PFT.at = Date.now(); PFT.err = '';
+  } catch (e) { PFT.err = String(e.message || e); PFT.rows = []; }
+}
+const PFT = { rows: [], key: '', at: 0, err: '', open: new Set() };
+const PF_TRIP_ST = { completed: 'Terminée', rider_cancelled: 'Annulée par le client', driver_cancelled: 'Annulée par le chauffeur', failed: 'Échouée', unfulfilled: 'Non servie' };
+function pfTripSt(s) { const k = String(s || '').toLowerCase(); return PF_TRIP_ST[k] || s || ''; }
+/** Courses du shift d'un chauffeur (identifiant Uber, sinon nom) */
+function pfTripsOf(id, name) {
+  const i = String(id || '').toLowerCase(), n = typeof normName === 'function' ? normName(name || '') : String(name || '').toLowerCase();
+  return PFT.rows.filter(t => (i && String(t.driver_uuid || '').toLowerCase() === i) || (!i && n && (typeof normName === 'function' ? normName(t.driver_name || '') : String(t.driver_name || '').toLowerCase()) === n));
+}
+function pfTripCounts(l) {
+  const c = { done: 0, rc: 0, dc: 0, other: 0, km: 0 };
+  l.forEach(t => { const s = String(t.status || '').toLowerCase(); if (s === 'completed') { c.done++; if (t.km != null) c.km += +t.km; } else if (s === 'rider_cancelled') c.rc++; else if (s === 'driver_cancelled') c.dc++; else c.other++; });
+  return c;
+}
+function pfTripsTable(l) {
+  if (!l.length) return '<div class="empty small">Aucune course de ce chauffeur dans le rapport « Activité des courses » pour ce shift.</div>';
+  const dur = t => t.dropoff_at && t.requested_at ? Math.round((new Date(t.dropoff_at) - new Date(t.requested_at)) / 60000) + ' min' : '';
+  return `<table class="tbl ubtrips"><thead><tr><th>Demande</th><th>Dépose</th><th>Durée</th><th>Statut</th><th>Prise en charge</th><th>Dépose</th><th class="n">km</th><th>Paiement</th><th>Véhicule</th></tr></thead><tbody>${l.map(t => {
+    const s = String(t.status || '').toLowerCase();
+    return `<tr class="${s === 'completed' ? '' : s === 'driver_cancelled' ? 'ubt-dc' : 'ubt-rc'}"><td>${esc(localHM(new Date(t.requested_at)))}</td><td>${t.dropoff_at ? esc(localHM(new Date(t.dropoff_at))) : ''}</td><td class="small">${dur(t)}</td>
+      <td>${esc(pfTripSt(t.status))}</td><td class="small">${esc(t.pickup_addr || '')}</td><td class="small">${esc(t.drop_addr || '')}</td><td class="n">${t.km != null && s === 'completed' ? f1(+t.km) : ''}</td>
+      <td class="small">${esc(t.payment || '')}</td><td>${t.plate ? esc(t.plate) : ''}</td></tr>`; }).join('')}</tbody></table>`;
+}
+/** Tableau en bas d'En direct : par chauffeur, revenus, espèces, courses, temps en ligne / en course / vers le client, revenus par heure, acceptation */
+function pfShiftHtml() {
+  const sh = pfShiftNow(); if (!sh) return '';
+  if (PFS.err) return /does not exist|relation|schema cache|PGRST20|42P01/i.test(PFS.err) ? '' : `<div class="sechead"><h2>Uber · ${esc(sh.label)}</h2></div>${msg('Lecture impossible : ' + esc(PFS.err), 'warn')}`;
+  const ok = typeof inAgency === 'function' ? inAgency() : () => true, a = typeof agFilter === 'function' ? agFilter() : '';
+  const rows = PFS.key === sh.key ? PFS.rows.filter(r => r.vehicle_key ? ok(r.vehicle_key) : !a) : [];
+  // chauffeurs qui ont des courses dans le rapport sans chiffres de performance : ajoutés (revenus non lus)
+  if (PFT.key === sh.key) {
+    const have = new Set(rows.map(r => String(r.driver_id || '').toLowerCase()));
+    const extra = {}; PFT.rows.forEach(t => { const d = String(t.driver_uuid || '').toLowerCase(); if (!d || have.has(d) || extra[d] || !(t.vehicle_key ? ok(t.vehicle_key) : !a)) return; extra[d] = { driver_id: d, driver_name: t.driver_name, plate: t.plate, vehicle_key: t.vehicle_key, data: {}, updated_at: t.requested_at }; });
+    Object.values(extra).forEach(x => rows.push(x));
+  }
+  const tripsOk = PFT.key === sh.key && !PFT.err, last = tripsOk && PFT.rows.length ? PFT.rows[PFT.rows.length - 1].requested_at : null;
+  const tripsInfo = PFT.err ? (/does not exist|relation|schema cache|PGRST20|42P01/i.test(PFT.err) ? '' : ' · courses : lecture impossible') :
+    ` · courses une par une : rapport « Activité des courses » d'Uber Fleet, demandé par l'application Ludy toutes les 15 min${last ? ' (dernière course ' + esc(localHM(new Date(last))) + ')' : ' (aucune course reçue pour ce shift)'} ; cliquer sur un chauffeur pour voir ses courses`;
+  const head = `<div class="sechead"><h2>Uber · revenus du shift · ${esc(sh.label)}</h2><span class="small">Lu dans Uber Fleet (page Performances, du début du shift ${esc(localHM(new Date(sh.from)))} à maintenant), relu toutes les 2 min par l'application Ludy${rows.length ? ' · dernière lecture ' + esc(localHM(new Date(Math.max(...rows.map(r => +new Date(r.updated_at)))))) : ''}${tripsInfo}.</span></div>`;
+  if (!rows.length) return head + `<div class="empty">Aucun chiffre Uber pour ce shift pour l'instant (application Ludy ouverte et connectée à Uber Fleet nécessaire).</div>`;
+  const D = r => r.data || {}, hm = h => h == null ? '' : Math.floor(h) + ' h ' + String(Math.round((h % 1) * 60)).padStart(2, '0');
+  const sum = k => rows.reduce((t, r) => t + (typeof D(r)[k] === 'number' ? D(r)[k] : 0), 0);
+  const list = rows.slice().sort((x, y) => (D(y).e || 0) - (D(x).e || 0));
+  const pct = v => v == null ? '' : f0(v * 100) + ' %';
+  const tr = r => { const d = D(r), eph = d.e != null && d.h > 0 ? d.e / d.h : null, id = String(r.driver_id || '').toLowerCase(), tl = tripsOk ? pfTripsOf(id, r.driver_name) : [], c = pfTripCounts(tl), op = PFT.open.has(id);
+    const tc = tripsOk ? `<td class="n">${tl.length ? f0(c.done) : ''}</td><td class="n${c.rc + c.dc ? ' bad' : ''}">${tl.length ? f0(c.rc + c.dc) + (c.dc ? ' <span class="small">(' + f0(c.dc) + ' chauffeur)</span>' : '') : ''}</td><td class="n">${c.done ? f1(c.km) : ''}</td>` : '';
+    return `<tr class="ubdrv${op ? ' open' : ''}" data-ubd="${esc(id)}" title="Cliquer pour voir les courses du shift"><td><span class="ubcar">${op ? '▾' : '▸'}</span> ${esc(r.driver_name || 'Chauffeur Uber')}</td><td>${r.plate ? plate(r.plate) : '<span class="nm">non lue</span>'}</td><td class="n"><b>${d.e != null ? f0(d.e) + ' MAD' : ''}</b></td>
+      <td class="n">${d.cash != null ? f0(d.cash) + ' MAD' : ''}</td><td class="n">${d.t != null ? f0(d.t) : ''}</td><td class="n">${hm(d.h)}</td><td class="n">${hm(d.hot)}</td><td class="n">${hm(d.hto)}</td>
+      <td class="n">${eph != null ? f0(eph) + ' MAD' : ''}</td><td class="n${d.a != null && d.a < 0.8 ? ' bad' : ''}">${pct(d.a)}</td><td class="n">${pct(d.c)}</td>
+      <td class="small">${d.last ? esc(localHM(new Date(d.last))) : ''}</td>${tc}</tr>${op ? `<tr class="ubdet"><td colspan="${tripsOk ? 15 : 12}">${pfTripsTable(tl)}</td></tr>` : ''}`; };
+  const tE = sum('e'), tH = sum('h');
+  return head + `<div class="tblwrap"><table class="tbl" id="tubshift"><thead><tr><th>Chauffeur</th><th>Véhicule</th><th class="n">Revenus</th><th class="n">dont espèces</th><th class="n">Courses</th>
+    <th class="n">En ligne</th><th class="n">En course</th><th class="n">Vers le client</th><th class="n">Revenus / h en ligne</th><th class="n">Acceptation</th><th class="n">Annulation</th><th>Dernière connexion</th>${tripsOk ? '<th class="n">Courses terminées</th><th class="n">Annulées</th><th class="n">km en course</th>' : ''}</tr></thead>
+    <tbody>${list.map(tr).join('')}</tbody><tfoot><tr><td><b>Total (${f0(rows.length)} chauffeurs)</b></td><td></td><td class="n"><b>${f0(tE)} MAD</b></td><td class="n">${f0(sum('cash'))} MAD</td><td class="n">${f0(sum('t'))}</td>
+    <td class="n">${hm(tH)}</td><td class="n">${hm(sum('hot'))}</td><td class="n">${hm(sum('hto'))}</td><td class="n">${tH > 0 ? f0(tE / tH) + ' MAD' : ''}</td><td></td><td></td><td></td>${tripsOk ? (() => { const all = pfTripCounts(rows.reduce((l, r) => l.concat(pfTripsOf(String(r.driver_id || '').toLowerCase(), r.driver_name)), [])); return `<td class="n">${f0(all.done)}</td><td class="n">${f0(all.rc + all.dc)}</td><td class="n">${f1(all.km)}</td>`; })() : ''}</tr></tfoot></table></div>`;
+}
+function pfShiftPaint() {
+  const el = $('#liveubshift'); if (!el) return;
+  el.innerHTML = pfShiftHtml();
+  if (!el.__ubd) { el.__ubd = 1; el.addEventListener('click', e => { const t = e.target.closest('[data-ubd]'); if (!t) return; const id = t.getAttribute('data-ubd'); if (PFT.open.has(id)) PFT.open.delete(id); else PFT.open.add(id); pfShiftPaint(); }); }
 }

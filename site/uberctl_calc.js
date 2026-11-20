@@ -30,12 +30,16 @@ function ubcTime(v) {
 /** Export « Activité des courses » (lignes d'un tableur : tableau de tableaux) → courses ; { error } si ce n'est pas cet export */
 function ubcParseTrips(rows) {
   let h = -1;
-  for (let i = 0; i < Math.min((rows || []).length, 30); i++) if ((rows[i] || []).some(c => ubcNorm(c) === 'uuid de la course') && (rows[i] || []).some(c => ubcNorm(c) === 'statut de la course')) { h = i; break; }
+  // en-têtes en français (export d'Uber Fleet en français), sinon en anglais (rapport généré sans langue, 20/11/2026)
+  const A = { uuid: ['uuid de la course', 'trip uuid'], st: ['statut de la course', 'trip status'] };
+  for (let i = 0; i < Math.min((rows || []).length, 30); i++) { const R = (rows[i] || []).map(ubcNorm); if (A.uuid.some(t => R.includes(t)) && A.st.some(t => R.includes(t))) { h = i; break; } }
   if (h < 0) return { error: 'colonnes « UUID de la course » et « Statut de la course » introuvables (export Uber Fleet « Activité des courses »)', rows: [] };
-  const H = rows[h].map(ubcNorm), eq = t => H.indexOf(t);
-  const ix = { uuid: eq('uuid de la course'), du: eq('uuid du chauffeur'), fn: eq('prenom du chauffeur'), ln: eq('nom du chauffeur'), vu: eq('uuid du vehicule'),
-    plate: eq('plaque d\'immatriculation'), svc: eq('type de service'), req: eq('heure de la demande de course'), drop: eq('heure de depose'),
-    pu: eq('adresse de prise en charge'), da: eq('lieu de depose'), km: eq('distance de la course'), st: eq('statut de la course'), prod: eq('type de produit'), pay: eq('type de paiement') };
+  const H = rows[h].map(ubcNorm), eq = (...l) => { for (const t of l) { const i = H.indexOf(t); if (i >= 0) return i; } return -1; };
+  const ix = { uuid: eq('uuid de la course', 'trip uuid'), du: eq('uuid du chauffeur', 'driver uuid'), fn: eq('prenom du chauffeur', 'driver first name'), ln: eq('nom du chauffeur', 'driver last name', 'driver surname'),
+    vu: eq('uuid du vehicule', 'vehicle uuid'), plate: eq('plaque d\'immatriculation', 'license plate', 'licence plate', 'number plate'), svc: eq('type de service', 'service type'),
+    req: eq('heure de la demande de course', 'trip request time'), drop: eq('heure de depose', 'trip drop off time', 'drop off time', 'dropoff time'),
+    pu: eq('adresse de prise en charge', 'pick-up address', 'pickup address'), da: eq('lieu de depose', 'drop off address', 'dropoff address'), km: eq('distance de la course', 'trip distance'),
+    st: eq('statut de la course', 'trip status'), prod: eq('type de produit', 'product type'), pay: eq('type de paiement', 'payment type') };
   const t = (r, i) => i >= 0 ? String(r[i] == null ? '' : r[i]).trim() : '', out = [], bad = [], seen = new Set();
   for (let i = h + 1; i < rows.length; i++) {
     const r = rows[i] || [], u = t(r, ix.uuid); if (!u) continue;

@@ -68,7 +68,11 @@ function pfDisconnects(latest, drivers, o) {
     if (o.keep && !o.keep(d, r)) return;
     out.push({ key: 'UOFF|' + r.driver_id + '|' + new Date(t).toISOString(), driverId: r.driver_id, name: (d && d.name) || '', plate: r.vehicle_label || '', lastAt: t, status: r.status, d, r });
   });
-  return out.sort((a, b) => b.lastAt - a.lastAt);
+  // plusieurs chauffeurs « plus affichés » à la même lecture (3 au moins, à 30 s près) : la lecture d'Uber a sauté (liste filtrée,
+  // page rechargée), pas des déconnexions : aucune alerte (20/11/2026, 15 fausses alertes à la même seconde)
+  const gone = out.filter(x => x.status !== 'offline');
+  const mass = new Set(gone.filter(x => gone.filter(y => Math.abs(y.lastAt - x.lastAt) <= 30000).length >= (o.massMin || 3)).map(x => x.key));
+  return out.filter(x => !mass.has(x.key)).sort((a, b) => b.lastAt - a.lastAt);
 }
 /** Message au chauffeur (français puis darija) : se reconnecter à Uber ou appeler l'agence */
 function pfWaOff(x, hm, dur, durAr) {
