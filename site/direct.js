@@ -201,7 +201,7 @@ function kpisHtml(rows) {
  */
 /**
  * Chiffres de la fiche (19/11/2026, demande d'Ahmed) : Geotab = km parcourus et carburant consommé depuis le début du contrat (sinon du
- * shift) ; Uber = revenus totaux, heures en ligne, taux d'acceptation, courses de la journée d'Uber (04:00 → 04:00). Rien sans mesure.
+ * shift) ; Uber = revenus totaux, heures en ligne, taux d'acceptation, courses de la journée d'Uber (05:00 → 05:00 heure du Maroc). Rien sans mesure.
  */
 function vcKpis(r) {
   const d = liveDrv(r), p = typeof pfVehPerf === 'function' ? pfVehPerf(r) : null, cells = [];
@@ -211,7 +211,7 @@ function vcKpis(r) {
   if (d && d.fuel_l != null) cells.push(cell(f1(d.fuel_l) + ' L', 'carburant', 'Carburant consommé ' + per + ' (compteur Geotab)'));
   if (p) {
     const hh = p.h != null ? Math.floor(p.h) + ' h ' + String(Math.round((p.h % 1) * 60)).padStart(2, '0') : null;
-    const tip = 'Uber, journée du jour (04:00 → 04:00), lu à ' + localHM(new Date(p.at));
+    const tip = 'Uber, journée en cours (de 05:00 à 05:00, heure du Maroc), lu à ' + localHM(new Date(p.at));
     if (p.e != null) cells.push(cell(f0(p.e) + ' MAD', 'revenus Uber', 'Revenus totaux · ' + tip + (p.cash != null ? ' · dont espèces ' + f0(p.cash) + ' MAD' : ''), 'uber'));
     if (hh) cells.push(cell(hh, 'en ligne', 'Heures en ligne · ' + tip, 'uber'));
     if (p.a != null) cells.push(cell(f0(p.a * 100) + ' %', 'acceptation', 'Taux d\'acceptation · ' + tip + (p.c != null ? ' · annulation ' + f0(p.c * 100) + ' %' : ''), 'uber' + (p.a < 0.8 ? ' bad' : '')));

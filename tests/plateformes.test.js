@@ -195,7 +195,9 @@ test('lecture 1.9 (site/uber_read.js) : carte en temps réel d\'Uber Fleet (GetD
   assert.strictEqual(U.perfIndex({ data: { getPerformanceReport: [{ uuid: id('1'), totalEarnings: 1242, cashEarnings: 205, hoursOnline: 7.84, totalTrips: 6, driverAcceptanceRate: 1, driverCancellationRate: 0, __typename: 'DriverPerformanceDetail' },
     { uuid: vid('1'), totalEarnings: 9, __typename: 'VehiclePerformanceDetail' }] } }), 1, 'performances des chauffeurs seulement');
   assert.strictEqual(U.read(doc, net, map).rows[0].perf.e, 1242, 'revenus du jour joints au chauffeur en ligne');
-  assert.strictEqual(U.uberDay(Date.UTC(2026, 10, 19, 2, 30)), U.uberDay(Date.UTC(2026, 10, 18, 4, 0)), 'journée d\'Uber de 04:00 à 04:00 (heure du Maroc)');
+  assert.strictEqual(U.uberDay(Date.UTC(2026, 10, 19, 2, 30)), U.uberDay(Date.UTC(2026, 10, 18, 4, 0)), 'journée d\'Uber de 04:00 à 04:00 UTC');
+  assert.strictEqual(U.uberDay(1795147200000) * 86400000 + 4 * 3600000, 1795147200000, 'début de journée = celui de la page Performances (20/11 04:00 UTC)');
+  assert.notStrictEqual(U.uberDay(Date.UTC(2026, 10, 20, 3, 59)), U.uberDay(Date.UTC(2026, 10, 20, 4, 0)));
   assert.strictEqual(m2.p[vid('4')], '968211', 'plaque écrite sans lettres dans Uber Fleet : gardée (Ludy la rapproche par les chiffres)');
   assert.strictEqual(m2.ph[id('4')], 'https://d1w2poirtb3as9.cloudfront.net/d.jpeg', 'photo de la fiche');
   assert.deepStrictEqual(['SUPPLY_ACTIVITY_STATE_ONLINE_DISPATCHABLE', 'SUPPLY_ACTIVITY_STATE_OFFLINE', 'SUPPLY_ACTIVITY_STATE_ON_TRIP', 'SUPPLY_ACTIVITY_STATE_EN_ROUTE', 'X'].map(U.uberSt), ['available', 'offline', 'on_trip', 'to_pickup', null]);

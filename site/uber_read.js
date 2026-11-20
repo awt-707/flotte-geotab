@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-20a';
+  var V = '2026-11-20b';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -197,13 +197,24 @@
   }
   function num2(v) { var n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? Math.round(n * 1000) / 1000 : null; }
   function perfOf(did) { var p = PERF[did]; return p && Date.now() - p.at < 20 * 60000 ? p : null; }
-  /** Jour d'Uber (04:00 → 04:00, heure du Maroc UTC+1) d'un instant */
-  function uberDay(t) { return Math.floor((t + 3600000 - 4 * 3600000) / 86400000); }
+  /** Jour d'Uber d'un instant : 04:00 → 04:00 UTC (Uber met le Maroc à UTC+0 : 05:00 → 05:00 heure réelle du Maroc ; relevé le 20/11/2026) */
+  function uberDay(t) { return Math.floor((t - 4 * 3600000) / 86400000); }
   /** Demande des performances rejouée pour les chauffeurs en ligne, dates décalées au jour d'Uber en cours (toutes les 2 min) */
+  var Q_PERF = 'query GetPerformanceReport($performanceReportRequest: PerformanceReportRequest__Input!) { getPerformanceReport(performanceReportRequest: $performanceReportRequest) { uuid totalEarningsLabel totalEarnings earningsPerHourLabel tripsPerOnlineHour hoursOnline totalTrips hoursOnJob hoursOnTrip hoursToTrip hoursAvailableForTrip ... on DriverPerformanceDetail { cashEarningsLabel cashEarnings driverAcceptanceRate driverCancellationRate firstOnlineTime lastOnlineTime firstTripTime lastTripTime __typename } ... on VehiclePerformanceDetail { utilization vehicleIncentiveTarget vehicleIncentiveCompleted vehicleIncentiveEnrollmentStatus vehicleIncentiveUnit vehicleAcceptanceRate __typename } __typename } }';
+  var PERF_METRICS = ['vs:TotalEarningsLabel', 'vs:TotalEarnings', 'vs:EarningsPerHourLabel', 'vs:TripsPerOnlineHour', 'vs:HoursOnline', 'vs:HoursOnTrip', 'vs:HoursOnJob', 'vs:TotalTrips', 'vs:CashEarningsLabel',
+    'vs:CashEarnings', 'vs:DriverAcceptanceRate', 'vs:DriverCancellationRate', 'vs:FirstOnlineTime', 'vs:LastOnlineTime', 'vs:FirstTripTime', 'vs:LastTripTime'];
   function perfAsk(ids) {
     if (!ids.length || (window.__ludyPerfAt && Date.now() - window.__ludyPerfAt < 120000)) return;
     var q = null; try { q = JSON.parse(localStorage.getItem('ludyUberPerfReq') || 'null'); } catch (e) { }
-    if (!q || !q.body) return;
+    // aucune demande gardée sur cet ordinateur (page Performances jamais affichée) : la demande de la page Performances, relevée le
+    // 20/11/2026 (requête, indicateurs, journée d'Uber 04:00 → 04:00 UTC), construite pour la journée en cours
+    if (!q || !q.body) {
+      var org = (location.pathname.match(/\/orgs\/([0-9a-f-]{36})/i) || [])[1] || ''; if (!org) return;
+      var d0 = uberDay(Date.now()) * 86400000 + 4 * 3600000;   // 04:00 UTC, comme la page Performances (1795147200000 = 20/11 04:00 UTC)
+      q = { url: '/graphql', headers: {}, at: Date.now(), body: JSON.stringify({ operationName: 'GetPerformanceReport', query: Q_PERF, variables: { performanceReportRequest: {
+        orgUUID: org, dimensions: ['vs:driver'], dimensionFilterClause: [{ dimensionName: 'vs:driver', operator: 'OPERATOR_IN', expressions: [] }], metrics: PERF_METRICS,
+        timeRange: { startsAt: { value: d0 }, endsAt: { value: d0 + 86400000 } } } } }) };
+    }
     var j; try { j = JSON.parse(q.body); } catch (e) { return; }
     var shift = (uberDay(Date.now()) - uberDay(q.at)) * 86400000;
     var walk = function (o) {
