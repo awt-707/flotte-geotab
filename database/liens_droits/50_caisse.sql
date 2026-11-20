@@ -163,9 +163,17 @@ REVOKE ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.import_uber_trips(p_rows jsonb) TO service_role;
 
+REVOKE ALL ON FUNCTION public.ma_offset_min(p_at timestamp with time zone, p_rules jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.ma_offset_min(p_at timestamp with time zone, p_rules jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.ma_offset_min(p_at timestamp with time zone, p_rules jsonb) TO service_role;
+
 REVOKE ALL ON FUNCTION public.uber_catalog_push(p_items jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.uber_catalog_push(p_items jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.uber_catalog_push(p_items jsonb) TO service_role;
+
+REVOKE ALL ON FUNCTION public.uber_demand(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.uber_demand(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.uber_demand(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint) TO service_role;
 
 REVOKE ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text, p_full boolean) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url text, p_diag text, p_full boolean) TO authenticated;
@@ -174,6 +182,10 @@ GRANT ALL ON FUNCTION public.uber_live_push(p_rows jsonb, p_device text, p_url t
 REVOKE ALL ON FUNCTION public.uber_perf_push(p_period text, p_from timestamp with time zone, p_items jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.uber_perf_push(p_period text, p_from timestamp with time zone, p_items jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.uber_perf_push(p_period text, p_from timestamp with time zone, p_items jsonb) TO service_role;
+
+REVOKE ALL ON FUNCTION public.uber_zones(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint, p_cell numeric) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.uber_zones(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint, p_cell numeric) TO authenticated;
+GRANT ALL ON FUNCTION public.uber_zones(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint, p_cell numeric) TO service_role;
 
 GRANT SELECT,INSERT,DELETE ON TABLE public.bolt_sessions TO authenticated;
 GRANT ALL ON TABLE public.bolt_sessions TO service_role;

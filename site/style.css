@@ -835,3 +835,18 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .ubtrips { font-size: 12px; margin: 0; }
 .ubtrips tr.ubt-rc td { color: #9a5b00; }
 .ubtrips tr.ubt-dc td { color: #b42318; }
+
+/* Zones Uber (20/11/2026) */
+.znbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 6px 0 4px; }
+.znbar label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.znwrap { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+#znmap { height: min(70vh, 640px); border-radius: 10px; border: 1px solid var(--line, #e5e7eb); }
+.znleg { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; margin-top: 6px; align-items: center; }
+.znsw { display: inline-flex; gap: 4px; align-items: center; }
+.znsw i { width: 14px; height: 14px; border-radius: 3px; display: inline-block; border: 1px solid rgba(0,0,0,.1); }
+.zntop h2 { margin-top: 0; }
+#tzones tr[data-zn] { cursor: pointer; }
+#tzones tr.few td { opacity: .65; }
+.zndem th, .zndem td { padding: 3px 4px; text-align: center; font-size: 12px; min-width: 26px; }
+.zndem td.insl { outline: 2px solid #1f5fbf; outline-offset: -2px; }
+@media (max-width: 900px) { .znwrap { grid-template-columns: 1fr; } }

@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-20d';
+  var V = '2026-11-20e';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -174,12 +174,33 @@
     }
     return out;
   }
+  /**
+   * Dernière réponse de la carte (GetDriverLiveLocation) de moins de 90 s. Liste complète = autant de chauffeurs que « en ligne » dans
+   * les comptes de la même réponse (driverStats.onlineDrivers) : la page d'Uber Fleet filtre parfois sa liste (chauffeur cliqué, filtre,
+   * recherche : 20/11/2026 22:56, 2 chauffeurs sur 21 en ligne, lus comme la liste entière = 19 fausses déconnexions). La dernière
+   * réponse complète est préférée ; sinon la dernière réponse, marquée partielle (jamais de déconnexion déduite).
+   */
+  function liveComplete(list, st) { var on = st && typeof st.onlineDrivers === 'number' ? st.onlineDrivers : null; return on == null || list.length >= on; }
   function liveOf(net) {
+    var part = null;
     for (var i = net.length - 1; i >= 0; i--) {
       var x = net[i]; if (!/GetDriverLiveLocation/i.test(x.url) || Date.now() - x.at > 90000) continue;
-      try { var j = JSON.parse(x.text); if (j && j.data && Array.isArray(j.data.driverLocations)) return { at: x.at, list: j.data.driverLocations, stats: j.data.driverStats || null }; } catch (e) { }
+      try {
+        var j = JSON.parse(x.text); if (!(j && j.data && Array.isArray(j.data.driverLocations))) continue;
+        var o = { at: x.at, list: j.data.driverLocations, stats: j.data.driverStats || null };
+        o.complete = liveComplete(o.list, o.stats);
+        if (o.complete) return o;
+        if (!part) part = o;
+      } catch (e) { }
     }
-    return null;
+    return part;
+  }
+  function lastCompleteAt(net) {
+    for (var i = net.length - 1; i >= 0; i--) {
+      var x = net[i]; if (!/GetDriverLiveLocation/i.test(x.url)) continue;
+      try { var j = JSON.parse(x.text); if (j && j.data && Array.isArray(j.data.driverLocations) && liveComplete(j.data.driverLocations, j.data.driverStats)) return x.at; } catch (e) { }
+    }
+    return 0;
   }
   // ---- performances du jour d'Uber (19/11/2026, demande d'Ahmed : revenus, taux d'acceptation, temps en ligne sur la fiche) ----
   // GraphQL GetPerformanceReport (page Performances d'Uber Fleet) : par chauffeur, journée d'Uber (04:00 → 04:00) : revenus totaux,
@@ -393,8 +414,9 @@
         rows.push({ plate: plate, status: st, raw: raw.replace(/^SUPPLY_ACTIVITY_STATE_|^MONITORING_SUPPLY_STATUS_/, '').slice(0, 60), name: name, phone: cd.phone || '', photo: cd.photo || (map.ph && map.ph[did]) || '', driver: did, perf: perfOf(did),
           lat: typeof x.latitude === 'number' ? x.latitude : null, lng: typeof x.longitude === 'number' ? x.longitude : null });
       });
-      var full = miss.length === 0;
-      if (!full) {
+      var full = miss.length === 0 && live.complete;
+      if (!live.complete) lines.push('LISTE PARTIELLE ' + V + ' : ' + live.list.length + ' chauffeur(s) dans la réponse de la carte sur ' + (live.stats && live.stats.onlineDrivers) + ' en ligne (filtre de la page d\'Uber Fleet) : aucune déconnexion déduite');
+      if (miss.length) {
         lines.push('LUDY ' + V + ' · en ligne (Uber) : ' + live.list.length + ' · plaques trouvées : ' + rows.length + ' · sans plaque : ' + miss.length + ' · fiches de la liste : ' + Object.keys(cards).length + ' · correspondances : ' + Object.keys(map.p).length);
         lines.push('ÉTATS ' + JSON.stringify(states));
         if (live.stats) lines.push('STATS ' + JSON.stringify(live.stats).slice(0, 1500));
@@ -558,7 +580,8 @@
    * carte (GetDriverLiveLocation, relevée telle quelle quand la carte a été ouverte une fois sur cet ordinateur) est envoyée par Ludy.
    */
   function selfLive() {
-    var last = 0; for (var i = NET.length - 1; i >= 0; i--) if (/GetDriverLiveLocation/i.test(NET[i].url)) { last = NET[i].at; break; }
+    // carte relue par Ludy quand aucune réponse COMPLÈTE n'est arrivée depuis 12 s (la page peut ne relire qu'une partie des chauffeurs)
+    var last = lastCompleteAt(NET);
     if (Date.now() - last < 12000 || (window.__ludySelfAt && Date.now() - window.__ludySelfAt < 9000)) return;
     var q = null; try { q = JSON.parse(localStorage.getItem('ludyUberLiveReq') || 'null'); } catch (e) { }
     var org = (location.pathname.match(/\/orgs\/([0-9a-f-]{36})/i) || [])[1] || '';

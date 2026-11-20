@@ -18,7 +18,9 @@ async function pfLoad() {
     PF.src = 'ludy';
     // liste complète lue dans les données de la carte d'Uber Fleet (application 1.9) : comptes, déconnexions, hors ligne ;
     // sinon (1.8, ou carte pas ouverte) : seulement les chauffeurs affichés, jamais comptés ni signalés déconnectés
-    PF.full = own.some(r => r.complete && new Date(r.observed_at).getTime() >= fresh);
+    // la dernière lecture doit être complète (une lecture partielle plus récente = comptes et déconnexions suspendus)
+    const newest = own.reduce((m, r) => Math.max(m, new Date(r.observed_at).getTime() || 0), 0);
+    PF.full = own.some(r => r.complete && new Date(r.observed_at).getTime() >= Math.max(fresh, newest - 15000));
     PF.latest = own.map(r => ({ driver_id: r.plate_key, source: 'uber', status: r.status, observed_at: r.observed_at, since: r.status_since, vehicle_label: r.plate, full: !!r.complete, photo: r.photo_url || '', perf: r.perf || null, evidence: { raw_state: r.raw } }));
     PF.drivers = own.map(r => ({ id: r.plate_key, name: r.driver_name || '', agency_id: r.agency_id, vehicle_key: r.vehicle_key, ludy_driver_code: null }));
     PF.err = ''; PF.at = Date.now();

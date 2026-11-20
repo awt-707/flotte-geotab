@@ -351,7 +351,7 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
-  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['suivi', 'Pauses et suivi des courses'], ['retours', 'Retours véhicules'], ['uberctl', 'Contrôle Uber'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['boitiers', 'Boîtiers GPS'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['suivi', 'Pauses et suivi des courses'], ['retours', 'Retours véhicules'], ['uberctl', 'Contrôle Uber'], ['zones', 'Zones Uber'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['boitiers', 'Boîtiers GPS'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
 // Dossiers du menu (demande d'Ahmed : menu allégé) : un titre qui ouvre / ferme ses volets (clic sur le titre), ouvert
 // d'office quand la page affichée en fait partie. Ressources humaines : onglets de la page #/rh. Dossier réduit à un seul
@@ -1741,7 +1741,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, suivi: pageSuivi, retours: pageRetours, uberctl: pageUberCtl, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, boitiers: pageBoitiers, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, suivi: pageSuivi, retours: pageRetours, uberctl: pageUberCtl, zones: pageZones, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, boitiers: pageBoitiers, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;

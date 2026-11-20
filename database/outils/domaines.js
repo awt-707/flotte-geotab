@@ -35,7 +35,7 @@ const DOMAINS = {
       'fiches d\'encaissement et justificatifs déposés (cash_sheets, cash_files),',
       'contrôle des courses Uber (export « Activité des courses » croisé avec le GPS Geotab : uber_trips, uber_days).'],
     tables: ['cash_moves', 'cash_log', 'uber_payments', 'uber_drivers', 'bolt_sessions', 'cash_sheets', 'cash_files', 'uber_trips', 'uber_days', 'uber_live', 'uber_live_readers', 'uber_live_log', 'uber_catalog', 'uber_perf'],
-    functions: ['cash_guard', 'cash_log_trg', 'cash_agency_trg', 'import_uber_trips', 'uber_live_push', 'uber_catalog_push', 'uber_perf_push'] },
+    functions: ['cash_guard', 'cash_log_trg', 'cash_agency_trg', 'import_uber_trips', 'uber_live_push', 'uber_catalog_push', 'uber_perf_push', 'uber_zones', 'uber_demand', 'ma_offset_min'] },
   '60': { file: 'planning_chauffeurs', title: 'Planning des chauffeurs',
     about: ['Réglages par chauffeur (driver_roster), cases jour / nuit (driver_plan), absences, semaines publiées ou verrouillées, historique.'],
     tables: ['driver_roster', 'driver_plan', 'driver_absences', 'plan_weeks', 'plan_log'],

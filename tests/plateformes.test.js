@@ -105,6 +105,11 @@ test('déconnexion d\'Uber : chauffeur vu puis plus vu (lecture à jour), contra
   assert.deepStrictEqual(l.map(x => [x.name, x.plate, x.key]), [['ALPHA', '030070WW', 'UOFF|a|' + ago(240)]]);
   assert.deepStrictEqual(P.pfDisconnects(latest, drivers, { now, keep: d => d.name !== 'ALPHA' }), [], 'contrat terminé, pause ou retour : pas d\'alerte');
   assert.deepStrictEqual(P.pfDisconnects(latest.filter(r => r.driver_id !== 'b'), drivers, { now }), [], 'lecture d\'Uber arrêtée : personne n\'est déclaré déconnecté');
+  // 20/11/2026 : 15 chauffeurs « plus affichés » à la même seconde = lecture d'Uber qui a sauté, pas de déconnexions
+  const t0 = now - 8 * 60000, mass = ['m1', 'm2', 'm3'].map((id, i) => ({ driver_id: id, source: 'uber', status: 'on_trip', observed_at: new Date(t0 + i * 1000).toISOString(), vehicle_label: '03007' + i + 'WW' }));
+  const all3 = latest.concat(mass), lm = P.pfDisconnects(all3, drivers.concat(mass.map(m => ({ id: m.driver_id, name: m.driver_id }))), { now });
+  assert.ok(!lm.some(x => /^m/.test(x.driverId)), 'déconnexions en masse à la même lecture : aucune alerte');
+  assert.deepStrictEqual(lm.map(x => x.driverId), l.map(x => x.driverId), 'les autres alertes restent');
   const hm = ms => new Date(ms).toISOString().slice(11, 16), dur = ms => Math.round(ms / 60000) + ' min';
   const x = { name: 'ALPHA', plate: 'WW030070', lastAt: now - 240000, now, ctr: 'K1', geo: 'En route à 40 km/h', phone: '0612345678' };
   assert.match(P.pfWaOff(x, hm, dur), /DÉCONNECTÉ D'UBER\*\nBonjour ALPHA,\nVous n'êtes plus connecté à Uber depuis 18:26 \(4 min\) avec le véhicule WW030070[\s\S]*خرجتي من Uber/);
@@ -381,4 +386,20 @@ test('courses du shift : rapport « Activité des courses » lu (CSV), lots impo
     assert.strictEqual(await page.locator('.ubtrips').count(), 0, 'replié au second clic');
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
+});
+
+test('lecture 1.9 : réponse de la carte filtrée par la page (2 chauffeurs sur 21 en ligne) = lecture partielle, la dernière réponse complète est préférée', () => {
+  const U = require('../site/uber_read.js');
+  const id = n => n + '97b48f1d-06da-4c89-8310-fe49bfd8b16a'.slice(1), vid = n => n + '317d21e1-79fb-4a0a-8e30-f5582739ac91'.slice(1);
+  const loc = n => ({ driverId: { value: id(n) }, vehicleId: { value: vid(n) }, latitude: 31.6, longitude: -8, supplyActivityState: 'SUPPLY_ACTIVITY_STATE_ON_TRIP', driverStatus: 'MONITORING_SUPPLY_STATUS_ONLINE' });
+  const resp = (ns, online) => JSON.stringify({ status: 'success', data: { driverLocations: ns.map(loc), driverStats: { matchedDrivers: ns.length, onlineDrivers: online } } });
+  const map = { p: {}, n: {}, ph: {} }; ['1', '2', '3'].forEach(n => { map.p[vid(n)] = 'WW96820' + n; map.ph[id(n)] = 'https://x.cloudfront.net/p.jpg'; });
+  const doc = { querySelectorAll: () => [] }, now = Date.now();
+  const part = { url: 'https://fleethub.uber.com/api/GetDriverLiveLocation', op: '', at: now, text: resp(['1'], 3) };
+  let r = U.read(doc, [part], map);
+  assert.strictEqual(r.full, false, 'seule réponse filtrée : partielle');
+  assert.match(r.diag, /LISTE PARTIELLE .* 1 chauffeur\(s\) .* sur 3 en ligne/);
+  const comp = { url: 'https://fleethub.uber.com/api/GetDriverLiveLocation', op: '', at: now - 5000, text: resp(['1', '2', '3'], 3) };
+  r = U.read(doc, [comp, part], map);
+  assert.strictEqual(r.full, true); assert.strictEqual(r.rows.length, 3, 'réponse complète d\'il y a 5 s préférée à la réponse filtrée plus récente');
 });
