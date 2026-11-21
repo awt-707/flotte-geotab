@@ -90,4 +90,28 @@ function pfShareOff(x, hm, dur) {
     (x.ctr ? ' · contrat ' + x.ctr : '') + (x.geo ? ' · GPS : ' + x.geo : '') + (x.phone ? ' · tél. ' + x.phone : '');
 }
 
-if (typeof module !== 'undefined') module.exports = { PF_ST, PF_FRESH_MS, pfSummary, pfDisconnects, pfWaOff, pfShareOff };
+
+/**
+ * Compte Uber d'un contrat Ludy (21/11/2026) : celui qui a été vu en ligne sur le véhicule du contrat pendant le contrat (historique des
+ * états de la carte d'Uber Fleet, uber_live_log : temps passé le plus long) ; sinon, compte Uber vu sur ce véhicule dans les chiffres du
+ * shift relevés pendant le contrat, s'il n'y en a qu'un. Rien trouvé ou plusieurs comptes sans historique = null (jamais deviné).
+ * c : { vehicle_key, start_at, _end (ms ou null) } ; logs : { vehicle_key, driver_id, driver_name, status, started_at, ended_at } ;
+ * perfs : { vehicle_key, driver_id, driver_name, updated_at }.
+ */
+function pfCtrDriver(c, logs, perfs, now) {
+  const f = +new Date(c.start_at), t = c._end || now, ov = {};
+  (logs || []).forEach(l => {
+    if (l.vehicle_key !== c.vehicle_key || !l.driver_id || l.status === 'gone' || l.status === 'offline') return;
+    const a = Math.max(f, +new Date(l.started_at)), b = Math.min(t, l.ended_at ? +new Date(l.ended_at) : now);
+    if (b > a) { const o = ov[l.driver_id] || (ov[l.driver_id] = { ms: 0, name: '' }); o.ms += b - a; if (l.driver_name) o.name = l.driver_name; }
+  });
+  const ids = Object.keys(ov).sort((x, y) => ov[y].ms - ov[x].ms);
+  if (ids.length) return { d: ids[0], name: ov[ids[0]].name, src: 'carte', others: ids.length - 1 };
+  const p = (perfs || []).filter(r => r.vehicle_key === c.vehicle_key && r.driver_id && +new Date(r.updated_at) >= f && +new Date(r.updated_at) <= t + 30 * 60000);
+  const u = [...new Set(p.map(r => r.driver_id))];
+  return u.length === 1 ? { d: u[0], name: (p.find(r => r.driver_name) || {}).driver_name || '', src: 'shift', others: 0 } : null;
+}
+/** Somme d'une clé des chiffres d'Uber (lignes uber_perf), en ignorant les valeurs absentes */
+function pfSumData(rows, k) { return (rows || []).reduce((t, r) => t + (r && r.data && typeof r.data[k] === 'number' ? r.data[k] : 0), 0); }
+
+if (typeof module !== 'undefined') module.exports = { PF_ST, PF_FRESH_MS, pfSummary, pfDisconnects, pfWaOff, pfShareOff, pfCtrDriver, pfSumData };
