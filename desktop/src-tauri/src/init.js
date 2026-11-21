@@ -2,5 +2,6 @@
 // « ext » = volets externes (liste des Réglages) affichés dans la fenêtre, à droite du menu Ludy
 // (commandes ext_show / ext_hide / ext_reload / ext_status / ext_login) ; « uber » : adresse par défaut du volet Uber Fleet ;
 // « open » (1.3) : liens WhatsApp / e-mail / extérieurs ouverts par le système (commande open_external) ;
-// « extWin » (1.6) : volets externes dans leur propre fenêtre (Windows) au lieu d'être posés à droite du menu.
-window.LUDY_APP = { version: '__VERSION__', uber: '__UBER__', embed: true, ext: true, open: true, extWin: __EXTWIN__ };
+// « extWin » (1.6) : volets externes dans leur propre fenêtre (Windows) au lieu d'être posés à droite du menu ;
+// « bg » (2.0) : robot Uber Fleet (ext_bg : volet ouvert caché), fermer = cacher (app_quit pour quitter), démarrage avec l'ordinateur (autostart).
+window.LUDY_APP = { version: '__VERSION__', uber: '__UBER__', embed: true, ext: true, open: true, extWin: __EXTWIN__, bg: true };

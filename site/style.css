@@ -850,3 +850,12 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .zndem th, .zndem td { padding: 3px 4px; text-align: center; font-size: 12px; min-width: 26px; }
 .zndem td.insl { outline: 2px solid #1f5fbf; outline-offset: -2px; }
 @media (max-width: 900px) { .znwrap { grid-template-columns: 1fr; } }
+
+/* En direct : total du shift Uber comparé à la veille au même moment (21/11/2026) */
+.kchip.pf-total { border-color: #1f5fbf; }
+.kchip.pf-up { border-color: #18794a; color: #18794a; }
+.kchip.pf-down { border-color: #b42318; color: #b42318; }
+
+/* Robot Uber Fleet : session d'Uber expirée (21/11/2026) */
+.pflogin { position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 2900; background: #b42318; color: #fff; padding: 10px 16px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.25); font-size: 14px; max-width: calc(100vw - 32px); }
+.pflogin a { color: #fff; text-decoration: underline; font-weight: 600; margin-left: 6px; }

@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-20e';
+  var V = '2026-11-21a';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -242,7 +242,7 @@
   function seenAdd(ids) {
     var o = {}; try { o = JSON.parse(localStorage.getItem('ludyUberSeen') || '{}') || {}; } catch (e) { }
     var now = Date.now(); ids.forEach(function (id) { if (id) o[id] = now; });
-    Object.keys(o).forEach(function (k) { if (now - o[k] > 20 * 3600000) delete o[k]; });
+    Object.keys(o).forEach(function (k) { if (now - o[k] > 50 * 3600000) delete o[k]; });   // 50 h : chauffeurs d'hier (comparaison J-1)
     try { localStorage.setItem('ludyUberSeen', JSON.stringify(o)); } catch (e) { }
     return o;
   }
@@ -269,13 +269,40 @@
               first: num2(x.firstOnlineTime), last: num2(x.lastOnlineTime) };
           });
           window.__ludyShiftRes = 'shift : ' + SHIFTP.items.length + ' chauffeur(s) lu(s)';
+          prevPerfAsk(sh, from, org, seen, map);
         }, function (e) { window.__ludyShiftRes = 'shift : échec ' + String(e && e.message || e).slice(0, 80); });
     } catch (e) { }
+  }
+  /**
+   * Comparaison avec la veille (21/11/2026, demande d'Ahmed : total du shift comparé à J-1 au même moment) : même demande, période
+   * d'hier = début du shift − 24 h → maintenant − 24 h, pour tous les chauffeurs connus de l'organisation (vus sur la carte depuis 50 h,
+   * fiches et listes d'Uber Fleet), par lots de 80 ; chiffres d'Uber, rien d'estimé. Envoyé avec la ligne PERF (prev).
+   */
+  function prevPerfAsk(sh, from, org, seen, map) {
+    var now = Math.floor(Date.now() / 60000) * 60000, f1 = from - 86400000, t1 = now - 86400000, ok = function (k) { return /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(k); };
+    var ids = {}; Object.keys(seen || {}).concat(Object.keys(map.n || {}), Object.keys(DRVP)).forEach(function (k) { if (ok(k)) ids[k] = 1; });
+    var all = Object.keys(ids).slice(0, 400), lots = []; for (var i = 0; i < all.length; i += 80) lots.push(all.slice(i, i + 80));
+    if (!lots.length) return;
+    var q = Q_PERF.replace('{ getPerformanceReport(', '{ prev: getPerformanceReport('), out = [], bad = 0;
+    var one = function (ids2) {
+      return window.fetch('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': 'x' }, credentials: 'include', __ludy: 1,
+        body: JSON.stringify({ operationName: 'GetPerformanceReport', query: q, variables: { performanceReportRequest: { orgUUID: org, dimensions: ['vs:driver'],
+          dimensionFilterClause: [{ dimensionName: 'vs:driver', operator: 'OPERATOR_IN', expressions: ids2 }], metrics: PERF_METRICS, timeRange: { startsAt: { value: f1 }, endsAt: { value: t1 } } } } }) })
+        .then(function (r) { return r.json(); }).then(function (j) { var l = j && j.data && j.data.prev; if (!Array.isArray(l)) { bad++; return; } l.forEach(function (x) { if (x && x.__typename === 'DriverPerformanceDetail' && idOf(x.uuid)) out.push(x); }); }, function () { bad++; });
+    };
+    lots.reduce(function (p, l) { return p.then(function () { return one(l); }); }, Promise.resolve()).then(function () {
+      if (bad) { window.__ludyShiftRes = (window.__ludyShiftRes || '') + ' · J-1 : ' + bad + ' lot(s) en échec, pas envoyé'; return; }
+      SHIFTP.prev = { key: sh.key, from: new Date(f1).toISOString(), to: t1, items: out.map(function (x) { var d = idOf(x.uuid), dp = DRVP[d] || {};
+        return { d: d, n: map.n[d] || dp.n || '', p: map.p[d] || dp.p || '', e: num2(x.totalEarnings), cash: num2(x.cashEarnings), h: num2(x.hoursOnline), t: num2(x.totalTrips), to: t1 }; })
+        .filter(function (x) { return x.e || x.t || x.h; }) };
+      SHIFTP.sends = 3;
+      window.__ludyShiftRes = (window.__ludyShiftRes || '') + ' · J-1 : ' + SHIFTP.prev.items.length + ' chauffeur(s) sur ' + all.length + ' interrogé(s)';
+    });
   }
   /** Ligne « PERF » du diagnostic (l'application garde 20 000 caractères au plus : reportée si le catalogue prend déjà la place) */
   function shiftPerfLine(used) {
     if (!(SHIFTP.sends > 0) || !SHIFTP.items.length) return '';
-    var l = 'PERF ' + JSON.stringify({ period: SHIFTP.key, from: SHIFTP.from, items: SHIFTP.items }) + '\n';
+    var l = 'PERF ' + JSON.stringify({ period: SHIFTP.key, from: SHIFTP.from, items: SHIFTP.items, prev: SHIFTP.prev && SHIFTP.prev.key === SHIFTP.key ? SHIFTP.prev : null }) + '\n';
     if (used + l.length > 19000) return '';
     SHIFTP.sends--;
     return l;
