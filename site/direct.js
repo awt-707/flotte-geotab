@@ -204,18 +204,20 @@ function kpisHtml(rows) {
  * shift) ; Uber = revenus totaux, heures en ligne, taux d'acceptation, courses de la journée d'Uber (05:00 → 05:00 heure du Maroc). Rien sans mesure.
  */
 function vcKpis(r) {
-  const d = liveDrv(r), p = typeof pfVehPerf === 'function' ? pfVehPerf(r) : null, cells = [];
+  const d = liveDrv(r), cells = [];
   const per = r.contract_num && r.ctr_start ? 'depuis le début du contrat' : 'depuis le début du shift';
   const cell = (v, l, tip, cls) => `<span class="vk${cls ? ' ' + cls : ''}" title="${esc(tip)}"><b>${v}</b><small>${l}</small></span>`;
   if (d && d.km != null) cells.push(cell(f0(d.km) + ' km', 'parcourus', 'Kilomètres ' + per + ' (compteur Geotab)'));
   if (d && d.fuel_l != null) cells.push(cell(f1(d.fuel_l) + ' L', 'carburant', 'Carburant consommé ' + per + ' (compteur Geotab)'));
-  if (p) {
-    const hh = p.h != null ? Math.floor(p.h) + ' h ' + String(Math.round((p.h % 1) * 60)).padStart(2, '0') : null;
-    const tip = 'Uber, journée en cours (de 05:00 à 05:00, heure du Maroc), lu à ' + localHM(new Date(p.at));
-    if (p.e != null) cells.push(cell(f0(p.e) + ' MAD', 'revenus Uber', 'Revenus totaux · ' + tip + (p.cash != null ? ' · dont espèces ' + f0(p.cash) + ' MAD' : ''), 'uber'));
+  // Uber : chiffres du compte du chauffeur depuis le début de son contrat Ludy (jamais la journée d'Uber, 05:00 → 05:00)
+  const cp = r.contract_num && typeof PFS !== 'undefined' && PFS.perf ? PFS.perf['ctr:' + r.contract_num] : null, q = cp && cp.data;
+  if (q) {
+    const hh = q.h != null ? Math.floor(q.h) + ' h ' + String(Math.round((q.h % 1) * 60)).padStart(2, '0') : null;
+    const tip = 'Uber, depuis le début du contrat' + (r.ctr_start ? ' (' + localHM(new Date(r.ctr_start)) + ')' : '') + ', lu à ' + localHM(new Date(cp.updated_at));
+    cells.push(cell(f0(q.e || 0) + ' MAD', 'revenus Uber', 'Revenus totaux · ' + tip + (q.cash != null ? ' · dont espèces ' + f0(q.cash) + ' MAD' : ''), 'uber'));
     if (hh) cells.push(cell(hh, 'en ligne', 'Heures en ligne · ' + tip, 'uber'));
-    if (p.a != null) cells.push(cell(f0(p.a * 100) + ' %', 'acceptation', 'Taux d\'acceptation · ' + tip + (p.c != null ? ' · annulation ' + f0(p.c * 100) + ' %' : ''), 'uber' + (p.a < 0.8 ? ' bad' : '')));
-    if (p.t != null) cells.push(cell(f0(p.t), 'courses', 'Courses effectuées · ' + tip, 'uber'));
+    if (q.a != null) cells.push(cell(f0(q.a * 100) + ' %', 'acceptation', 'Taux d\'acceptation · ' + tip + (q.c != null ? ' · annulation ' + f0(q.c * 100) + ' %' : ''), 'uber' + (q.a < 0.8 ? ' bad' : '')));
+    if (q.t != null) cells.push(cell(f0(q.t), 'courses', 'Courses effectuées · ' + tip, 'uber'));
   }
   return cells.length ? `<span class="vc-kpis">${cells.join('')}</span>` : '';
 }

@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-21c';
+  var V = '2026-11-21d';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -286,12 +286,13 @@
    * toutes les 2 min, les chiffres d'Uber de chaque compte sur la période exacte de son contrat sont demandés en une seule fois (une
    * réponse nommée par contrat, 15 par demande). Ligne « CTRP » du diagnostic (envoyée 3 fois).
    */
-  var CTRP = (typeof window !== 'undefined' && window.__ludyCtrPerf) || { at: 0, sends: 0, items: [], res: '' };
+  var CTRP = (typeof window !== 'undefined' && window.__ludyCtrPerf) || { at: 0, items: [], q: [], cur: null, curAt: 0, res: '' };
+  if (!CTRP.q) CTRP.q = [];
   if (typeof window !== 'undefined') window.__ludyCtrPerf = CTRP;
   var PERF_FIELDS = Q_PERF.slice(Q_PERF.indexOf('{ uuid'), Q_PERF.lastIndexOf('} }') + 1);
   function ctrPerfAsk() {
     var L = (window.__ludyCtrs && window.__ludyCtrs.list) || [], org = (location.pathname.match(/\/orgs\/([0-9a-f-]{36})/i) || [])[1] || '';
-    if (!L.length || !org || CTRP.busy || Date.now() - CTRP.at < 120000) return;
+    if (!L.length || !org || CTRP.busy || Date.now() - CTRP.at < 90000) return;
     CTRP.at = Date.now(); CTRP.busy = 1;
     var lots = [], out = [], errs = []; for (var i = 0; i < L.length; i += 15) lots.push(L.slice(i, i + 15));
     var one = function (lot) {
@@ -317,17 +318,20 @@
         }); }, function (e) { errs.push(String(e && e.message || e).slice(0, 80)); });
     };
     lots.reduce(function (p, l) { return p.then(function () { return one(l); }); }, Promise.resolve()).then(function () {
-      CTRP.items = out; CTRP.sends = 3; CTRP.busy = 0;
+      // lots de 7 000 caractères au plus (le diagnostic de l'application en garde 20 000), chacun affiché 15 s
+      var lots2 = [], b = [], len = 0;
+      out.forEach(function (x) { Object.keys(x).forEach(function (k) { if (x[k] == null) delete x[k]; }); var l2 = JSON.stringify(x).length; if (len + l2 > 7000 && b.length) { lots2.push(b); b = []; len = 0; } b.push(x); len += l2; });
+      if (b.length) lots2.push(b);
+      CTRP.items = out; CTRP.q = lots2; CTRP.cur = null; CTRP.busy = 0;
       CTRP.res = out.length + ' contrat(s) lu(s) sur ' + L.length + (errs.length ? ' · ' + errs.slice(0, 2).join(' | ') : '');
     }, function () { CTRP.busy = 0; });
   }
-  /** Lignes « CTRP » (lots de 9 000 caractères au plus) */
+  /** Ligne « CTRP » : un lot de contrats, affiché 15 s (le site relève toutes les 10 s), puis le suivant */
   function ctrPerfLine(used) {
-    if (!(CTRP.sends > 0) || !CTRP.items.length) return '';
-    var l = 'CTRP ' + JSON.stringify(CTRP.items) + '\n';
-    if (used + l.length > 19500) return '';
-    CTRP.sends--;
-    return l;
+    if (!CTRP.cur || Date.now() - CTRP.curAt > 15000) { CTRP.cur = CTRP.q.shift() || null; CTRP.curAt = Date.now(); }
+    if (!CTRP.cur) return '';
+    var l = 'CTRP ' + JSON.stringify(CTRP.cur) + '\n';
+    return used + l.length > 19800 ? '' : l;
   }
   /**
    * Courses une par une (20/11/2026, demande d'Ahmed : « les courses de la journée chauffeur par chauffeur », « les rapports d'Uber ») :
@@ -664,7 +668,7 @@
       try { tripsStep(); } catch (e) { TRP.res = 'rapport : ' + String(e && e.message || e).slice(0, 80); }
       try { ctrPerfAsk(); } catch (e) { CTRP.res = String(e && e.message || e).slice(0, 80); }
       // diagnostic (20 000 caractères au plus) : CAT (catalogue), PERF (shift), TRIPS (courses), puis l'état de la lecture
-      var dg = catBatch(TRP.q.length || TRP.cur ? 3000 : 8000); dg += shiftPerfLine(dg.length + 9500); dg += ctrPerfLine(dg.length + 9000); dg += tripsLine(dg.length + 1200);
+      var dg = catBatch(TRP.q.length || TRP.cur || CTRP.q.length || CTRP.cur ? 2000 : 8000); dg += ctrPerfLine(dg.length + 300); dg += shiftPerfLine(dg.length + 9500); dg += tripsLine(dg.length + 1200);
       dg += ((window.__ludySelfRes ? 'RELECTURE ' + window.__ludySelfRes + '\n' : '') + (window.__ludyShiftRes ? 'SHIFT ' + window.__ludyShiftRes + '\n' : '') + (CTRP.res ? 'CONTRATS ' + CTRP.res + '\n' : '') + (TRP.res ? 'COURSES ' + TRP.res + (TRP.q.length ? ' · ' + TRP.q.length + ' lot(s) en attente' : '') + '\n' : '') + (r.diag || (r.src ? 'source : ' + r.src : ''))).slice(0, Math.max(1000, 19800 - dg.length));
       inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: dg, full: r.full }).catch(function () { });
     } catch (e) { }
