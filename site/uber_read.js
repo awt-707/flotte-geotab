@@ -8,7 +8,7 @@
 // Rien n'est deviné : un chauffeur sans état reconnu ou sans plaque lisible n'est pas envoyé. Tant que la lecture n'est pas complète,
 // un extrait de la structure des données (diag) est joint pour régler la lecture.
 (function () {
-  var V = '2026-11-21a';
+  var V = '2026-11-21b';
   var ST = [
     [/offline|hors[ _-]?ligne|logged[ _-]?out|signed[ _-]?off/i, 'offline'],
     [/on[ _-]?trip|in[ _-]?trip|trip[ _-]?in[ _-]?progress|ontrip|driving[ _-]?with|course en cours|en course|with[ _-]?rider|in[ _-]?progress/i, 'on_trip'],
@@ -279,24 +279,35 @@
    * fiches et listes d'Uber Fleet), par lots de 80 ; chiffres d'Uber, rien d'estimé. Envoyé avec la ligne PERF (prev).
    */
   function prevPerfAsk(sh, from, org, seen, map) {
-    var now = Math.floor(Date.now() / 60000) * 60000, f1 = from - 86400000, t1 = now - 86400000, ok = function (k) { return /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(k); };
-    var ids = {}; Object.keys(seen || {}).concat(Object.keys(map.n || {}), Object.keys(DRVP)).forEach(function (k) { if (ok(k)) ids[k] = 1; });
-    var all = Object.keys(ids).slice(0, 400), lots = []; for (var i = 0; i < all.length; i += 80) lots.push(all.slice(i, i + 80));
-    if (!lots.length) return;
-    var q = Q_PERF.replace('{ getPerformanceReport(', '{ prev: getPerformanceReport('), out = [], bad = 0;
-    var one = function (ids2) {
+    var now = Math.floor(Date.now() / 60000) * 60000, f1 = from - 86400000, t1 = now - 86400000, ok = function (k) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(k); };
+    var q = Q_PERF.replace('{ getPerformanceReport(', '{ prev: getPerformanceReport('), errs = [];
+    var ask = function (ids2) {
+      var req = { orgUUID: org, dimensions: ['vs:driver'], metrics: PERF_METRICS, timeRange: { startsAt: { value: f1 }, endsAt: { value: t1 } } };
+      if (ids2) req.dimensionFilterClause = [{ dimensionName: 'vs:driver', operator: 'OPERATOR_IN', expressions: ids2 }];
       return window.fetch('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': 'x' }, credentials: 'include', __ludy: 1,
-        body: JSON.stringify({ operationName: 'GetPerformanceReport', query: q, variables: { performanceReportRequest: { orgUUID: org, dimensions: ['vs:driver'],
-          dimensionFilterClause: [{ dimensionName: 'vs:driver', operator: 'OPERATOR_IN', expressions: ids2 }], metrics: PERF_METRICS, timeRange: { startsAt: { value: f1 }, endsAt: { value: t1 } } } } }) })
-        .then(function (r) { return r.json(); }).then(function (j) { var l = j && j.data && j.data.prev; if (!Array.isArray(l)) { bad++; return; } l.forEach(function (x) { if (x && x.__typename === 'DriverPerformanceDetail' && idOf(x.uuid)) out.push(x); }); }, function () { bad++; });
+        body: JSON.stringify({ operationName: 'GetPerformanceReport', query: q, variables: { performanceReportRequest: req } }) })
+        .then(function (r) { return r.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (e) { } var l = j && j.data && j.data.prev;
+          if (!Array.isArray(l)) { errs.push('HTTP ' + r.status + ' ' + String((j && j.errors && j.errors[0] && j.errors[0].message) || t).slice(0, 160)); return null; }
+          return l.filter(function (x) { return x && x.__typename === 'DriverPerformanceDetail' && idOf(x.uuid); }); }); }, function (e) { errs.push(String(e && e.message || e).slice(0, 80)); return null; });
     };
-    lots.reduce(function (p, l) { return p.then(function () { return one(l); }); }, Promise.resolve()).then(function () {
-      if (bad) { window.__ludyShiftRes = (window.__ludyShiftRes || '') + ' · J-1 : ' + bad + ' lot(s) en échec, pas envoyé'; return; }
-      SHIFTP.prev = { key: sh.key, from: new Date(f1).toISOString(), to: t1, items: out.map(function (x) { var d = idOf(x.uuid), dp = DRVP[d] || {};
+    var done = function (out, mode, n) {
+      SHIFTP.prev = { key: sh.key, from: new Date(f1).toISOString(), to: t1, mode: mode, items: out.map(function (x) { var d = idOf(x.uuid), dp = DRVP[d] || {};
         return { d: d, n: map.n[d] || dp.n || '', p: map.p[d] || dp.p || '', e: num2(x.totalEarnings), cash: num2(x.cashEarnings), h: num2(x.hoursOnline), t: num2(x.totalTrips), to: t1 }; })
         .filter(function (x) { return x.e || x.t || x.h; }) };
       SHIFTP.sends = 3;
-      window.__ludyShiftRes = (window.__ludyShiftRes || '') + ' · J-1 : ' + SHIFTP.prev.items.length + ' chauffeur(s) sur ' + all.length + ' interrogé(s)';
+      window.__ludyPrevRes = 'J-1 (' + (mode === 'all' ? 'tous les chauffeurs de l\'organisation' : n + ' chauffeur(s) connus') + ') : ' + SHIFTP.prev.items.length + ' chauffeur(s) avec des chiffres' + (errs.length ? ' · ' + errs.join(' | ') : '');
+    };
+    // 1. toute l'organisation (sans liste de chauffeurs) : chiffre exact d'Uber ; 2. sinon chauffeurs connus de Ludy (vus sur la carte), par lots de 50
+    ask(null).then(function (l) {
+      if (l) return done(l, 'all', 0);
+      var ids = {}; Object.keys(seen || {}).concat(Object.keys(DRVP)).forEach(function (k) { if (ok(k)) ids[k] = 1; });
+      var all = Object.keys(ids).slice(0, 400), lots = [], out = [], bad = 0; for (var i = 0; i < all.length; i += 50) lots.push(all.slice(i, i + 50));
+      if (!lots.length) { window.__ludyPrevRes = 'J-1 : aucun chauffeur connu · ' + errs.join(' | '); return; }
+      return lots.reduce(function (p, l2) { return p.then(function () { return ask(l2).then(function (r) { if (r) out = out.concat(r); else bad++; }); }); }, Promise.resolve()).then(function () {
+        if (bad) { window.__ludyPrevRes = 'J-1 : ' + bad + ' lot(s) en échec, pas envoyé · ' + errs.join(' | '); return; }
+        // liste des chauffeurs connus de Ludy : un chauffeur d'hier jamais vu sur la carte manquerait au total : pas envoyé (rien d'estimé)
+        window.__ludyPrevRes = 'J-1 : toute l\'organisation refusée par Uber, liste de ' + all.length + ' chauffeur(s) connus lue (' + out.length + ' avec des chiffres) mais pas envoyée (total incomplet possible) · ' + errs.join(' | ');
+      });
     });
   }
   /** Ligne « PERF » du diagnostic (l'application garde 20 000 caractères au plus : reportée si le catalogue prend déjà la place) */
@@ -642,7 +653,7 @@
       try { tripsStep(); } catch (e) { TRP.res = 'rapport : ' + String(e && e.message || e).slice(0, 80); }
       // diagnostic (20 000 caractères au plus) : CAT (catalogue), PERF (shift), TRIPS (courses), puis l'état de la lecture
       var dg = catBatch(TRP.q.length || TRP.cur ? 4000 : 12000); dg += shiftPerfLine(dg.length + 9500); dg += tripsLine(dg.length + 1200);
-      dg += ((window.__ludySelfRes ? 'RELECTURE ' + window.__ludySelfRes + '\n' : '') + (window.__ludyShiftRes ? 'SHIFT ' + window.__ludyShiftRes + '\n' : '') + (TRP.res ? 'COURSES ' + TRP.res + (TRP.q.length ? ' · ' + TRP.q.length + ' lot(s) en attente' : '') + '\n' : '') + (r.diag || (r.src ? 'source : ' + r.src : ''))).slice(0, Math.max(1000, 19800 - dg.length));
+      dg += ((window.__ludySelfRes ? 'RELECTURE ' + window.__ludySelfRes + '\n' : '') + (window.__ludyShiftRes ? 'SHIFT ' + window.__ludyShiftRes + '\n' : '') + (window.__ludyPrevRes ? 'PREV ' + window.__ludyPrevRes + '\n' : '') + (TRP.res ? 'COURSES ' + TRP.res + (TRP.q.length ? ' · ' + TRP.q.length + ' lot(s) en attente' : '') + '\n' : '') + (r.diag || (r.src ? 'source : ' + r.src : ''))).slice(0, Math.max(1000, 19800 - dg.length));
       inv('uber_push', { rows: r.rows, url: location.href.split('?')[0].slice(0, 200), diag: dg, full: r.full }).catch(function () { });
     } catch (e) { }
   }
