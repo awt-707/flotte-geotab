@@ -315,7 +315,10 @@ fn ext_bg<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: Strin
   let _ = name;
   if app.get_webview(&label).is_some() { return Ok(false); }
   // demandé par le site seulement quand aucun volet externe n'est affiché : volet créé puis aussitôt caché, clavier rendu à Ludy
-  ext_pane(&app, &mut opened.0.lock().map_err(|e| e.to_string())?, label.clone(), target, url, 0.0, 0.0, 100.0, 100.0)?;
+  {
+    let mut op = opened.0.lock().map_err(|e| e.to_string())?;
+    ext_pane(&app, &mut op, label.clone(), target, url, 0.0, 0.0, 100.0, 100.0)?;
+  }
   if let Some(v) = app.get_webview(&label) { let _ = v.hide(); }
   if let Some(v) = app.get_webview("ludy") { let _ = v.set_focus(); }
   Ok(true)
