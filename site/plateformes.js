@@ -270,6 +270,20 @@ async function pfTripsImport(txt) {
   PFT.at = 0;   // courses du shift relues au prochain dessin
   return new Date().toISOString().slice(11, 16) + ' : ' + res.rows.length + ' course(s) · ' + ['added', 'updated', 'same', 'skipped', 'no_vehicle'].map(k => k + ' ' + ((data || {})[k] || 0)).join(', ');
 }
+/** Chiffres d'Uber par contrat (ligne « CTRP ») : une ligne uber_perf par contrat (« ctr: » / « ctrj1: »), seulement si elle a changé */
+async function pfCtrPush(txt) {
+  let l; try { l = JSON.parse(txt); } catch (e) { return; }
+  PFP.ctrSent = PFP.ctrSent || {}; let errs = 0, done = 0;
+  for (const x of l || []) {
+    if (!x || !/^(ctr|ctrj1):/.test(x.p || '')) continue;
+    const sig = JSON.stringify(x); if (PFP.ctrSent[x.p] === sig) continue;
+    const it = Object.assign({}, x); delete it.p;
+    const r = await sb.rpc('uber_perf_push', { p_period: x.p, p_from: new Date(x.f).toISOString(), p_items: [it] }).then(y => y, e => ({ error: e }));
+    if (r.error) { errs++; PFS.ctrErr = 'enregistrement des chiffres par contrat refusé : ' + String(r.error.message || r.error).slice(0, 120); } else { PFP.ctrSent[x.p] = sig; done++; }
+  }
+  if (done) { PFS.ctrErr = errs ? PFS.ctrErr : ''; PFS.at = 0; }
+  return errs ? false : true;
+}
 async function pfPushTick() {
   if (!S.session || !pfPushCan()) return;
   let v = null; try { v = await appInvoke('uber_rows'); } catch (e) { return; }   // application avant la 1.8 : commande absente
@@ -280,7 +294,7 @@ async function pfPushTick() {
   // lignes en tête du diagnostic (site/uber_read.js) : « CAT [...] » = catalogue de ce que la page d'Uber Fleet charge,
   // « PERF {period, from, items} » = revenus du shift, « TRIPS {id, h, r} » = lot de courses du rapport « Activité des courses »
   let diag = String(v.diag || ''), note = '';
-  for (let guard = 0; guard < 4 && /^(CAT|PERF|TRIPS) /.test(diag); guard++) {
+  for (let guard = 0; guard < 5 && /^(CAT|PERF|CTRP|TRIPS) /.test(diag); guard++) {
     const nl = diag.indexOf('\n'), line = nl < 0 ? diag : diag.slice(0, nl); diag = nl < 0 ? '' : diag.slice(nl + 1);
     if (line.startsWith('CAT ')) { if (line !== PFP.cat) { try { const c = await sb.rpc('uber_catalog_push', { p_items: JSON.parse(line.slice(4)) }); if (!c.error) PFP.cat = line; } catch (e) { } } }
     else if (line.startsWith('PERF ')) {
@@ -293,6 +307,7 @@ async function pfPushTick() {
         } catch (e) { }
       }
     }
+    else if (line.startsWith('CTRP ')) { if (line !== PFP.ctrp) { const r3 = await pfCtrPush(line.slice(5)); if (r3 !== false) PFP.ctrp = line; } }
     else { const r2 = await pfTripsImport(line.slice(6)); if (r2) note = r2; }
   }
   if (note || PFP.tripsNote) { PFP.tripsNote = note || PFP.tripsNote; diag = 'IMPORT ' + PFP.tripsNote + '\n' + diag; }
@@ -322,7 +337,8 @@ async function pfReaderSend() {
   try {
     if (!PFR.code || Date.now() - PFR.at > 300000) { const r = await fetch('uber_read.js', { cache: 'no-cache' }); if (!r.ok) return; PFR.code = await r.text(); PFR.at = Date.now(); }
     const sh = pfShiftNow();
-    await appInvoke('uber_eval', { code: (sh ? 'window.__ludyShift=' + JSON.stringify({ key: sh.key, from: sh.from }) + ';\n' : '') + PFR.code });
+    if (!PFS.at || Date.now() - PFS.at > 110000) await pfShiftLoad().catch(() => { });   // contrats à faire lire (même hors page En direct)
+    await appInvoke('uber_eval', { code: (sh ? 'window.__ludyShift=' + JSON.stringify({ key: sh.key, from: sh.from }) + ';\n' : '') + 'window.__ludyCtrs=' + JSON.stringify({ at: Date.now(), list: (PFS.ask || []).map(x => ({ p: x.p, d: x.d, f: x.f, t: x.t })) }) + ';\n' + PFR.code });
   } catch (e) { }
 }
 /**
@@ -387,57 +403,120 @@ function pfShiftNow() {
   const cur = shiftAt(Date.now(), S.P); if (!cur) return null;
   return { key: 'shift:' + cur.day + ':' + cur.s, from: shiftStart(cur, S.P).toISOString(), label: shiftDayName(cur) };
 }
-const PFS = { rows: [], cmp: [], at: 0, err: '', busy: false, key: '' };
+const PFS = { rows: [], ctr: [], logs: [], perf: {}, at: 0, err: '', busy: false, key: '', sel: '', ask: [], ctrErr: '' };
+/** Shift d'un contrat (règle des contrats : heure de prise avancée de shiftAdvance) ; clé « jour:Jour|Nuit » */
+function pfShKey(x) { return x ? x.day + ':' + x.s : ''; }
+function pfShOf(k) { const m = String(k || '').match(/^(\d{4}-\d{2}-\d{2}):(Jour|Nuit)$/); return m ? { day: m[1], s: m[2] } : null; }
+/** Shift en cours au sens des contrats (un contrat pris maintenant appartiendrait à ce shift) */
+function pfShCur() { return typeof shiftOfCtr === 'function' && S.P ? shiftOfCtr(new Date(), S.P) : null; }
+/** Shift d'avant : nuit du J → jour du J ; jour du J → nuit du J-1 */
+function pfShPrev(x) { return x.s === 'Nuit' ? { day: x.day, s: 'Jour' } : { day: addDays(x.day, -1), s: 'Nuit' }; }
 /**
- * Total du shift comparé à la veille au même moment (21/11/2026, demande d'Ahmed) : revenus Uber de tous les chauffeurs du shift
- * (agence du menu), même total hier du début du même shift jusqu'à la même heure (chiffres d'Uber, période « cmp: ») et écart en %.
+ * Totaux d'un shift de contrats (agence du menu) : revenus d'Uber de chaque contrat (ligne « ctr: » ou « ctrj1: »), contrats sans chiffres.
+ * j1 : chiffres de la veille au même moment (contrats déjà commencés à maintenant − 24 h).
+ */
+function pfShiftTot(key, j1) {
+  const ok = typeof inAgency === 'function' ? inAgency() : () => true, now = Date.now();
+  let l = PFS.ctr.filter(c => c._k === key && ok(c.vehicle_key));
+  if (j1) l = l.filter(c => +new Date(c.start_at) < now - DAY);
+  const rows = l.map(c => PFS.perf[(j1 ? 'ctrj1:' : 'ctr:') + c.num]).filter(Boolean);
+  return { n: l.length, got: rows.length, miss: l.length - rows.length, e: pfSumData(rows, 'e'), cash: pfSumData(rows, 'cash'), t: pfSumData(rows, 't'),
+    at: rows.length ? Math.max(...rows.map(r => +new Date(r.updated_at))) : 0 };
+}
+/**
+ * Total du shift en cours (contrats Ludy) comparé à la veille au même moment (21/11/2026, demande d'Ahmed) : écart en % seulement si
+ * chaque contrat des deux côtés a ses chiffres (sinon le total serait incomplet : rien d'estimé).
  */
 function pfShiftCmp() {
-  const sh = pfShiftNow(); if (!sh || PFS.key !== sh.key) return null;
-  const ok = typeof inAgency === 'function' ? inAgency() : () => true, a = typeof agFilter === 'function' ? agFilter() : '';
-  const keep = r => r.vehicle_key ? ok(r.vehicle_key) : !a, sum = (l, k) => l.reduce((t, r) => t + (typeof (r.data || {})[k] === 'number' ? r.data[k] : 0), 0);
-  const cur = PFS.rows.filter(keep), prev = PFS.cmp.filter(keep);
-  if (!cur.length) return null;
-  const at = Math.max(...cur.map(r => +new Date(r.updated_at))), pAt = prev.length ? Math.max(...prev.map(r => +new Date(r.updated_at))) : 0;
-  const e = sum(cur, 'e'), cash = sum(cur, 'cash'), t = sum(cur, 't');
-  // veille comparable seulement si elle a été relue en même temps (moins de 10 min d'écart) : sinon pas de pourcentage
-  const prevOk = prev.length && Math.abs(at - pAt) < 10 * 60000, pe = prevOk ? sum(prev, 'e') : null, pTo = prevOk ? Math.max(...prev.map(r => +(r.data || {}).to || 0)) : 0;
-  return { label: sh.label, at, e, cash, t, n: cur.length, pe, pcash: prevOk ? sum(prev, 'cash') : null, pt: prevOk ? sum(prev, 't') : null, pTo, pct: pe ? (e - pe) / pe : null, stale: Date.now() - at > 10 * 60000 };
+  const cur = pfShCur(); if (!cur || !PFS.at) return null;
+  const k = pfShKey(cur), y = pfShKey({ day: addDays(cur.day, -1), s: cur.s }), a = pfShiftTot(k), b = pfShiftTot(y, true);
+  if (!a.n) return null;
+  return { label: shiftDayName(cur), a, b, pct: !a.miss && !b.miss && b.e > 0 ? (a.e - b.e) / b.e : null, at: a.at, stale: a.at && Date.now() - a.at > 10 * 60000 };
 }
 function pfShiftChips() {
   const c = pfShiftCmp(); if (!c) return '';
-  const pct = c.pct == null ? '' : `<span class="kchip ${c.pct >= 0 ? 'pf-up' : 'pf-down'}" title="Écart avec la veille au même moment"><b>${c.pct >= 0 ? '+' : '−'}${f0(Math.abs(c.pct) * 100)} %</b> ${c.pct >= 0 ? 'de plus que' : 'de moins que'} J-1</span>`;
-  return `<span class="kchip pf-total" title="Revenus Uber de tous les chauffeurs du shift (${esc(c.label)}), du début du shift à ${esc(localHM(new Date(c.at)))} · ${f0(c.n)} chauffeur(s), ${f0(c.t)} course(s)"><b>${f0(c.e)} MAD</b> total shift${c.cash ? ' · dont ' + f0(c.cash) + ' espèces' : ''}${c.stale ? ' · chiffres de ' + esc(localHM(new Date(c.at))) : ''}</span>
-    ${c.pe != null ? `<span class="kchip" title="Mêmes chiffres hier, du début du même shift jusqu'à ${esc(localHM(new Date(c.pTo)))}${c.pt != null ? ' · ' + f0(c.pt) + ' course(s)' : ''}"><b>${f0(c.pe)} MAD</b> J-1 à ${esc(localHM(new Date(c.pTo)))}</span>${pct}` : '<span class="kchip mute">J-1 : pas encore lu</span>'}`;
+  const pct = c.pct == null ? '' : `<span class="kchip ${c.pct >= 0 ? 'pf-up' : 'pf-down'}" title="Écart avec la veille au même moment (contrats du même shift)"><b>${c.pct >= 0 ? '+' : '−'}${f0(Math.abs(c.pct) * 100)} %</b> ${c.pct >= 0 ? 'de plus que' : 'de moins que'} J-1</span>`;
+  const miss = x => x.miss ? ` · ${f0(x.miss)} contrat(s) sans chiffres` : '';
+  return `<span class="kchip pf-total" title="Revenus Uber des chauffeurs sous contrat du shift (${esc(c.label)}), chacun du début de son contrat à maintenant ou à la fin du contrat · ${f0(c.a.got)} contrat(s), ${f0(c.a.t)} course(s)${miss(c.a)}"><b>${f0(c.a.e)} MAD</b> total shift${c.a.cash ? ' · dont ' + f0(c.a.cash) + ' espèces' : ''}${c.a.miss ? ' · incomplet' : ''}${c.stale ? ' · chiffres de ' + esc(localHM(new Date(c.at))) : ''}</span>
+    ${c.b.n ? `<span class="kchip" title="Contrats du même shift hier, chacun arrêté à la même heure qu'aujourd'hui moins 24 h${miss(c.b)}"><b>${f0(c.b.e)} MAD</b> J-1 à ${esc(localHM(new Date(Date.now() - DAY)))}${c.b.miss ? ' · incomplet' : ''}</span>${pct}` : '<span class="kchip mute">J-1 : aucun contrat</span>'}`;
 }
 function pfShiftLoad() {
   if (PFS.busy) return PFS.p.then(() => pfShiftLoad());   // lecture en cours : attendue, puis relue (données à jour)
   PFS.busy = true;
   return (PFS.p = pfShiftRead());
 }
+/**
+ * Contrats des 56 dernières heures, compte Uber de chacun, chiffres d'Uber par contrat, liste des contrats à faire lire par l'application
+ * (PFS.ask : shift en cours et shift d'avant tant que le contrat n'a pas sa ligne finale ; contrats d'hier du même shift, arrêtés à la même
+ * heure qu'aujourd'hui ; contrats sans aucune ligne, 60 au plus).
+ */
 async function pfShiftRead() {
-  const sh = pfShiftNow(); if (!sh) { PFS.busy = false; return; }
+  const now = Date.now(), from = new Date(now - 56 * HOUR).toISOString();
   try {
-    const r = await sb.from('uber_perf').select('driver_id,driver_name,plate,vehicle_key,data,updated_at,period_from,period').in('period', [sh.key, sh.key.replace(/^shift:/, 'cmp:')]).limit(1000);
-    if (r.error) throw r.error;
-    PFS.rows = (r.data || []).filter(x => x.period === sh.key); PFS.cmp = (r.data || []).filter(x => x.period !== sh.key);
-    PFS.key = sh.key; PFS.at = Date.now(); PFS.err = '';
+    const cs = await all('contracts', 'num,name,phone,vehicle_key,plate,start_at,end_at', q => q.gt('start_at', from).lte('start_at', new Date(now + HOUR).toISOString()).not('vehicle_key', 'is', null));
+    const byV = {}; cs.forEach(c => { (byV[c.vehicle_key] = byV[c.vehicle_key] || []).push(c); });
+    const ctr = [].concat(...Object.values(byV).map(l => ctrEffEnds(l, now)));
+    const [logs, pfs] = await Promise.all([
+      all('uber_live_log', 'id,vehicle_key,driver_id,driver_name,status,started_at,ended_at', q => q.gt('started_at', new Date(now - 60 * HOUR).toISOString()).not('driver_id', 'is', null)).catch(() => []),
+      all('uber_perf', 'driver_id,period,driver_name,vehicle_key,updated_at', q => q.like('period', 'shift:%').gte('updated_at', from)).catch(() => [])]);
+    ctr.forEach(c => { c._sh = shiftOfCtr(c.start_at, S.P); c._k = pfShKey(c._sh); c._u = pfCtrDriver(c, logs, pfs, now); });
+    const periods = ctr.map(c => 'ctr:' + c.num).concat(ctr.map(c => 'ctrj1:' + c.num)), perf = {};
+    for (let i = 0; i < periods.length; i += 80) {
+      const r = await sb.from('uber_perf').select('driver_id,driver_name,period,data,updated_at,period_from').in('period', periods.slice(i, i + 80));
+      if (r.error) throw r.error;
+      (r.data || []).forEach(x => { perf[x.period] = x; });
+    }
+    // chiffres du shift horaire (chauffeurs en ligne sur Uber sans contrat Ludy)
+    const sh = pfShiftNow(); let rows = [];
+    if (sh) { const r = await sb.from('uber_perf').select('driver_id,driver_name,plate,vehicle_key,data,updated_at').eq('period', sh.key).limit(500); if (!r.error) rows = r.data || []; }
+    const cur = pfShCur(), ck = pfShKey(cur), pk = pfShKey(pfShPrev(cur)), yk = pfShKey({ day: addDays(cur.day, -1), s: cur.s }), ask = [];
+    // rattrapage (toutes les 30 min) : contrats des 8 derniers jours sans chiffres finaux (historique des shifts)
+    if (!PFS.bfAt || now - PFS.bfAt > 30 * 60000) {
+      PFS.bfAt = now; PFS.backfill = [];
+      try {
+        const old = await all('contracts', 'num,name,vehicle_key,plate,start_at,end_at', q => q.gt('start_at', new Date(now - 8 * DAY).toISOString()).lte('start_at', from).not('vehicle_key', 'is', null));
+        if (old.length) {
+          const byO = {}; old.concat(cs).forEach(c => { (byO[c.vehicle_key] = byO[c.vehicle_key] || []).push(c); });
+          const oc = [].concat(...Object.values(byO).map(l => ctrEffEnds(l, now))).filter(c => +new Date(c.start_at) <= +new Date(from));
+          const have = {};
+          for (let i = 0; i < oc.length; i += 80) { const r = await sb.from('uber_perf').select('period,data').in('period', oc.slice(i, i + 80).map(c => 'ctr:' + c.num)); (r.data || []).forEach(x => { have[x.period] = x; }); }
+          const miss = oc.filter(c => c._end && !(have['ctr:' + c.num] && +(have['ctr:' + c.num].data || {}).to >= c._end));
+          if (miss.length) {
+            const lo = miss.map(c => c.start_at).sort()[0];
+            const [ol, op] = await Promise.all([
+              all('uber_live_log', 'id,vehicle_key,driver_id,driver_name,status,started_at,ended_at', q => q.gt('started_at', new Date(+new Date(lo) - 6 * HOUR).toISOString()).lte('started_at', from).not('driver_id', 'is', null)).catch(() => []),
+              all('uber_perf', 'driver_id,period,driver_name,vehicle_key,updated_at', q => q.like('period', 'shift:%').gte('updated_at', lo).lte('updated_at', from)).catch(() => [])]);
+            miss.forEach(c => { const u = pfCtrDriver(c, ol.concat(logs), op.concat(pfs), now); if (u) PFS.backfill.push({ p: 'ctr:' + c.num, d: u.d, f: +new Date(c.start_at), t: c._end, k: c.num }); });
+          }
+        }
+      } catch (e) { }
+    }
+    ctr.forEach(c => {
+      if (!c._u) return;
+      const f = +new Date(c.start_at), end = c._end && c._end < now ? c._end : null, t = end || Math.floor(now / 60000) * 60000, row = perf['ctr:' + c.num];
+      const final = row && end && +(row.data || {}).to >= end && +new Date(row.updated_at) > end + 3 * HOUR;
+      if ((c._k === ck || c._k === pk || !row) && !final && t > f) ask.push({ p: 'ctr:' + c.num, d: c._u.d, f, t, k: c.num });
+      if (c._k === yk) { const t1 = Math.min(end || Infinity, Math.floor((now - DAY) / 60000) * 60000); if (t1 > f) ask.push({ p: 'ctrj1:' + c.num, d: c._u.d, f, t: t1, k: c.num }); }
+    });
+    const inAsk = new Set(ask.map(x => x.p)); (PFS.backfill || []).forEach(x => { if (!inAsk.has(x.p) && !(perf[x.p] && +(perf[x.p].data || {}).to >= x.t)) ask.push(x); });
+    Object.assign(PFS, { ctr, logs, perf, rows, key: sh ? sh.key : '', ask: ask.slice(0, 120), at: Date.now(), err: '' });
   } catch (e) { PFS.err = String(e.message || e); } finally { PFS.busy = false; }
-  // courses une par une du shift (rapport « Activité des courses » importé par Ludy, ou import manuel de Contrôle Uber)
+  // courses une par une (rapport « Activité des courses ») depuis le plus ancien contrat affiché
   try {
+    const sel = PFS.sel || pfShKey(pfShCur()), l = PFS.ctr.filter(c => c._k === sel), f = l.length ? l.map(c => c.start_at).sort()[0] : new Date(now - 14 * HOUR).toISOString();
     const t = await sb.from('uber_trips').select('uuid,driver_uuid,driver_name,plate,vehicle_key,requested_at,dropoff_at,pickup_addr,drop_addr,km,status,payment,product')
-      .gte('requested_at', sh.from).order('requested_at', { ascending: true }).limit(1000);
+      .gte('requested_at', f).order('requested_at', { ascending: true }).limit(1500);
     if (t.error) throw t.error;
-    PFT.rows = t.data || []; PFT.key = sh.key; PFT.at = Date.now(); PFT.err = '';
+    PFT.rows = t.data || []; PFT.key = sel; PFT.at = Date.now(); PFT.err = '';
   } catch (e) { PFT.err = String(e.message || e); PFT.rows = []; }
 }
 const PFT = { rows: [], key: '', at: 0, err: '', open: new Set() };
 const PF_TRIP_ST = { completed: 'Terminée', rider_cancelled: 'Annulée par le client', driver_cancelled: 'Annulée par le chauffeur', failed: 'Échouée', unfulfilled: 'Non servie' };
 function pfTripSt(s) { const k = String(s || '').toLowerCase(); return PF_TRIP_ST[k] || s || ''; }
-/** Courses du shift d'un chauffeur (identifiant Uber, sinon nom) */
-function pfTripsOf(id, name) {
-  const i = String(id || '').toLowerCase(), n = typeof normName === 'function' ? normName(name || '') : String(name || '').toLowerCase();
-  return PFT.rows.filter(t => (i && String(t.driver_uuid || '').toLowerCase() === i) || (!i && n && (typeof normName === 'function' ? normName(t.driver_name || '') : String(t.driver_name || '').toLowerCase()) === n));
+/** Courses d'un compte Uber pendant une période (contrat) */
+function pfTripsOf(id, from, to) {
+  const i = String(id || '').toLowerCase(), f = from ? +new Date(from) : 0, t = to || Infinity;
+  return PFT.rows.filter(x => i && String(x.driver_uuid || '').toLowerCase() === i && +new Date(x.requested_at) >= f && +new Date(x.requested_at) < t);
 }
 function pfTripCounts(l) {
   const c = { done: 0, rc: 0, dc: 0, other: 0, km: 0 };
@@ -445,7 +524,7 @@ function pfTripCounts(l) {
   return c;
 }
 function pfTripsTable(l) {
-  if (!l.length) return '<div class="empty small">Aucune course de ce chauffeur dans le rapport « Activité des courses » pour ce shift.</div>';
+  if (!l.length) return '<div class="empty small">Aucune course de ce compte Uber pendant le contrat dans le rapport « Activité des courses ».</div>';
   const dur = t => t.dropoff_at && t.requested_at ? Math.round((new Date(t.dropoff_at) - new Date(t.requested_at)) / 60000) + ' min' : '';
   return `<table class="tbl ubtrips"><thead><tr><th>Demande</th><th>Dépose</th><th>Durée</th><th>Statut</th><th>Prise en charge</th><th>Dépose</th><th class="n">km</th><th>Paiement</th><th>Véhicule</th></tr></thead><tbody>${l.map(t => {
     const s = String(t.status || '').toLowerCase();
@@ -453,41 +532,61 @@ function pfTripsTable(l) {
       <td>${esc(pfTripSt(t.status))}</td><td class="small">${esc(t.pickup_addr || '')}</td><td class="small">${esc(t.drop_addr || '')}</td><td class="n">${t.km != null && s === 'completed' ? f1(+t.km) : ''}</td>
       <td class="small">${esc(t.payment || '')}</td><td>${t.plate ? esc(t.plate) : ''}</td></tr>`; }).join('')}</tbody></table>`;
 }
-/** Tableau en bas d'En direct : par chauffeur, revenus, espèces, courses, temps en ligne / en course / vers le client, revenus par heure, acceptation */
+/**
+ * Tableau en bas d'En direct (21/11/2026, demande d'Ahmed : « combien a rapporté le chauffeur selon son shift de travail, pas selon
+ * Uber ») : un contrat Ludy par ligne, chiffres d'Uber du compte du chauffeur du début à la fin de son contrat ; shift = règle des
+ * contrats (heure de prise) ; choix du shift ; J-1 ; chauffeurs en ligne sur Uber sans contrat Ludy à part.
+ */
 function pfShiftHtml() {
-  const sh = pfShiftNow(); if (!sh) return '';
-  if (PFS.err) return /does not exist|relation|schema cache|PGRST20|42P01/i.test(PFS.err) ? '' : `<div class="sechead"><h2>Uber · ${esc(sh.label)}</h2></div>${msg('Lecture impossible : ' + esc(PFS.err), 'warn')}`;
-  const ok = typeof inAgency === 'function' ? inAgency() : () => true, a = typeof agFilter === 'function' ? agFilter() : '';
-  const rows = PFS.key === sh.key ? PFS.rows.filter(r => r.vehicle_key ? ok(r.vehicle_key) : !a) : [];
-  // chauffeurs qui ont des courses dans le rapport sans chiffres de performance : ajoutés (revenus non lus)
-  if (PFT.key === sh.key) {
-    const have = new Set(rows.map(r => String(r.driver_id || '').toLowerCase()));
-    const extra = {}; PFT.rows.forEach(t => { const d = String(t.driver_uuid || '').toLowerCase(); if (!d || have.has(d) || extra[d] || !(t.vehicle_key ? ok(t.vehicle_key) : !a)) return; extra[d] = { driver_id: d, driver_name: t.driver_name, plate: t.plate, vehicle_key: t.vehicle_key, data: {}, updated_at: t.requested_at }; });
-    Object.values(extra).forEach(x => rows.push(x));
+  if (PFS.err) return /does not exist|relation|schema cache|PGRST20|42P01/i.test(PFS.err) ? '' : `<div class="sechead"><h2>Uber · revenus par contrat</h2></div>${msg('Lecture impossible : ' + esc(PFS.err), 'warn')}`;
+  if (!PFS.at) return '';
+  const ok = typeof inAgency === 'function' ? inAgency() : () => true, now = Date.now(), cur = pfShCur(), ck = pfShKey(cur);
+  const keys = [...new Set(PFS.ctr.map(c => c._k).concat([ck]))].filter(Boolean).sort().reverse().slice(0, 5), sel = keys.includes(PFS.sel) ? PFS.sel : ck, X = pfShOf(sel);
+  const list = PFS.ctr.filter(c => c._k === sel && ok(c.vehicle_key)).sort((a, b) => ((PFS.perf['ctr:' + b.num] || {}).data || {}).e - ((PFS.perf['ctr:' + a.num] || {}).data || {}).e || new Date(a.start_at) - new Date(b.start_at));
+  const D = c => (PFS.perf['ctr:' + c.num] || {}).data || null, hm = h => h == null ? '' : Math.floor(h) + ' h ' + String(Math.round((h % 1) * 60)).padStart(2, '0'), pct = v => v == null ? '' : f0(v * 100) + ' %';
+  const tripsOk = !PFT.err && PFT.key === sel, dm = d => d.slice(8, 10) + '/' + d.slice(5, 7);
+  const sel2 = `<select id="pfshsel">${keys.map(k => `<option value="${esc(k)}"${k === sel ? ' selected' : ''}>${esc(shiftDayName(pfShOf(k)))}${k === ck ? ' (en cours)' : ''}</option>`).join('')}</select>`;
+  // veille : shift en cours = même heure hier ; autre shift = shift entier de la veille
+  const yk = pfShKey({ day: addDays(X.day, -1), s: X.s }), a = pfShiftTot(sel), b = pfShiftTot(yk, sel === ck);
+  const cmp = b.n ? `J-1 (${esc(shiftDayName(pfShOf(yk)))}${sel === ck ? ', chaque contrat arrêté à ' + esc(localHM(new Date(now - DAY))) : ', shift entier'}) : <b>${f0(b.e)} MAD</b>${b.miss ? ' · ' + f0(b.miss) + ' contrat(s) sans chiffres' : ''}${!a.miss && !b.miss && b.e > 0 ? ` · <b class="${a.e >= b.e ? 'ok' : 'bad'}">${a.e >= b.e ? '+' : '−'}${f0(Math.abs(a.e - b.e) / b.e * 100)} %</b>` : (a.miss || b.miss ? ' · écart non calculé (chiffres incomplets)' : '')}` : 'J-1 : aucun contrat';
+  const head = `<div class="sechead"><h2>Uber · revenus par contrat · ${sel2}</h2><span class="small">Chaque chauffeur : chiffres d'Uber de son compte du début de son contrat Ludy à sa fin (ou maintenant), quelle que soit la journée d'Uber. Shift = heure de prise du contrat (de ${String((num(S.P.shiftDay, 7) - num(S.P.shiftAdvance, 2) + 24) % 24).padStart(2, '0')}:00 à ${String((num(S.P.shiftNight, 19) - num(S.P.shiftAdvance, 2) + 24) % 24).padStart(2, '0')}:00 = jour, sinon nuit). Relu toutes les 2 min par l'application Ludy.${PFS.ctrErr ? ' · ' + esc(PFS.ctrErr) : ''}</span></div>
+    <div class="pfcmp small">${cmp}</div>`;
+  if (!list.length) return head + `<div class="empty">Aucun contrat Ludy dans ce shift.</div>`;
+  const tr = c => {
+    const d = D(c), u = c._u, end = c._end && c._end < now ? c._end : null, tl = tripsOk && u ? pfTripsOf(u.d, c.start_at, end || now) : [], cc = pfTripCounts(tl), op = PFT.open.has(c.num);
+    const eph = d && d.e != null && d.h > 0 ? d.e / d.h : null, name = (u && u.name) || '';
+    const same = name && c.name && normPlate(name.split(' ').sort().join('')) === normPlate(String(c.name).split(' ').sort().join(''));
+    const acct = !u ? '<span class="bad small">aucun compte Uber vu sur ce véhicule pendant le contrat</span>' : same ? '<span class="small ok">✓</span>' : `<span class="small" title="Compte Uber vu sur ce véhicule pendant le contrat">${esc(name || 'compte ' + u.d.slice(0, 8))}</span>`;
+    const val = d ? '' : u ? '<span class="nm">lecture en attente</span>' : '<span class="nm">non mesuré</span>';
+    return `<tr class="ubdrv${op ? ' open' : ''}" data-ubd="${esc(c.num)}" title="Cliquer pour voir les courses Uber du contrat"><td><span class="ubcar">${op ? '▾' : '▸'}</span> ${esc(c.name || '')}<div class="small">${esc(c.num)}</div></td><td>${acct}</td><td>${plate(c.plate || c.vehicle_key)}</td>
+      <td class="small">${esc(dm(localDay(new Date(c.start_at))))} ${esc(localHM(new Date(c.start_at)))} → ${end ? esc(localHM(new Date(end))) : 'en cours'}</td>
+      <td class="n"><b>${d ? f0(d.e || 0) + ' MAD' : val}</b></td><td class="n">${d && d.cash != null ? f0(d.cash) + ' MAD' : ''}</td><td class="n">${d && d.t != null ? f0(d.t) : ''}</td>
+      <td class="n">${d ? hm(d.h) : ''}</td><td class="n">${d ? hm(d.hot) : ''}</td><td class="n">${d ? hm(d.hto) : ''}</td><td class="n">${eph != null ? f0(eph) + ' MAD' : ''}</td>
+      <td class="n${d && d.a != null && d.a < 0.8 ? ' bad' : ''}">${d ? pct(d.a) : ''}</td><td class="n">${d ? pct(d.c) : ''}</td>
+      ${tripsOk ? `<td class="n">${tl.length ? f0(cc.done) : ''}</td><td class="n${cc.rc + cc.dc ? ' bad' : ''}">${tl.length ? f0(cc.rc + cc.dc) + (cc.dc ? ' <span class="small">(' + f0(cc.dc) + ' chauffeur)</span>' : '') : ''}</td><td class="n">${cc.done ? f1(cc.km) : ''}</td>` : ''}</tr>
+      ${op ? `<tr class="ubdet"><td colspan="${tripsOk ? 16 : 13}">${u ? pfTripsTable(tl) : '<div class="empty small">Aucun compte Uber relié à ce contrat.</div>'}</td></tr>` : ''}`;
+  };
+  const rows = list.map(c => ({ data: D(c) })).filter(r => r.data), sum = k => pfSumData(rows, k), tE = sum('e'), tH = sum('h');
+  const allT = tripsOk ? pfTripCounts([].concat(...list.map(c => c._u ? pfTripsOf(c._u.d, c.start_at, c._end && c._end < now ? c._end : now) : []))) : null;
+  let html = head + `<div class="tblwrap"><table class="tbl" id="tubshift"><thead><tr><th>Chauffeur (contrat)</th><th>Compte Uber</th><th>Véhicule</th><th>Contrat</th><th class="n">Revenus</th><th class="n">dont espèces</th><th class="n">Courses</th>
+    <th class="n">En ligne</th><th class="n">En course</th><th class="n">Vers le client</th><th class="n">Revenus / h en ligne</th><th class="n">Acceptation</th><th class="n">Annulation</th>${tripsOk ? '<th class="n">Courses terminées</th><th class="n">Annulées</th><th class="n">km en course</th>' : ''}</tr></thead>
+    <tbody>${list.map(tr).join('')}</tbody><tfoot><tr><td><b>Total (${f0(list.length)} contrats${a.miss ? ', ' + f0(a.miss) + ' sans chiffres' : ''})</b></td><td></td><td></td><td></td><td class="n"><b>${f0(tE)} MAD</b></td><td class="n">${f0(sum('cash'))} MAD</td><td class="n">${f0(sum('t'))}</td>
+    <td class="n">${hm(tH)}</td><td class="n">${hm(sum('hot'))}</td><td class="n">${hm(sum('hto'))}</td><td class="n">${tH > 0 ? f0(tE / tH) + ' MAD' : ''}</td><td></td><td></td>${allT ? `<td class="n">${f0(allT.done)}</td><td class="n">${f0(allT.rc + allT.dc)}</td><td class="n">${f1(allT.km)}</td>` : ''}</tr></tfoot></table></div>`;
+  // en ligne sur Uber pendant ce shift sans contrat Ludy (chiffres du shift horaire)
+  if (sel === ck) {
+    const mine = new Set(PFS.ctr.filter(c => c._k === ck && c._u).map(c => c._u.d)), a2 = typeof agFilter === 'function' ? agFilter() : '';
+    const out = PFS.rows.filter(r => !mine.has(r.driver_id) && (r.vehicle_key ? ok(r.vehicle_key) : !a2) && (r.data || {}).e > 0);
+    if (out.length) html += `<details class="pfdet"><summary>En ligne sur Uber sans contrat Ludy dans ce shift (${f0(out.length)})</summary><div class="small">Chiffres d'Uber depuis le début du shift horaire (${esc(localHM(new Date(pfShiftNow().from)))}), pas de contrat pour les rattacher.</div>
+      <table class="tbl"><thead><tr><th>Compte Uber</th><th>Véhicule</th><th class="n">Revenus</th><th class="n">dont espèces</th><th class="n">Courses</th></tr></thead><tbody>${out.map(r => `<tr><td>${esc(r.driver_name || '')}</td><td>${r.plate ? plate(r.plate) : ''}</td><td class="n">${f0(r.data.e || 0)} MAD</td><td class="n">${r.data.cash != null ? f0(r.data.cash) + ' MAD' : ''}</td><td class="n">${r.data.t != null ? f0(r.data.t) : ''}</td></tr>`).join('')}</tbody></table></details>`;
   }
-  const tripsOk = PFT.key === sh.key && !PFT.err, last = tripsOk && PFT.rows.length ? PFT.rows[PFT.rows.length - 1].requested_at : null;
-  const tripsInfo = PFT.err ? (/does not exist|relation|schema cache|PGRST20|42P01/i.test(PFT.err) ? '' : ' · courses : lecture impossible') :
-    ` · courses une par une : rapport « Activité des courses » d'Uber Fleet, demandé par l'application Ludy toutes les 15 min${last ? ' (dernière course ' + esc(localHM(new Date(last))) + ')' : ' (aucune course reçue pour ce shift)'} ; cliquer sur un chauffeur pour voir ses courses`;
-  const head = `<div class="sechead"><h2>Uber · revenus du shift · ${esc(sh.label)}</h2><span class="small">Lu dans Uber Fleet (page Performances, du début du shift ${esc(localHM(new Date(sh.from)))} à maintenant), relu toutes les 2 min par l'application Ludy${rows.length ? ' · dernière lecture ' + esc(localHM(new Date(Math.max(...rows.map(r => +new Date(r.updated_at)))))) : ''}${tripsInfo}.</span></div>`;
-  if (!rows.length) return head + `<div class="empty">Aucun chiffre Uber pour ce shift pour l'instant (application Ludy ouverte et connectée à Uber Fleet nécessaire).</div>`;
-  const D = r => r.data || {}, hm = h => h == null ? '' : Math.floor(h) + ' h ' + String(Math.round((h % 1) * 60)).padStart(2, '0');
-  const sum = k => rows.reduce((t, r) => t + (typeof D(r)[k] === 'number' ? D(r)[k] : 0), 0);
-  const list = rows.slice().sort((x, y) => (D(y).e || 0) - (D(x).e || 0));
-  const pct = v => v == null ? '' : f0(v * 100) + ' %';
-  const tr = r => { const d = D(r), eph = d.e != null && d.h > 0 ? d.e / d.h : null, id = String(r.driver_id || '').toLowerCase(), tl = tripsOk ? pfTripsOf(id, r.driver_name) : [], c = pfTripCounts(tl), op = PFT.open.has(id);
-    const tc = tripsOk ? `<td class="n">${tl.length ? f0(c.done) : ''}</td><td class="n${c.rc + c.dc ? ' bad' : ''}">${tl.length ? f0(c.rc + c.dc) + (c.dc ? ' <span class="small">(' + f0(c.dc) + ' chauffeur)</span>' : '') : ''}</td><td class="n">${c.done ? f1(c.km) : ''}</td>` : '';
-    return `<tr class="ubdrv${op ? ' open' : ''}" data-ubd="${esc(id)}" title="Cliquer pour voir les courses du shift"><td><span class="ubcar">${op ? '▾' : '▸'}</span> ${esc(r.driver_name || 'Chauffeur Uber')}</td><td>${r.plate ? plate(r.plate) : '<span class="nm">non lue</span>'}</td><td class="n"><b>${d.e != null ? f0(d.e) + ' MAD' : ''}</b></td>
-      <td class="n">${d.cash != null ? f0(d.cash) + ' MAD' : ''}</td><td class="n">${d.t != null ? f0(d.t) : ''}</td><td class="n">${hm(d.h)}</td><td class="n">${hm(d.hot)}</td><td class="n">${hm(d.hto)}</td>
-      <td class="n">${eph != null ? f0(eph) + ' MAD' : ''}</td><td class="n${d.a != null && d.a < 0.8 ? ' bad' : ''}">${pct(d.a)}</td><td class="n">${pct(d.c)}</td>
-      <td class="small">${d.last ? esc(localHM(new Date(d.last))) : ''}</td>${tc}</tr>${op ? `<tr class="ubdet"><td colspan="${tripsOk ? 15 : 12}">${pfTripsTable(tl)}</td></tr>` : ''}`; };
-  const tE = sum('e'), tH = sum('h');
-  return head + `<div class="tblwrap"><table class="tbl" id="tubshift"><thead><tr><th>Chauffeur</th><th>Véhicule</th><th class="n">Revenus</th><th class="n">dont espèces</th><th class="n">Courses</th>
-    <th class="n">En ligne</th><th class="n">En course</th><th class="n">Vers le client</th><th class="n">Revenus / h en ligne</th><th class="n">Acceptation</th><th class="n">Annulation</th><th>Dernière connexion</th>${tripsOk ? '<th class="n">Courses terminées</th><th class="n">Annulées</th><th class="n">km en course</th>' : ''}</tr></thead>
-    <tbody>${list.map(tr).join('')}</tbody><tfoot><tr><td><b>Total (${f0(rows.length)} chauffeurs)</b></td><td></td><td class="n"><b>${f0(tE)} MAD</b></td><td class="n">${f0(sum('cash'))} MAD</td><td class="n">${f0(sum('t'))}</td>
-    <td class="n">${hm(tH)}</td><td class="n">${hm(sum('hot'))}</td><td class="n">${hm(sum('hto'))}</td><td class="n">${tH > 0 ? f0(tE / tH) + ' MAD' : ''}</td><td></td><td></td><td></td>${tripsOk ? (() => { const all = pfTripCounts(rows.reduce((l, r) => l.concat(pfTripsOf(String(r.driver_id || '').toLowerCase(), r.driver_name)), [])); return `<td class="n">${f0(all.done)}</td><td class="n">${f0(all.rc + all.dc)}</td><td class="n">${f1(all.km)}</td>`; })() : ''}</tr></tfoot></table></div>`;
+  return html;
 }
 function pfShiftPaint() {
   const el = $('#liveubshift'); if (!el) return;
   el.innerHTML = pfShiftHtml();
-  if (!el.__ubd) { el.__ubd = 1; el.addEventListener('click', e => { const t = e.target.closest('[data-ubd]'); if (!t) return; const id = t.getAttribute('data-ubd'); if (PFT.open.has(id)) PFT.open.delete(id); else PFT.open.add(id); pfShiftPaint(); }); }
+  if (!el.__ubd) {
+    el.__ubd = 1;
+    el.addEventListener('click', e => { const t = e.target.closest('[data-ubd]'); if (!t) return; const id = t.getAttribute('data-ubd'); if (PFT.open.has(id)) PFT.open.delete(id); else PFT.open.add(id); pfShiftPaint(); });
+    el.addEventListener('change', e => { if (e.target && e.target.id === 'pfshsel') { PFS.sel = e.target.value; PFT.key = ''; pfShiftLoad().then(pfShiftPaint); } });
+  }
 }

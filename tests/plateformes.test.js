@@ -316,78 +316,6 @@ test('application Mac : Uber Fleet ouvert caché en arrière-plan quand aucune l
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
 
-test('revenus Uber du shift : enregistrés par chauffeur (clés connues seulement, plaque en chiffres reliée), lus selon les agences, tableau en bas d\'En direct', async () => {
-  env.resetDb();
-  env.psql(`insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin';
-    insert into profiles (user_id, email, role) values ('${MGR}', 'mgr@x', 'manager') on conflict (user_id) do update set role = 'manager';
-    insert into agencies (id, name) overriding system value values (1, 'Rabat'), (2, 'Marrakech');
-    insert into user_agencies (user_id, agency_id) values ('${MGR}', 1);
-    insert into vehicles (key, plate, model, active, agency_id) values ('968211WW', 'WW968211', 'SONATA', 'OUI', 1), ('86120T1', '86120-T-1', 'STARIA', 'OUI', 2);
-    insert into live_status (vehicle_key, plate, model, state, speed, lat, lon, updated_at) values ('968211WW', 'WW968211', 'SONATA', 'En route', 30, 31.62, -8.01, now());`);
-  const srv = await startSite(), { br, page, errors } = await openBrowser();
-  try {
-    await login(page, '#/direct');
-    await page.waitForSelector('#liveubshift');
-    const sh = await page.evaluate(() => pfShiftNow());
-    assert.match(sh.key, /^shift:\d{4}-\d{2}-\d{2}:(Jour|Nuit)$/);
-    const items = JSON.stringify([{ d: '97b48f1d-06da-4c89-8310-fe49bfd8b16a', n: 'ALPHA Test', p: '968211', e: 983, cash: 184, h: 7.22, t: 6, a: 0.75, c: 0.05, hot: 4.5, hto: 1.2, x: 'pas gardé' },
-      { d: 'a3dcb299-8a4d-438a-97f7-8d5df6c657b4', n: 'BETA Test', p: '86120-T-1', e: 400, h: 4, t: 3, a: 1 }, { d: 'pas-un-uuid', e: 5 }]);
-    assert.strictEqual(as(MGR, `select public.uber_perf_push('${sh.key}', '${sh.from}', '${items}'::jsonb)`), '2', 'identifiant invalide ignoré');
-    assert.strictEqual(env.psql("select string_agg(driver_name || '|' || coalesce(vehicle_key, '-') || '|' || plate || '|' || (data ? 'x')::text, ',' order by driver_name) from uber_perf"),
-      'ALPHA Test|968211WW|WW968211|false,BETA Test|86120T1|86120-T-1|false', 'plaque en chiffres reliée au seul véhicule aux mêmes chiffres');
-    assert.strictEqual(as(MGR, 'select count(*) from uber_perf'), '1', 'gestionnaire de Rabat : ses véhicules seulement');
-    assert.throws(() => as(MGR, `select public.uber_perf_push('jour', null, '[]'::jsonb)`), /Période invalide/);
-    await page.evaluate(async () => { await pfShiftLoad(); pfShiftPaint(); });
-    const t = (await page.innerText('#liveubshift')).replace(/\s+/g, ' ');
-    assert.match(t, /Uber · revenus du shift/);
-    assert.match(t, /ALPHA Test WW968211 983 MAD 184 MAD 6 7 h 13 4 h 30 1 h 12 136 MAD 75 % 5 %/);
-    assert.match(t, /BETA Test 86120-T-1 400 MAD/);
-    assert.match(t, /Total \(2 chauffeurs\) 1[\s  ]?383 MAD/);
-    assert.strictEqual(await page.locator('#tubshift td.bad').count(), 1, 'acceptation sous 80 % en rouge');
-    assert.deepStrictEqual(errors, []);
-  } finally { await br.close(); srv.kill(); env.psql('truncate uber_perf'); env.resetDb(); }
-});
-
-test('courses du shift : rapport « Activité des courses » lu (CSV), lots importés par le site, courses dépliées sous chaque chauffeur', async () => {
-  const U = require('../site/uber_read.js');
-  const csv = '﻿UUID de la course,UUID du chauffeur,Prénom du chauffeur,Nom du chauffeur,UUID du véhicule,Plaque d\'immatriculation,Type de service,Heure de la demande de course,Heure de dépose,Adresse de prise en charge,Lieu de dépose,Distance de la course,Statut de la course,Type de produit,Type de paiement\r\n'
-    + 't1,97b48f1d-06da-4c89-8310-fe49bfd8b16a,ALPHA,Test,v1,WW968211,UberX,2026-11-20 10:00:00,2026-11-20 10:25:00,"Gare, Marrakech","Menara ""aéroport""",7.4,completed,UberX,cash\r\n';
-  const rows = U.csvRows(csv);
-  assert.strictEqual(rows.length, 2);
-  assert.strictEqual(rows[1][9], 'Gare, Marrakech'); assert.strictEqual(rows[1][10], 'Menara "aéroport"');
-  env.resetDb();
-  env.psql(`insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin';
-    insert into agencies (id, name) overriding system value values (1, 'Rabat');
-    insert into vehicles (key, plate, model, active, agency_id) values ('968211WW', 'WW968211', 'SONATA', 'OUI', 1);`);
-  const srv = await startSite(), { br, page, errors } = await openBrowser();
-  try {
-    await login(page, '#/direct');
-    await page.waitForSelector('#liveubshift');
-    const sh = await page.evaluate(() => pfShiftNow());
-    const at = m => new Date(+new Date(sh.from) + m * 60000).toISOString().slice(0, 19).replace('T', ' ');
-    const h = rows[0], r = [
-      ['t1', '97b48f1d-06da-4c89-8310-fe49bfd8b16a', 'ALPHA', 'Test', 'v1', 'WW968211', 'UberX', at(10), at(35), 'Gare, Marrakech', 'Menara', '7.4', 'completed', 'UberX', 'cash'],
-      ['t2', '97b48f1d-06da-4c89-8310-fe49bfd8b16a', 'ALPHA', 'Test', 'v1', 'WW968211', 'UberX', at(50), '', 'Jemaa el-Fna', '', '0', 'rider_cancelled', 'UberX', 'cash'],
-      ['t3', '97b48f1d-06da-4c89-8310-fe49bfd8b16a', 'ALPHA', 'Test', 'v1', 'WW968211', 'UberX', at(60), '', 'Guéliz', '', '0', 'driver_cancelled', 'UberX', 'card']];
-    const note = await page.evaluate(o => pfTripsImport(JSON.stringify(o)), { id: 'lot-1', h, r });
-    assert.match(note, /3 course\(s\) · added 3/);
-    assert.strictEqual(await page.evaluate(o => pfTripsImport(JSON.stringify(o)), { id: 'lot-1', h, r }), '', 'lot déjà relevé : pas réimporté');
-    assert.strictEqual(env.psql("select string_agg(uuid || ':' || coalesce(vehicle_key, '-'), ',' order by uuid) from uber_trips"), 't1:968211WW,t2:968211WW,t3:968211WW');
-    await page.evaluate(async () => { await pfShiftLoad(); pfShiftPaint(); });
-    let t = (await page.innerText('#liveubshift')).replace(/\s+/g, ' ');
-    assert.match(t, /ALPHA Test/, 'chauffeur avec des courses mais sans performances : ajouté');
-    assert.match(t, /Courses terminées Annulées km en course/);
-    await page.click('#tubshift tr.ubdrv');
-    t = (await page.innerText('#liveubshift')).replace(/\s+/g, ' ');
-    assert.match(t, /Terminée Gare, Marrakech Menara 7,4 cash/);
-    assert.match(t, /Annulée par le client/); assert.match(t, /Annulée par le chauffeur/);
-    assert.strictEqual(await page.locator('.ubtrips tr.ubt-dc').count(), 1);
-    await page.click('#tubshift tr.ubdrv');
-    assert.strictEqual(await page.locator('.ubtrips').count(), 0, 'replié au second clic');
-    assert.deepStrictEqual(errors, []);
-  } finally { await br.close(); srv.kill(); env.resetDb(); }
-});
-
 test('lecture 1.9 : réponse de la carte filtrée par la page (2 chauffeurs sur 21 en ligne) = lecture partielle, la dernière réponse complète est préférée', () => {
   const U = require('../site/uber_read.js');
   const id = n => n + '97b48f1d-06da-4c89-8310-fe49bfd8b16a'.slice(1), vid = n => n + '317d21e1-79fb-4a0a-8e30-f5582739ac91'.slice(1);
@@ -438,28 +366,80 @@ test('application 2.0 : robot Uber Fleet (ouvert caché, page rechargée si la l
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });
 
-test('total du shift Uber comparé à la veille au même moment (J-1), selon les agences', async () => {
+test('compte Uber d\'un contrat : le plus longtemps vu sur le véhicule pendant le contrat, sinon seul compte des chiffres du shift, sinon rien', () => {
+  const now = Date.parse('2026-11-21T20:00:00Z'), c = { vehicle_key: 'V1', start_at: '2026-11-21T07:00:00Z', _end: Date.parse('2026-11-21T18:00:00Z') };
+  const logs = [{ vehicle_key: 'V1', driver_id: 'a', driver_name: 'ALPHA', status: 'on_trip', started_at: '2026-11-21T06:00:00Z', ended_at: '2026-11-21T08:00:00Z' },
+    { vehicle_key: 'V1', driver_id: 'b', driver_name: 'BETA', status: 'available', started_at: '2026-11-21T08:00:00Z', ended_at: '2026-11-21T17:00:00Z' },
+    { vehicle_key: 'V1', driver_id: 'c', status: 'gone', started_at: '2026-11-21T08:00:00Z', ended_at: '2026-11-21T19:00:00Z' },
+    { vehicle_key: 'V2', driver_id: 'd', status: 'on_trip', started_at: '2026-11-21T08:00:00Z', ended_at: '2026-11-21T19:00:00Z' }];
+  assert.deepStrictEqual(P.pfCtrDriver(c, logs, [], now), { d: 'b', name: 'BETA', src: 'carte', others: 1 });
+  const perfs = [{ vehicle_key: 'V1', driver_id: 'e', driver_name: 'EPS', updated_at: '2026-11-21T10:00:00Z' }];
+  assert.deepStrictEqual(P.pfCtrDriver(c, [], perfs, now), { d: 'e', name: 'EPS', src: 'shift', others: 0 });
+  assert.strictEqual(P.pfCtrDriver(c, [], perfs.concat([{ vehicle_key: 'V1', driver_id: 'f', updated_at: '2026-11-21T11:00:00Z' }]), now), null, 'deux comptes possibles : rien deviné');
+  assert.strictEqual(P.pfCtrDriver(c, [], [], now), null);
+  assert.strictEqual(P.pfSumData([{ data: { e: 10 } }, { data: {} }, null, { data: { e: 5.5 } }], 'e'), 15.5);
+});
+
+test('revenus Uber par contrat : contrats à lire (en cours, J-1 au même moment), chiffres enregistrés selon les agences, tableau et J-1 d\'En direct, courses du contrat', async () => {
   env.resetDb();
   env.psql(`insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin';
-    insert into agencies (id, name) overriding system value values (1, 'Rabat');
-    insert into vehicles (key, plate, model, active, agency_id) values ('968211WW', 'WW968211', 'SONATA', 'OUI', 1), ('968212WW', 'WW968212', 'SONATA', 'OUI', 1);`);
+    insert into profiles (user_id, email, role) values ('${MGR}', 'mgr@x', 'manager') on conflict (user_id) do update set role = 'manager';
+    insert into agencies (id, name) overriding system value values (1, 'Rabat'), (2, 'Marrakech');
+    insert into user_agencies (user_id, agency_id) values ('${MGR}', 1);
+    insert into vehicles (key, plate, model, active, agency_id) values ('968211WW', 'WW968211', 'SONATA', 'OUI', 1), ('86120T1', '86120-T-1', 'STARIA', 'OUI', 2);`);
+  const A = '97b48f1d-06da-4c89-8310-fe49bfd8b16a', B = 'a3dcb299-8a4d-438a-97f7-8d5df6c657b4';
   const srv = await startSite(), { br, page, errors } = await openBrowser();
   try {
     await login(page, '#/direct');
     await page.waitForSelector('#liveubshift');
-    const sh = await page.evaluate(() => pfShiftNow()), to = Date.now() - 86400000;
-    const cur = JSON.stringify([{ d: '97b48f1d-06da-4c89-8310-fe49bfd8b16a', n: 'ALPHA', p: 'WW968211', e: 600, cash: 200, t: 5 }, { d: 'a3dcb299-8a4d-438a-97f7-8d5df6c657b4', n: 'BETA', p: 'WW968212', e: 500, cash: 100, t: 4 }]);
-    const prev = JSON.stringify([{ d: '97b48f1d-06da-4c89-8310-fe49bfd8b16a', n: 'ALPHA', p: 'WW968211', e: 700, cash: 300, t: 6, to }, { d: 'b608509d-14df-4802-bafa-f8041da71458', n: 'GAMMA', p: 'WW968212', e: 300, t: 2, to }]);
-    as(ADMIN, `select public.uber_perf_push('${sh.key}', '${sh.from}', '${cur}'::jsonb)`);
-    as(ADMIN, `select public.uber_perf_push('${sh.key.replace('shift:', 'cmp:')}', '${new Date(+new Date(sh.from) - 86400000).toISOString()}', '${prev}'::jsonb)`);
-    assert.strictEqual(env.psql("select (data->>'to') is not null from uber_perf where period like 'cmp:%' limit 1"), 't', 'fin de la période d\'hier gardée');
-    assert.throws(() => as(ADMIN, `select public.uber_perf_push('veille', null, '[]'::jsonb)`), /Période invalide/);
-    await page.evaluate(async () => { await pfShiftLoad(); await pfLoad(); });
+    // début des contrats dans le shift en cours (règle des contrats), jusqu'à 60 min avant maintenant
+    const st = await page.evaluate(() => { const cur = pfShKey(pfShCur()); for (let k = 60; k > 0; k--) { const t = new Date(Date.now() - k * 60000); if (pfShKey(shiftOfCtr(t, S.P)) === cur) return t.toISOString(); } return new Date().toISOString(); });
+    const y = new Date(+new Date(st) - 86400000).toISOString(), y2 = new Date(Date.now() - 86400000 + 3 * 3600000).toISOString(), e2 = new Date(Date.now() - 60000).toISOString();
+    env.psql(`insert into contracts (num, name, plate, vehicle_key, start_at, end_at, status) values ('CT1', 'ALPHA Test', 'WW968211', '968211WW', '${st}', null, 'IN_PROGRESS'),
+        ('CT2', 'BETA Test', '86120-T-1', '86120T1', '${st}', '${e2}', 'Terminé'), ('CT0', 'ALPHA Test', 'WW968211', '968211WW', '${y}', '${y2}', 'Terminé');
+      insert into uber_live_log (plate_key, plate, vehicle_key, driver_id, driver_name, status, started_at, ended_at) values
+        ('968211WW', 'WW968211', '968211WW', '${A}', 'ALPHA Test', 'on_trip', '${st}', null),
+        ('86120T1', '86120-T-1', '86120T1', '${B}', 'BETA Uber', 'available', '${st}', '${e2}'),
+        ('968211WW', 'WW968211', '968211WW', '${A}', 'ALPHA Test', 'on_trip', '${y}', '${y2}');`);
+    await page.evaluate(async () => { PFS.at = 0; await pfShiftLoad(); });
+    const ask = await page.evaluate(() => PFS.ask);
+    const byP = Object.fromEntries(ask.map(x => [x.p, x]));
+    assert.strictEqual(byP['ctr:CT1'].d, A); assert.strictEqual(byP['ctr:CT1'].f, +new Date(st));
+    assert.strictEqual(byP['ctr:CT2'].d, B); assert.strictEqual(byP['ctr:CT2'].t, +new Date(e2), 'contrat terminé : jusqu\'à sa fin');
+    assert.ok(Math.abs(byP['ctrj1:CT0'].t - (Date.now() - 86400000)) < 120000, 'contrat d\'hier arrêté à la même heure moins 24 h');
+    // chiffres lus par l'application (ligne « CTRP »)
+    const items = [{ p: 'ctr:CT1', d: A, f: +new Date(st), to: Date.now(), e: 600, cash: 200, t: 5, h: 2, a: 0.7 }, { p: 'ctr:CT2', d: B, f: +new Date(st), to: +new Date(e2), e: 300, t: 2, h: 1 },
+      { p: 'ctrj1:CT0', d: A, f: +new Date(y), to: Date.now() - 86400000, e: 500, t: 4 }];
+    assert.strictEqual(await page.evaluate(t => pfCtrPush(t), JSON.stringify(items)), true);
+    assert.strictEqual(env.psql("select string_agg(period || '|' || vehicle_key || '|' || (data->>'e'), ',' order by period) from uber_perf"), 'ctr:CT1|968211WW|600,ctr:CT2|86120T1|300,ctrj1:CT0|968211WW|500', 'véhicule du contrat');
+    assert.strictEqual(as(MGR, "select string_agg(period, ',' order by period) from uber_perf"), 'ctr:CT1,ctrj1:CT0', 'gestionnaire de Rabat : contrats de ses véhicules seulement');
+    assert.throws(() => as(ADMIN, `select public.uber_perf_push('ctr:INCONNU', now(), '[{"d":"${A}","e":1}]'::jsonb)`), /Contrat inconnu/);
+    // trois courses Uber pendant le contrat CT1
+    const at = m => new Date(+new Date(st) + m * 60000).toISOString();
+    env.psql(`insert into uber_trips (uuid, driver_uuid, driver_name, vehicle_key, plate, requested_at, dropoff_at, pickup_addr, drop_addr, km, status, payment) values
+      ('t1', '${A}', 'ALPHA Test', '968211WW', 'WW968211', '${at(1)}', '${at(20)}', 'Gare, Marrakech', 'Menara', 7.4, 'completed', 'cash'),
+      ('t2', '${A}', 'ALPHA Test', '968211WW', 'WW968211', '${at(2)}', null, 'Guéliz', null, null, 'driver_cancelled', 'card')`);
+    await page.evaluate(async () => { PFS.at = 0; await pfShiftLoad(); pfShiftPaint(); });
+    let t = (await page.innerText('#liveubshift')).replace(/\s+/g, ' ');
+    assert.match(t, /Uber · revenus par contrat/);
+    assert.match(t, /ALPHA Test CT1 ✓ WW968211/);
+    assert.match(t, /BETA Test CT2 BETA Uber 86120-T-1/, 'nom du compte Uber affiché quand il diffère du contrat');
+    assert.match(t, /Total \(2 contrats\) 900 MAD/);
     const c = await page.evaluate(() => pfShiftCmp());
-    assert.deepStrictEqual([c.e, c.cash, c.pe, Math.round(c.pct * 1000) / 10], [1100, 300, 1000, 10], 'total 1 100, J-1 1 000 : +10 %');
-    const html = await page.evaluate(() => pfShiftChips());
-    assert.match(html.replace(/\s+/g, ' '), /1[\s  ]?100 MAD<\/b> total shift · dont 300 espèces/);
-    assert.match(html, /J-1 à/); assert.match(html, /\+10 %<\/b> de plus que J-1/);
+    assert.deepStrictEqual([c.a.e, c.b.e, Math.round(c.pct * 1000) / 10], [900, 500, 80], 'J-1 : contrats d\'hier au même moment');
+    assert.match(await page.evaluate(() => pfShiftChips()), /\+80 %<\/b> de plus que J-1/);
+    await page.click('#tubshift tr.ubdrv[data-ubd="CT1"]');
+    t = (await page.innerText('#liveubshift')).replace(/\s+/g, ' ');
+    assert.match(t, /Terminée Gare, Marrakech Menara 7,4 cash/); assert.match(t, /Annulée par le chauffeur/);
+    // historique des shifts
+    await page.evaluate(() => { location.hash = '#/ubrev'; });
+    await page.waitForSelector('#tubrev');
+    t = (await page.innerText('#page')).replace(/\s+/g, ' ');
+    assert.match(t, /Revenus Uber par shift/); assert.match(t, /Évolution jour après jour/);
+    assert.ok(await page.locator('svg.cshchart2 rect').count() >= 1, 'barre du graphique');
+    assert.match(t, /900 MAD/, 'total du shift des contrats');
+    await page.click('#tubrev tr.ubdrv');
+    assert.ok(await page.locator('#tubrev tr.ubdet').count() === 1, 'détail du jour déplié');
     assert.deepStrictEqual(errors, []);
-  } finally { await br.close(); srv.kill(); env.psql('truncate uber_perf'); env.resetDb(); }
+  } finally { await br.close(); srv.kill(); env.psql('truncate uber_perf, uber_live_log'); env.resetDb(); }
 });

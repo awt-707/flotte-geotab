@@ -238,9 +238,15 @@ CREATE FUNCTION public.uber_perf_push(p_period text, p_from timestamp with time 
     SET search_path TO 'public'
     AS $_$
 declare v_role text := coalesce((select role from profiles where user_id = auth.uid()), ''); it jsonb; k text; d text; v_key text; v_ag bigint; v_plate text; n integer := 0;
+  v_ckey text; v_cag bigint; v_cplate text;
 begin
   if auth.uid() is null or v_role not in ('admin', 'manager', 'viewer') then raise exception 'Envoi refusé'; end if;
-  if coalesce(p_period, '') !~ '^(shift|cmp):\d{4}-\d{2}-\d{2}:(Jour|Nuit)$' then raise exception 'Période invalide'; end if;
+  if coalesce(p_period, '') !~ '^(shift|cmp):\d{4}-\d{2}-\d{2}:(Jour|Nuit)$' and coalesce(p_period, '') !~ '^(ctr|ctrj1):[A-Za-z0-9_.-]{1,40}$' then raise exception 'Période invalide'; end if;
+  -- contrat : véhicule et agence du contrat Ludy (droits de lecture par agence), début du contrat
+  if p_period ~ '^(ctr|ctrj1):' then
+    select c.vehicle_key, v.agency_id, c.plate into v_ckey, v_cag, v_cplate from contracts c left join vehicles v on v.key = c.vehicle_key where c.num = split_part(p_period, ':', 2);
+    if v_ckey is null then raise exception 'Contrat inconnu'; end if;
+  end if;
   if jsonb_typeof(coalesce(p_items, '[]'::jsonb)) <> 'array' or jsonb_array_length(coalesce(p_items, '[]'::jsonb)) > 200 then raise exception 'Envoi invalide'; end if;
   for it in select * from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) loop
     d := lower(coalesce(it->>'d', ''));
@@ -253,10 +259,13 @@ begin
         select v.key, v.agency_id, v.plate into v_key, v_ag, v_plate from vehicles v where regexp_replace(v.plate, '\D', '', 'g') = k;
       end if;
     end if;
+    if v_ckey is not null then v_key := v_ckey; v_ag := v_cag; v_plate := coalesce(v_cplate, v_plate); end if;
+    -- un contrat = un seul compte Uber : la ligne d'un autre compte pour ce contrat est remplacée
+    if v_ckey is not null then delete from uber_perf where period = p_period and driver_id <> d; end if;
     insert into uber_perf (driver_id, period, period_from, driver_name, plate, vehicle_key, agency_id, data, updated_at)
       values (d, p_period, p_from, nullif(left(it->>'n', 80), ''), v_plate, v_key, v_ag,
         coalesce((select jsonb_object_agg(e.key, e.value) from jsonb_each(it) e
-          where e.key in ('e', 'cash', 'h', 't', 'a', 'c', 'hot', 'hto', 'hav', 'first', 'last', 'to') and jsonb_typeof(e.value) = 'number'), '{}'::jsonb), now())
+          where e.key in ('e', 'cash', 'h', 't', 'a', 'c', 'hot', 'hto', 'hav', 'first', 'last', 'to', 'f') and jsonb_typeof(e.value) = 'number'), '{}'::jsonb), now())
       on conflict (driver_id, period) do update set period_from = excluded.period_from, driver_name = coalesce(excluded.driver_name, uber_perf.driver_name),
         plate = coalesce(excluded.plate, uber_perf.plate), vehicle_key = coalesce(excluded.vehicle_key, uber_perf.vehicle_key),
         agency_id = coalesce(excluded.agency_id, uber_perf.agency_id), data = excluded.data, updated_at = now();
