@@ -281,7 +281,7 @@ async function pfCtrPush(txt) {
     const r = await sb.rpc('uber_perf_push', { p_period: x.p, p_from: new Date(x.f).toISOString(), p_items: [it] }).then(y => y, e => ({ error: e }));
     if (r.error) { errs++; PFS.ctrErr = 'enregistrement des chiffres par contrat refusé : ' + String(r.error.message || r.error).slice(0, 120); } else { PFP.ctrSent[x.p] = sig; done++; }
   }
-  if (done) { PFS.ctrErr = errs ? PFS.ctrErr : ''; PFS.at = 0; }
+  if (done) { PFS.ctrErr = errs ? PFS.ctrErr : ''; PFS.at = 0; if ($('#liveubshift')) pfShiftLoad().then(pfShiftPaint).catch(() => { }); }
   return errs ? false : true;
 }
 async function pfPushTick() {

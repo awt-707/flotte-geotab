@@ -77,11 +77,14 @@ test('page En direct : bloc « Uber en ce moment » (chiffres et liste des chauf
     env.psql("update uber_live set photo_url = 'https://d1w2poirtb3as9.cloudfront.net/a.jpeg', observed_at = now() where plate = 'WW030070'");
     await page.evaluate(async () => { await pfLoad(); pfPaint(); });
     await page.waitForSelector('.vcard[data-vk="030070WW"] img.vc-photo');
-    // performances du jour d'Uber sur la fiche (revenus, en ligne, acceptation, courses)
-    env.psql(`update uber_live set perf = '{"e":1242,"cash":205,"h":7.84,"t":6,"a":0.7,"c":0,"at":${Date.now()}}' where plate = 'WW030070'`);
-    await page.evaluate(async () => { await pfLoad(); pfPaint(); });
-    assert.match(await page.innerText('.vcard[data-vk="030070WW"] .vc-kpis'), /1[\s\u202f\u00a0]?242 MAD\s*revenus Uber\s*7 h 50\s*en ligne\s*70 %\s*acceptation\s*6\s*courses/);
-    assert.strictEqual(await page.locator('.vcard[data-vk="030070WW"] .vk.uber.bad').count(), 1, 'acceptation sous 80 % en rouge');
+    // chiffres d'Uber sur la fiche : depuis le début du contrat (jamais la journée d'Uber, 05:00 → 05:00)
+    env.psql(`update uber_live set perf = '{"e":999,"h":9,"t":9,"a":1,"at":${Date.now()}}' where plate = 'WW030070';
+      insert into uber_perf (driver_id, period, period_from, vehicle_key, data, updated_at) values ('97b48f1d-06da-4c89-8310-fe49bfd8b16a', 'ctr:K6', now() - interval '2 hours', '030076WW', '{"e":1242,"cash":205,"h":7.84,"t":6,"a":0.7,"c":0}', now())`);
+    await page.evaluate(async () => { await pfLoad(); PFS.at = 0; await pfShiftLoad(); pfPaint(); });
+    await page.waitForFunction(() => /revenus Uber/.test((document.querySelector('.vcard[data-vk="030076WW"] .vc-kpis') || {}).innerText || ''));
+    assert.match(await page.innerText('.vcard[data-vk="030076WW"] .vc-kpis'), /1[\s\u202f\u00a0]?242 MAD\s*revenus Uber\s*7 h 50\s*en ligne\s*70 %\s*acceptation\s*6\s*courses/);
+    assert.strictEqual(await page.locator('.vcard[data-vk="030076WW"] .vk.uber.bad').count(), 1, 'acceptation sous 80 % en rouge');
+    assert.doesNotMatch(await page.innerText('.vcard[data-vk="030070WW"]'), /999 MAD/, 'chiffres de la journée d\'Uber jamais affichés');
     assert.strictEqual(await page.locator('.vcard[data-vk="030071WW"] img.vc-photo').count(), 0, 'sans photo : rien');
     // lecture partielle seulement (application 1.8 : chauffeur ouvert à l'écran) : pas de comptes, jamais « hors ligne » supposé
     env.psql("update uber_live set observed_at = now(), complete = false");
