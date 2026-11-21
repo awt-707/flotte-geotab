@@ -240,7 +240,7 @@ CREATE FUNCTION public.uber_perf_push(p_period text, p_from timestamp with time 
 declare v_role text := coalesce((select role from profiles where user_id = auth.uid()), ''); it jsonb; k text; d text; v_key text; v_ag bigint; v_plate text; n integer := 0;
 begin
   if auth.uid() is null or v_role not in ('admin', 'manager', 'viewer') then raise exception 'Envoi refusé'; end if;
-  if coalesce(p_period, '') !~ '^shift:\d{4}-\d{2}-\d{2}:(Jour|Nuit)$' then raise exception 'Période invalide'; end if;
+  if coalesce(p_period, '') !~ '^(shift|cmp):\d{4}-\d{2}-\d{2}:(Jour|Nuit)$' then raise exception 'Période invalide'; end if;
   if jsonb_typeof(coalesce(p_items, '[]'::jsonb)) <> 'array' or jsonb_array_length(coalesce(p_items, '[]'::jsonb)) > 200 then raise exception 'Envoi invalide'; end if;
   for it in select * from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) loop
     d := lower(coalesce(it->>'d', ''));
@@ -256,7 +256,7 @@ begin
     insert into uber_perf (driver_id, period, period_from, driver_name, plate, vehicle_key, agency_id, data, updated_at)
       values (d, p_period, p_from, nullif(left(it->>'n', 80), ''), v_plate, v_key, v_ag,
         coalesce((select jsonb_object_agg(e.key, e.value) from jsonb_each(it) e
-          where e.key in ('e', 'cash', 'h', 't', 'a', 'c', 'hot', 'hto', 'hav', 'first', 'last') and jsonb_typeof(e.value) = 'number'), '{}'::jsonb), now())
+          where e.key in ('e', 'cash', 'h', 't', 'a', 'c', 'hot', 'hto', 'hav', 'first', 'last', 'to') and jsonb_typeof(e.value) = 'number'), '{}'::jsonb), now())
       on conflict (driver_id, period) do update set period_from = excluded.period_from, driver_name = coalesce(excluded.driver_name, uber_perf.driver_name),
         plate = coalesce(excluded.plate, uber_perf.plate), vehicle_key = coalesce(excluded.vehicle_key, uber_perf.vehicle_key),
         agency_id = coalesce(excluded.agency_id, uber_perf.agency_id), data = excluded.data, updated_at = now();

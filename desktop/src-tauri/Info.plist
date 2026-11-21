@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Robot Uber Fleet (2.0) : macOS ne met jamais Ludy en sommeil (App Nap) quand sa fenêtre est cachée ou recouverte -->
+  <key>NSAppSleepDisabled</key>
+  <true/>
+</dict>
+</plist>

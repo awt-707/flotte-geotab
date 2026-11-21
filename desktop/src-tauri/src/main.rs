@@ -7,6 +7,11 @@
 // superposées dans une même fenêtre (multiwebview de Tauri, encore « unstable ») sont mal placées et ne reçoivent plus bien la
 // souris quand la mise à l'échelle de Windows n'est pas 100 %. Sous Windows : Ludy dans une fenêtre normale (une seule vue,
 // ouverte agrandie) et chaque volet externe dans sa propre fenêtre. Mac : inchangé (une fenêtre, volets à droite du menu).
+// 2.0 (21/11/2026, demande d'Ahmed : « juste ouvrir Ludy et tout se connecte à Uber Fleet en live, en arrière-plan, 24 h/24 ») :
+// robot Uber Fleet = volet Uber ouvert sans être affiché dès le démarrage (ext_bg : Windows fenêtre cachée, Mac vue cachée),
+// pages jamais ralenties en arrière-plan (WebView2 : WV2_ARGS ; Mac : App Nap désactivé dans Info.plist), fermer la fenêtre ne
+// quitte pas Ludy (Mac : cachée, clic sur l'icône du Dock = rouverte ; Windows : réduite ; volets externes : cachés), veille de
+// l'ordinateur empêchée tant que Ludy tourne (keep_awake), Ludy ouvert au démarrage de l'ordinateur (autostart).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
@@ -25,6 +30,11 @@ const UBER: &str = "https://fleethub.uber.com/orgs/692d0268-9766-4061-9c0e-85d7c
 const TITLE: &str = "Ludy · Supervision de flotte";
 /// Volets externes dans leur propre fenêtre (Windows) plutôt qu'à droite du menu Ludy
 const EXT_WINDOWS: bool = cfg!(target_os = "windows");
+/// WebView2 (Windows) : pages jamais ralenties ni mises en sommeil quand leur fenêtre est cachée, réduite ou recouverte (robot Uber
+/// Fleet, lecture et envoi toutes les 5 à 10 s). Mêmes options pour toutes les fenêtres (WebView2 refuse des options différentes) ;
+/// options par défaut de Tauri gardées (msWebOOUI, msPdfOOUI, msSmartScreenProtection).
+#[cfg(target_os = "windows")]
+const WV2_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
 
 /// Volets externes (Uber Fleet, Clicar…) : la liste est réglée sur le site (Réglages > Volets externes), l'application
 /// ouvre l'adresse demandée par le site Ludy (https seulement) : ajouter un site ne demande pas de nouvelle application.
@@ -254,9 +264,15 @@ fn ext_pane<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap<S
 /// rouverte à sa nouvelle adresse si elle a changé dans les Réglages ; jamais fermée en changeant de page dans Ludy
 #[cfg(target_os = "windows")]
 fn ext_window<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap<String, String>, label: &str, target: &url::Url, url: &str, name: Option<String>) -> Result<(), String> {
+  ext_window_open(app, op, label, target, url, name, true)
+}
+/// visible = false : fenêtre créée cachée (robot Uber Fleet, 2.0) ; déjà ouverte : laissée telle quelle
+#[cfg(target_os = "windows")]
+#[allow(clippy::too_many_arguments)]
+fn ext_window_open<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap<String, String>, label: &str, target: &url::Url, url: &str, name: Option<String>, visible: bool) -> Result<(), String> {
   if let Some(w) = app.get_webview_window(label) {
     if op.get(label).map(|u| u != url).unwrap_or(true) { let _ = w.navigate(with_login(app, target)); op.insert(label.to_string(), url.to_string()); }
-    let _ = w.unminimize(); let _ = w.show(); let _ = w.set_focus();
+    if visible { let _ = w.unminimize(); let _ = w.show(); let _ = w.set_focus(); }
     return Ok(());
   }
   let (h2, l2, home) = (app.clone(), label.to_string(), target.clone());
@@ -266,7 +282,8 @@ fn ext_window<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap
     .map(|m| { let a = m.work_area().size; let f = m.scale_factor().max(1.0); (a.width as f64 / f * 0.85, a.height as f64 / f * 0.85) })
     .unwrap_or((1100.0, 700.0));
   WebviewWindowBuilder::new(app, label, WebviewUrl::External(with_login(app, target)))
-    .title(title).inner_size(w.max(700.0), h.max(500.0)).min_inner_size(700.0, 500.0).center()
+    .title(title).inner_size(w.max(700.0), h.max(500.0)).min_inner_size(700.0, 500.0).center().visible(visible)
+    .additional_browser_args(WV2_ARGS)
     .initialization_script(UBER_READER)
     .on_new_window(move |u, _f| {
       if same_site(&u, &home) { if let Some(v) = h2.get_webview(&l2) { let _ = v.navigate(u); } }
@@ -279,6 +296,89 @@ fn ext_window<R: Runtime>(app: &AppHandle<R>, op: &mut std::collections::HashMap
   op.insert(label.to_string(), url.to_string());
   Ok(())
 }
+
+/// Robot (2.0) : volet externe ouvert en arrière-plan sans être affiché (Uber Fleet lu dès l'ouverture de Ludy). Renvoie vrai s'il vient
+/// d'être ouvert, faux s'il l'était déjà. Windows : fenêtre cachée (commande asynchrone : création de fenêtre) ; Mac : vue cachée.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn ext_bg<R: Runtime>(app: AppHandle<R>, opened: tauri::State<'_, Opened>, id: String, url: String, name: Option<String>) -> Result<bool, String> {
+  let (label, target) = (ext_label(&id)?, ext_parse(&url)?);
+  if app.get_webview_window(&label).is_some() { return Ok(false); }
+  let mut op = opened.0.lock().map_err(|e| e.to_string())?;
+  ext_window_open(&app, &mut op, &label, &target, &url, name, false)?;
+  Ok(true)
+}
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn ext_bg<R: Runtime>(app: AppHandle<R>, opened: tauri::State<Opened>, id: String, url: String, name: Option<String>) -> Result<bool, String> {
+  let (label, target) = (ext_label(&id)?, ext_parse(&url)?);
+  let _ = name;
+  if app.get_webview(&label).is_some() { return Ok(false); }
+  // demandé par le site seulement quand aucun volet externe n'est affiché : volet créé puis aussitôt caché, clavier rendu à Ludy
+  {
+    let mut op = opened.0.lock().map_err(|e| e.to_string())?;
+    ext_pane(&app, &mut op, label.clone(), target, url, 0.0, 0.0, 100.0, 100.0)?;
+  }
+  if let Some(v) = app.get_webview(&label) { let _ = v.hide(); }
+  if let Some(v) = app.get_webview("ludy") { let _ = v.set_focus(); }
+  Ok(true)
+}
+
+/// Quitter vraiment Ludy (fermer la fenêtre la cache seulement, 2.0)
+#[tauri::command]
+fn app_quit<R: Runtime>(app: AppHandle<R>) { app.exit(0); }
+
+/// Ouvrir Ludy au démarrage de l'ordinateur (2.0) : on = Some(…) règle, None lit ; renvoie l'état. Windows : clé Run de l'utilisateur ;
+/// Mac : LaunchAgent de l'utilisateur (application lancée par « open » ; jamais depuis l'image disque montée).
+#[tauri::command]
+fn autostart(on: Option<bool>) -> Result<bool, String> { autostart_do(on) }
+#[cfg(target_os = "windows")]
+fn autostart_do(on: Option<bool>) -> Result<bool, String> {
+  use std::os::windows::process::CommandExt;
+  const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+  let reg = |args: &[&str]| std::process::Command::new("reg").args(args).creation_flags(0x0800_0000).output();
+  if let Some(v) = on {
+    if v {
+      let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+      let val = format!("\"{}\"", exe.display());
+      reg(&["add", KEY, "/v", "Ludy", "/t", "REG_SZ", "/d", val.as_str(), "/f"]).map_err(|e| e.to_string())?;
+    } else { let _ = reg(&["delete", KEY, "/v", "Ludy", "/f"]); }
+  }
+  Ok(reg(&["query", KEY, "/v", "Ludy"]).map(|o| o.status.success()).unwrap_or(false))
+}
+#[cfg(target_os = "macos")]
+fn autostart_do(on: Option<bool>) -> Result<bool, String> {
+  let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+  let plist = PathBuf::from(&home).join("Library/LaunchAgents/com.ludy.flotte.plist");
+  if let Some(v) = on {
+    if v {
+      let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+      let app = exe.ancestors().find(|p| p.extension().map(|e| e == "app").unwrap_or(false)).ok_or("application introuvable")?.to_path_buf();
+      if app.starts_with("/Volumes") { return Err("Ludy est ouvert depuis l'image disque : glissez-le dans Applications".into()); }
+      let x = |t: &str| t.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+      let body = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>com.ludy.flotte</string><key>ProgramArguments</key><array><string>/usr/bin/open</string><string>-a</string><string>{}</string></array><key>RunAtLoad</key><true/></dict></plist>\n", x(&app.display().to_string()));
+      if let Some(d) = plist.parent() { std::fs::create_dir_all(d).map_err(|e| e.to_string())?; }
+      std::fs::write(&plist, body).map_err(|e| e.to_string())?;
+    } else { let _ = std::fs::remove_file(&plist); }
+  }
+  Ok(plist.exists())
+}
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn autostart_do(_on: Option<bool>) -> Result<bool, String> { Ok(false) }
+
+/// Veille de l'ordinateur empêchée tant que Ludy tourne (l'écran peut s'éteindre) : Windows SetThreadExecutionState sur le fil principal ;
+/// Mac « caffeinate -i » rattaché à Ludy (s'arrête avec lui). Un portable dont on ferme le capot se met quand même en veille.
+#[cfg(target_os = "windows")]
+fn keep_awake() {
+  #[link(name = "kernel32")]
+  extern "system" { fn SetThreadExecutionState(flags: u32) -> u32; }
+  const ES_CONTINUOUS: u32 = 0x8000_0000; const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+  unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED); }
+}
+#[cfg(target_os = "macos")]
+fn keep_awake() { let _ = std::process::Command::new("/usr/bin/caffeinate").args(["-i", "-w", &std::process::id().to_string()]).spawn(); }
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn keep_awake() {}
 
 /// Masque les volets externes (leurs pages restent chargées : retour instantané) ; Windows : fenêtres propres, laissées ouvertes
 #[tauri::command]
@@ -326,13 +426,29 @@ fn main() {
     .plugin(tauri_plugin_opener::init())
     .manage(Opened(Mutex::new(Default::default())))
     .manage(UberRows(Mutex::new(None)))
-    .invoke_handler(tauri::generate_handler![ext_show, ext_hide, ext_reload, ext_status, ext_login, open_external, uber_push, uber_rows, uber_eval])
+    .invoke_handler(tauri::generate_handler![ext_show, ext_hide, ext_reload, ext_status, ext_login, open_external, uber_push, uber_rows, uber_eval, ext_bg, app_quit, autostart])
+    // fermer une fenêtre ne quitte pas Ludy (robot Uber Fleet toujours en marche) : Mac = fenêtre cachée (icône du Dock = rouverte),
+    // Windows = fenêtre réduite ; volets externes (fenêtres Windows) = cachés. Quitter : Cmd + Q (Mac) ou « Quitter Ludy » sur le site.
+    .on_window_event(|w, e| {
+      if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+        let l = w.label().to_string();
+        if l.starts_with("ext-") || l == "main" { api.prevent_close(); let _ = w.hide(); }
+        else if l == "ludy" { api.prevent_close(); let _ = w.minimize(); }
+      }
+    })
     .setup(|app| {
+      keep_awake();
+      // Ludy ouvert au démarrage de l'ordinateur : réglé une fois au premier lancement (ensuite selon le choix fait sur le site)
+      if let Ok(d) = app.path().app_config_dir() {
+        let mark = d.join("autostart.done");
+        if !mark.exists() && autostart_do(Some(true)).is_ok() { let _ = std::fs::create_dir_all(&d); let _ = std::fs::write(&mark, "1"); }
+      }
       let home = home();
       let origin = { let u: url::Url = home.parse().expect("adresse du site"); u.origin().ascii_serialization() };
       // seul le site Ludy peut afficher / masquer les volets externes et enregistrer leurs accès réservés
       app.add_capability(CapabilityBuilder::new("ludy-site").webview("ludy").remote(format!("{origin}/*"))
-        .permission("allow-ext-show").permission("allow-ext-hide").permission("allow-ext-reload").permission("allow-ext-status").permission("allow-ext-login").permission("allow-open-external").permission("allow-uber-rows").permission("allow-uber-eval"))?;
+        .permission("allow-ext-show").permission("allow-ext-hide").permission("allow-ext-reload").permission("allow-ext-status").permission("allow-ext-login").permission("allow-open-external").permission("allow-uber-rows").permission("allow-uber-eval")
+        .permission("allow-ext-bg").permission("allow-app-quit").permission("allow-autostart"))?;
       // volets externes sur *.uber.com : seulement l'envoi du relevé d'Uber Fleet (rien d'autre)
       app.add_capability(CapabilityBuilder::new("uber-reader").window("ext-*").webview("ext-*").remote("https://*.uber.com/*".to_string()).permission("allow-uber-push"))?;
       let init = include_str!("init.js").replace("__VERSION__", env!("CARGO_PKG_VERSION")).replace("__UBER__", UBER).replace("__EXTWIN__", if EXT_WINDOWS { "true" } else { "false" });
@@ -357,6 +473,7 @@ fn main() {
       {
         WebviewWindowBuilder::new(app, "ludy", WebviewUrl::External(home.parse().unwrap()))
           .title(TITLE).inner_size(1280.0, 800.0).min_inner_size(900.0, 600.0).maximized(true)
+          .additional_browser_args(WV2_ARGS)
           .initialization_script(&init)
           .on_new_window(new_window).on_navigation(navigation).on_download(downloads(app.handle(), true))
           .build()?;
@@ -381,8 +498,14 @@ fn main() {
         Ok(())
       }
     })
-    .run(tauri::generate_context!())
-    .expect("Ludy n'a pas pu démarrer");
+    .build(tauri::generate_context!())
+    .expect("Ludy n'a pas pu démarrer")
+    .run(|app, e| {
+      // Mac : clic sur l'icône du Dock alors que la fenêtre est cachée = fenêtre rouverte
+      #[cfg(target_os = "macos")]
+      if let tauri::RunEvent::Reopen { .. } = e { if let Some(w) = app.get_window("main") { let _ = w.show(); let _ = w.set_focus(); } }
+      let _ = (app, e);
+    });
 }
 
 #[cfg(test)]

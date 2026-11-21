@@ -49,7 +49,7 @@ function pfHtml() {
   if (u.stale) html += `<div class="pfbar"><span class="pfname">Uber</span><span class="msg warn small">Lecture arrêtée${u.lastAt ? ' depuis ' + esc(localHM(new Date(u.lastAt))) : ''} : chiffres pas à jour (aucune application Ludy n'a le volet Uber Fleet ouvert et connecté)</span></div>`;
   else html += `<div class="pfbar"><span class="pfname">Uber <span class="small">lu à ${esc(localHM(new Date(u.lastAt)))}${src}</span></span>
     ${chip(f0(u.online), 'en ligne')}${chip(f0(u.available), 'Disponible', 'pf-available')}${chip(f0(u.to_pickup), 'En route vers le lieu de prise en charge', 'pf-to_pickup')}${chip(f0(u.on_trip), 'Course en cours', 'pf-on_trip')}${u.unknown ? chip(f0(u.unknown), 'état non reconnu', 'mute') : ''}
-    <span id="pfoffchip"></span></div>`;
+    <span id="pfoffchip"></span>${pfShiftChips()}</div>`;
   if (b.seen && !b.stale && b.online) html += `<div class="pfbar"><span class="pfname">Bolt</span>${chip(f0(b.online), 'en ligne')}${chip(f0(b.available), 'Disponible', 'pf-available')}${chip(f0(b.to_pickup), 'En route vers le lieu de prise en charge', 'pf-to_pickup')}${chip(f0(b.on_trip), 'Course en cours', 'pf-on_trip')}</div>`;
   // véhicules sous contrat (page En direct) pas connectés : ni Uber ni Bolt en ligne, lecture d'Uber Fleet à jour
   let off = [];
@@ -247,7 +247,7 @@ function pfwStart() {
   pfwTick();
 }
 /** Changement d'utilisateur : alertes, contexte et lectures oubliés (jamais montrés à un autre compte) */
-function pfwReset() { Object.values(PFW.toasts).forEach(t => t.remove()); PFW.toasts = {}; PFW.ctx = null; PFW.primed = false; PF.latest = []; PF.drivers = []; PF.at = 0; PFP.last = ''; PFP.lastAt = 0; }
+function pfwReset() { PFP.login = false; pfLoginBar(); Object.values(PFW.toasts).forEach(t => t.remove()); PFW.toasts = {}; PFW.ctx = null; PFW.primed = false; PF.latest = []; PF.drivers = []; PF.at = 0; PFP.last = ''; PFP.lastAt = 0; }
 
 // ---------- Application Ludy 1.8 : relevé du volet Uber Fleet envoyé à la base (n'importe quel compte connecté) ----------
 const PFP = { timer: 0, last: '', lastAt: 0, n: 0, err: '', cat: '', perf: '', trips: new Set(), tripsNote: '' };
@@ -274,13 +274,25 @@ async function pfPushTick() {
   if (!S.session || !pfPushCan()) return;
   let v = null; try { v = await appInvoke('uber_rows'); } catch (e) { return; }   // application avant la 1.8 : commande absente
   if (!v || !Array.isArray(v.rows) || v.age > 30) return;
+  // page de connexion d'Uber (session expirée) : plus aucune lecture possible tant que personne ne se reconnecte
+  const login = /auth\.uber\.com|\/login|signin/i.test(v.url || '') || (!v.rows.length && /votre numéro de téléphone ou votre adresse courriel|phone number or email/i.test(v.diag || ''));
+  if (login !== !!PFP.login) { PFP.login = login; pfLoginBar(); }
   // lignes en tête du diagnostic (site/uber_read.js) : « CAT [...] » = catalogue de ce que la page d'Uber Fleet charge,
   // « PERF {period, from, items} » = revenus du shift, « TRIPS {id, h, r} » = lot de courses du rapport « Activité des courses »
   let diag = String(v.diag || ''), note = '';
   for (let guard = 0; guard < 4 && /^(CAT|PERF|TRIPS) /.test(diag); guard++) {
     const nl = diag.indexOf('\n'), line = nl < 0 ? diag : diag.slice(0, nl); diag = nl < 0 ? '' : diag.slice(nl + 1);
     if (line.startsWith('CAT ')) { if (line !== PFP.cat) { try { const c = await sb.rpc('uber_catalog_push', { p_items: JSON.parse(line.slice(4)) }); if (!c.error) PFP.cat = line; } catch (e) { } } }
-    else if (line.startsWith('PERF ')) { if (line !== PFP.perf) { try { const o = JSON.parse(line.slice(5)); const c = await sb.rpc('uber_perf_push', { p_period: o.period, p_from: o.from, p_items: o.items }); if (!c.error) PFP.perf = line; } catch (e) { } } }
+    else if (line.startsWith('PERF ')) {
+      if (line !== PFP.perf) {
+        try {
+          const o = JSON.parse(line.slice(5)); const c = await sb.rpc('uber_perf_push', { p_period: o.period, p_from: o.from, p_items: o.items });
+          // veille au même moment (chiffres d'Uber d'hier, du début du même shift jusqu'à la même heure) : période « cmp:… »
+          let c2 = { error: null }; if (o.prev && Array.isArray(o.prev.items)) c2 = await sb.rpc('uber_perf_push', { p_period: o.period.replace(/^shift:/, 'cmp:'), p_from: o.prev.from, p_items: o.prev.items });
+          if (!c.error && !c2.error) { PFP.perf = line; PFS.at = 0; }
+        } catch (e) { }
+      }
+    }
     else { const r2 = await pfTripsImport(line.slice(6)); if (r2) note = r2; }
   }
   if (note || PFP.tripsNote) { PFP.tripsNote = note || PFP.tripsNote; diag = 'IMPORT ' + PFP.tripsNote + '\n' + diag; }
@@ -319,7 +331,37 @@ async function pfReaderSend() {
  * volet Uber Fleet (adresse réglée : la carte en temps réel) est ouvert puis aussitôt caché ; la lecture continue caché (uber_read.js).
  * Windows : volets dans leur propre fenêtre, ouverts par l'utilisateur. Une seule fois par minute au plus.
  */
+/**
+ * Robot Uber Fleet (application 2.0, 21/11/2026, demande d'Ahmed : « juste ouvrir Ludy et tout se connecte à Uber Fleet en
+ * arrière-plan, 24 h/24 ») : volet Uber Fleet ouvert caché dès l'ouverture de Ludy, Mac et Windows (commande ext_bg) ; aucune
+ * lecture depuis 3 min = page d'Uber Fleet rechargée (au plus toutes les 5 min) ; page de connexion d'Uber = alerte (pfLoginBar).
+ */
+function pfRobot() {
+  if (!window.LUDY_APP || !window.LUDY_APP.bg || !pfPushCan()) return false;
+  const site = extSites().find(x => x.id === 'uber') || extSites().find(x => /^https:\/\/([a-z0-9-]+\.)*uber\.com\//.test(x.url));
+  if (!site) return true;
+  const now = Date.now(), got = PFP.got || 0;
+  if (!PFP.bgAt || (now - got > 60000 && now - PFP.bgAt > 60000)) {   // ouvert caché (sans effet s'il l'est déjà)
+    PFP.bgAt = now;
+    appInvoke('ext_bg', { id: site.id, url: site.url, name: site.name || 'Uber Fleet' }).then(n => { if (n) PFP.bgOpened = now; }).catch(() => { });
+  }
+  const since = Math.max(got, PFP.bgOpened || 0, PFP.start || 0);
+  if (now - since > 180000 && now - (PFP.reloadAt || 0) > 300000 && !PFP.login) {   // lecture bloquée : page rechargée
+    PFP.reloadAt = now; PFP.reloads = (PFP.reloads || 0) + 1;
+    appInvoke('ext_reload', { id: site.id, url: site.url }).catch(() => { });
+  }
+  return true;
+}
+/** Uber Fleet sur sa page de connexion (session expirée) : bandeau sur toutes les pages, clic = volet Uber Fleet affiché pour se reconnecter */
+function pfLoginBar() {
+  let el = document.getElementById('pflogin');
+  if (!PFP.login || !S.session) { if (el) el.remove(); return; }
+  const site = extSites().find(x => x.id === 'uber') || { id: 'uber' };
+  if (!el) { el = document.createElement('div'); el.id = 'pflogin'; el.className = 'pflogin'; document.body.appendChild(el); }
+  el.innerHTML = `🔴 <b>Uber Fleet n'est plus connecté</b> : la lecture en direct est arrêtée. <a href="#/x-${esc(site.id)}">Se reconnecter à Uber Fleet</a>`;
+}
 function pfAutoOpen() {
+  if (pfRobot()) return;
   if (appMode() !== 'ext' || appExtWin() || !pfPushCan() || /^x-/.test(pageOf())) return;
   const wait = window.__pfAutoMs || 25000;
   if (Date.now() - (PFP.got || PFP.start || 0) < wait || Date.now() - (PFP.opened || 0) < Math.max(wait, 60000)) return;
@@ -345,7 +387,29 @@ function pfShiftNow() {
   const cur = shiftAt(Date.now(), S.P); if (!cur) return null;
   return { key: 'shift:' + cur.day + ':' + cur.s, from: shiftStart(cur, S.P).toISOString(), label: shiftDayName(cur) };
 }
-const PFS = { rows: [], at: 0, err: '', busy: false, key: '' };
+const PFS = { rows: [], cmp: [], at: 0, err: '', busy: false, key: '' };
+/**
+ * Total du shift comparé à la veille au même moment (21/11/2026, demande d'Ahmed) : revenus Uber de tous les chauffeurs du shift
+ * (agence du menu), même total hier du début du même shift jusqu'à la même heure (chiffres d'Uber, période « cmp: ») et écart en %.
+ */
+function pfShiftCmp() {
+  const sh = pfShiftNow(); if (!sh || PFS.key !== sh.key) return null;
+  const ok = typeof inAgency === 'function' ? inAgency() : () => true, a = typeof agFilter === 'function' ? agFilter() : '';
+  const keep = r => r.vehicle_key ? ok(r.vehicle_key) : !a, sum = (l, k) => l.reduce((t, r) => t + (typeof (r.data || {})[k] === 'number' ? r.data[k] : 0), 0);
+  const cur = PFS.rows.filter(keep), prev = PFS.cmp.filter(keep);
+  if (!cur.length) return null;
+  const at = Math.max(...cur.map(r => +new Date(r.updated_at))), pAt = prev.length ? Math.max(...prev.map(r => +new Date(r.updated_at))) : 0;
+  const e = sum(cur, 'e'), cash = sum(cur, 'cash'), t = sum(cur, 't');
+  // veille comparable seulement si elle a été relue en même temps (moins de 10 min d'écart) : sinon pas de pourcentage
+  const prevOk = prev.length && Math.abs(at - pAt) < 10 * 60000, pe = prevOk ? sum(prev, 'e') : null, pTo = prevOk ? Math.max(...prev.map(r => +(r.data || {}).to || 0)) : 0;
+  return { label: sh.label, at, e, cash, t, n: cur.length, pe, pcash: prevOk ? sum(prev, 'cash') : null, pt: prevOk ? sum(prev, 't') : null, pTo, pct: pe ? (e - pe) / pe : null, stale: Date.now() - at > 10 * 60000 };
+}
+function pfShiftChips() {
+  const c = pfShiftCmp(); if (!c) return '';
+  const pct = c.pct == null ? '' : `<span class="kchip ${c.pct >= 0 ? 'pf-up' : 'pf-down'}" title="Écart avec la veille au même moment"><b>${c.pct >= 0 ? '+' : '−'}${f0(Math.abs(c.pct) * 100)} %</b> ${c.pct >= 0 ? 'de plus que' : 'de moins que'} J-1</span>`;
+  return `<span class="kchip pf-total" title="Revenus Uber de tous les chauffeurs du shift (${esc(c.label)}), du début du shift à ${esc(localHM(new Date(c.at)))} · ${f0(c.n)} chauffeur(s), ${f0(c.t)} course(s)"><b>${f0(c.e)} MAD</b> total shift${c.cash ? ' · dont ' + f0(c.cash) + ' espèces' : ''}${c.stale ? ' · chiffres de ' + esc(localHM(new Date(c.at))) : ''}</span>
+    ${c.pe != null ? `<span class="kchip" title="Mêmes chiffres hier, du début du même shift jusqu'à ${esc(localHM(new Date(c.pTo)))}${c.pt != null ? ' · ' + f0(c.pt) + ' course(s)' : ''}"><b>${f0(c.pe)} MAD</b> J-1 à ${esc(localHM(new Date(c.pTo)))}</span>${pct}` : '<span class="kchip mute">J-1 : pas encore lu</span>'}`;
+}
 function pfShiftLoad() {
   if (PFS.busy) return PFS.p.then(() => pfShiftLoad());   // lecture en cours : attendue, puis relue (données à jour)
   PFS.busy = true;
@@ -354,9 +418,10 @@ function pfShiftLoad() {
 async function pfShiftRead() {
   const sh = pfShiftNow(); if (!sh) { PFS.busy = false; return; }
   try {
-    const r = await sb.from('uber_perf').select('driver_id,driver_name,plate,vehicle_key,data,updated_at,period_from').eq('period', sh.key).limit(500);
+    const r = await sb.from('uber_perf').select('driver_id,driver_name,plate,vehicle_key,data,updated_at,period_from,period').in('period', [sh.key, sh.key.replace(/^shift:/, 'cmp:')]).limit(1000);
     if (r.error) throw r.error;
-    PFS.rows = r.data || []; PFS.key = sh.key; PFS.at = Date.now(); PFS.err = '';
+    PFS.rows = (r.data || []).filter(x => x.period === sh.key); PFS.cmp = (r.data || []).filter(x => x.period !== sh.key);
+    PFS.key = sh.key; PFS.at = Date.now(); PFS.err = '';
   } catch (e) { PFS.err = String(e.message || e); } finally { PFS.busy = false; }
   // courses une par une du shift (rapport « Activité des courses » importé par Ludy, ou import manuel de Contrôle Uber)
   try {

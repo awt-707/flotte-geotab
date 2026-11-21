@@ -403,3 +403,63 @@ test('lecture 1.9 : réponse de la carte filtrée par la page (2 chauffeurs sur 
   r = U.read(doc, [comp, part], map);
   assert.strictEqual(r.full, true); assert.strictEqual(r.rows.length, 3, 'réponse complète d\'il y a 5 s préférée à la réponse filtrée plus récente');
 });
+
+test('application 2.0 : robot Uber Fleet (ouvert caché, page rechargée si la lecture s\'arrête, alerte de connexion), démarrage automatique', async () => {
+  env.resetDb();
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await page.addInitScript(() => {
+      window.LUDY_APP = { version: '2.0.0', uber: 'https://fleethub.uber.com/orgs/x/livemap', embed: true, ext: true, open: true, extWin: true, bg: true }; window.__pfAutoMs = 500; window.__calls = []; window.__rows = null; window.__auto = false;
+      window.__TAURI_INTERNALS__ = { invoke: (cmd, a) => { window.__calls.push([cmd, a]);
+        if (cmd === 'autostart') { if (a && typeof a.on === 'boolean') window.__auto = a.on; return Promise.resolve(window.__auto); }
+        return Promise.resolve(cmd === 'uber_rows' ? window.__rows : cmd === 'uber_eval' ? 0 : cmd === 'ext_bg' ? true : null); } };
+    });
+    await login(page, '#/dashboard');
+    await page.waitForFunction(() => window.__calls.some(c => c[0] === 'ext_bg'), null, { timeout: 15000 });
+    const bg = await page.evaluate(() => window.__calls.find(c => c[0] === 'ext_bg')[1]);
+    assert.strictEqual(bg.id, 'uber'); assert.match(bg.url, /uber\.com/);
+    assert.strictEqual(await page.evaluate(() => window.__calls.filter(c => c[0] === 'ext_show').length), 0, 'Windows aussi : jamais affiché, ouvert caché');
+    // aucune lecture depuis plus de 3 min : page d'Uber Fleet rechargée
+    await page.evaluate(() => { PFP.got = Date.now() - 200000; PFP.bgOpened = Date.now() - 200000; PFP.start = Date.now() - 200000; PFP.bgAt = Date.now(); PFP.reloadAt = 0; pfAutoOpen(); });
+    assert.strictEqual(await page.evaluate(() => window.__calls.filter(c => c[0] === 'ext_reload').length), 1);
+    // page de connexion d'Uber : bandeau sur toutes les pages
+    await page.evaluate(async () => { window.__rows = { rows: [], url: 'https://auth.uber.com/v2/', diag: 'Quel est votre numéro de téléphone ou votre adresse courriel?', full: false, age: 1 }; await pfPushTick(); });
+    await page.waitForSelector('#pflogin');
+    assert.match(await page.innerText('#pflogin'), /Uber Fleet n'est plus connecté/);
+    await page.evaluate(async () => { window.__rows = { rows: [], url: 'https://fleethub.uber.com/orgs/x/livemap', diag: '', full: true, age: 1 }; await pfPushTick(); });
+    assert.strictEqual(await page.locator('#pflogin').count(), 0, 'reconnecté : bandeau retiré');
+    // page Application : démarrage avec l'ordinateur, quitter
+    await page.evaluate(() => { location.hash = '#/application'; });
+    await page.waitForSelector('#appauto');
+    await page.check('#appauto');
+    await page.waitForFunction(() => window.__auto === true);
+    assert.match(await page.innerText('#page'), /Robot Uber Fleet/);
+    assert.deepStrictEqual(errors.filter(e => !/LUDY_APP|__TAURI/.test(e)), []);
+  } finally { await br.close(); srv.kill(); env.resetDb(); }
+});
+
+test('total du shift Uber comparé à la veille au même moment (J-1), selon les agences', async () => {
+  env.resetDb();
+  env.psql(`insert into profiles (user_id, email, role) values ('${ADMIN}', 'admin@x', 'admin') on conflict (user_id) do update set role = 'admin';
+    insert into agencies (id, name) overriding system value values (1, 'Rabat');
+    insert into vehicles (key, plate, model, active, agency_id) values ('968211WW', 'WW968211', 'SONATA', 'OUI', 1), ('968212WW', 'WW968212', 'SONATA', 'OUI', 1);`);
+  const srv = await startSite(), { br, page, errors } = await openBrowser();
+  try {
+    await login(page, '#/direct');
+    await page.waitForSelector('#liveubshift');
+    const sh = await page.evaluate(() => pfShiftNow()), to = Date.now() - 86400000;
+    const cur = JSON.stringify([{ d: '97b48f1d-06da-4c89-8310-fe49bfd8b16a', n: 'ALPHA', p: 'WW968211', e: 600, cash: 200, t: 5 }, { d: 'a3dcb299-8a4d-438a-97f7-8d5df6c657b4', n: 'BETA', p: 'WW968212', e: 500, cash: 100, t: 4 }]);
+    const prev = JSON.stringify([{ d: '97b48f1d-06da-4c89-8310-fe49bfd8b16a', n: 'ALPHA', p: 'WW968211', e: 700, cash: 300, t: 6, to }, { d: 'b608509d-14df-4802-bafa-f8041da71458', n: 'GAMMA', p: 'WW968212', e: 300, t: 2, to }]);
+    as(ADMIN, `select public.uber_perf_push('${sh.key}', '${sh.from}', '${cur}'::jsonb)`);
+    as(ADMIN, `select public.uber_perf_push('${sh.key.replace('shift:', 'cmp:')}', '${new Date(+new Date(sh.from) - 86400000).toISOString()}', '${prev}'::jsonb)`);
+    assert.strictEqual(env.psql("select (data->>'to') is not null from uber_perf where period like 'cmp:%' limit 1"), 't', 'fin de la période d\'hier gardée');
+    assert.throws(() => as(ADMIN, `select public.uber_perf_push('veille', null, '[]'::jsonb)`), /Période invalide/);
+    await page.evaluate(async () => { await pfShiftLoad(); await pfLoad(); });
+    const c = await page.evaluate(() => pfShiftCmp());
+    assert.deepStrictEqual([c.e, c.cash, c.pe, Math.round(c.pct * 1000) / 10], [1100, 300, 1000, 10], 'total 1 100, J-1 1 000 : +10 %');
+    const html = await page.evaluate(() => pfShiftChips());
+    assert.match(html.replace(/\s+/g, ' '), /1[\s  ]?100 MAD<\/b> total shift · dont 300 espèces/);
+    assert.match(html, /J-1 à/); assert.match(html, /\+10 %<\/b> de plus que J-1/);
+    assert.deepStrictEqual(errors, []);
+  } finally { await br.close(); srv.kill(); env.psql('truncate uber_perf'); env.resetDb(); }
+});

@@ -314,6 +314,7 @@ async function pageApplication() {
   $('#page').innerHTML = `<div class="head"><h1>Application Ludy</h1><div class="sub">Le logiciel dans sa propre fenêtre, avec le volet <b>Uber Fleet</b> affiché à l'intérieur (impossible dans un navigateur : Uber l'interdit).
     Les mises à jour du logiciel arrivent toutes seules, sans réinstaller l'application.</div></div>
     ${window.LUDY_APP ? (S.appLatest && verNum(S.appLatest) > verNum(window.LUDY_APP.version) ? msg('Vous avez la version ' + esc(window.LUDY_APP.version || '') + ' de l\'application : la version <b>' + esc(S.appLatest) + '</b> est disponible. Téléchargez-la ci-dessous et remplacez l\'ancienne (sur Mac : refaire la commande du Terminal).', 'warn') : msg('Vous êtes dans l\'application Ludy (version ' + esc(window.LUDY_APP.version || '') + ').', 'ok')) : ''}
+    ${appRobotHtml()}
     <div class="appdl">
       <div class="panel"><h2>Mac</h2><p><a class="btn" href="${APP_DL.mac}">Télécharger pour Mac</a></p>
         <ol><li>Ouvrir <b>Ludy.dmg</b> et glisser <b>Ludy</b> dans <b>Applications</b>.</li>
@@ -336,6 +337,28 @@ async function pageApplication() {
         <li>Ouvrir <b>Ludy</b> depuis l'écran d'accueil et se connecter (une fois).</li></ol></div>
     </div>
     <div class="sub">Dans l'application Mac / Windows : <b>Uber Fleet</b>, <b>Clicar</b>… (liste dans Réglages) s'affichent à droite du menu Ludy (sous Windows, application 1.7 : chacun dans sa propre fenêtre, à côté de Ludy) ; un clic sur un autre volet revient au logiciel, ils restent ouverts en arrière-plan. Accès réservé (identifiant demandé par le site) : bouton « Accès réservé… » au-dessus du volet. Les PDF sont enregistrés dans Téléchargements et s'ouvrent tout seuls.</div>`;
+}
+
+/**
+ * Robot Uber Fleet (application 2.0) : état de la lecture, démarrage avec l'ordinateur, quitter. Avant la 2.0 : invitation à l'installer.
+ */
+function appRobotHtml() {
+  if (!window.LUDY_APP) return '';
+  if (!window.LUDY_APP.bg) return msg('<b>Robot Uber Fleet</b> : avec l\'application <b>2.0</b>, Uber Fleet se connecte tout seul en arrière-plan dès l\'ouverture de Ludy (aucune page à ouvrir), la lecture continue fenêtre fermée et l\'ordinateur ne se met pas en veille. Téléchargez la version 2.0 ci-dessous.', 'warn');
+  setTimeout(appRobotBind, 0);
+  const got = PFP.got ? 'dernière lecture d\'Uber Fleet à ' + esc(localHM(new Date(PFP.got))) : 'pas encore de lecture d\'Uber Fleet sur cet ordinateur';
+  return `<div class="panel"><h2>Robot Uber Fleet</h2>
+    <p>Uber Fleet est ouvert en arrière-plan dès l'ouverture de Ludy et lu toutes les 5 s, sans rien ouvrir (${got}${PFP.login ? ' · <b class="bad">Uber Fleet n\'est plus connecté</b> : <a href="#/x-uber">se reconnecter</a>' : ''}).
+    Fermer la fenêtre ne quitte pas Ludy (${/Win/i.test(navigator.platform || navigator.userAgent) ? 'elle est réduite dans la barre des tâches' : 'cliquer sur l\'icône Ludy du Dock pour la rouvrir'}) et l'ordinateur ne se met pas en veille tant que Ludy tourne (l'écran peut s'éteindre ; un portable dont on ferme le capot se met quand même en veille).
+    Pour une lecture 24 h/24 : un ordinateur toujours allumé (par exemple celui de l'agence), avec Ludy ouvert au démarrage.</p>
+    <p><label><input type="checkbox" id="appauto"> Ouvrir Ludy au démarrage de l'ordinateur</label> <span class="small" id="appautomsg"></span></p>
+    <p><button class="btn small" id="appquit">Quitter Ludy</button> <span class="small">(arrête la lecture d'Uber Fleet sur cet ordinateur)</span></p></div>`;
+}
+async function appRobotBind() {
+  const cb = $('#appauto'), m = $('#appautomsg'), q = $('#appquit'); if (!cb) return;
+  try { cb.checked = !!(await appInvoke('autostart', {})); } catch (e) { if (m) m.textContent = 'réglage illisible : ' + (e.message || e); }
+  cb.onchange = async () => { try { cb.checked = !!(await appInvoke('autostart', { on: cb.checked })); if (m) m.textContent = cb.checked ? 'Ludy s\'ouvrira au démarrage.' : 'Ludy ne s\'ouvrira plus au démarrage.'; } catch (e) { if (m) m.textContent = String(e.message || e); cb.checked = !cb.checked; } };
+  if (q) q.onclick = async () => { if (await ask('Quitter Ludy ? La lecture d\'Uber Fleet s\'arrête sur cet ordinateur jusqu\'à la prochaine ouverture.')) appInvoke('app_quit', {}).catch(() => { }); };
 }
 
 // ---------- Volets visibles par utilisateur (Réglages > Utilisateurs) : profiles.pages = liste des volets, vide = tous ----------
