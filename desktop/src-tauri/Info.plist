@@ -5,5 +5,10 @@
   <!-- Robot Uber Fleet (2.0) : macOS ne met jamais Ludy en sommeil (App Nap) quand sa fenêtre est cachée ou recouverte -->
   <key>NSAppSleepDisabled</key>
   <true/>
+  <!-- Tchat (2.1) : messages audio et appels audio / vidéo dans Ludy -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Ludy utilise le micro pour les messages audio et les appels du tchat.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Ludy utilise la caméra pour les appels vidéo du tchat.</string>
 </dict>
 </plist>

@@ -386,7 +386,7 @@ function dailyStep_(t0) {
   let st = JSON.parse(props.getProperty('DAILY') || 'null');
   if (!st || st.day !== today) {
     if (h < 2 && st) return '';                                        // la nuit, après 2 h
-    st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size', 'manifests', 'rh', 'rhdrive'] };
+    st = { day: today, steps: ['vehicles', 'rules', 'drivers', 'backup', 'prune', 'size', 'manifests', 'chat', 'rh', 'rhdrive'] };
     const month = today.slice(0, 7);
     if (props.getProperty('ARCH_MONTH') !== month) st.steps.push('arch:trips', 'arch:idles', 'arch:engine_stops', 'arch:events', 'arch:fuel', 'arch:levels',
       'arch:vehicle_days', 'arch:journal', 'arch:alerts', 'arch:done');
@@ -402,6 +402,7 @@ function dailyStep_(t0) {
       else if (s === 'prune') { dbRpc_('purge_before', { p_table: 'logs', p_before: addDays_(today, -30) }); dbRpc_('purge_before', { p_table: 'jobs', p_before: addDays_(today, -30) }); }
       else if (s === 'size') { const z = dbRpc_('db_size'); if (z && z.total_mb > 400) out.push('Base : ' + z.total_mb + ' Mo sur 500 Mo gratuits, réduire « Données détaillées conservées »'); props.setProperty('DB_MB', String(z ? z.total_mb : '')); }
       else if (s === 'manifests') { const m = pruneManifests_(); if (m) out.push(m); }
+      else if (s === 'chat') { const m = pruneChatFiles_(); if (m) out.push(m); }
       else if (s === 'rh') { const m = rhDigest_(); if (m) out.push(m); }
       else if (s === 'rhdrive') { const m = rhDriveSheetsStep_(); if (m) out.push(m); }
       else if (s === 'arch:done') props.setProperty('ARCH_MONTH', today.slice(0, 7));
@@ -436,6 +437,26 @@ function pruneManifests_() {
   }
   return n + ' PDF de manifestes de plus de ' + days + ' jours effacés du stockage';
 }
+/** Tchat (22/11/2026) : fichiers (PDF, images, audio) de plus de chatFileDays jours effacés du stockage ; les messages restent (« fichier effacé ») */
+function pruneChatFiles_() {
+  const days = +params_().chatFileDays;
+  if (!(days > 0)) return '';
+  let rows;
+  try { rows = dbSelect_('chat_messages', 'select=id,path&path=not.is.null&created_at=lt.' + enc_(new Date(Date.now() - days * 86400000).toISOString()), 'id'); }
+  catch (e) { if (/HTTP 404|PGRST205|does not exist/.test(e.message)) return ''; throw e; }
+  if (!rows.length) return '';
+  const c = sbConf_(), h = Object.assign({ apikey: c.key }, /^sb_/.test(c.key) ? {} : { Authorization: 'Bearer ' + c.key });
+  let n = 0;
+  for (let i = 0; i < rows.length; i += 100) {
+    const part = rows.slice(i, i + 100);
+    const r = UrlFetchApp.fetch(c.url + '/storage/v1/object/chat', { method: 'delete', muteHttpExceptions: true, contentType: 'application/json', headers: h,
+      payload: JSON.stringify({ prefixes: part.map(x => x.path) }) });
+    if (r.getResponseCode() >= 300) throw new Error('stockage : HTTP ' + r.getResponseCode() + ' ' + String(r.getContentText()).slice(0, 200));
+    sbReq_('patch', 'chat_messages?id=in.(' + part.map(x => x.id).join(',') + ')', { path: null }, { Prefer: 'return=minimal' });
+    n += part.length;
+  }
+  return n + ' fichier(s) du tchat de plus de ' + days + ' jours effacé(s) du stockage';
+}
 function driveFolder_(name) {
   const it = DriveApp.getFoldersByName(name);
   return it.hasNext() ? it.next() : DriveApp.createFolder(name);
@@ -449,7 +470,8 @@ function backup_() {
   const later = [['fuel_card_tx', 'id'], ['manager_shifts', 'agency_id,user_id,day,shift'], ['manifest_config', 'id'], ['manifests', 'id'],
     ['missions', 'id'], ['pricing_grid', 'id'], ['cash_moves', 'id'], ['cash_log', 'id'], ['uber_drivers', 'uuid'], ['uber_payments', 'tx'], ['bolt_sessions', 'key'],
     ['driver_roster', 'driver_code'], ['driver_plan', 'id'], ['driver_absences', 'id'], ['plan_weeks', 'agency_id,week'],
-    ['employers', 'id'], ['work_contracts', 'id'], ['hr_employees', 'id'], ['hr_events', 'id'], ['hr_clock', 'id'], ['hr_documents', 'id']];
+    ['employers', 'id'], ['work_contracts', 'id'], ['hr_employees', 'id'], ['hr_events', 'id'], ['hr_clock', 'id'], ['hr_documents', 'id'],
+    ['chat_threads', 'id'], ['chat_members', 'thread_id,user_id'], ['chat_messages', 'id']];
   base.forEach(t => { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); });
   later.forEach(t => { try { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); } catch (e) { o[t[0]] = 'absente : ' + e.message; } });
   o.alerts = dbSelect_('alerts', 'select=id,status,comment&or=' + enc_('(status.neq.À traiter,comment.neq.)'), 'id');

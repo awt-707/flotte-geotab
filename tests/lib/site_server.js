@@ -8,7 +8,7 @@ const SUB = JSON.parse(Buffer.from(TOKEN.split('.')[1], 'base64url').toString())
 if (SUB !== ADMIN.id) Object.assign(ADMIN, { id: SUB, email: 'new@x' });
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml' };
 // Faux Supabase Storage (en mémoire) : dépôt d'un fichier, lien signé, lecture (site et collecteur)
-const STORE = new Map();
+const STORE = new Map(), TYPES = new Map();
 // En-têtes de sécurité de production (site/_headers), avec l'adresse Supabase remplacée par ce serveur de test
 const HEADERS = fs.readFileSync(path.join(ROOT, '_headers'), 'utf8').split('\n/').shift().split('\n').slice(1).map(l => l.trim()).filter(Boolean)
   .map(l => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim().replace(/https:\/\/cgiiwumbblimvmrypxlc\.supabase\.co/g, 'http://localhost:' + PORT).replace(/wss:\/\/cgiiwumbblimvmrypxlc\.supabase\.co/g, 'ws://localhost:' + PORT)]);
@@ -33,6 +33,9 @@ http.createServer((req, res) => {
   // l'horloge du faux Geotab avance d'une minute à chaque appel (les véhicules roulent sur leurs vraies traces)
   if (u.pathname === '/functions/v1/geotab-live') { liveCall(req, res); return; }
   if (u.pathname.startsWith('/realtime/')) { res.statusCode = 404; return res.end(); }
+  // second site de test (tchat à deux comptes) : même faux stockage que le premier serveur
+  if (u.pathname.startsWith('/storage/v1/') && process.env.STORAGE_FROM) { const h = Object.assign({}, req.headers); delete h.host;
+    const p = http.request({ host: 'localhost', port: +process.env.STORAGE_FROM, path: req.url, method: req.method, headers: h }, r => { res.writeHead(r.statusCode, r.headers); r.pipe(res); }); req.pipe(p); return; }
   if (u.pathname.startsWith('/storage/v1/')) { storage(req, res, u); return; }
   let f = path.join(ROOT, u.pathname === '/' ? 'index.html' : u.pathname);
   if (u.pathname === '/config.js') { res.setHeader('Content-Type', 'text/javascript'); return res.end(`window.FLOTTE_CONFIG = { SUPABASE_URL: 'http://localhost:${PORT}', SUPABASE_ANON_KEY: 'anon' };`); }
@@ -74,12 +77,18 @@ function storage(req, res, u) {
       const a = body.indexOf('%PDF-'), e = body.lastIndexOf('%%EOF');
       // photo (justificatif scanné) : image JPEG ou PNG entière
       const j = body.indexOf(Buffer.from([0xff, 0xd8, 0xff])), je = body.lastIndexOf(Buffer.from([0xff, 0xd9])), g = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47])), ge = body.lastIndexOf('IEND');
-      const part = a >= 0 && e >= 0 ? body.slice(a, e + 5) : j >= 0 && je > j ? body.slice(j, je + 2) : g >= 0 && ge > g ? body.slice(g, ge + 8) : null;
+      let part = a >= 0 && e >= 0 ? body.slice(a, e + 5) : j >= 0 && je > j ? body.slice(j, je + 2) : g >= 0 && ge > g ? body.slice(g, ge + 8) : null;
+      // tchat : tout fichier (audio webm / ogg / m4a, tableur…) = partie « filename » du multipart, sinon le corps entier
+      if (!part && p.startsWith('chat/')) { const bm = String(req.headers['content-type'] || '').match(/boundary=([^;]+)/);
+        if (bm) { const b = Buffer.from('--' + bm[1].trim()); let i = body.indexOf(b); while (i >= 0) { const he = body.indexOf('\r\n\r\n', i); if (he < 0) break; const nx = body.indexOf(b, he);
+          if (/filename=/.test(body.slice(i, he).toString())) { part = body.slice(he + 4, nx >= 0 ? nx - 2 : body.length); break; } i = nx; } }
+        else part = body; if (part && !part.length) part = null; }
       if (!part || STORE.has(p)) { res.statusCode = 400; return res.end('{"error":"invalid","message":"refusé"}'); }
+      TYPES.set(p, (String(req.headers['content-type'] || '').match(/boundary=/) ? null : req.headers['content-type']) || (part[0] === 0xff ? 'image/jpeg' : part[0] === 0x89 ? 'image/png' : part.slice(0, 5).toString() === '%PDF-' ? 'application/pdf' : 'application/octet-stream'));
       STORE.set(p, part); return res.end(JSON.stringify({ Key: p, Id: 'x' }));
     }
     const k = p.replace(/^sign\//, ''), f = STORE.get(k);
     if (!f || (p.startsWith('sign/') && !/^jeton-/.test(u.searchParams.get('token') || '')) || (!p.startsWith('sign/') && !/Bearer \S/.test(req.headers.authorization || ''))) { res.statusCode = 400; return res.end('{"error":"not_found"}'); }
-    res.setHeader('Content-Type', 'application/pdf'); res.end(f);
+    res.setHeader('Content-Type', TYPES.get(k) || 'application/pdf'); res.end(f);
   });
 }

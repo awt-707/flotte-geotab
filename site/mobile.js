@@ -23,17 +23,19 @@ const MOB_ICON = {
   manifeste: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.5h8l4 4v15H6z"/><path d="M14 2.5v4h4M9 11h6M9 14.5h6M9 18h4"/></svg>',
   suivi: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg>',
   retours: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg>',
-  depenses: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.5h12v19l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5-2 1.5z"/><path d="M9 7.5h6M9 11h6M9 14.5h4"/></svg>'
+  depenses: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.5h12v19l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5-2 1.5z"/><path d="M9 7.5h6M9 11h6M9 14.5h4"/></svg>',
+  tchat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v11H9l-4.5 3.5v-3.5H4z"/><path d="M8 9.5h8M8 12.5h5"/></svg>'
 };
 const MOB_TABS = [{ k: 'shift', label: 'Encaissement', title: 'Encaissement du shift', href: '#/caisse?t=shift' },
   { k: 'courses', label: 'Courses', title: 'Courses privées', href: '#/caisse?t=courses' },
   { k: 'depenses', label: 'Dépenses', title: 'Dépenses', href: '#/caisse?t=depenses' },
   { k: 'suivi', label: 'Pauses', title: 'Pauses et courses', href: '#/suivi' },
   { k: 'retours', label: 'Retours', title: 'Retours véhicules', href: '#/retours' },
-  { k: 'manifeste', label: 'Manifeste', title: 'Manifeste', href: '#/manifeste' }];
+  { k: 'manifeste', label: 'Manifeste', title: 'Manifeste', href: '#/manifeste' },
+  { k: 'tchat', label: 'Tchat', title: 'Tchat', href: '#/chat' }];
 /** Écrans ouverts à cet utilisateur (caisse : gestionnaires et administrateur ; volets choisis par l'administrateur respectés) */
 function mobTabs() {
-  return MOB_TABS.filter(x => x.k === 'manifeste' ? canSee('manifeste') : x.k === 'suivi' ? canEdit() && canSee('suivi') : x.k === 'retours' ? canEdit() && canSee('retours') : canEdit() && canSee('caisse'));
+  return MOB_TABS.filter(x => x.k === 'manifeste' ? canSee('manifeste') : x.k === 'tchat' ? canSee('chat') : x.k === 'suivi' ? canEdit() && canSee('suivi') : x.k === 'retours' ? canEdit() && canSee('retours') : canEdit() && canSee('caisse'));
 }
 /** Écran affiché (null : page hors du mode téléphone) */
 function mobCur() {
@@ -41,6 +43,7 @@ function mobCur() {
   if (p === 'manifeste') return 'manifeste';
   if (p === 'suivi') return 'suivi';
   if (p === 'retours') return 'retours';
+  if (p === 'chat') return 'tchat';
   if (p === 'caisse' && (t === 'shift' || t === 'courses' || t === 'depenses')) return t;
   return null;
 }

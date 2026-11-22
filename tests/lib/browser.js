@@ -2,13 +2,16 @@
 const path = require('path'), fs = require('fs'), { spawn } = require('child_process'), { chromium } = require('playwright');
 const env = require('./env');
 const NM = path.join(env.ROOT, 'node_modules');
-async function startSite(who) {
-  const srv = spawn(process.execPath, [path.join(__dirname, 'site_server.js')], { stdio: 'ignore', env: Object.assign({}, process.env, { WHO: who || 'admin' }) });
-  for (let i = 0; i < 50; i++) { try { await fetch('http://localhost:8080/'); break; } catch (e) { await new Promise(r => setTimeout(r, 100)); } }
+/** Serveur de test du site ; who = utilisateur connecté (admin, pending = gestionnaire) ; port = 8080 sauf un second site (tchat à deux) */
+async function startSite(who, port) {
+  port = port || 8080;
+  const srv = spawn(process.execPath, [path.join(__dirname, 'site_server.js')], { stdio: 'ignore', env: Object.assign({}, process.env, { WHO: who || 'admin', PORT: String(port) }, port === 8080 ? {} : { STORAGE_FROM: '8080' }) });
+  for (let i = 0; i < 50; i++) { try { await fetch('http://localhost:' + port + '/'); break; } catch (e) { await new Promise(r => setTimeout(r, 100)); } }
   return srv;
 }
-async function openBrowser(opts) {
-  const br = await chromium.launch(env.CHROMIUM ? { executablePath: env.CHROMIUM } : {});
+/** opts = contexte Playwright ; launch = options de lancement (ex. args : faux micro / caméra pour le tchat) */
+async function openBrowser(opts, launch) {
+  const br = await chromium.launch(Object.assign(env.CHROMIUM ? { executablePath: env.CHROMIUM } : {}, launch || {}));
   const ctx = await br.newContext(Object.assign({ viewport: { width: 1440, height: 900 }, locale: 'fr-FR', timezoneId: 'Africa/Casablanca' }, opts || {}));
   await ctx.route(/cdn\.jsdelivr\.net\/npm\//, r => {
     const m = r.request().url().match(/\/npm\/((?:@[^/]+\/)?[^@/]+)@([^/]+)\/(.+)$/);
@@ -33,8 +36,8 @@ async function openBrowser(opts) {
   page.on('console', m => { if (m.type() === 'error' && !/realtime|websocket|Failed to load resource/i.test(m.text())) errors.push('console : ' + m.text()); });
   return { br, ctx, page, errors };
 }
-async function login(page, hash) {
-  await page.goto('http://localhost:8080/' + (hash || ''));
+async function login(page, hash, port) {
+  await page.goto('http://localhost:' + (port || 8080) + '/' + (hash || ''));
   await page.fill('#le', 'admin@x'); await page.fill('#lp', 'secret123'); await page.click('#lf button[type=submit]');
   await page.waitForSelector('.side nav');
 }

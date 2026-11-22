@@ -20,6 +20,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -42,6 +43,8 @@ import java.io.OutputStream;
  * 1.2 (04/11/2026, demande d'Ahmed) : PDF (manifeste, devis) partagés tels quels dans WhatsApp, directement au numéro du chauffeur ou
  *   du client (LudyAndroid.share ; fichier servi par FilesProvider, sans bibliothèque) ; sans WhatsApp : choix de l'application.
  * 1.4 (16/11/2026, demande d'Ahmed) : notification quand un chauffeur prévenu est arrivé à l'agence (retours des véhicules, WatchService).
+ * 1.5 (22/11/2026, demande d'Ahmed) : tchat de Ludy : micro et caméra accordés à la vue web (messages audio, appels audio / vidéo WebRTC ;
+ *   autorisation Android demandée à la première utilisation), messages et appels notifiés par WatchService quand l'application est en arrière-plan.
  * 1.3 (14/11/2026, demande d'Ahmed) : alertes des pauses et des courses suivies même écran éteint (WatchService, service au premier
  *   plan) : LudyAndroid.watchStart / watchStop / watchStatus ; appui sur une alerte = page Pauses (#/suivi).
  */
@@ -71,7 +74,7 @@ public class MainActivity extends Activity {
     s.setSupportMultipleWindows(false);   // target="_blank" : même vue, puis shouldOverrideUrlLoading
     s.setAllowFileAccess(false);
     s.setMediaPlaybackRequiresUserGesture(true);
-    s.setUserAgentString(s.getUserAgentString() + " LudyAndroid/1.4");
+    s.setUserAgentString(s.getUserAgentString() + " LudyAndroid/1.5");
     CookieManager.getInstance().setAcceptCookie(true);
     CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
     web.addJavascriptInterface(new Bridge(), "LudyAndroid");
@@ -82,11 +85,42 @@ public class MainActivity extends Activity {
     });
     web.setWebChromeClient(new WebChromeClient() {
       @Override public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) { return choose(cb, p); }
+      // tchat : micro / caméra demandés par le site Ludy seulement (getUserMedia) ; autorisation Android demandée si elle manque
+      @Override public void onPermissionRequest(PermissionRequest r) { media(r); }
     });
     web.setDownloadListener((url, ua, cd, mime, len) -> download(url, cd, mime));
     String hash = getIntent() == null ? null : getIntent().getStringExtra("hash");
     if (b != null && hash == null) web.restoreState(b); else web.loadUrl(HOME + (hash != null && hash.startsWith("#/") ? hash : ""));
     if (WatchService.enabled(this)) { try { WatchService.start(this); } catch (Exception e) { } }   // surveillance arrêtée par le système : relancée
+  }
+
+  static final int MEDIA = 2;
+  PermissionRequest mediaReq;
+  /** Micro / caméra pour la vue web : accordés au site Ludy une fois les autorisations Android obtenues */
+  void media(PermissionRequest r) {
+    Uri o = r.getOrigin();
+    if (o == null || !HOST.equals(o.getHost())) { r.deny(); return; }
+    java.util.List<String> need = new java.util.ArrayList<>();
+    for (String res : r.getResources()) {
+      if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res) && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) need.add(android.Manifest.permission.RECORD_AUDIO);
+      if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(res) && checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) need.add(android.Manifest.permission.CAMERA);
+    }
+    if (need.isEmpty()) { r.grant(r.getResources()); return; }
+    if (Build.VERSION.SDK_INT < 23) { r.deny(); return; }
+    mediaReq = r;
+    requestPermissions(need.toArray(new String[0]), MEDIA);
+  }
+
+  @Override public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
+    super.onRequestPermissionsResult(code, perms, res);
+    if (code != MEDIA || mediaReq == null) return;
+    PermissionRequest r = mediaReq; mediaReq = null;
+    java.util.List<String> ok = new java.util.ArrayList<>();
+    for (String x : r.getResources()) {
+      if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(x) && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) ok.add(x);
+      if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(x) && checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) ok.add(x);
+    }
+    if (ok.isEmpty()) r.deny(); else r.grant(ok.toArray(new String[0]));
   }
 
   /** Appui sur une alerte (application déjà ouverte) : page demandée */

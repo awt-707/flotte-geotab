@@ -42,7 +42,7 @@ import java.util.Set;
  * « Déplacement autorisé »), course arrivée à destination. Appui sur la notification = page Pauses de Ludy.
  */
 public class WatchService extends Service {
-  static final String PREFS = "watch", CH_ALERT = "ludy_alertes", CH_RUN = "ludy_surveillance";
+  static final String PREFS = "watch", CH_ALERT = "ludy_alertes", CH_RUN = "ludy_surveillance", CH_CHAT = "ludy_tchat";
   static final String ACTION_ALLOW = "com.ludy.flotte.ALLOW", ACTION_STOP = "com.ludy.flotte.STOP";
   static final int RUN_ID = 1;
   static final long POLL_MS = 30000, GEO_MS = 60000, END_EVERY = 5 * 60000, MOVE_EVERY = 2 * 60000;
@@ -79,6 +79,10 @@ public class WatchService extends Service {
           new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
       al.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
       nm.createNotificationChannel(al);
+      NotificationChannel tc = new NotificationChannel(CH_CHAT, "Messages du tchat", NotificationManager.IMPORTANCE_HIGH);
+      tc.setDescription("Nouveaux messages du tchat de Ludy");
+      tc.enableVibration(true);
+      nm.createNotificationChannel(tc);
     }
     for (String s : prefs(this).getStringSet("allowed", new HashSet<>())) allowed.add(s);
   }
@@ -205,6 +209,15 @@ public class WatchService extends Service {
     } catch (Exception e) { return 0; }
   }
 
+  /** Notification du tchat : appui = conversation ; appel = sonnerie d'alarme, message = son de notification */
+  void chat(String key, String title, String text, long thread, boolean call) {
+    Notification.Builder b = builder(call ? CH_ALERT : CH_CHAT).setSmallIcon(android.R.drawable.stat_notify_chat).setContentTitle(title).setContentText(text)
+        .setStyle(new Notification.BigTextStyle().bigText(text)).setAutoCancel(true).setContentIntent(openApp("#/chat" + (thread > 0 ? "?t=" + thread : ""), key.hashCode()))
+        .setCategory(call ? Notification.CATEGORY_CALL : Notification.CATEGORY_MESSAGE).setVisibility(Notification.VISIBILITY_PRIVATE);
+    if (Build.VERSION.SDK_INT < 26) b.setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL);
+    getSystemService(NotificationManager.class).notify(key.hashCode(), b.build());
+  }
+
   static String dur(long ms) {
     long m = Math.max(0, Math.round(ms / 60000.0));
     return m >= 60 ? (m / 60) + " h " + String.format(Locale.FRANCE, "%02d", m % 60) : m + " min";
@@ -289,7 +302,29 @@ public class WatchService extends Service {
         alert(k, "✅ ARRIVÉ À L'AGENCE", x.optString("plate") + (name.isEmpty() ? "" : " · " + name) + (ag.isEmpty() ? "" : "\nAgence " + ag) + "\nArrivé il y a " + dur(now - t(arr)) + ". Faites le retour du véhicule.", null);
       }
     }
-    String s = np == 0 && nt == 0 && nr == 0 ? "Aucune pause en cours" : np + " pause(s) en cours" + (over > 0 ? " · " + over + " terminée(s)" : "") + (moved > 0 ? " · " + moved + " véhicule(s) en mouvement" : "") + (nt > 0 ? " · " + nt + " course(s) suivie(s)" : "") + (nrWait > 0 ? " · " + nrWait + " retour(s) attendu(s)" : "") + (nrArr > 0 ? " · " + nrArr + " à l'agence" : "");
+    // tchat (1.5) : nouveaux messages non lus (une notification par message, 2 h au plus) et appel entrant
+    JSONObject ch = w.optJSONObject("chat");
+    int nUnread = 0;
+    if (ch != null) {
+      nUnread = ch.optInt("unread", 0);
+      JSONArray ms = ch.optJSONArray("msgs");
+      long maxId = prefs(this).getLong("chatMax", 0), newMax = maxId;
+      for (int i = 0; ms != null && i < ms.length(); i++) {
+        JSONObject m = ms.getJSONObject(i); long id = m.optLong("id", 0);
+        if (id > newMax) newMax = id;
+        if (id <= maxId) continue;   // déjà notifié, ou plus ancien que la première lecture
+        String from = m.optString("from", "Ludy"), grp = m.optString("group", ""); if (grp.equals("null")) grp = "";
+        if (maxId > 0 && once("c|" + id)) chat("c|" + id, "💬 " + from + (grp.isEmpty() ? "" : " · " + grp), m.optString("text", ""), m.optLong("thread_id", 0), false);
+      }
+      if (newMax != maxId) prefs(this).edit().putLong("chatMax", newMax).apply();
+      JSONArray rg = ch.optJSONArray("ringing");
+      for (int i = 0; rg != null && i < rg.length(); i++) {
+        JSONObject c = rg.getJSONObject(i);
+        String k = "call|" + c.optString("id");
+        if (once(k)) chat(k, "📞 Appel " + ("video".equals(c.optString("kind")) ? "vidéo" : "audio") + " de " + c.optString("caller_name", ""), "Ouvrez Ludy pour répondre.", c.optLong("thread_id", 0), true);
+      }
+    }
+    String s = np == 0 && nt == 0 && nr == 0 ? (nUnread > 0 ? nUnread + " message(s) non lu(s)" : "Aucune pause en cours") : np + " pause(s) en cours" + (over > 0 ? " · " + over + " terminée(s)" : "") + (moved > 0 ? " · " + moved + " véhicule(s) en mouvement" : "") + (nt > 0 ? " · " + nt + " course(s) suivie(s)" : "") + (nrWait > 0 ? " · " + nrWait + " retour(s) attendu(s)" : "") + (nrArr > 0 ? " · " + nrArr + " à l'agence" : "");
     return s;
   }
 }
