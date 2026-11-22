@@ -353,6 +353,16 @@ test('application 2.0 : robot Uber Fleet (ouvert caché, page rechargée si la l
     // aucune lecture depuis plus de 3 min : page d'Uber Fleet rechargée
     await page.evaluate(() => { PFP.got = Date.now() - 200000; PFP.bgOpened = Date.now() - 200000; PFP.start = Date.now() - 200000; PFP.bgAt = Date.now(); PFP.reloadAt = 0; pfAutoOpen(); });
     assert.strictEqual(await page.evaluate(() => window.__calls.filter(c => c[0] === 'ext_reload').length), 1);
+    // rechargement toutes les uberReloadMin minutes (1 par défaut) même si la lecture marche, sauf volet Uber affiché ou page de connexion
+    await page.evaluate(() => { PFP.got = Date.now() - 5000; PFP.reloadAt = Date.now() - 61000; pfAutoOpen(); });
+    assert.strictEqual(await page.evaluate(() => window.__calls.filter(c => c[0] === 'ext_reload').length), 2, 'rechargé après 1 min');
+    await page.evaluate(() => { PFP.reloadAt = Date.now() - 30000; pfAutoOpen(); });
+    assert.strictEqual(await page.evaluate(() => window.__calls.filter(c => c[0] === 'ext_reload').length), 2, 'pas avant la minute');
+    await page.evaluate(() => { PFP.reloadAt = Date.now() - 61000; PFP.login = true; pfAutoOpen(); PFP.login = false; });
+    assert.strictEqual(await page.evaluate(() => window.__calls.filter(c => c[0] === 'ext_reload').length), 2, 'jamais sur la page de connexion');
+    await page.evaluate(() => { S.P.uberReloadMin = 5; PFP.reloadAt = Date.now() - 120000; pfAutoOpen(); });
+    assert.strictEqual(await page.evaluate(() => window.__calls.filter(c => c[0] === 'ext_reload').length), 2, 'réglage uberReloadMin respecté');
+    await page.evaluate(() => { delete S.P.uberReloadMin; });
     // page de connexion d'Uber : bandeau sur toutes les pages
     await page.evaluate(async () => { window.__rows = { rows: [], url: 'https://auth.uber.com/v2/', diag: 'Quel est votre numéro de téléphone ou votre adresse courriel?', full: false, age: 1 }; await pfPushTick(); });
     await page.waitForSelector('#pflogin');

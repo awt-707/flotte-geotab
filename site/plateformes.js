@@ -362,7 +362,11 @@ function pfRobot() {
     appInvoke('ext_bg', { id: site.id, url: site.url, name: site.name || 'Uber Fleet' }).then(n => { if (n) PFP.bgOpened = now; }).catch(() => { });
   }
   const since = Math.max(got, PFP.bgOpened || 0, PFP.start || 0);
-  if (now - since > 180000 && now - (PFP.reloadAt || 0) > 300000 && !PFP.login) {   // lecture bloquée : page rechargée
+  // page d'Uber Fleet rechargée toutes les uberReloadMin minutes (22/11/2026, demande d'Ahmed : la carte en arrière-plan prend du retard sur
+  // Uber Fleet dans un navigateur, d'où de fausses alertes) ; jamais pendant que le volet est affiché, ni sur la page de connexion
+  const every = Math.max(0.5, +((S.P || {}).uberReloadMin) || 1) * 60000, last = PFP.reloadAt || Math.max(PFP.bgOpened || 0, PFP.start || 0);
+  const stuck = now - since > 180000 && now - (PFP.reloadAt || 0) > 300000;   // lecture bloquée : rechargée aussi
+  if (!PFP.login && (stuck || (!/^x-/.test(pageOf()) && now - last > every))) {
     PFP.reloadAt = now; PFP.reloads = (PFP.reloads || 0) + 1;
     appInvoke('ext_reload', { id: site.id, url: site.url }).catch(() => { });
   }
