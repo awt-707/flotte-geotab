@@ -181,7 +181,7 @@ test('site : deux comptes, message, bandeau et pastille, fichier PDF, message au
     await A.page.fill('#chtxt', 'Bienvenue'); await A.page.keyboard.press('Enter'); await A.page.waitForSelector('.chm.me');
     await B.page.evaluate(() => chatTick());
     await B.page.waitForFunction(() => /Équipe caisse/.test(document.querySelector('#chthreads').innerText), null, { timeout: 15000 });
-    assert.match(await B.page.innerText('.toast.chtoast'), /Ahmed · Équipe caisse[\s\S]*Bienvenue/);
+    await B.page.waitForFunction(() => /Ahmed · Équipe caisse[\s\S]*Bienvenue/.test(document.querySelector('#toasts') ? document.querySelector('#toasts').innerText : ''), null, { timeout: 15000 });   // le bandeau « Appel refusé » peut encore être là
     // mode téléphone (application Android) : écran Tchat
     await B.page.goto('http://localhost:8081/?mobile=1#/chat'); await B.page.waitForSelector('.mtabs [data-mt="tchat"].on');
     await B.page.waitForSelector('#chthreads'); assert.match(await B.page.innerText('#chthreads'), /Ahmed/);
