@@ -85,7 +85,7 @@ test('base : annuaire et présence, conversation à deux, non lus, groupe, droit
     assert.strictEqual(as(OTHER, 'select count(*) from chat_users()'), '0');
     assert.match(asErr(OTHER, `select chat_open('${ADMIN}')`), /refusé/);
     assert.match(asErr(ADMIN, `select chat_open('${OTHER}')`), /en attente/);
-  } finally { env.resetDb(); env.psql('truncate chat_threads, chat_calls restart identity cascade'); }
+  } finally { env.resetDb(); env.psql(`truncate chat_threads, chat_calls restart identity cascade; update profiles set role = 'pending' where user_id = '${MGR}'`); }
 });
 
 test('site : deux comptes, message, bandeau et pastille, fichier PDF, message audio, appel audio (sonnerie, réponse, raccroché), groupe, téléphone', async () => {
@@ -189,5 +189,5 @@ test('site : deux comptes, message, bandeau et pastille, fichier PDF, message au
     assert.ok(await B.page.isVisible('.chback'), 'retour à la liste sur petit écran');
     await B.page.goto('http://localhost:8081/?mobile=0#/direct');
     assert.deepStrictEqual(A.errors.concat(B.errors), []);
-  } finally { await A.br.close(); await B.br.close(); srvA.kill(); srvB.kill(); try { fs.unlinkSync(pdf); } catch (e) { } env.resetDb(); env.psql('truncate chat_threads, chat_calls restart identity cascade'); }
+  } finally { await A.br.close(); await B.br.close(); srvA.kill(); srvB.kill(); try { fs.unlinkSync(pdf); } catch (e) { } env.resetDb(); env.psql(`truncate chat_threads, chat_calls restart identity cascade; update profiles set role = 'pending' where user_id = '${MGR}'`); }
 });

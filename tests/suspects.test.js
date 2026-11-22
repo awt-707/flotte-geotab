@@ -54,7 +54,7 @@ test('base : en route puis disponible = cas (Suspect ≥ 60 s, Info sinon), en r
     assert.match(asErr(ADMIN, `select uber_suspect_set(${id2}, 'Bidon', '')`), /inconnu/);
     as(ADMIN, `select uber_suspect_set(${id2}, 'Justifié', 'Client absent')`);
     assert.strictEqual(env.psql(`select status from uber_suspects where id = ${id2}`), 'Justifié');
-  } finally { env.resetDb(); }
+  } finally { env.resetDb(); env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'`); }
 });
 
 test('collecteur : km Geotab après le changement (hors course Uber), verdict roulé / sur place / non mesuré, fenêtre en cours', () => {
@@ -95,7 +95,7 @@ test('collecteur : km Geotab après le changement (hors course Uber), verdict ro
     env.psql("update vehicles set geotab_id = null where key = '968212WW'; update uber_suspects set km_done = false, verdict = null, km_after = null where plate = 'WW968212'");
     B.run('memoClear_(); suspectKmStep_()');
     assert.strictEqual(env.psql("select verdict || '|' || km_note from uber_suspects where plate = 'WW968212'"), 'non mesuré|Véhicule sans boîtier Geotab : non mesuré');
-  } finally { env.resetDb(); }
+  } finally { env.resetDb(); env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'`); }
 });
 
 test('site : alerte rouge à l\'instant sur toutes les pages, seconde alerte « a roulé », fiche En direct, page des cas (classement, PDF)', async () => {
@@ -132,5 +132,5 @@ test('site : alerte rouge à l\'instant sur toutes les pages, seconde alerte « 
     assert.strictEqual(env.psql("select status || '|' || comment from uber_suspects"), 'Confirmé|Client repris hors application');
     const dl = page.waitForEvent('download'); await page.click('#pspdf'); assert.match((await dl).suggestedFilename(), /^courses_suspectes_.*\.pdf$/);
     assert.deepStrictEqual(errors, []);
-  } finally { await br.close(); srv.kill(); env.resetDb(); }
+  } finally { await br.close(); srv.kill(); env.resetDb(); env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'`); }
 });
