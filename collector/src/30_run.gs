@@ -228,6 +228,8 @@ function collect() {
     try { const m = returnArriveStep_(live && live.status); if (m) msg.push(m); } catch (e) { msg.push('Retours : ' + e.message); }
     // Siphonages suspects contrôlés (GPS pendant l'arrêt, jauge après le redémarrage) : faux signaux marqués, avec la raison
     try { const m = siphonCheckStep_(); if (m) msg.push(m); } catch (e) { msg.push('Contrôle des siphonages : ' + e.message); }
+    // Courses Uber suspectes (en route vers le client puis disponible / hors ligne) : km Geotab parcourus ensuite, verdict
+    try { const m = suspectKmStep_(); if (m) msg.push(m); } catch (e) { msg.push('Courses suspectes : ' + e.message); }
     // Véhicules encore sans boîtier Geotab (boîtier installé ou renommé après l'ajout au parc, VIN lu par le boîtier…) : nouvel essai toutes les 30 min
     try { const m = geoLinkStep_(); if (m) msg.push(m); } catch (e) { msg.push('Association Geotab : ' + e.message); }
     // Demandes du site (contrats importés, plaques, synchro immédiate, recalcul)
@@ -471,7 +473,7 @@ function backup_() {
     ['missions', 'id'], ['pricing_grid', 'id'], ['cash_moves', 'id'], ['cash_log', 'id'], ['uber_drivers', 'uuid'], ['uber_payments', 'tx'], ['bolt_sessions', 'key'],
     ['driver_roster', 'driver_code'], ['driver_plan', 'id'], ['driver_absences', 'id'], ['plan_weeks', 'agency_id,week'],
     ['employers', 'id'], ['work_contracts', 'id'], ['hr_employees', 'id'], ['hr_events', 'id'], ['hr_clock', 'id'], ['hr_documents', 'id'],
-    ['chat_threads', 'id'], ['chat_members', 'thread_id,user_id'], ['chat_messages', 'id']];
+    ['chat_threads', 'id'], ['chat_members', 'thread_id,user_id'], ['chat_messages', 'id'], ['uber_suspects', 'id']];
   base.forEach(t => { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); });
   later.forEach(t => { try { o[t[0]] = dbSelect_(t[0], 'select=*', t[1]); } catch (e) { o[t[0]] = 'absente : ' + e.message; } });
   o.alerts = dbSelect_('alerts', 'select=id,status,comment&or=' + enc_('(status.neq.À traiter,comment.neq.)'), 'id');

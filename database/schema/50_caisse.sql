@@ -3,7 +3,7 @@
 -- Journal unique des mouvements (cash_moves, garde cash_guard, historique cash_log), exports Uber et Bolt,
 -- fiches d'encaissement et justificatifs déposés (cash_sheets, cash_files),
 -- contrôle des courses Uber (export « Activité des courses » croisé avec le GPS Geotab : uber_trips, uber_days).
--- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_catalog, uber_days, uber_drivers, uber_live, uber_live_log, uber_live_readers, uber_payments, uber_perf, uber_trips
+-- Tables : bolt_sessions, cash_files, cash_log, cash_moves, cash_sheets, uber_catalog, uber_days, uber_drivers, uber_live, uber_live_log, uber_live_readers, uber_payments, uber_perf, uber_suspects, uber_trips
 -- Fichier produit par « node database/outils/schema.js build » depuis supabase/migrations/ : ne pas modifier à la main
 -- (ajouter une migration, puis relancer build).
 -- =============================================================================
@@ -273,6 +273,43 @@ begin
   end loop;
   if random() < 0.02 then delete from uber_perf where updated_at < now() - interval '62 days'; end if;
   return n;
+end $_$;
+
+CREATE FUNCTION public.uber_suspect_set(p_id bigint, p_status text, p_comment text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare s uber_suspects;
+begin
+  if coalesce(public.my_role(), '') not in ('admin', 'manager') then raise exception 'Accès refusé'; end if;
+  if p_status not in ('À vérifier', 'Justifié', 'Confirmé') then raise exception 'Statut inconnu'; end if;
+  select * into s from uber_suspects where id = p_id;
+  if s.id is null then raise exception 'Cas inconnu'; end if;
+  if not public.is_admin() and not (s.vehicle_key = any((select public.my_vehicle_keys())::text[]) or s.agency_id = any((select public.my_agency_ids())::bigint[])) then raise exception 'Accès refusé'; end if;
+  update uber_suspects set status = p_status, comment = left(p_comment, 500), checked_by = auth.uid(), checked_at = now(), updated_at = now() where id = p_id;
+end $$;
+
+CREATE FUNCTION public.uber_suspect_trg() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+declare p uber_live_log; v_min integer; v_win integer;
+begin
+  if new.status not in ('available', 'offline', 'gone') then return null; end if;
+  select * into p from uber_live_log l where l.plate_key = new.plate_key and l.status = 'to_pickup' and l.id <> new.id and l.ended_at is not null
+    and l.ended_at between new.started_at - interval '3 minutes' and new.started_at + interval '1 second' order by l.ended_at desc, l.id desc limit 1;
+  if p.id is null then return null; end if;
+  if p.ended_at - p.started_at < interval '10 seconds' then return null; end if;   -- clignotement de l'écran
+  if new.status = 'gone' and (select count(distinct plate_key) from uber_live_log g where g.status = 'gone'
+      and g.started_at between new.started_at - interval '30 seconds' and new.started_at + interval '30 seconds') >= 3 then return null; end if;
+  v_min := coalesce((select value::integer from params where key = 'suspectMinS' and value ~ '^[0-9]+$'), 60);
+  v_win := coalesce((select value::integer from params where key = 'suspectWinMin' and value ~ '^[0-9]+$'), 20);
+  insert into uber_suspects (log_id, plate_key, plate, vehicle_key, agency_id, driver_id, driver_name, route_from, route_to, lat, lng, next_status, next_at, level, win_until)
+    values (p.id, p.plate_key, coalesce(new.plate, p.plate), coalesce(new.vehicle_key, p.vehicle_key), coalesce(new.agency_id, p.agency_id), coalesce(p.driver_id, new.driver_id),
+      coalesce(new.driver_name, p.driver_name), p.started_at, p.ended_at, p.lat1, p.lng1, new.status, new.started_at,
+      case when p.ended_at - p.started_at >= make_interval(secs => v_min) then 'Suspect' else 'Info' end, new.started_at + make_interval(mins => v_win))
+    on conflict (log_id) do nothing;
+  return null;
 end $_$;
 
 CREATE FUNCTION public.uber_zones(p_from timestamp with time zone, p_to timestamp with time zone, p_agency bigint DEFAULT NULL::bigint, p_cell numeric DEFAULT 0.005) RETURNS TABLE(kind text, cy integer, cx integer, dow integer, hour integer, n integer, v double precision)
@@ -597,6 +634,49 @@ CREATE TABLE public.uber_perf (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE public.uber_suspects (
+    id bigint NOT NULL,
+    log_id bigint,
+    plate_key text NOT NULL,
+    plate text,
+    vehicle_key text,
+    agency_id bigint,
+    driver_id text,
+    driver_name text,
+    route_from timestamp with time zone NOT NULL,
+    route_to timestamp with time zone NOT NULL,
+    lat double precision,
+    lng double precision,
+    next_status text NOT NULL,
+    next_at timestamp with time zone NOT NULL,
+    level text DEFAULT 'Suspect'::text NOT NULL,
+    win_until timestamp with time zone NOT NULL,
+    km_after numeric,
+    km_free numeric,
+    moved_m integer,
+    km_done boolean DEFAULT false NOT NULL,
+    km_note text,
+    verdict text,
+    status text DEFAULT 'À vérifier'::text NOT NULL,
+    comment text,
+    checked_by uuid,
+    checked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT uber_suspects_level_check CHECK ((level = ANY (ARRAY['Suspect'::text, 'Info'::text]))),
+    CONSTRAINT uber_suspects_status_check CHECK ((status = ANY (ARRAY['À vérifier'::text, 'Justifié'::text, 'Confirmé'::text]))),
+    CONSTRAINT uber_suspects_verdict_check CHECK ((verdict = ANY (ARRAY['roulé'::text, 'sur place'::text, 'non mesuré'::text])))
+);
+
+ALTER TABLE public.uber_suspects ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.uber_suspects_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
 CREATE TABLE public.uber_trips (
     uuid text NOT NULL,
     agency_id bigint,
@@ -677,6 +757,12 @@ ALTER TABLE ONLY public.uber_payments
 ALTER TABLE ONLY public.uber_perf
     ADD CONSTRAINT uber_perf_pkey PRIMARY KEY (driver_id, period);
 
+ALTER TABLE ONLY public.uber_suspects
+    ADD CONSTRAINT uber_suspects_log_id_key UNIQUE (log_id);
+
+ALTER TABLE ONLY public.uber_suspects
+    ADD CONSTRAINT uber_suspects_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.uber_trips
     ADD CONSTRAINT uber_trips_pkey PRIMARY KEY (uuid);
 
@@ -724,6 +810,12 @@ CREATE INDEX uber_payments_driver ON public.uber_payments USING btree (driver_uu
 
 CREATE INDEX uber_perf_period ON public.uber_perf USING btree (period);
 
+CREATE INDEX uber_suspects_at ON public.uber_suspects USING btree (next_at DESC);
+
+CREATE INDEX uber_suspects_todo ON public.uber_suspects USING btree (km_done, next_at) WHERE (NOT km_done);
+
+CREATE INDEX uber_suspects_veh ON public.uber_suspects USING btree (vehicle_key, next_at DESC);
+
 CREATE INDEX uber_trips_at ON public.uber_trips USING btree (requested_at);
 
 CREATE INDEX uber_trips_drv ON public.uber_trips USING btree (driver_uuid, requested_at);
@@ -743,3 +835,5 @@ CREATE TRIGGER cash_moves_log AFTER INSERT OR DELETE OR UPDATE ON public.cash_mo
 CREATE TRIGGER uber_drivers_agency BEFORE INSERT ON public.uber_drivers FOR EACH ROW EXECUTE FUNCTION public.cash_agency_trg();
 
 CREATE TRIGGER uber_payments_agency BEFORE INSERT ON public.uber_payments FOR EACH ROW EXECUTE FUNCTION public.cash_agency_trg();
+
+CREATE CONSTRAINT TRIGGER uber_suspect_trg AFTER INSERT ON public.uber_live_log DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.uber_suspect_trg();
