@@ -13,7 +13,7 @@ const canEdit = () => S.profile && ['admin', 'manager'].includes(S.profile.role)
 const isAdmin = () => S.profile && S.profile.role === 'admin';
 // Compte « Ressources humaines » : seulement le dossier Ressources humaines (droits de la base : 20261111000000_rh_acces.sql)
 const isRH = () => S.profile && S.profile.role === 'rh';
-const RH_ONLY = { rh: 1, travail: 1, moi: 1, application: 1, menu: 1 };
+const RH_ONLY = { rh: 1, travail: 1, moi: 1, application: 1, menu: 1, chat: 1 };
 const PARAM_DEFAULTS = { limDbMb: 500, limStorageMb: 1024, limLiveMonth: 500000, manifestKeepDays: 30, shiftAdvance: 2, minFuelKm: 30, kmMin: 20, scoreY: 29, scoreO: 36, scoreR: 74, idleLongMin: 10, liveMin: 5, engStopMin: 3, rpmMin: 300 };
 
 // ---------- Accès aux données ----------
@@ -363,7 +363,7 @@ async function appRobotBind() {
 
 // ---------- Volets visibles par utilisateur (Réglages > Utilisateurs) : profiles.pages = liste des volets, vide = tous ----------
 // Le menu ne montre que les volets choisis ; les données restent limitées par agence dans la base.
-const ALWAYS_PAGES = { vehicule: 1, chauffeur: 1, application: 1, moi: 1, menu: 1 };   // fiches ouvertes depuis les autres volets, page de téléchargement
+const ALWAYS_PAGES = { vehicule: 1, chauffeur: 1, application: 1, moi: 1, menu: 1, chat: 1 };   // tchat : tout compte validé (22/11/2026)   // fiches ouvertes depuis les autres volets, page de téléchargement
 function allPages() { return NAV.filter(n => !ADMIN_PAGES[n[0]]).map(n => [n[0], n[1]]).concat(extSites().map(x => ['x-' + x.id, x.name + ' (application)'])); }
 function canSee(page) {
   if (isRH()) return !!RH_ONLY[page];
@@ -374,7 +374,7 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
-  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['suivi', 'Pauses et suivi des courses'], ['retours', 'Retours véhicules'], ['uberctl', 'Contrôle Uber'], ['zones', 'Zones Uber'], ['ubrev', 'Revenus Uber par shift'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['boitiers', 'Boîtiers GPS'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['reglages', 'Réglages']];
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['suivi', 'Pauses et suivi des courses'], ['retours', 'Retours véhicules'], ['uberctl', 'Contrôle Uber'], ['zones', 'Zones Uber'], ['ubrev', 'Revenus Uber par shift'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['boitiers', 'Boîtiers GPS'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['chat', 'Tchat'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
 // Dossiers du menu (demande d'Ahmed : menu allégé) : un titre qui ouvre / ferme ses volets (clic sur le titre), ouvert
 // d'office quand la page affichée en fait partie. Ressources humaines : onglets de la page #/rh. Dossier réduit à un seul
@@ -416,7 +416,7 @@ function navEntries() {
   const fav = new Set(menuCfg().fav);
   // étoile dessinée par la feuille de style (le texte du volet reste son seul nom)
   const star = id => `<span class="navstar${fav.has(id) ? ' on' : ''}" data-fav="${esc(id)}" role="button" title="${fav.has(id) ? 'Retirer des favoris' : 'Ajouter aux favoris'}"></span>`;
-  const leafHtml = (l, cls) => `<a href="${esc(l.href)}"${cls ? ` class="${cls}"` : ''}${l.extra || ''} data-leaf="${esc(l.id)}">${esc(l.label)}${l.href === '#/alertes' && cls !== 'navfav' ? '<span class="nb" id="nbal" hidden></span>' : ''}${l.href === '#/courses' && cls !== 'navfav' ? '<span class="nb" id="nbcrs" hidden></span>' : ''}${star(l.id)}</a>`;
+  const leafHtml = (l, cls) => `<a href="${esc(l.href)}"${cls ? ` class="${cls}"` : ''}${l.extra || ''} data-leaf="${esc(l.id)}">${esc(l.label)}${l.href === '#/alertes' && cls !== 'navfav' ? '<span class="nb" id="nbal" hidden></span>' : ''}${l.href === '#/courses' && cls !== 'navfav' ? '<span class="nb" id="nbcrs" hidden></span>' : ''}${l.href === '#/chat' && cls !== 'navfav' ? '<span class="nb" id="nbchat" hidden></span>' : ''}${star(l.id)}</a>`;
   const link = (id, href, label, extra) => { const l = { id, href, label, extra }; return { id, label, leaves: [l], html: leafHtml(l) }; };
   const grp = (g, label, leaves) => {
     leaves = leaves.slice().sort(navCmp).map(l => Object.assign(l, { group: label }));
@@ -556,7 +556,7 @@ function shell() {
   }
   navMark(page);
   // derniers états connus redessinés tout de suite (menu neuf), relus ensuite en arrière-plan
-  sessBadgePaint(); healthPaint(); nbalPaint(); rhBadgePaint(); crsBadgePaint(); health(); openAlerts(); crsBadgeLoad(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
+  sessBadgePaint(); healthPaint(); nbalPaint(); rhBadgePaint(); crsBadgePaint(); if (typeof chatBadgePaint === 'function') chatBadgePaint(); health(); openAlerts(); crsBadgeLoad(); appUpdateCheck(); appUpdateShow(); siteNewShow(); usageWarn();
   const on = $('.side nav a.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   return page;
 }
@@ -1764,7 +1764,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, suivi: pageSuivi, retours: pageRetours, uberctl: pageUberCtl, zones: pageZones, ubrev: pageUbRev, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, boitiers: pageBoitiers, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, suivi: pageSuivi, retours: pageRetours, uberctl: pageUberCtl, zones: pageZones, ubrev: pageUbRev, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, boitiers: pageBoitiers, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, chat: pageChat, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
@@ -1773,7 +1773,7 @@ async function route() {
   if (!/^x-/.test(pageOf()) || !S.session) extHide();   // autre volet : volets externes masqués (leurs pages restent chargées)
   S.timers.forEach(clearInterval); S.timers = [];
   if (S.channel) { sb.removeChannel(S.channel); S.channel = null; }
-  if (!S.session) { if (S.alertCh) { sb.removeChannel(S.alertCh); S.alertCh = null; } loginView(); return; }
+  if (!S.session) { if (S.alertCh) { sb.removeChannel(S.alertCh); S.alertCh = null; } if (S.chatCh) { sb.removeChannel(S.chatCh); S.chatCh = null; if (typeof CH !== 'undefined') { clearInterval(CH.poll); CH.poll = 0; CH.me = null; } } loginView(); return; }
   if (!S.profile) {
     const { data, error } = await sb.from('profiles').select('*').eq('user_id', S.session.user.id).maybeSingle();
     // erreur réseau : pas de « compte en attente » par erreur ; le profil est relu au prochain changement de page
@@ -1798,6 +1798,7 @@ async function route() {
   if (typeof svStart === 'function') svStart();   // pauses et courses suivies : compte à rebours et alertes sur toutes les pages
   if (typeof rtwStart === 'function') rtwStart();   // retours : bandeau quand un chauffeur prévenu arrive à l'agence
   if (typeof pfwStart === 'function') pfwStart();   // Uber : bandeau rouge quand un chauffeur sous contrat se déconnecte
+  if (typeof chatWatch === 'function') chatWatch();   // tchat : messages, pastille et appels entrants sur toutes les pages
   if (typeof pfPushStart === 'function') pfPushStart();   // application Ludy 1.8 : volet Uber Fleet lu et envoyé à la base
   if (MOBILE) return;
   S.timers.push(setInterval(health, 60000));

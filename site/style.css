@@ -865,3 +865,91 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .cshlg i.ub-jour { background: #d97706; } .cshlg i.ub-nuit { background: var(--ink); }
 #tubrev tr.ubdrv { cursor: pointer; } #tubrev tr.ubdet > td { background: var(--bg2, rgba(0,0,0,.02)); padding: 6px 10px 12px 24px; }
 .pfcmp { margin: 4px 0 8px; }
+/* ---------- Tchat (chat.js, 22/11/2026) : liste des conversations, messages, composition, appels ---------- */
+.chat { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 0; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); height: calc(100vh - 120px); min-height: 420px; overflow: hidden; }
+.chlist { border-right: 1px solid var(--line); overflow-y: auto; display: flex; flex-direction: column; min-width: 0; }
+.chtools { display: flex; gap: 6px; padding: 10px; position: sticky; top: 0; background: var(--panel); z-index: 1; border-bottom: 1px solid var(--line); }
+.chtools input { flex: 1; min-width: 0; }
+.chsec { font: 600 11px var(--f); text-transform: uppercase; letter-spacing: .06em; color: var(--mute); padding: 10px 12px 4px; }
+.chpad { padding: 4px 12px 8px; }
+.chrow { display: flex; gap: 10px; align-items: center; width: 100%; padding: 8px 12px; text-decoration: none; color: var(--ink); background: transparent; border: 0; border-radius: 0; text-align: left; font: inherit; min-height: 0; cursor: pointer; }
+.chrow:hover { background: var(--line2); } .chrow.on { background: var(--acc-bg, var(--line2)); box-shadow: inset 3px 0 0 var(--acc); }
+.chrow.unread b { color: var(--acc); }
+.chtx { flex: 1; min-width: 0; display: flex; flex-direction: column; } .chtx b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.chlast { font-size: 12.5px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chmeta { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-size: 11px; color: var(--mute); }
+.chav { position: relative; flex: none; width: 36px; height: 36px; border-radius: 50%; background: var(--side); color: #fff; display: grid; place-items: center; font: 600 13px var(--f); }
+.chav.big { width: 72px; height: 72px; font-size: 26px; }
+.chav::after { content: ''; position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px; border-radius: 50%; background: #9aa6ad; border: 2px solid var(--panel); }
+.chav[data-on="1"]::after { background: var(--ok); }
+.chav.big::after { width: 18px; height: 18px; }
+.chmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chempty { margin: auto; text-align: center; color: var(--mute); } .chempty b { display: block; color: var(--ink); font-size: 18px; margin-bottom: 6px; }
+.chhead { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.chhead .chtx b { font-size: 16px; }
+.chacts { display: flex; gap: 6px; } .chacts button { font-size: 18px; padding: 4px 10px; }
+.chback { display: none; font-size: 28px; line-height: 1; text-decoration: none; color: var(--ink); padding: 0 6px; }
+.chmsgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 6px; background: var(--bg); }
+.chm { max-width: min(78%, 640px); align-self: flex-start; display: flex; flex-direction: column; gap: 2px; }
+.chm.me { align-self: flex-end; align-items: flex-end; }
+.chb { background: var(--panel); border: 1px solid var(--line); border-radius: 14px 14px 14px 4px; padding: 8px 12px; font-size: 14.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.chm.me .chb { background: var(--acc); color: #fff; border-color: transparent; border-radius: 14px 14px 4px 14px; }
+.chm.me .chb a { color: #fff; }
+.chm.call .chb { background: var(--line2); color: var(--ink); border-radius: 14px; font-style: italic; }
+.chm.call.me .chb { background: var(--line2); }
+.chcall.missed, .chcall.declined, .chcall.failed { color: var(--crit); }
+.chwho { font-size: 12px; color: var(--mute); padding-left: 6px; }
+.chtime { font-size: 11px; color: var(--mute); padding: 0 6px; display: flex; align-items: center; gap: 4px; }
+.chdel { background: transparent; color: var(--mute); border: 0; padding: 0 4px; min-height: 0; font-size: 14px; line-height: 1; opacity: 0; cursor: pointer; }
+.chm:hover .chdel { opacity: 1; }
+.chsys { align-self: center; font-size: 12px; color: var(--mute); background: var(--line2); border-radius: 10px; padding: 3px 10px; margin: 4px 0; }
+.chimg { max-width: 100%; max-height: 320px; border-radius: 8px; display: block; }
+.chb audio { max-width: 100%; vertical-align: middle; }
+.chfile { font-weight: 600; }
+.chcomp { display: flex; gap: 6px; align-items: flex-end; padding: 10px; border-top: 1px solid var(--line); background: var(--panel); }
+.chcomp textarea { flex: 1; min-height: 42px; max-height: 140px; resize: none; border-radius: 20px; padding: 10px 14px; font-size: 15px; }
+.chico { width: 42px; height: 42px; min-height: 0; padding: 0; border-radius: 50%; font-size: 18px; display: grid; place-items: center; flex: none; }
+.chsend { background: var(--acc); color: #fff; }
+.chico.rec { background: var(--crit); color: #fff; animation: chblink 1s infinite; }
+.chrec { font-size: 13px; color: var(--crit); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+@keyframes chblink { 50% { opacity: .55; } }
+.chgrpform { padding: 16px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.chgrpform .chk { display: flex; gap: 8px; align-items: center; }
+.toast.chtoast { cursor: pointer; } .toast.chtoast a { align-self: flex-start; }
+/* appel entrant (sonnerie) et fenêtre d'appel */
+.chring { position: fixed; inset: 0; z-index: 3050; display: flex; align-items: center; justify-content: center; background: rgba(10, 30, 50, .75); padding: 16px; }
+.chringbox { background: var(--panel); color: var(--ink); border-radius: 18px; padding: 28px 32px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(360px, 100%);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .4); animation: chpulse 1.2s infinite; }
+.chringbox b { font-size: 22px; } .chringbox p { margin: 0; color: var(--mute); }
+.chringbox .row { display: flex; gap: 12px; margin-top: 8px; }
+@keyframes chpulse { 50% { box-shadow: 0 20px 60px rgba(0, 0, 0, .4), 0 0 0 10px rgba(46, 160, 100, .25); } }
+.chacc { background: var(--ok); color: #fff; font-size: 16px; padding: 10px 22px; } .chdec { background: var(--crit); color: #fff; font-size: 16px; padding: 10px 22px; }
+.chcall { position: fixed; right: 16px; bottom: 16px; z-index: 3040; width: min(380px, calc(100vw - 32px)); }
+.chcall.video { inset: 0; width: auto; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .85); padding: 12px; }
+.chcbox { position: relative; background: #0f2633; color: #fff; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: 0 16px 50px rgba(0, 0, 0, .45); width: 100%; }
+.chcall.video .chcbox { max-width: 1100px; height: min(92vh, 92dvh); justify-content: flex-end; padding: 0; overflow: hidden; }
+.chcrem { display: none; } .chcall.video .chcrem { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.chcall.video.live .chcav { display: none; }
+.chcloc { display: none; } .chcall.video .chcloc { display: block; position: absolute; top: 12px; right: 12px; width: 160px; max-width: 30%; border-radius: 10px; border: 2px solid rgba(255, 255, 255, .6); background: #000; transform: scaleX(-1); }
+.chcinfo { display: flex; flex-direction: column; align-items: center; gap: 2px; position: relative; z-index: 1; }
+.chcall.video .chcinfo { background: rgba(0, 0, 0, .45); border-radius: 10px; padding: 6px 14px; }
+.chcinfo b { font-size: 18px; } .chcinfo span { font-size: 13px; opacity: .85; }
+.chcbtns { display: flex; gap: 12px; position: relative; z-index: 1; padding-bottom: 6px; }
+.chcall.video .chcbtns { padding-bottom: 16px; }
+.chcbtns button { width: 54px; height: 54px; min-height: 0; padding: 0; border-radius: 50%; font-size: 22px; background: rgba(255, 255, 255, .18); color: #fff; }
+.chcbtns button.off { background: #fff; color: #0f2633; text-decoration: line-through; }
+.chcbtns .chdec { background: var(--crit); }
+@media (max-width: 760px) {
+  .chat { grid-template-columns: 1fr; height: calc(100vh - 100px); height: calc(100dvh - 100px); }
+  .chlist { border-right: 0; } .chlist.hasc { display: none; }
+  .chmain { display: none; } .chmain.on { display: flex; }
+  .chback { display: inline-block; }
+  .chm { max-width: 88%; }
+}
+.mob .chat { grid-template-columns: 1fr; height: calc(100dvh - 60px - 64px - env(safe-area-inset-bottom)); min-height: 0; border-radius: 0; border-left: 0; border-right: 0; margin: -14px -14px 0; }
+.mob .chlist { border-right: 0; } .mob .chlist.hasc { display: none; } .mob .chmain { display: none; } .mob .chmain.on { display: flex; } .mob .chback { display: inline-block; } .mob .chm { max-width: 88%; }
+.mob .chcomp textarea { min-height: 44px; width: auto; }
+.mob .chico { width: 44px; height: 44px; min-height: 0; }
+.mob .chrow { min-height: 56px; } .mob .chtools button { min-height: 40px; }
+.mtabs a { position: relative; } .mtabs a .nb { position: absolute; top: 6px; left: calc(50% + 6px); }
+.mtabs a span:last-child:not(.nb) { font-size: 12px; white-space: nowrap; }

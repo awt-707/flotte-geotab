@@ -39,7 +39,7 @@ begin
   select * into d from watch_devices where secret_hash = encode(sha256(convert_to(coalesce(p_secret, ''), 'UTF8')), 'hex');
   if d.id is null then raise exception 'watch_unknown' using errcode = '28000'; end if;
   v_role := coalesce((select role from profiles where user_id = d.user_id), '');
-  if v_role not in ('admin', 'manager', 'viewer') then raise exception 'watch_unknown' using errcode = '28000'; end if;
+  if v_role not in ('admin', 'manager', 'viewer', 'rh') then raise exception 'watch_unknown' using errcode = '28000'; end if;
   v_admin := v_role = 'admin';
   v_ag := coalesce((select array_agg(agency_id) from user_agencies where user_id = d.user_id), '{}');
   v_keys := coalesce((select array_agg(key) from vehicles where agency_id = any(v_ag)), '{}');
@@ -48,22 +48,35 @@ begin
     'now', now(),
     'user_id', d.user_id,
     'params', coalesce((select jsonb_object_agg(key, value) from params where key in ('pauseShiftMin', 'pauseRemindMin', 'pauseMoveM', 'trackArriveM', 'returnRadiusM')), '{}'),
-    'pauses', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'vehicle_key', p.vehicle_key, 'plate', p.plate, 'driver_name', p.driver_name,
+    'pauses', case when v_role = 'rh' then '[]'::jsonb else coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'vehicle_key', p.vehicle_key, 'plate', p.plate, 'driver_name', p.driver_name,
         'driver_phone', p.driver_phone, 'started_at', p.started_at, 'planned_min', p.planned_min, 'start_lat', p.start_lat, 'start_lon', p.start_lon,
         'moved_at', p.moved_at, 'moved_m', p.moved_m, 'moved_note', p.moved_note) order by p.started_at)
       from driver_pauses p where p.ended_at is null and p.started_at > now() - interval '24 hours'
-        and (v_admin or p.vehicle_key = any(v_keys) or p.agency_id = any(v_ag))), '[]'),
-    'tracks', coalesce((select jsonb_agg(jsonb_build_object('id', t.id, 'mission_id', t.mission_id, 'vehicle_key', t.vehicle_key, 'plate', t.plate,
+        and (v_admin or p.vehicle_key = any(v_keys) or p.agency_id = any(v_ag))), '[]') end,
+    'tracks', case when v_role = 'rh' then '[]'::jsonb else coalesce((select jsonb_agg(jsonb_build_object('id', t.id, 'mission_id', t.mission_id, 'vehicle_key', t.vehicle_key, 'plate', t.plate,
         'driver_name', t.driver_name, 'started_at', t.started_at, 'dest_label', t.dest_label, 'dest_lat', t.dest_lat, 'dest_lon', t.dest_lon,
         'arrived_at', t.arrived_at) order by t.started_at)
       from mission_tracks t where t.ended_at is null and t.started_at > now() - interval '48 hours'
-        and (v_admin or t.vehicle_key = any(v_keys) or t.agency_id = any(v_ag))), '[]'),
-    'returns', coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'contract_num', r.contract_num, 'vehicle_key', r.vehicle_key,
+        and (v_admin or t.vehicle_key = any(v_keys) or t.agency_id = any(v_ag))), '[]') end,
+    'returns', case when v_role = 'rh' then '[]'::jsonb else coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'contract_num', r.contract_num, 'vehicle_key', r.vehicle_key,
         'plate', coalesce(v.plate, r.vehicle_key), 'driver_name', r.driver_name, 'slot_at', r.slot_at, 'sent_at', r.sent_at, 'arrived_at', r.arrived_at,
         'agency', a.name, 'lat', a.lat, 'lng', a.lng, 'radius_m', a.return_radius_m) order by r.slot_at nulls last, r.sent_at)
       from return_calls r left join vehicles v on v.key = r.vehicle_key left join agencies a on a.id = r.agency_id
       where r.sent_at is not null and r.done_at is null and r.cancelled_at is null and r.created_at > now() - interval '24 hours'
-        and (v_admin or r.vehicle_key = any(v_keys))), '[]'));
+        and (v_admin or r.vehicle_key = any(v_keys))), '[]') end,
+    'chat', jsonb_build_object(
+      'unread', (select count(*) from chat_messages m join chat_members me on me.thread_id = m.thread_id and me.user_id = d.user_id
+        where m.created_at > me.last_read_at and m.user_id is distinct from d.user_id and m.kind not in ('system', 'call')),
+      'msgs', coalesce((select jsonb_agg(jsonb_build_object('id', m.id, 'thread_id', m.thread_id, 'from', coalesce(nullif(p.name, ''), split_part(p.email, '@', 1)),
+          'group', t.name, 'text', case m.kind when 'text' then left(m.body, 160) when 'audio' then '🎤 Message audio' when 'image' then '🖼 ' || coalesce(m.file_name, 'Image') else '📎 ' || coalesce(m.file_name, 'Fichier') end,
+          'at', m.created_at) order by m.id desc)
+        from chat_messages m join chat_members me on me.thread_id = m.thread_id and me.user_id = d.user_id join chat_threads t on t.id = m.thread_id
+        left join profiles p on p.user_id = m.user_id
+        where m.created_at > me.last_read_at and m.created_at > now() - interval '2 hours' and m.user_id is distinct from d.user_id and m.kind not in ('system', 'call') and m.deleted_at is null
+        limit 10), '[]'),
+      'ringing', coalesce((select jsonb_agg(jsonb_build_object('id', c.id, 'thread_id', c.thread_id, 'kind', c.kind, 'started_at', c.started_at,
+          'caller_name', coalesce(nullif(p.name, ''), split_part(p.email, '@', 1)))) from chat_calls c join profiles p on p.user_id = c.caller
+        where c.callee = d.user_id and c.status = 'ringing' and c.started_at > now() - interval '2 minutes'), '[]')));
 end $$;
 
 CREATE FUNCTION public.watch_register(p_label text) RETURNS text

@@ -31,7 +31,7 @@ test('application Android : trois écrans seulement, encaissement du shift et d\
     // ouverture : premier écran, trois boutons en bas, aucun menu du site complet
     await loginPhone(page, '#/tableau');
     await page.waitForURL(/#\/caisse\?t=shift/);
-    assert.deepStrictEqual(await page.$$eval('.mtabs a', as => as.map(a => a.innerText.trim())), ['Encaissement', 'Courses', 'Dépenses', 'Pauses', 'Retours', 'Manifeste']);
+    assert.deepStrictEqual(await page.$$eval('.mtabs a', as => as.map(a => a.innerText.trim())), ['Encaissement', 'Courses', 'Dépenses', 'Pauses', 'Retours', 'Manifeste', 'Tchat']);
     assert.strictEqual(await page.locator('.side').count(), 0);
     // toute autre page renvoie au premier écran
     await page.evaluate(() => { location.hash = '#/reglages'; });

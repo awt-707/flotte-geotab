@@ -129,8 +129,15 @@ test('application Android 1.3 : service au premier plan, notifications, relance 
   assert.match(svc, /x-ludy-watch/); assert.match(svc, /IMPORTANCE_HIGH/); assert.match(svc, /Déplacement autorisé/);
   assert.match(main, /@JavascriptInterface public void watchStart\(String url, String anon, String secret\)/);
   assert.match(main, /@JavascriptInterface public String watchStop\(\)/); assert.match(main, /@JavascriptInterface public String watchStatus\(\)/);
-  assert.match(main, /LudyAndroid\/1\.4/); assert.match(main, /onNewIntent/);
-  assert.match(g, /versionName '1\.4'/); assert.ok(+g.match(/versionCode (\d+)/)[1] >= 5);
+  assert.match(main, /LudyAndroid\/1\.5/); assert.match(main, /onNewIntent/);
+  assert.match(g, /versionName '1\.5'/); assert.ok(+g.match(/versionCode (\d+)/)[1] >= 6);
+  // 1.5 (tchat) : micro / caméra accordés au site Ludy seul après l'autorisation Android ; messages et appels du tchat notifiés par le service
+  assert.match(main, /onPermissionRequest\(PermissionRequest r\) \{ media\(r\); \}/); assert.match(main, /HOST\.equals\(o\.getHost\(\)\)\) \{ r\.deny\(\)/);
+  assert.match(main, /requestPermissions\(need\.toArray/); assert.match(main, /onRequestPermissionsResult/);
+  const manifest = fs.readFileSync(path.join(env.ROOT, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
+  ['RECORD_AUDIO', 'CAMERA', 'MODIFY_AUDIO_SETTINGS'].forEach(x => assert.match(manifest, new RegExp('android\\.permission\\.' + x)));
+  assert.match(svc, /optJSONObject\("chat"\)/); assert.match(svc, /CH_CHAT = "ludy_tchat"/); assert.match(svc, /"#\/chat" \+ \(thread > 0 \? "\?t=" \+ thread : ""\)/);
+  assert.match(svc, /CATEGORY_CALL/);
   assert.match(svc, /ARRIVÉ À L'AGENCE/); assert.match(svc, /optJSONArray\("returns"\)/); assert.match(svc, /#\/retours/);
   // date de la base lue par le service : fraction de 0 à 6 chiffres
   const re = /Pattern\.compile\("(.*)"\)\.matcher/.exec(svc)[1].replace(/\\\\/g, '\\');

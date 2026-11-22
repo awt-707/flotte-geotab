@@ -58,11 +58,12 @@ function cacheNew(o) {
 }
 // Fonctions de lecture seule (appel POST, rien n'est modifié) ; toute autre fonction de la base vide le cache
 const CACHE_RO_RPC = { alert_counts: 1, uber_zones: 1, uber_demand: 1, driver_rule_counts: 1, shift_plan: 1, usage_stats: 1, plan_can_edit: 1, session_ping: 1 };
+// tchat (22/11/2026) : ses fonctions (chat_*) n'écrivent que dans ses tables, jamais lues par le cache ; sinon chaque relecture ou signal d'appel viderait le cache
 /** Requête vers la base qui peut modifier une donnée gardée (insert, update, delete, fonction qui écrit) */
 function cacheWrites(url, method) {
   if (/^(GET|HEAD)$/i.test(method || 'GET')) return false;
   const m = String(url).match(/\/rest\/v1\/(rpc\/)?([^?/#]+)/); if (!m) return false;   // connexion, stockage, relais : aucune lecture gardée
-  return m[1] ? !CACHE_RO_RPC[m[2]] : m[2] !== 'user_sessions';   // connexions (signal de présence) : jamais gardées
+  return m[1] ? !(CACHE_RO_RPC[m[2]] || /^chat_/.test(m[2])) : m[2] !== 'user_sessions' && !/^chat_/.test(m[2]);   // connexions (signal de présence) et tchat : jamais gardés
 }
 /** fetch du client Supabase : écriture = cache vidé avant l'envoi et à la réponse (lecture faite pendant l'écriture non gardée) */
 function cacheFetch(c, f) {
