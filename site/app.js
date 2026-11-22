@@ -374,7 +374,7 @@ function firstAllowed() { const p = NAV.map(n => n[0]).find(k => !ADMIN_PAGES[k]
 
 // ---------- Mise en page ----------
 const NAV = [['direct', 'En direct'], ['tableau', 'Tableau de bord'], ['jour', 'Du jour'], ['chauffeurs', 'Classement'], ['comportement', 'Comportement chauffeur'], ['finshift', 'Fin de shift'], ['conduite', 'Conduite'], ['carburant', 'Carburant'], ['conso', 'Consommation'],
-  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['suivi', 'Pauses et suivi des courses'], ['retours', 'Retours véhicules'], ['uberctl', 'Contrôle Uber'], ['zones', 'Zones Uber'], ['ubrev', 'Revenus Uber par shift'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['boitiers', 'Boîtiers GPS'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['chat', 'Tchat'], ['reglages', 'Réglages']];
+  ['ralenti', 'Ralenti'], ['arrets', 'Arrêts moteur'], ['fiches', 'Chauffeurs'], ['plan', 'Planning chauffeurs'], ['alertes', 'Alertes'], ['manifeste', 'Manifestes'], ['courses', 'Courses privées'], ['suivi', 'Pauses et suivi des courses'], ['retours', 'Retours véhicules'], ['uberctl', 'Contrôle Uber'], ['suspects', 'Courses suspectes'], ['zones', 'Zones Uber'], ['ubrev', 'Revenus Uber par shift'], ['caisse', 'Caisse'], ['rh', 'Ressources humaines'], ['rapports', 'Rapports'], ['contrats', 'Contrats'], ['plaques', 'Plaques'], ['vehicules', 'Véhicules'], ['boitiers', 'Boîtiers GPS'], ['agences', 'Agences'], ['planning', 'Planning gestionnaires'], ['connexions', 'Connexions'], ['chat', 'Tchat'], ['reglages', 'Réglages']];
 const ADMIN_PAGES = { agences: 1, planning: 1, connexions: 1, reglages: 1 };
 // Dossiers du menu (demande d'Ahmed : menu allégé) : un titre qui ouvre / ferme ses volets (clic sur le titre), ouvert
 // d'office quand la page affichée en fait partie. Ressources humaines : onglets de la page #/rh. Dossier réduit à un seul
@@ -1764,7 +1764,7 @@ function pendingView() {
 // ---------- Navigation ----------
 const PAGES = { direct: pageDirect, tableau: pageTableau, jour: pageJour, chauffeurs: pageChauffeurs, fiches: pageFiches, alertes: pageAlertes, rapports: pageRapports,
   conduite: pageConduite, comportement: pageComportement, finshift: pageFinShift, carburant: pageCarburant, conso: pageConso, ralenti: pageRalenti, arrets: pageArrets, vehicule: pageFicheVehicule, chauffeur: pageFicheChauffeur,
-  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, suivi: pageSuivi, retours: pageRetours, uberctl: pageUberCtl, zones: pageZones, ubrev: pageUbRev, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, boitiers: pageBoitiers, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, chat: pageChat, reglages: pageReglages };
+  contrats: pageContrats, manifeste: pageManifeste, courses: pageCourses, suivi: pageSuivi, retours: pageRetours, uberctl: pageUberCtl, suspects: pageSuspects, zones: pageZones, ubrev: pageUbRev, caisse: pageCaisse, rh: pageRH, moi: pageMoi, travail: pageContratsTravail, plan: pagePlan, application: pageApplication, menu: pageMenu, plaques: pagePlaques, vehicules: pageVehicules, boitiers: pageBoitiers, agences: pageAgences, planning: pagePlanning, connexions: pageConnexions, chat: pageChat, reglages: pageReglages };
 let ROUTING = 0;
 async function route() {
   const my = ++ROUTING;
@@ -1773,7 +1773,7 @@ async function route() {
   if (!/^x-/.test(pageOf()) || !S.session) extHide();   // autre volet : volets externes masqués (leurs pages restent chargées)
   S.timers.forEach(clearInterval); S.timers = [];
   if (S.channel) { sb.removeChannel(S.channel); S.channel = null; }
-  if (!S.session) { if (S.alertCh) { sb.removeChannel(S.alertCh); S.alertCh = null; } if (S.chatCh) { sb.removeChannel(S.chatCh); S.chatCh = null; if (typeof CH !== 'undefined') { clearInterval(CH.poll); CH.poll = 0; CH.me = null; } } loginView(); return; }
+  if (!S.session) { if (S.alertCh) { sb.removeChannel(S.alertCh); S.alertCh = null; } if (S.chatCh) { sb.removeChannel(S.chatCh); S.chatCh = null; if (typeof CH !== 'undefined') { clearInterval(CH.poll); CH.poll = 0; CH.me = null; } } if (S.suspCh) { sb.removeChannel(S.suspCh); S.suspCh = null; if (typeof PS !== 'undefined') { clearInterval(PS.timer); PS.timer = 0; PS.me = null; } } loginView(); return; }
   if (!S.profile) {
     const { data, error } = await sb.from('profiles').select('*').eq('user_id', S.session.user.id).maybeSingle();
     // erreur réseau : pas de « compte en attente » par erreur ; le profil est relu au prochain changement de page
@@ -1799,6 +1799,7 @@ async function route() {
   if (typeof rtwStart === 'function') rtwStart();   // retours : bandeau quand un chauffeur prévenu arrive à l'agence
   if (typeof pfwStart === 'function') pfwStart();   // Uber : bandeau rouge quand un chauffeur sous contrat se déconnecte
   if (typeof chatWatch === 'function') chatWatch();   // tchat : messages, pastille et appels entrants sur toutes les pages
+  if (typeof psWatch === 'function') psWatch();   // courses Uber suspectes : alerte rouge sur toutes les pages
   if (typeof pfPushStart === 'function') pfPushStart();   // application Ludy 1.8 : volet Uber Fleet lu et envoyé à la base
   if (MOBILE) return;
   S.timers.push(setInterval(health, 60000));

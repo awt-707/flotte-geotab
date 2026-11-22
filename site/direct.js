@@ -237,6 +237,7 @@ function vcardsHtml(rows) {
       <span class="vc-l3">${drv}</span>
       ${vcKpis(r)}
       ${typeof svVehLine === 'function' ? svVehLine(r.vehicle_key) : ''}
+      ${typeof psVehLine === 'function' ? psVehLine(r.vehicle_key) : ''}
       <span class="vc-l4">${r.live ? 'Position Geotab ' + esc(fmtHMS(r.last_pos_at).slice(6)) + ' · <span class="ago" data-t="' + esc(r.last_pos_at || '') + '">' + ago(r.last_pos_at) + '</span>'
         : r.last_pos_at ? 'Position du collecteur ' + esc(fmtDT(r.last_pos_at)) : 'Aucune position'}</span>
     </span>
@@ -311,7 +312,8 @@ async function pageDirect(refresh) {
   $('#page').innerHTML = `
     <div class="livehead"><h1>En direct</h1><span class="small" id="livest">${liveStatusTxt()}</span></div>
     <div class="livetop"><div id="livecards">${kpisHtml(rows)}</div>
-      <section id="liveplat">${typeof pfHtml === 'function' ? pfHtml() : ''}</section></div>
+      <section id="liveplat">${typeof pfHtml === 'function' ? pfHtml() : ''}</section>
+      <section id="livesusp">${typeof psDirectHtml === 'function' ? psDirectHtml() : ''}</section></div>
     <div class="livegrid livebig">
       <section class="mapbox"><div id="map"></div>
         <div class="maplegend"><span class="lg st-ok">En route</span><span class="lg st-warn">Arrêté, contact mis</span><span class="lg st-mute">Garé</span><span class="lg st-crit">Hors ligne / au-dessus du seuil</span><span class="pfchip pf-available">Uber · Disponible</span><span class="pfchip pf-to_pickup">Uber · En route vers le lieu de prise en charge</span><span class="pfchip pf-on_trip">Uber · Course en cours</span><span class="pfchip pf-offline">Hors ligne</span><span class="pfchip pf-offmove">Hors ligne · roule</span>
