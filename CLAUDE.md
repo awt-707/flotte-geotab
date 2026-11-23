@@ -263,6 +263,8 @@ Ajouté le 23/11/2026 (demande d'Ahmed) : **Contrats de travail, champs vidés a
 
 Ajouté le 23/11/2026 (demande d'Ahmed : les cartes de droite d'En direct « bougent ») : **colonne des cartes véhicules triée et stable** (direct.js). Tri par **revenus Uber encaissés du contrat en cours décroissants** (`vcRevenue`, `vcardOrder` ; sans chiffre en bas, par plaque) au lieu de l'état (disponible/en route/en course) qui changeait en direct et faisait sauter les cartes ; la position de défilement est conservée à chaque rafraîchissement (`setVlist`). Test : `tests/site.test.js`, `tests/plateformes.test.js`.
 
+Ajouté le 23/11/2026 (demande d'Ahmed : encaisser une avance qui n'est pas le total) : **acompte du client sur une course privée** (courses.js). Fiche de course (enregistrée, modifiable) : panneau « Acompte du client » (total TTC, déjà encaissé, reste dû), champ « Montant de l'acompte à encaisser », bouton « Encaisser l'acompte et générer le reçu » → acompte enregistré sur la course (`missions.data.deposits` [{at, amount, by, number}], historique) et **reçu PDF à remettre au client** (`crsDepositPdf`, même en-tête/société que le devis : montant encaissé, total déjà encaissé, reste dû, montant en lettres `cshMadWords`, N° `DEV-…-An`). Plusieurs acomptes possibles. Aucune migration. Test : `tests/courses.test.js`.
+
 Le 21/10/2026, dépôt passé en **public** par Ahmed (minutes GitHub Actions épuisées) le temps de la mise en ligne, à repasser en privé ensuite.
 
 Reste à faire (par Ahmed, secrets et autorisations) :
