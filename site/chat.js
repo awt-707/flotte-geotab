@@ -19,6 +19,26 @@ function chatTitle(t) {
 }
 function chatOther(t) { return t && t.kind === 'direct' ? (t.members || []).find(m => m.user_id !== chatMe()) : null; }
 function chatOnline(uid) { const u = CH.umap[uid]; return !!(u && u.online); }
+// Icônes du tchat (traits, 24 px, couleur du texte) : refonte du 23/11/2026 (demande d'Ahmed : « plus moderne, beau et bien organisé »)
+const CH_ICO = { clip: '<path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8"/>', stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/>', phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>',
+  video: '<path d="m23 7-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>', users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>', back: '<path d="m15 18-6-6 6-6"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+  leave: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>', chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>' };
+function chIco(n) { return `<svg class="chi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${CH_ICO[n] || ''}</svg>`; }
+/** Teinte stable d'un avatar d'après le nom (chaque personne garde sa couleur) */
+function chHue(name) { let h = 0; for (const c of String(name || '')) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
+function chatHM(d) { const p = parts(new Date(d)); return p.hour + ':' + p.minute; }
+function chatDayKey(d) { const p = parts(new Date(d)); return p.year + '-' + p.month + '-' + p.day; }
+/** Séparateur de jour : « Aujourd'hui », « Hier », « lundi 21/11 » */
+function chatDayLbl(d) {
+  const k = chatDayKey(d), now = Date.now();
+  if (k === chatDayKey(now)) return 'Aujourd\'hui';
+  if (k === chatDayKey(now - 86400000)) return 'Hier';
+  const p = parts(new Date(d)); return ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'][new Date(d).getDay()] + ' ' + p.day + '/' + p.month;
+}
 /** Serveurs ICE : STUN de Google, plus ceux du paramètre chatIce (JSON : TURN d'Ahmed s'il en règle un) */
 function chatIce() {
   let extra = [];
@@ -58,12 +78,12 @@ async function pageChat() {
 }
 function chatPaint() {
   const el = $('#chat'); if (!el) return;
-  el.innerHTML = `<aside class="chlist${CH.cur ? ' hasc' : ''}" id="chlist"></aside><section class="chmain${CH.cur ? ' on' : ''}" id="chmain">${CH.cur ? '' : '<div class="chempty"><b>Choisissez une conversation</b><p>Ou commencez-en une avec un compte en ligne.</p></div>'}</section>`;
+  el.innerHTML = `<aside class="chlist${CH.cur ? ' hasc' : ''}" id="chlist"></aside><section class="chmain${CH.cur ? ' on' : ''}" id="chmain">${CH.cur ? '' : `<div class="chempty"><span class="chemptyic">${chIco('chat')}</span><b>Vos conversations</b><p>Choisissez une conversation à gauche, ou écrivez à un collègue en ligne.</p></div>`}</section>`;
   chatPaintList();
 }
 function chatAvatar(name, online, big) {
   const ini = String(name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '?';
-  return `<span class="chav${big ? ' big' : ''}" data-on="${online ? 1 : 0}" aria-hidden="true">${esc(ini)}</span>`;
+  return `<span class="chav${big ? ' big' : ''}" data-on="${online ? 1 : 0}" style="--h:${chHue(name)}" aria-hidden="true">${esc(ini)}</span>`;
 }
 function chatPaintList() {
   const el = $('#chlist'); if (!el) return;
@@ -71,10 +91,12 @@ function chatPaintList() {
   const row = t => { const o = chatOther(t), on = o ? chatOnline(o.user_id) : (t.members || []).some(m => m.user_id !== me && chatOnline(m.user_id));
     return `<a href="#/chat?t=${t.id}" class="chrow${t.id === CH.cur ? ' on' : ''}${t.unread ? ' unread' : ''}" data-cht="${t.id}">${chatAvatar(chatTitle(t), on)}<span class="chtx"><b>${esc(chatTitle(t))}${t.kind === 'group' ? ` <span class="small mute">· ${t.members.length}</span>` : ''}</b><span class="chlast">${esc(t.last_text || 'Nouvelle conversation')}</span></span><span class="chmeta">${t.last_at ? esc(chatWhen(t.last_at)) : ''}${t.unread ? `<span class="nb">${t.unread}</span>` : ''}</span></a>`; };
   const usr = x => `<button type="button" class="chrow chuser" data-chu="${x.user_id}">${chatAvatar(x.name, x.online)}<span class="chtx"><b>${esc(x.name)}</b><span class="chlast">${esc(ROLE_TXT[x.role] || x.role)} · ${x.online ? '<span class="ok">en ligne</span>' : x.last_seen ? 'vu ' + esc(chatWhen(x.last_seen)) : 'jamais connecté'}</span></span></button>`;
-  el.innerHTML = `<div class="chtools"><input type="search" id="chq" placeholder="Rechercher…" aria-label="Rechercher une conversation ou un compte"><button type="button" class="small" id="chgrp" title="Créer un groupe">👥 Groupe</button></div>
+  const nUnread = chatBadgeN();
+  el.innerHTML = `<div class="chlhead"><b>Messages</b>${nUnread ? `<span class="chpillnb">${nUnread} non lu${nUnread > 1 ? 's' : ''}</span>` : ''}<button type="button" class="chpill" id="chgrp" title="Créer un groupe">${chIco('users')}<span>Groupe</span></button></div>
+    <div class="chtools"><label class="chsearch">${chIco('search')}<input type="search" id="chq" placeholder="Rechercher" aria-label="Rechercher une conversation ou un compte"></label></div>
     <div class="chsec">Conversations</div><div id="chthreads">${CH.threads.length ? CH.threads.map(row).join('') : '<div class="small mute chpad">Aucune conversation. Choisissez un compte ci-dessous.</div>'}</div>
-    <div class="chsec">En ligne <span class="small mute">(${onl.length})</span></div><div id="chonl">${onl.length ? onl.map(usr).join('') : '<div class="small mute chpad">Personne d\'autre n\'est connecté.</div>'}</div>
-    <div class="chsec">Hors ligne</div><div id="choff">${off.map(usr).join('')}</div>`;
+    <div class="chsec">En ligne <span class="chcount on">${onl.length}</span></div><div id="chonl">${onl.length ? onl.map(usr).join('') : '<div class="small mute chpad">Personne d\'autre n\'est connecté.</div>'}</div>
+    <div class="chsec">Hors ligne <span class="chcount">${off.length}</span></div><div id="choff">${off.map(usr).join('')}</div>`;
   el.querySelectorAll('[data-chu]').forEach(b => { b.onclick = async () => { try { const r = await sb.rpc('chat_open', { p_user: b.dataset.chu }); if (r.error) throw r.error; location.hash = '#/chat?t=' + r.data; } catch (e) { uiNote(e.message); } }; });
   $('#chq').oninput = () => { const v = $('#chq').value.trim().toLowerCase(); el.querySelectorAll('.chrow').forEach(r => { r.hidden = !!v && !r.textContent.toLowerCase().includes(v); }); };
   $('#chgrp').onclick = chatNewGroup;
@@ -105,13 +127,13 @@ async function chatOpen(id, my) {
   CH.cur = id; const t = CH.threads.find(x => x.id === id); if (!t) return;
   $('#chlist').classList.add('hasc'); const el = $('#chmain'); el.classList.add('on');
   const o = chatOther(t), on = o ? chatOnline(o.user_id) : false, grp = t.kind === 'group';
-  el.innerHTML = `<div class="chhead"><a href="#/chat" class="chback" aria-label="Retour à la liste">‹</a>${chatAvatar(chatTitle(t), on)}<span class="chtx"><b>${esc(chatTitle(t))}</b><span class="small mute" id="chsub">${grp ? esc(t.members.map(m => m.name).join(', ')) : on ? '<span class="ok">en ligne</span>' : o && CH.umap[o.user_id] && CH.umap[o.user_id].last_seen ? 'vu ' + esc(chatWhen(CH.umap[o.user_id].last_seen)) : 'hors ligne'}</span></span>
-    <span class="chacts">${grp ? `<button type="button" class="small ghost" id="chadd" title="Ajouter un membre">＋ Membre</button><button type="button" class="small ghost" id="chleave" title="Quitter le groupe">Quitter</button>` : `<button type="button" class="small" id="chcalla" title="Appel audio">📞</button><button type="button" class="small" id="chcallv" title="Appel vidéo">🎥</button>`}</span></div>
+  el.innerHTML = `<div class="chhead"><a href="#/chat" class="chback" aria-label="Retour à la liste">${chIco('back')}</a>${chatAvatar(chatTitle(t), on)}<span class="chtx"><b>${esc(chatTitle(t))}</b><span class="small mute" id="chsub">${grp ? esc(t.members.map(m => m.name).join(', ')) : on ? '<span class="ok">en ligne</span>' : o && CH.umap[o.user_id] && CH.umap[o.user_id].last_seen ? 'vu ' + esc(chatWhen(CH.umap[o.user_id].last_seen)) : 'hors ligne'}</span></span>
+    <span class="chacts">${grp ? `<button type="button" class="chround" id="chadd" title="Ajouter un membre">${chIco('plus')}</button><button type="button" class="chround" id="chleave" title="Quitter le groupe">${chIco('leave')}</button>` : `<button type="button" class="chround" id="chcalla" title="Appel audio">${chIco('phone')}</button><button type="button" class="chround" id="chcallv" title="Appel vidéo">${chIco('video')}</button>`}</span></div>
     <div class="chmsgs" id="chmsgs"><div class="loading">Chargement…</div></div>
-    <form class="chcomp" id="chcomp"><button type="button" class="ghost chico" id="chfile" title="Envoyer un fichier (PDF, image, tableur… ${CH_MAX_MB} Mo au plus)">📎</button><input type="file" id="chfilein" hidden multiple>
-      <textarea id="chtxt" rows="1" placeholder="Écrire un message…" aria-label="Message"></textarea>
-      <button type="button" class="ghost chico" id="chmic" title="Message audio (appuyer pour enregistrer, appuyer encore pour envoyer)">🎤</button><span id="chrec" class="chrec" hidden></span>
-      <button type="submit" class="chico chsend" title="Envoyer">➤</button></form>`;
+    <form class="chcomp" id="chcomp"><button type="button" class="chico" id="chfile" title="Envoyer un fichier (PDF, image, tableur… ${CH_MAX_MB} Mo au plus)">${chIco('clip')}</button><input type="file" id="chfilein" hidden multiple>
+      <textarea id="chtxt" rows="1" placeholder="Message…" aria-label="Message"></textarea>
+      <button type="button" class="chico" id="chmic" title="Message audio (appuyer pour enregistrer, appuyer encore pour envoyer)">${chIco('mic')}</button><span id="chrec" class="chrec" hidden></span>
+      <button type="submit" class="chico chsend" title="Envoyer">${chIco('send')}</button></form>`;
   const { data, error } = await sb.from('chat_messages').select('*').eq('thread_id', id).order('id', { ascending: false }).limit(300);
   if (my !== ROUTING || CH.cur !== id) return;
   if (error) { $('#chmsgs').innerHTML = msg(esc(error.message), 'err'); return; }
@@ -155,11 +177,16 @@ function chatCallTxt(m) {
   const [kind, st] = String(m.body || '').split(' '), ic = kind === 'video' ? '🎥' : '📞', mine = m.user_id === chatMe();
   const lbl = { ringing: 'Appel en cours…', accepted: 'Communication en cours', ended: 'Appel ' + (kind === 'video' ? 'vidéo' : 'audio') + (m.duration_s != null ? ' · ' + chatDur(m.duration_s) : ''),
     declined: mine ? 'Appel refusé' : 'Appel refusé par vous', missed: mine ? 'Sans réponse' : 'Appel manqué', busy: 'Occupé', failed: 'Appel échoué' }[st] || 'Appel';
-  return `<span class="chcall ${st}">${ic} ${esc(lbl)}</span>`;
+  return `<span class="chcalltxt ${st}">${ic} ${esc(lbl)}</span>`;
 }
-async function chatMsgHtml(m) {
-  const mine = m.user_id === chatMe(), when = fmtDT(m.created_at);
-  if (m.kind === 'system') return `<div class="chsys">${esc(m.body || '')} · ${esc(when)}</div>`;
+/** Message à la suite du précédent (même personne, même jour, moins de 5 min) : bulles groupées, nom affiché une fois */
+function chatCont(m, prev) {
+  return !!(prev && prev.user_id === m.user_id && ![m.kind, prev.kind].some(k => k === 'system' || k === 'call')
+    && chatDayKey(prev.created_at) === chatDayKey(m.created_at) && new Date(m.created_at) - new Date(prev.created_at) < 5 * 60000);
+}
+async function chatMsgHtml(m, prev) {
+  const mine = m.user_id === chatMe(), when = fmtDT(m.created_at), cont = chatCont(m, prev);
+  if (m.kind === 'system') return `<div class="chsys">${esc(m.body || '')} · ${esc(chatHM(m.created_at))}</div>`;
   let body;
   if (m.deleted_at) body = '<i class="mute">Message retiré</i>';
   else if (m.kind === 'text') body = chatText(m.body || '');
@@ -171,13 +198,15 @@ async function chatMsgHtml(m) {
     else if (m.kind === 'audio' && url) body = `<audio controls preload="metadata" src="${esc(url)}"></audio><span class="small mute"> 🎤 ${m.duration_s != null ? chatDur(m.duration_s) : ''}</span>`;
     else body = `<a href="${esc(url || '#')}" target="_blank" rel="noopener" class="chfile">📎 ${esc(m.file_name || 'Fichier')}</a> <span class="small mute">${chatSize(m.file_size)}</span>${url ? '' : ' <span class="small warn">(fichier illisible)</span>'}`;
   }
-  const t = CH.threads.find(x => x.id === m.thread_id), who = !mine && t && t.kind === 'group' ? `<span class="chwho">${esc(chatName(m.user_id))}</span>` : '';
-  return `<div class="chm${mine ? ' me' : ''}${m.kind === 'call' ? ' call' : ''}" data-chm="${m.id}">${who}<div class="chb">${body}</div><span class="chtime">${esc(when)}${mine && !m.deleted_at && m.kind !== 'call' ? ` <button type="button" class="chdel" data-chdel="${m.id}" title="Retirer le message">×</button>` : ''}</span></div>`;
+  const t = CH.threads.find(x => x.id === m.thread_id), who = !mine && !cont && t && t.kind === 'group' ? `<span class="chwho" style="--h:${chHue(chatName(m.user_id))}">${esc(chatName(m.user_id))}</span>` : '';
+  const del = mine && !m.deleted_at && m.kind !== 'call' ? `<button type="button" class="chdel" data-chdel="${m.id}" title="Retirer le message">×</button>` : '';
+  return `<div class="chm${mine ? ' me' : ''}${m.kind === 'call' ? ' call' : ''}${cont ? ' cont' : ''}" data-chm="${m.id}" data-day="${chatDayKey(m.created_at)}">${who}<div class="chb">${body}<span class="chtime" title="${esc(when)}">${esc(chatHM(m.created_at))}${del}</span></div></div>`;
 }
 async function chatPaintMsgs() {
   const box = $('#chmsgs'); if (!box) return;
-  const html = []; for (const m of CH.msgs) html.push(await chatMsgHtml(m));
-  box.innerHTML = html.join('') || '<div class="chsys">Aucun message. Écrivez le premier.</div>';
+  const html = []; let prev = null;
+  for (const m of CH.msgs) { if (!prev || chatDayKey(prev.created_at) !== chatDayKey(m.created_at)) html.push(`<div class="chday"><span>${esc(chatDayLbl(m.created_at))}</span></div>`); html.push(await chatMsgHtml(m, prev)); prev = m; }
+  box.innerHTML = html.join('') || '<div class="chsys chnone">Aucun message. Écrivez le premier.</div>';
   box.querySelectorAll('[data-chdel]').forEach(b => { b.onclick = async () => { if (!(await ask('Retirer ce message ?'))) return; await sb.rpc('chat_delete', { p_id: +b.dataset.chdel }); const m = CH.msgs.find(x => x.id === +b.dataset.chdel); if (m) { m.deleted_at = new Date().toISOString(); m.body = null; } chatPaintMsgs(); }; });
   box.scrollTop = box.scrollHeight;
 }
@@ -185,7 +214,11 @@ async function chatAppend(m) {
   const box = $('#chmsgs'); if (!box || CH.cur !== m.thread_id) return;
   if (box.querySelector('[data-chm="' + m.id + '"]')) return;
   const atEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-  box.insertAdjacentHTML('beforeend', await chatMsgHtml(m));
+  const i = CH.msgs.findIndex(x => x.id === m.id), prev = i > 0 ? CH.msgs[i - 1] : i < 0 ? CH.msgs[CH.msgs.length - 1] : null;
+  const none = box.querySelector('.chnone'); if (none) none.remove();
+  const last = [...box.querySelectorAll('[data-day]')].pop();
+  if (!last || last.dataset.day !== chatDayKey(m.created_at)) box.insertAdjacentHTML('beforeend', `<div class="chday"><span>${esc(chatDayLbl(m.created_at))}</span></div>`);
+  box.insertAdjacentHTML('beforeend', await chatMsgHtml(m, prev && prev.id !== m.id ? prev : null));
   box.querySelectorAll('[data-chdel]').forEach(b => { if (!b.onclick) b.onclick = async () => { if (!(await ask('Retirer ce message ?'))) return; await sb.rpc('chat_delete', { p_id: +b.dataset.chdel }); chatPaintMsgs(); }; });
   if (atEnd || m.user_id === chatMe()) box.scrollTop = box.scrollHeight;
 }
@@ -210,10 +243,26 @@ async function chatUpload(id, file, kind, dur) {
 
 // ---------- Message audio (MediaRecorder) ----------
 function chatRecMime() { const c = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg']; return c.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || ''; }
+/**
+ * Micro / caméra refusés (23/11/2026, signalé par Ahmed) : message clair selon l'appareil au lieu de l'erreur brute du navigateur.
+ * Application Mac avant 2.2 : macOS bloquait le micro (runtime renforcé sans autorisations) ; 2.2 = autorisations ajoutées.
+ */
+function chatMediaErr(e, video) {
+  const what = video ? 'Caméra / micro' : 'Micro', n = (e && e.name) || '', m = String((e && e.message) || e || '');
+  const app = window.LUDY_APP, mac = /Mac/i.test(navigator.platform || navigator.userAgent), android = /LudyAndroid/i.test(navigator.userAgent);
+  const ver = app && app.version ? String(app.version).split('.').map(Number) : null, old = ver && (ver[0] < 2 || (ver[0] === 2 && ver[1] < 2));
+  if (n === 'NotFoundError' || /not found|no device/i.test(m)) return what + ' introuvable : branchez un micro' + (video ? ' / une caméra' : '') + '.';
+  if (n === 'NotReadableError' || /in use|could not start/i.test(m)) return what + ' déjà utilisé(e) par une autre application (Zoom, Teams, FaceTime…) : fermez-la puis réessayez.';
+  if (app && mac && old) return what + ' bloqué(e) par macOS dans cette version de Ludy (' + app.version + '). Installez Ludy 2.2 (page Application), puis acceptez la demande d\'accès au micro' + (video ? ' et à la caméra' : '') + '.';
+  if (app && mac) return what + ' refusé(e) : Réglages Système > Confidentialité et sécurité > ' + (video ? 'Microphone et Caméra' : 'Microphone') + ' > activer Ludy, puis quittez Ludy (Cmd + Q) et rouvrez-le.';
+  if (android) return what + ' refusé(e) : Réglages du téléphone > Applications > Ludy > Autorisations > autoriser ' + (video ? 'le micro et l\'appareil photo' : 'le micro') + '.';
+  if (app) return what + ' refusé(e) : Paramètres Windows > Confidentialité et sécurité > ' + (video ? 'Microphone et Caméra' : 'Microphone') + ' > autoriser les applications de bureau, puis rouvrez Ludy.';
+  return what + ' refusé(e) : cliquez sur le cadenas 🔒 de la barre d\'adresse > ' + (video ? 'Micro et Caméra' : 'Micro') + ' > Autoriser, puis réessayez.';
+}
 async function chatRecToggle(id) {
   if (CH.rec) { chatRecStop(); return; }
   if (!navigator.mediaDevices || !window.MediaRecorder) { uiNote('Enregistrement audio non disponible dans ce navigateur.'); return; }
-  let stream; try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { uiNote('Micro refusé : ' + e.message); return; }
+  let stream; try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { uiNote(chatMediaErr(e, false)); return; }
   const mime = chatRecMime(), rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined), chunks = [];
   CH.rec = { rec, stream, chunks, t0: Date.now(), id, cancel: false };
   rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -232,8 +281,8 @@ async function chatRecToggle(id) {
 function chatRecStop(cancel) { const r = CH.rec; if (!r) return; r.cancel = !!cancel; try { r.rec.stop(); } catch (e) { CH.rec = null; r.stream.getTracks().forEach(t => t.stop()); chatRecPaint(); } }
 function chatRecPaint() {
   const el = $('#chrec'), b = $('#chmic'); if (!el || !b) return;
-  if (!CH.rec) { el.hidden = true; b.classList.remove('rec'); b.textContent = '🎤'; b.title = 'Message audio (appuyer pour enregistrer, appuyer encore pour envoyer)'; clearInterval(CH.recT); return; }
-  el.hidden = false; b.classList.add('rec'); b.textContent = '⏹'; b.title = 'Arrêter et envoyer';
+  if (!CH.rec) { el.hidden = true; b.classList.remove('rec'); b.innerHTML = chIco('mic'); b.title = 'Message audio (appuyer pour enregistrer, appuyer encore pour envoyer)'; clearInterval(CH.recT); return; }
+  el.hidden = false; b.classList.add('rec'); b.innerHTML = chIco('stop'); b.title = 'Arrêter et envoyer';
   const tick = () => { if (!CH.rec) return; el.innerHTML = `● ${chatDur((Date.now() - CH.rec.t0) / 1000)} <button type="button" class="ghost small" id="chreccan">annuler</button>`; const c = $('#chreccan'); if (c) c.onclick = () => chatRecStop(true); };
   tick(); clearInterval(CH.recT); CH.recT = setInterval(tick, 500);
 }
@@ -329,7 +378,7 @@ async function chatCall(id, kind) {
   if (!window.RTCPeerConnection || !navigator.mediaDevices) { uiNote('Appels non disponibles dans ce navigateur.'); return; }
   if (!chatOnline(o.user_id) && !(await ask(o.name + ' n\'est pas en ligne sur Ludy : appeler quand même ?'))) return;
   let local; try { local = await navigator.mediaDevices.getUserMedia({ audio: true, video: kind === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false }); }
-  catch (e) { uiNote((kind === 'video' ? 'Caméra / micro' : 'Micro') + ' refusé(e) : ' + e.message); return; }
+  catch (e) { uiNote(chatMediaErr(e, kind === 'video')); return; }
   const r = await sb.rpc('chat_call_start', { p_thread: id, p_kind: kind });
   if (r.error) { local.getTracks().forEach(x => x.stop()); uiNote(r.error.message); return; }
   const c = r.data;
@@ -413,7 +462,7 @@ async function chatAccept() {
   const r = CH.ring; if (!r) return;
   clearInterval(CH.ringI); clearTimeout(CH.ringTo2);
   let local; try { local = await navigator.mediaDevices.getUserMedia({ audio: true, video: r.kind === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false }); }
-  catch (e) { uiNote((r.kind === 'video' ? 'Caméra / micro' : 'Micro') + ' refusé(e) : ' + e.message); sb.rpc('chat_call_set', { p_id: r.id, p_status: 'declined' }).then(null, () => { }); chatRingStop(); return; }
+  catch (e) { uiNote(chatMediaErr(e, r.kind === 'video')); sb.rpc('chat_call_set', { p_id: r.id, p_status: 'declined' }).then(null, () => { }); chatRingStop(); return; }
   const a = await sb.rpc('chat_call_set', { p_id: r.id, p_status: 'accepted' }); if (a.error) { local.getTracks().forEach(x => x.stop()); chatRingStop('Appel déjà terminé'); return; }
   CH.ring = null; document.querySelectorAll('#chring').forEach(x => x.remove()); if (typeof svTitle === 'function') svTitle(false);
   CH.call = { id: r.id, thread: r.thread, kind: r.kind, role: 'callee', other: r.caller, name: r.name, local, pc: null, status: 'connecting', sigAfter: 0, t0: 0, pend: [], mic: true, cam: true };
