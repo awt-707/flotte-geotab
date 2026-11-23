@@ -22,8 +22,8 @@ function psVerdict(r) {
   if (r.verdict === 'non mesuré') return '<span class="badge">Non mesuré</span>';
   return '<span class="badge info">Mesure en cours</span>';
 }
-/** Un cas encore ouvert (mesure en cours ou confirmé « a roulé ») : affiché sur En direct ; course réalisée / sur place / non mesuré = classé, masqué */
-function psOpen(r) { return r.level === 'Suspect' && (!r.verdict || r.verdict === 'roulé'); }
+/** Un cas affiché sur En direct : mesure en cours, ou « a roulé » corroboré par une annulation Uber ; course réalisée / sur place / non mesuré / roulé sans annulation = classé, masqué */
+function psOpen(r) { return r.level === 'Suspect' && (!r.verdict || (r.verdict === 'roulé' && r.cx_status)); }
 function psSeen(k) { try { return !!JSON.parse(localStorage.getItem('psSeen') || '{}')[k]; } catch (e) { return false; } }
 function psMark(k) { try { const o = JSON.parse(localStorage.getItem('psSeen') || '{}'); o[k] = Date.now(); Object.keys(o).forEach(x => { if (Date.now() - o[x] > 2 * 86400000) delete o[x]; }); localStorage.setItem('psSeen', JSON.stringify(o)); } catch (e) { } }
 async function psLoad(sinceMs) {
@@ -57,8 +57,9 @@ function psOnRow(r, quiet) {
   if (!ok) return;
   const old = !PS.primed && Date.now() - new Date(r.next_at).getTime() > 10 * 60000;
   // 23/11/2026 : plus de notification à la création (beaucoup de cas sont de vraies courses, « Course en cours » ratée en direct) ;
-  // l'alerte part seulement au verdict « a roulé sans course Uber » confirmé par le collecteur (km Geotab, croisé avec le rapport Uber).
-  if (r.verdict === 'roulé' && !psSeen('r' + r.id)) { if (old && !PS.primed) psMark('r' + r.id); else psToast(r, 'roule'); }
+  // l'alerte part seulement au verdict « a roulé sans course Uber » confirmé par le collecteur ET corroboré par une annulation Uber
+  // (le vrai motif : le client annule, le chauffeur le prend en cachette). Les « roulé » sans annulation restent au tableau, sans alerte.
+  if (r.verdict === 'roulé' && r.cx_status && !psSeen('r' + r.id)) { if (old && !PS.primed) psMark('r' + r.id); else psToast(r, 'roule'); }
   if (pageOf() === 'suspects' && typeof window.__psRepaint === 'function') window.__psRepaint();
 }
 async function psGeo(key) {
@@ -68,7 +69,7 @@ async function psGeo(key) {
 function psBody(r) {
   return `<div><b>${esc(r.driver_name || 'Chauffeur Uber')}</b> ${r.plate ? plate(r.plate) : ''}</div>
     <div class="small">En route vers le client de ${esc(localHM(new Date(r.route_from)))} à ${esc(localHM(new Date(r.route_to)))} (${esc(psDur(r.route_from, r.route_to))}), puis <b>${esc(psNext(r.next_status))}</b> sans course en cours${r.lat != null ? ` · <a href="${esc(osmUrl(r.lat, r.lng))}" target="_blank" rel="noopener">lieu</a>` : ''}</div>
-    <div class="small">Km Geotab après : <b>${esc(psKmTxt(r))}</b>${r.geo ? ' · GPS : ' + esc(r.geo) : ''}</div>`;
+    <div class="small">Km Geotab après : <b>${esc(psKmTxt(r))}</b>${r.geo ? ' · GPS : ' + esc(r.geo) : ''}</div>${r.cx_status ? `<div class="small"><b>Annulation Uber par le ${esc(r.cx_status)}</b></div>` : ''}`;
 }
 async function psToast(r, kind) {
   const k = (kind === 'roule' ? 'r' : 'n') + r.id; psMark(k);

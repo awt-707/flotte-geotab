@@ -54,6 +54,9 @@ function suspectKmStep_() {
     const tripWin = t => { const q = new Date(t.requested_at).getTime(), d = t.dropoff_at ? new Date(t.dropoff_at).getTime() : q + 30 * MIN; return { q, d }; };
     const overlap = t => { const w = tripWin(t); return w.q <= winEnd && w.d >= rf - MIN; };   // course qui recoupe la période en route → fenêtre
     const doneTrip = trips.some(t => t.status === 'completed' && overlap(t));
+    // annulation Uber qui chevauche la période (client = le vrai motif : le chauffeur fait annuler puis prend la course en cachette)
+    const cancels = trips.filter(t => (t.status === 'rider_cancelled' || t.status === 'driver_cancelled') && overlap(t));
+    const cx = cancels.some(t => t.status === 'rider_cancelled') ? 'client' : cancels.length ? 'chauffeur' : null;
     // verdict figé : dès qu'une course réalisée est trouvée (même avant la fin de la fenêtre), ou quand la fenêtre est passée
     const fixed = doneTrip || done;
     let m = { km: 0, kmFree: 0, movedM: 0, n: 0 }, note;
@@ -71,7 +74,7 @@ function suspectKmStep_() {
     } else { return; }   // fenêtre pas finie et pas de course réalisée : rien à figer encore
     const verdict = !fixed ? null : doneTrip ? 'course réalisée' : !m.n ? 'non mesuré' : m.kmFree >= thr ? 'roulé' : 'sur place';
     if (verdict === 'roulé') roule++;
-    sbReq_('patch', 'uber_suspects?id=eq.' + r.id, { km_after: m.n ? m.km : null, km_free: m.n ? m.kmFree : null, moved_m: m.n ? m.movedM : null, km_done: fixed, km_note: note || null, verdict, updated_at: new Date(now).toISOString() }, { Prefer: 'return=minimal' });
+    sbReq_('patch', 'uber_suspects?id=eq.' + r.id, { km_after: m.n ? m.km : null, km_free: m.n ? m.kmFree : null, moved_m: m.n ? m.movedM : null, km_done: fixed, km_note: note || null, verdict, cx_status: doneTrip ? null : cx, updated_at: new Date(now).toISOString() }, { Prefer: 'return=minimal' });
     n++;
   });
   return n ? 'Courses suspectes : ' + n + ' mesurée(s)' + (roule ? ', dont ' + roule + ' avec déplacement sans course Uber' : '') : '';
