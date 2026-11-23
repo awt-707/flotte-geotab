@@ -157,6 +157,12 @@ const PFW_SEEN = 'pfOffSeen';
 function pfwCan() { return !!(S.profile && ['admin', 'manager', 'viewer'].includes(S.profile.role)) && (typeof canSee !== 'function' || canSee('direct')); }
 function pfwSeen(k) { try { return !!(JSON.parse(localStorage.getItem(PFW_SEEN) || '{}'))[k]; } catch (e) { return false; } }
 function pfwMark(k) { try { const o = JSON.parse(localStorage.getItem(PFW_SEEN) || '{}'), cut = Date.now() - 2 * 86400000; o[k] = Date.now(); Object.keys(o).forEach(x => { if (o[x] < cut) delete o[x]; }); localStorage.setItem(PFW_SEEN, JSON.stringify(o)); } catch (e) { } }
+// Alerte coupée pour un chauffeur (bouton « Stopper l'alerte ») : par identifiant Uber, jusqu'à une heure donnée (fin du shift / contrat).
+const PFW_MUTE = 'pfOffMute';
+function pfwId(x) { return x.driverId || x.key; }
+function pfwMuteMap() { try { return JSON.parse(localStorage.getItem(PFW_MUTE) || '{}'); } catch (e) { return {}; } }
+function pfwMutedUntil(id) { const u = +pfwMuteMap()[id] || 0; return u > Date.now() ? u : 0; }
+function pfwMute(id, until) { try { const o = pfwMuteMap(), now = Date.now(); o[id] = until; Object.keys(o).forEach(k => { if (+o[k] <= now) delete o[k]; }); localStorage.setItem(PFW_MUTE, JSON.stringify(o)); } catch (e) { } }
 /** Contrats en cours (par véhicule et par chauffeur), retours demandés, pauses ouvertes ; relus toutes les 2 min */
 async function pfwContext() {
   if (PFW.ctx && Date.now() - PFW.ctxAt < 120000) return PFW.ctx;
@@ -188,11 +194,13 @@ async function pfwTick() {
       if (ctx.ret.has(c.num) || ctx.paused.has(c.vehicle_key)) return false;          // rappelé à l'agence, ou en pause
       if (a) { const v = (S.vehList || []).find(x => x.key === c.vehicle_key); if (v && String(v.agency_id) !== a) return false; }
       return true; } });
-    const live = new Set(list.map(x => x.key));
+    const live = new Set(list.map(x => pfwId(x)));
     // reconnecté (ou plus concerné) : bandeau passé au vert puis retiré
     Object.keys(PFW.toasts).forEach(k => { if (!live.has(k)) { const t = PFW.toasts[k]; delete PFW.toasts[k]; pfwBack(t, k); } });
     for (const x of list) {
-      if (PFW.toasts[x.key]) { pfwUpdate(x, ctx); continue; }
+      const id = pfwId(x);
+      if (pfwMutedUntil(id)) { if (PFW.toasts[id]) { PFW.toasts[id].remove(); delete PFW.toasts[id]; } continue; }   // alerte coupée pour ce chauffeur
+      if (PFW.toasts[id]) { pfwUpdate(x, ctx); continue; }   // même chauffeur déjà affiché (clignotement / page rechargée) : actualisé, pas de nouvelle notification
       if (pfwSeen(x.key)) continue;
       if (!PFW.primed && now - x.lastAt > 10 * 60000) { pfwMark(x.key); continue; }   // à l'ouverture : vieilles déconnexions pas rejouées
       await pfwShow(x, ctx, ctrOf(x.d, x.r));
@@ -217,22 +225,32 @@ function pfwBody(x) {
 }
 async function pfwShow(x, ctx, c) {
   pfwInfo(x, ctx, c); x.geo = await pfwGeo(x);
+  const id = pfwId(x);
   let box = $('#toasts'); if (!box) { box = document.createElement('div'); box.id = 'toasts'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
-  const t = document.createElement('div'); t.className = 'toast crit pftoast'; t.dataset.k = x.key;
+  const t = document.createElement('div'); t.className = 'toast crit pftoast'; t.dataset.k = id;
   t.innerHTML = `<button class="x" aria-label="Fermer">×</button><b>🔴 CHAUFFEUR DÉCONNECTÉ D'UBER</b><div class="pfbody">${pfwBody(x)}</div>
-    <div class="row pfact"><button class="small" data-a="wa">WhatsApp au chauffeur</button><button class="small ghost" data-a="share">Partager sur WhatsApp</button><button class="small ghost" data-a="ok">Vu</button></div>`;
-  const close = () => { pfwMark(x.key); delete PFW.toasts[x.key]; t.remove(); };
+    <div class="row pfact"><button class="small" data-a="wa">WhatsApp au chauffeur</button><button class="small ghost" data-a="share">Partager sur WhatsApp</button><button class="small ghost" data-a="ok">Vu</button><button class="small ghost" data-a="mute">🔕 Stopper l'alerte</button></div>`;
+  const close = () => { pfwMark(x.key); delete PFW.toasts[id]; t.remove(); };
   t.querySelector('.x').onclick = close; t.querySelector('[data-a="ok"]').onclick = close;
+  // Stopper : plus d'alerte « déconnecté d'Uber » pour ce chauffeur jusqu'à la fin de son contrat / shift (sinon 12 h)
+  t.querySelector('[data-a="mute"]').onclick = () => {
+    const until = (x.c && x.c._end && x.c._end > Date.now()) ? x.c._end : Date.now() + 12 * 3600000;
+    pfwMute(id, until); delete PFW.toasts[id]; pfwMark(x.key);
+    t.className = 'toast ok pftoast';
+    t.innerHTML = `<button class="x" aria-label="Fermer">×</button><b>🔕 Alerte coupée pour ${esc(x.name || 'ce chauffeur')}</b>
+      <div class="small">Plus d'alerte « déconnecté d'Uber » pour ce chauffeur jusqu'à ${esc(localHM(new Date(until)))}.</div>`;
+    t.querySelector('.x').onclick = () => t.remove(); setTimeout(() => { if (t.isConnected) t.remove(); }, 6000);
+  };
   t.querySelector('[data-a="wa"]').onclick = () => { const txt = pfWaOff(Object.assign({}, x, { now: Date.now() }), ms => localHM(new Date(ms)), svDur, typeof svDurAr === 'function' ? svDurAr : null);
     if (x.phone) svWa(x.phone, txt); else { const u = 'https://wa.me/?text=' + encodeURIComponent(txt); if (!openOut(u)) window.open(u, '_blank', 'noopener'); } };
   t.querySelector('[data-a="share"]').onclick = () => { const u = 'https://wa.me/?text=' + encodeURIComponent(pfShareOff(Object.assign({}, x, { now: Date.now() }), ms => localHM(new Date(ms)), svDur)); if (!openOut(u)) window.open(u, '_blank', 'noopener'); };
-  box.prepend(t); PFW.toasts[x.key] = t; t._x = x;
+  box.prepend(t); PFW.toasts[id] = t; t._x = x;
   if (typeof svBeep === 'function') svBeep();
   try { if (document.hidden && window.Notification && Notification.permission === 'granted') {
-    const n = new Notification('Ludy · chauffeur déconnecté d\'Uber', { body: (x.name || '') + (x.plate ? ' · ' + x.plate : '') + ' · depuis ' + localHM(new Date(x.lastAt)), tag: x.key, requireInteraction: true, icon: 'icon-192.png' });
+    const n = new Notification('Ludy · chauffeur déconnecté d\'Uber', { body: (x.name || '') + (x.plate ? ' · ' + x.plate : '') + ' · depuis ' + localHM(new Date(x.lastAt)), tag: id, requireInteraction: true, icon: 'icon-192.png' });
     n.onclick = () => { try { window.focus(); } catch (e) { } n.close(); }; } } catch (e) { }
 }
-function pfwUpdate(x, ctx) { const t = PFW.toasts[x.key]; if (!t || !t._x) return; const b = t.querySelector('.pfbody'); if (b) b.innerHTML = pfwBody(Object.assign(t._x, { now: Date.now() })); }
+function pfwUpdate(x, ctx) { const t = PFW.toasts[pfwId(x)]; if (!t || !t._x) return; const b = t.querySelector('.pfbody'); if (b) b.innerHTML = pfwBody(Object.assign(t._x, { now: Date.now() })); }
 function pfwBack(t, k) {
   if (!t || !t.isConnected) return;
   const x = t._x || {}, back = PF.latest.find(r => r.source === 'uber' && r.driver_id === x.driverId && Date.now() - new Date(r.observed_at).getTime() <= PF_FRESH_MS);

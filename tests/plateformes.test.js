@@ -145,6 +145,17 @@ test('page : bandeau rouge « chauffeur déconnecté d\'Uber » (WhatsApp, parta
     await page.evaluate(() => pfwTick());
     await page.waitForSelector('.pftoast.ok');
     assert.match(await page.innerText('.pftoast.ok'), /Reconnecté à Uber[\s\S]*ALPHA Test/);
+    // « Stopper l'alerte » : coupe les alertes « déconnecté d'Uber » de ce chauffeur, aucune nouvelle alerte même s'il reste hors ligne
+    await page.evaluate(() => { Object.values(PFW.toasts).forEach(t => t.remove()); PFW.toasts = {}; try { localStorage.removeItem('pfOffSeen'); localStorage.removeItem('pfOffMute'); } catch (e) {} });
+    env.psql("update uber_live set observed_at = now() - interval '3 minutes' where plate = 'WW030070'");
+    await page.evaluate(() => pfwTick());
+    await page.waitForSelector('.pftoast.crit');
+    await page.click('.pftoast [data-a="mute"]');
+    await page.waitForSelector('.pftoast.ok');
+    assert.match(await page.innerText('.pftoast.ok'), /Alerte coupée[\s\S]*ALPHA Test/);
+    await page.evaluate(() => { document.querySelectorAll('.pftoast').forEach(t => t.remove()); return pfwTick(); });
+    await page.waitForTimeout(400);
+    assert.strictEqual(await page.locator('.pftoast.crit').count(), 0, 'chauffeur coupé : plus d\'alerte de déconnexion');
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.psql('truncate uber_live, uber_live_readers, uber_catalog'); env.resetDb(); }
 });
