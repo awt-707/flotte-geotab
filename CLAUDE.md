@@ -261,6 +261,8 @@ Ajouté le 23/11/2026 (demande d'Ahmed : couper une alerte qui spamme, ex. « ch
 
 Ajouté le 23/11/2026 (demande d'Ahmed) : **Contrats de travail, champs vidés après génération** : une fois le PDF créé, le formulaire du salarié repart vierge (`ctrResetDraft`, contrat.js : société, agence et modèle gardés ; nom, CIN, dates, salaire, chauffeur lié effacés) pour éditer le contrat suivant sans reste. Le panneau « Contrat prêt » et l'historique restent affichés (`pageContratsTravail` rappelé, `CT.last` conservé). Test : `tests/contrat.test.js`.
 
+Ajouté le 23/11/2026 (demande d'Ahmed : les cartes de droite d'En direct « bougent ») : **colonne des cartes véhicules triée et stable** (direct.js). Tri par **revenus Uber encaissés du contrat en cours décroissants** (`vcRevenue`, `vcardOrder` ; sans chiffre en bas, par plaque) au lieu de l'état (disponible/en route/en course) qui changeait en direct et faisait sauter les cartes ; la position de défilement est conservée à chaque rafraîchissement (`setVlist`). Test : `tests/site.test.js`, `tests/plateformes.test.js`.
+
 Le 21/10/2026, dépôt passé en **public** par Ahmed (minutes GitHub Actions épuisées) le temps de la mise en ligne, à repasser en privé ensuite.
 
 Reste à faire (par Ahmed, secrets et autorisations) :
