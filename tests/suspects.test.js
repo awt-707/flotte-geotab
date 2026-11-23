@@ -95,6 +95,17 @@ test('collecteur : km Geotab après le changement (hors course Uber), verdict ro
     env.psql("update vehicles set geotab_id = null where key = '968212WW'; update uber_suspects set km_done = false, verdict = null, km_after = null where plate = 'WW968212'");
     B.run('memoClear_(); suspectKmStep_()');
     assert.strictEqual(env.psql("select verdict || '|' || km_note from uber_suspects where plate = 'WW968212'"), 'non mesuré|Véhicule sans boîtier Geotab : non mesuré');
+    // a roulé AVEC une annulation du client dans le rapport Uber : cx_status = 'client' (sans la période on_trip ajoutée plus haut)
+    env.psql(`delete from uber_live_log where plate_key = '968211WW' and status = 'on_trip';
+      update uber_suspects set km_done = false, verdict = null, km_after = null, cx_status = null where plate = 'WW968211';
+      insert into uber_trips (uuid, agency_id, vehicle_key, plate, requested_at, status) values ('cx1', 1, '968211WW', 'WW968211', '${iso(NOW - 31 * 60000)}', 'rider_cancelled')`);
+    B.run('memoClear_(); suspectKmStep_()');
+    assert.strictEqual(env.psql("select verdict || '|' || coalesce(cx_status,'-') from uber_suspects where plate = 'WW968211'"), 'roulé|client', 'roulé corroboré par une annulation du client');
+    // course Uber completed chevauchant la période (« Course en cours » ratée en direct) : verdict « course réalisée », jamais suspect
+    env.psql(`update uber_suspects set km_done = false, verdict = null, km_after = null, cx_status = null where plate = 'WW968211';
+      insert into uber_trips (uuid, agency_id, vehicle_key, plate, requested_at, dropoff_at, status) values ('ct1', 1, '968211WW', 'WW968211', '${iso(NOW - 32 * 60000)}', '${iso(NOW - 24 * 60000)}', 'completed')`);
+    B.run('memoClear_(); suspectKmStep_()');
+    assert.strictEqual(env.psql("select verdict || '|' || coalesce(cx_status,'-') || '|' || km_note from uber_suspects where plate = 'WW968211'"), 'course réalisée|-|Course Uber réalisée pendant la période (« Course en cours » non vue en direct) : pas suspect');
   } finally { env.resetDb(); env.psql(`update profiles set role = 'pending' where user_id = '${MGR}'`); }
 });
 
@@ -108,17 +119,25 @@ test('site : alerte rouge à l\'instant sur toutes les pages, seconde alerte « 
     push(ADMIN, [{ plate: 'WW968211', status: 'to_pickup', name: 'Aymane', lat: 31.63, lng: -8.01 }]); back(4);
     push(ADMIN, [{ plate: 'WW968211', status: 'available', name: 'Aymane' }]);
     await page.evaluate(() => psTick());
-    await page.waitForSelector('.toast.pstoast');
-    const t = (await page.innerText('.toast.pstoast')).replace(/\s+/g, ' ');
-    assert.match(t, /COURSE SUSPECTE[\s\S]*Aymane[\s\S]*WW968211/); assert.match(t, /En route vers le client de \d\d:\d\d à \d\d:\d\d \(4 min[^)]*\), puis Disponible sans course en cours/); assert.match(t, /mesure en cours/);
-    // fiche du véhicule et bloc d'En direct
+    // pas de notification à la création (beaucoup de cas sont de vraies courses) : le cas s'affiche en silence sur En direct
     await page.waitForFunction(() => /Course suspecte/.test(document.querySelector('#vlist') ? document.querySelector('#vlist').innerText : ''));
     assert.match(await page.innerText('#livesusp'), /Courses suspectes \(3 dernières heures\) : 1/);
-    // le collecteur mesure : a roulé = seconde alerte rouge
-    env.psql("update uber_suspects set km_after = 3.1, km_free = 3.1, moved_m = 2200, km_done = true, verdict = 'roulé', km_note = '3,1 km parcourus en 20 min après le passage en Disponible, dont 3,1 km hors course Uber (jusqu''à 2,2 km du lieu) : le véhicule a roulé sans course Uber (course cachée probable)'");
+    assert.strictEqual(await page.locator('.toast.pstoast').count(), 0, 'aucune notification à la création');
+    // course Uber réalisée pendant la période (collecteur) : classée, retirée d'En direct, jamais d'alerte
+    env.psql("update uber_suspects set km_done = true, verdict = 'course réalisée', km_note = 'Course Uber réalisée pendant la période'");
     await page.evaluate(() => psTick());
-    await page.waitForFunction(() => /A ROULÉ SANS COURSE UBER/.test(document.querySelector('#toasts') ? document.querySelector('#toasts').innerText : ''));
-    assert.match((await page.innerText('#toasts')).replace(/\s+/g, ' '), /3,1 km hors course Uber/);
+    await page.waitForFunction(() => !/Course suspecte/.test(document.querySelector('#livesusp') ? document.querySelector('#livesusp').innerText : 'Course suspecte'));
+    assert.strictEqual(await page.locator('.toast.pstoast').count(), 0, 'course réalisée : jamais d\'alerte');
+    // a roulé mais SANS annulation Uber : reste au tableau, aucune alerte
+    env.psql("update uber_suspects set km_after = 3.1, km_free = 3.1, moved_m = 2200, km_done = true, verdict = 'roulé', cx_status = null, km_note = '3,1 km parcourus en 20 min après le passage en Disponible, dont 3,1 km hors course Uber (jusqu''à 2,2 km du lieu) : le véhicule a roulé sans course Uber (course cachée probable)'");
+    await page.evaluate(() => psTick());
+    await page.waitForTimeout(400);
+    assert.strictEqual(await page.locator('.toast.pstoast').count(), 0, 'a roulé sans annulation : pas d\'alerte');
+    // a roulé AVEC annulation du client = alerte rouge (la seule notification)
+    env.psql("update uber_suspects set cx_status = 'client'");
+    await page.evaluate(() => psTick());
+    await page.waitForSelector('.toast.pstoast');
+    assert.match((await page.innerText('.toast.pstoast')).replace(/\s+/g, ' '), /A ROULÉ SANS COURSE UBER[\s\S]*3,1 km hors course Uber[\s\S]*Annulation Uber par le client/);
     await page.waitForFunction(() => /A roulé sans course Uber|3,1 km/.test(document.querySelector('#vlist').innerText));
     // page des cas : annulation Uber rapprochée, classement, PDF
     env.psql(`insert into uber_trips (uuid, agency_id, vehicle_key, plate, driver_name, requested_at, status, km) values ('t1', 1, '968211WW', 'WW968211', 'Aymane', now() - interval '5 minutes', 'rider_cancelled', null)`);
