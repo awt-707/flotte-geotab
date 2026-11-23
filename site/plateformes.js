@@ -356,7 +356,7 @@ async function pfReaderSend() {
     if (!PFR.code || Date.now() - PFR.at > 300000) { const r = await fetch('uber_read.js', { cache: 'no-cache' }); if (!r.ok) return; PFR.code = await r.text(); PFR.at = Date.now(); }
     const sh = pfShiftNow();
     if (!PFS.at || Date.now() - PFS.at > 110000) await pfShiftLoad().catch(() => { });   // contrats à faire lire (même hors page En direct)
-    await appInvoke('uber_eval', { code: (sh ? 'window.__ludyShift=' + JSON.stringify({ key: sh.key, from: sh.from }) + ';\n' : '') + 'window.__ludyCtrs=' + JSON.stringify({ at: Date.now(), list: (PFS.ask || []).map(x => ({ p: x.p, d: x.d, f: x.f, t: x.t })) }) + ';\n' + PFR.code });
+    await appInvoke('uber_eval', { code: (sh ? 'window.__ludyShift=' + JSON.stringify({ key: sh.key, from: sh.from }) + ';\n' : '') + 'window.__ludyCtrs=' + JSON.stringify({ at: Date.now(), list: (PFS.ask || []).map(x => ({ p: x.p, d: x.d, f: x.f, t: pfAskT(x, Date.now()) })).filter(x => x.t > x.f) }) + ';\n' + PFR.code });
   } catch (e) { }
 }
 /**
@@ -463,9 +463,21 @@ function pfShiftChips() {
     ${c.b.n ? `<span class="kchip" title="Contrats du même shift hier, chacun arrêté à la même heure qu'aujourd'hui moins 24 h${miss(c.b)}"><b>${f0(c.b.e)} MAD</b> J-1 à ${esc(localHM(new Date(Date.now() - DAY)))}${c.b.miss ? ' · incomplet' : ''}</span>${pct}` : '<span class="kchip mute">J-1 : aucun contrat</span>'}`;
 }
 function pfShiftLoad() {
-  if (PFS.busy) return PFS.p.then(() => pfShiftLoad());   // lecture en cours : attendue, puis relue (données à jour)
-  PFS.busy = true;
+  // lecture en cours : attendue, puis relue (données à jour) ; bloquée depuis 90 s (requête sans réponse) : abandonnée, nouvelle lecture
+  if (PFS.busy && Date.now() - (PFS.busyAt || 0) < 90000) return PFS.p.then(() => pfShiftLoad());
+  PFS.busy = true; PFS.busyAt = Date.now();
   return (PFS.p = pfShiftRead());
+}
+/**
+ * Fin de la période demandée à Uber, recalculée à chaque envoi au lecteur (23/11/2026) : une liste calculée il y a longtemps (lecture
+ * des contrats en échec) reste juste. Contrat en cours : jusqu'à maintenant ; terminé : jusqu'à sa fin ; J-1 : la même heure hier
+ * (sans dépasser la fin du contrat d'hier) ; rattrapage : fin fixe.
+ */
+function pfAskT(x, now) {
+  const mn = v => Math.floor(v / 60000) * 60000;
+  if (x.m === 'ctr') return x.e && x.e < now ? x.e : mn(now);
+  if (x.m === 'j1') return Math.min(x.e || Infinity, mn(now - DAY));
+  return x.t;
 }
 /**
  * Contrats des 56 dernières heures, compte Uber de chacun, chiffres d'Uber par contrat, liste des contrats à faire lire par l'application
@@ -473,14 +485,16 @@ function pfShiftLoad() {
  * heure qu'aujourd'hui ; contrats sans aucune ligne, 60 au plus).
  */
 async function pfShiftRead() {
-  const now = Date.now(), from = new Date(now - 56 * HOUR).toISOString();
+  const now = Date.now(), from = new Date(now - 56 * HOUR).toISOString(), gen = PFS.gen = (PFS.gen || 0) + 1;
   try {
     const cs = await all('contracts', 'num,name,phone,vehicle_key,plate,start_at,end_at', q => q.gt('start_at', from).lte('start_at', new Date(now + HOUR).toISOString()).not('vehicle_key', 'is', null));
     const byV = {}; cs.forEach(c => { (byV[c.vehicle_key] = byV[c.vehicle_key] || []).push(c); });
     const ctr = [].concat(...Object.values(byV).map(l => ctrEffEnds(l, now)));
     const [logs, pfs] = await Promise.all([
-      all('uber_live_log', 'id,vehicle_key,driver_id,driver_name,status,started_at,ended_at', q => q.gt('started_at', new Date(now - 60 * HOUR).toISOString()).not('driver_id', 'is', null)).catch(() => []),
-      all('uber_perf', 'driver_id,period,driver_name,vehicle_key,updated_at', q => q.like('period', 'shift:%').gte('updated_at', from)).catch(() => [])]);
+      all('uber_live_log', 'id,vehicle_key,driver_id,driver_name,status,started_at,ended_at', q => q.gt('started_at', new Date(now - 60 * HOUR).toISOString()).not('driver_id', 'is', null).not('status', 'in', '(gone,offline)'))
+        .catch(e => { if (PFS.logs && PFS.logs.length) return PFS.logs; throw e; }),
+      all('uber_perf', 'driver_id,period,driver_name,vehicle_key,updated_at', q => q.like('period', 'shift:%').gte('updated_at', from))
+        .catch(e => { if (PFS.pfs && PFS.pfs.length) return PFS.pfs; throw e; })]);
     ctr.forEach(c => { c._sh = shiftOfCtr(c.start_at, S.P); c._k = pfShKey(c._sh); c._u = pfCtrDriver(c, logs, pfs, now); });
     const periods = ctr.map(c => 'ctr:' + c.num).concat(ctr.map(c => 'ctrj1:' + c.num)), perf = {};
     for (let i = 0; i < periods.length; i += 80) {
@@ -517,12 +531,13 @@ async function pfShiftRead() {
       if (!c._u) return;
       const f = +new Date(c.start_at), end = c._end && c._end < now ? c._end : null, t = end || Math.floor(now / 60000) * 60000, row = perf['ctr:' + c.num];
       const final = row && end && +(row.data || {}).to >= end && +new Date(row.updated_at) > end + 3 * HOUR;
-      if ((c._k === ck || c._k === pk || !row) && !final && t > f) ask.push({ p: 'ctr:' + c.num, d: c._u.d, f, t, k: c.num });
-      if (c._k === yk) { const t1 = Math.min(end || Infinity, Math.floor((now - DAY) / 60000) * 60000); if (t1 > f) ask.push({ p: 'ctrj1:' + c.num, d: c._u.d, f, t: t1, k: c.num }); }
+      if ((c._k === ck || c._k === pk || !row) && !final && t > f) ask.push({ p: 'ctr:' + c.num, d: c._u.d, f, t, k: c.num, e: c._end || null, m: 'ctr' });
+      if (c._k === yk) { const t1 = Math.min(end || Infinity, Math.floor((now - DAY) / 60000) * 60000); if (t1 > f) ask.push({ p: 'ctrj1:' + c.num, d: c._u.d, f, t: t1, k: c.num, e: c._end || null, m: 'j1' }); }
     });
     const inAsk = new Set(ask.map(x => x.p)); (PFS.backfill || []).forEach(x => { if (!inAsk.has(x.p) && !(perf[x.p] && +(perf[x.p].data || {}).to >= x.t)) ask.push(x); });
-    Object.assign(PFS, { ctr, logs, perf, rows, key: sh ? sh.key : '', ask: ask.slice(0, 120), at: Date.now(), err: '' });
-  } catch (e) { PFS.err = String(e.message || e); } finally { PFS.busy = false; }
+    if (gen !== PFS.gen) return;   // lecture remplacée par une plus récente (garde-fou d'une lecture bloquée) : rien écrit
+    Object.assign(PFS, { ctr, logs, pfs, perf, rows, key: sh ? sh.key : '', ask: ask.slice(0, 120), at: Date.now(), err: '' });
+  } catch (e) { if (gen === PFS.gen) PFS.err = String(e.message || e); } finally { if (gen === PFS.gen) PFS.busy = false; }
   // courses une par une (rapport « Activité des courses ») depuis le plus ancien contrat affiché
   try {
     const sel = PFS.sel || pfShKey(pfShCur()), l = PFS.ctr.filter(c => c._k === sel), f = l.length ? l.map(c => c.start_at).sort()[0] : new Date(now - 14 * HOUR).toISOString();

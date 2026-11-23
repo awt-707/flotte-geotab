@@ -436,6 +436,14 @@ test('revenus Uber par contrat : contrats à lire (en cours, J-1 au même moment
       { p: 'ctrj1:CT0', d: A, f: +new Date(y), to: Date.now() - 86400000, e: 500, t: 4 }];
     assert.strictEqual(await page.evaluate(t => pfCtrPush(t), JSON.stringify(items)), true);
     assert.strictEqual(env.psql("select string_agg(period || '|' || vehicle_key || '|' || (data->>'e'), ',' order by period) from uber_perf"), 'ctr:CT1|968211WW|600,ctr:CT2|86120T1|300,ctrj1:CT0|968211WW|500', 'véhicule du contrat');
+    // deux lecteurs : celui qui renvoie une période plus courte (liste figée) n'écrase pas les chiffres frais
+    assert.strictEqual(await page.evaluate(t => pfCtrPush(t), JSON.stringify([{ p: 'ctr:CT1', d: A, f: +new Date(st), to: Date.now() - 3600000, e: 100, t: 1 }])), true);
+    assert.strictEqual(env.psql("select data->>'e' from uber_perf where period = 'ctr:CT1'"), '600', 'période plus courte ignorée');
+    // liste figée depuis 2 h : heures recalculées à l'envoi (en cours = maintenant, terminé = sa fin, J-1 = même heure hier)
+    const tb = Object.fromEntries(await page.evaluate(() => { const n = Date.now(); return PFS.ask.map(x => [x.p, { t: pfAskT(Object.assign({}, x, { t: n - 7200000 }), n), n }]); }));
+    assert.ok(Math.abs(tb['ctr:CT1'].t - tb['ctr:CT1'].n) < 61000, 'contrat en cours : jusqu\'à maintenant');
+    assert.strictEqual(tb['ctr:CT2'].t, +new Date(e2), 'contrat terminé : sa fin');
+    assert.ok(Math.abs(tb['ctrj1:CT0'].t - (tb['ctrj1:CT0'].n - 86400000)) < 61000, 'J-1 : même heure hier');
     assert.strictEqual(as(MGR, "select string_agg(period, ',' order by period) from uber_perf"), 'ctr:CT1,ctrj1:CT0', 'gestionnaire de Rabat : contrats de ses véhicules seulement');
     assert.throws(() => as(ADMIN, `select public.uber_perf_push('ctr:INCONNU', now(), '[{"d":"${A}","e":1}]'::jsonb)`), /Contrat inconnu/);
     // trois courses Uber pendant le contrat CT1
