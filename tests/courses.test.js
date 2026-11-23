@@ -160,6 +160,15 @@ test('page Courses privées : nouvelle demande, prix en direct, enregistrement, 
     await page.selectOption('[data-f="vehicleKey"]', '968199WW');
     await page.click('[data-crst="Acompte reçu"]'); await page.waitForFunction(() => /Acompte reçu/.test(document.querySelector('#crsres').innerText));
     assert.strictEqual(env.psql('select status || \'|\' || vehicle_key from missions'), 'Acompte reçu|968199WW');
+    // acompte partiel du client : encaissé sur la course + reçu PDF à remettre (montant encaissé, reste dû)
+    await page.fill('#crsdep', '5000');
+    const [dep] = await Promise.all([page.waitForEvent('download'), page.click('#crsdepgo')]);
+    assert.match(dep.suggestedFilename(), /^Recu-acompte-DEV-/);
+    assert.strictEqual(fs.readFileSync(await dep.path()).slice(0, 5).toString(), '%PDF-');
+    assert.strictEqual(env.psql("select (data->'deposits'->0->>'amount') from missions"), '5000');
+    await page.waitForFunction(() => /déjà encaissé/.test(document.querySelector('#crsside').innerText));
+    const sd = await page.innerText('#crsside');
+    assert.match(sd, /déjà encaissé 5 000 MAD/); assert.match(sd, /reste dû\s*10 500 MAD/);
     await page.goto('http://localhost:8080/#/courses?t=planning&d=2026-11-09'); await page.waitForSelector('table.plan');
     assert.ok((await page.innerText('table.plan')).includes(num.slice(-4)), 'mission au planning');
     // mission en cours : contrôle réel par Geotab (trajets du véhicule affecté pendant la mission)

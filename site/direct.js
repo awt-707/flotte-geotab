@@ -221,8 +221,16 @@ function vcKpis(r) {
   }
   return cells.length ? `<span class="vc-kpis">${cells.join('')}</span>` : '';
 }
+/** Revenus Uber encaissés du contrat en cours (sinon -1 : classé en bas) — sert à trier les cartes */
+function vcRevenue(r) {
+  const cp = r.contract_num && typeof PFS !== 'undefined' && PFS.perf ? PFS.perf['ctr:' + r.contract_num] : null;
+  return cp && cp.data && typeof cp.data.e === 'number' ? cp.data.e : -1;
+}
+/** Ordre des cartes de droite : du plus gros chiffre encaissé au moins bon (ordre fixe ; sans chiffre en bas, par plaque) */
+function vcardOrder(rows) { return rows.slice().sort((a, b) => vcRevenue(b) - vcRevenue(a) || String(a.plate).localeCompare(String(b.plate))); }
 function vcardsHtml(rows) {
   if (!rows.length) return '<div class="empty">Aucun véhicule actif</div>';
+  rows = vcardOrder(rows);
   const pz = k => typeof svPauseOf === 'function' ? svPauseOf(k) : null;
   return rows.map(r => {
     const ub = typeof pfVehChip === 'function' ? pfVehChip(r) : '', ph = typeof pfVehPhoto === 'function' ? pfVehPhoto(r) : '', g = consoGauge(r);
@@ -329,9 +337,11 @@ async function pageDirect(refresh) {
   if (typeof pfStart === 'function') pfStart(ROUTING);   // chauffeurs Uber / Bolt en ce moment
   void last;
 }
+/** Cartes de droite mises à jour sans sauter : la position de défilement est conservée */
+function setVlist(rows) { const el = $('#vlist'); if (!el) return; const top = el.scrollTop; el.innerHTML = vcardsHtml(rows); el.scrollTop = top; }
 function applyDirect() {
   const rows = liveRows(), set = (sel, html) => { const el = $(sel); if (el) el.innerHTML = html; };
-  set('#livecards', kpisHtml(rows)); set('#vlist', vcardsHtml(rows));
+  set('#livecards', kpisHtml(rows)); setVlist(rows);
   // pauses : liste redessinée à chaque lecture ; formulaire de mise en pause gardé tant qu'il est utilisé
   if (typeof svDirectHtml === 'function') { const f = $('#livepauseform'), busy = f && f.contains(document.activeElement);
     if (busy) set('#livepauselist', svDirectList(svOpen().sort((a, b) => svPauseEndAt(a) - svPauseEndAt(b)), svCan())); else set('#livepause', svDirectHtml(rows));
@@ -374,7 +384,7 @@ async function liveDrvTick(my) {
     try { LIVE.drvFallback = await liveDrivers(rows) || ''; } catch (e2) { LIVE.drvFallback = ''; }
   } finally { LIVE.drvBusy = false; }
   // cadrans de consommation (cartes des véhicules) et tableau des chauffeurs redessinés dès la lecture, sans attendre la position suivante
-  if (pageOf() === 'direct') { const rs = liveRows(), el = $('#livedrv'), vl = $('#vlist'); if (el) el.innerHTML = liveDriversHtml(rs); if (vl) vl.innerHTML = vcardsHtml(rs); }
+  if (pageOf() === 'direct') { const rs = liveRows(), el = $('#livedrv'); if (el) el.innerHTML = liveDriversHtml(rs); setVlist(rs); }
 }
 
 // ---------- Carte ----------

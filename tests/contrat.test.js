@@ -132,6 +132,11 @@ test('page Contrats de travail : nouvelle société, salarié, PDF généré, en
     assert.match(await page.innerText('#cthist'), /Ali TEST\tX000001\tATLAS TEST\t31\/08\/2026\tRabat/);
     const wa = await page.getAttribute('#ctdone a[href^="https://wa.me/212611223344"]', 'href');
     assert.ok(wa && decodeURIComponent(wa).includes('Contrat PDF à signer : '), 'WhatsApp au salarié avec le lien du PDF');
+    // après génération : champs du salarié vidés (prêt pour un autre contrat), société gardée
+    assert.strictEqual(await page.inputValue('#ct_cin'), '', 'CIN vidé après génération');
+    assert.strictEqual(await page.inputValue('#ct_nom'), '', 'nom vidé après génération');
+    assert.strictEqual(await page.inputValue('#ct_sal'), '', 'salaire vidé après génération');
+    assert.match(await page.evaluate(() => document.querySelector('#ctemp').selectedOptions[0].textContent), /ATLAS TEST/);
     assert.deepStrictEqual(errors, []);
   } finally { await br.close(); srv.kill(); env.resetDb(); }
 });

@@ -527,6 +527,13 @@ function crsSide() {
       ${crsValBox(m, needVal, validated, fin)}
       <div id="crsres" class="small"></div>
       ${(m.data && m.data.history || []).length ? `<div class="small">${m.data.history.slice(-6).reverse().map(h => esc(fmtDTY(h.at) + ' · ' + h.status + (h.by ? ' · ' + h.by : ''))).join('<br>')}</div>` : ''}</div>
+    ${m.id && CR.edit ? (() => { const paid = crsPaid(m), rest = Math.max(0, Math.round((crsN(p.total) - paid) * 100) / 100); return `<div class="panel"><h2>Acompte du client</h2>
+      <div class="small">Total TTC <b>${crsMoney(p.total)}</b> · déjà encaissé ${crsMoney(paid)} · reste dû <b class="${rest > 0 ? 'crit' : 'ok'}">${crsMoney(rest)}</b></div>
+      ${crsDeposits(m).length ? `<div class="small">${crsDeposits(m).map(d => esc(fmtDTY(d.at) + ' · ' + crsMoney(d.amount) + (d.number ? ' · ' + d.number : '') + (d.by ? ' · ' + d.by : ''))).join('<br>')}</div>` : ''}
+      <div class="mfrow"><label>Montant de l'acompte à encaisser (MAD) <input id="crsdep" type="number" min="1" step="any" value="${rest || ''}"></label></div>
+      <div class="mfgo"><button class="small" id="crsdepgo">Encaisser l'acompte et générer le reçu</button></div>
+      <div class="small">Le reçu (montant encaissé et reste dû) est à remettre au client ; l'acompte est enregistré sur la course.</div>
+      <div id="crsdepres" class="small"></div></div>`; })() : ''}
     <details class="panel"><summary><h2>Script d'appel (8 questions)</h2></summary><ol class="small">${CRS_SCRIPT.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
       <div class="small"><i>Question clé : « Pouvez-vous me décrire une journée type avec le véhicule ? »</i><br>Règle : pas de prix « X MAD/jour » sans heures incluses, kilomètres inclus, zone d'utilisation et conditions de dépassement.</div></details>
     <div class="panel" id="crsmf" hidden></div>
@@ -622,6 +629,22 @@ function crsBindSide(p, val, miss) {
     const saved = await crsSave(to);
     if (saved && ['Confirmée', 'En cours'].includes(to) && !(saved.data && saved.data.manifest)) crsManifest(true);   // manifeste automatique
   }; });
+  // acompte du client : encaissement (partiel) enregistré sur la course + reçu PDF à remettre
+  const dg = $('#crsdepgo'); if (dg) dg.onclick = async () => {
+    const amt = Math.round(crsN($('#crsdep').value) * 100) / 100, m = CR.cur, box = $('#crsdepres');
+    if (!m || !m.id) { alert('Enregistrer d\'abord la course.'); return; }
+    if (!(amt > 0)) { if (box) box.innerHTML = '<span class="err">Saisir le montant de l\'acompte.</span>'; return; }
+    dg.disabled = true; if (box) box.textContent = 'Enregistrement…';
+    const deps = crsDeposits(m).slice(), number = (m.number || 'ACPT') + '-A' + (deps.length + 1);
+    const dep = { at: new Date().toISOString(), amount: amt, by: S.profile.email || '', number };
+    const hist = ((m.data && m.data.history) || []).concat([{ at: dep.at, status: 'Acompte encaissé : ' + crsMoney(amt), by: dep.by }]);
+    const data = Object.assign({}, m.data, { deposits: deps.concat([dep]), history: hist });
+    const r = await sb.from('missions').update({ data }).eq('id', m.id).select('*').single();
+    if (r.error) { if (box) box.innerHTML = '<span class="err">Non enregistré : ' + esc(r.error.message) + '</span>'; dg.disabled = false; return; }
+    CR.cur = r.data;
+    try { crsDepositPdf(r.data, crsRead(), crsPrice(crsRead(), crsG()), crsG(), amt, crsPaid(r.data), number); } catch (e) { alert(e.message); }
+    crsSide();
+  };
   const note = (st, extra) => ({ at: new Date().toISOString(), status: st, by: S.profile.email || '', ...(extra || {}) });
   // administrateur : fiche enregistrée (réajustements compris) puis validée
   const vb = $('#crsval'); if (vb) vb.onclick = async () => {
@@ -1058,6 +1081,38 @@ function crsPdf(m, f, p, G, keep) {
   const n = doc.getNumberOfPages();
   for (let i = 1; i <= n; i++) { doc.setPage(i); font('normal', 6.8, mute); const l = doc.splitTextToSize(cl((iss.mentions || '') + (iss.contact ? ' · ' + iss.contact : '')), W - 2 * M); doc.text(l, W / 2, H - 9, { align: 'center' }); doc.text('Page ' + i + ' / ' + n, W - M, H - 4, { align: 'right' }); }
   if (!keep) doc.save(crsPdfName(m, f));
+  return doc;
+}
+// ---------- Acompte du client : encaissement partiel + reçu à remettre ----------
+function crsDeposits(m) { return m && m.data && Array.isArray(m.data.deposits) ? m.data.deposits : []; }
+function crsPaid(m) { return Math.round(crsDeposits(m).reduce((s, d) => s + crsN(d.amount), 0) * 100) / 100; }
+/** Reçu d'acompte à remettre au client : montant encaissé, total déjà encaissé, reste dû ; même en-tête (société) que le devis */
+function crsDepositPdf(m, f, p, G, amount, paid, number, keep) {
+  const doc = crsPdfDoc(), W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 14, acc = [123, 30, 46], ink = [20, 32, 43], mute = [93, 107, 120], cl = crsCl;
+  const font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); doc.setTextColor(...(c || ink)); }, iss = crsIssuer(m, f, G);
+  const total = crsN(p && p.total), rest = Math.max(0, Math.round((total - crsN(paid)) * 100) / 100), t = crsTimes(f);
+  if (iss.main) { try { doc.addImage(RPT_LOGO, 'PNG', M, 10, 38, 9.3); } catch (e) { } }
+  else { font('bold', 13); doc.text(doc.splitTextToSize(cl(iss.name), (W - 2 * M) / 2 - 4)[0] || '', M, 15); font('normal', 8, mute); doc.text(doc.splitTextToSize(cl(iss.addr), (W - 2 * M) / 2 - 4).slice(0, 2), M, 20); }
+  font('bold', 16); doc.text('REÇU D\'ACOMPTE' + (number ? ' N° ' + cl(number) : ''), W - M, 15, { align: 'right' });
+  font('normal', 9, mute); doc.text('Établi le ' + fmtDay(today()) + (m.number ? ' · devis ' + cl(m.number) : ''), W - M, 20.5, { align: 'right' });
+  let y = 34;
+  const box = (title, rows, x, w) => { font('bold', 9, acc); doc.text(title.toUpperCase(), x, y); let yy = y + 5; rows.filter(r => r[1]).forEach(r => { font('normal', 8, mute); doc.text(cl(r[0]), x, yy); font('normal', 9, ink); const l = doc.splitTextToSize(cl(r[1]), w - 30); doc.text(l, x + 30, yy); yy += 4.4 * l.length; }); return yy; };
+  const cities = crsCities(f);
+  const y1 = box('Client', [['Nom', f.client], ['Société', f.company], ['Téléphone', f.phone]], M, (W - 2 * M) / 2 - 4);
+  const y2 = box('Mission', [['Prestation', f.kind], ['Début', t.a ? (f.startTime || f.dayStart ? fmtDTY(t.a) : fmtDay(f.startDate)) : ''], ['Itinéraire', [f.startCity, f.dest].concat(cities).filter((x, i, a) => x && a.indexOf(x) === i).join(' - ')], ['Véhicule', crsCatName(f.cat)]], W / 2 + 2, (W - 2 * M) / 2 - 2);
+  y = Math.max(y1, y2) + 6;
+  doc.autoTable({ startY: y, margin: { left: M, right: M }, head: [['Détail', 'Montant']],
+    body: [['Montant total TTC de la prestation', cl(crsMoney(total))], ['Acompte encaissé (ce reçu)', cl(crsMoney(amount))], ['Total déjà encaissé', cl(crsMoney(paid))]],
+    foot: [['Reste dû', cl(crsMoney(rest))]],
+    styles: { fontSize: 10, cellPadding: 2.4, textColor: ink }, headStyles: { fillColor: [15, 38, 51], textColor: 255 }, footStyles: { fillColor: [243, 245, 247], textColor: ink, fontStyle: 'bold', fontSize: 11 }, columnStyles: { 1: { halign: 'right' } } });
+  y = doc.lastAutoTable.finalY + 8;
+  const words = typeof cshMadWords === 'function' ? cshMadWords(amount) : '';
+  const intro = 'Reçu de ' + cl(f.client || 'client') + ' la somme de ' + crsMoney(amount) + (words ? ' (' + words + ')' : '') + ' à titre d\'acompte sur la prestation ' + (m.number ? 'du devis ' + cl(m.number) : 'ci-dessus') + '.';
+  font('normal', 9.5, ink); const il = doc.splitTextToSize(cl(intro), W - 2 * M); doc.text(il, M, y); y += il.length * 5 + 2;
+  font('normal', 9.5, rest > 0 ? [180, 35, 24] : [20, 120, 60]); doc.text(cl(rest > 0 ? 'Solde restant dû : ' + crsMoney(rest) + ', payable selon les conditions du devis.' : 'Prestation intégralement réglée.'), M, y); y += 12;
+  font('normal', 9, mute); doc.text('Le client', M, y); doc.text('Pour ' + cl(iss.short || iss.name || 'la société'), W - M, y, { align: 'right' });
+  font('normal', 6.8, mute); const l = doc.splitTextToSize(cl((iss.mentions || '') + (iss.contact ? ' · ' + iss.contact : '')), W - 2 * M); doc.text(l, W / 2, H - 9, { align: 'center' });
+  if (!keep) doc.save('Recu-acompte-' + cl(number || m.number || 'Ludy') + '.pdf');
   return doc;
 }
 function crsActualPdf(m, f, p, r) {

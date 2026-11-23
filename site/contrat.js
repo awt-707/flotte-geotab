@@ -191,9 +191,14 @@ async function ctrGenerate() {
   try {
     CT.last = await ctrMake(c, st);
     if (CT.last.row) CT.hist.unshift(CT.last.row);
-    ctrDone(CT.last); ctrHistory();
-  } catch (e) { alert(e.message || e); }
-  btn.disabled = false; btn.textContent = 'Générer le contrat PDF';
+    ctrResetDraft();            // contrat créé : champs du salarié vidés pour éditer le suivant sans reste (société / agence / modèle gardés)
+    await pageContratsTravail();   // formulaire vide réaffiché, panneau « Contrat prêt » (CT.last) et historique conservés
+  } catch (e) { alert(e.message || e); btn.disabled = false; btn.textContent = 'Générer le contrat PDF'; }
+}
+/** Nouveau brouillon vierge après un contrat généré : on garde la société, l'agence et le modèle choisis ; tout le reste (salarié, dates, salaire, chauffeur lié) est effacé */
+function ctrResetDraft() {
+  const d = CT.draft || {};
+  CT.draft = { civ: 'M', nat_fr: 'Marocaine', employer_id: d.employer_id || '', agency: d.agency || '', model: d.model || 'chauffeur' };
 }
 async function ctrMake(c, st) {
   const L = await ctrLibs(), e = Object.assign({}, st);
