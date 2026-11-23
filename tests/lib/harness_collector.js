@@ -141,6 +141,7 @@ const ctx = vm.createContext({ console, Utilities, Date: FakeDate, Math, JSON,
     getFolderById: id => { const f = folders.find(x => x.id === id); if (!f) throw new Error('No item with the given ID could be found. ' + id); return f; },
     getFileById: id => { const x = driveFiles[id]; if (!x) throw new Error('No item with the given ID could be found. ' + id); return x; } },
   CacheService: { getScriptCache: () => ({ get: k => k in cache ? cache[k] : null, put: (k, v) => { cache[k] = v; } }) },
+  LanguageApp: { translate: (text, src, dst) => '[' + (dst || 'fr') + '] ' + String(text) },   // traduction des avis clients (stub : préfixe la langue cible)
   // comme Google : adresse de plus de 2 Ko refusée
   UrlFetchApp: { fetch: (url, opt) => { if (url.length > 2048) throw new Error('Limite dépassée : Longueur d\'URL URLFetch.'); if (url.indexOf('script.googleapis.com') >= 0) { scriptApi.push({ url, opt }); return scriptApiReply(url, opt); } if (url.indexOf('/storage/v1/') >= 0) return storageFetch(url, opt); if (url.indexOf('/apiv1') < 0) return dbFetch(url, opt); stats.calls++; global.__NOW = NOW0; const req = JSON.parse(opt.payload); const res = require('./geotab_fake.js').handle(req.method, req.params); const txt = JSON.stringify(res); stats.bytes += txt.length; return { getContentText: () => txt, getResponseCode: () => 200 }; }, fetchAll: reqs => { stats.batches++; return reqs.map(r => ctx.UrlFetchApp.fetch(r.url, r)); } }
 });

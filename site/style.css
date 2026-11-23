@@ -959,3 +959,15 @@ label.cshup:hover { background: var(--acc); color: var(--acc-ink); }
 .pscard { border: 1px solid var(--high); border-left-width: 4px; border-radius: var(--r); padding: 8px 10px; background: var(--panel); font-size: 14px; }
 .pscard.crit { border-color: var(--crit); background: var(--crit-bg, var(--panel)); }
 .toast.pstoast .psbody { display: flex; flex-direction: column; gap: 2px; }
+
+/* Avis clients (QR) */
+.avcard { background: var(--card, #fff); border: 1px solid var(--line, #e3ddd1); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+.avcard.crit { border-color: #e0a3a3; }
+.avhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.avstars { color: #f0a500; font-size: 18px; letter-spacing: 2px; } .avstars .o { color: #d7cfc0; }
+.avbad { color: #9b1c1c; font-weight: 600; font-size: 13px; }
+.avmsg { margin: 8px 0 4px; } .avlang { color: var(--mut, #5d6b78); font-size: 12px; }
+.avorig { color: var(--mut, #5d6b78); font-style: italic; }
+.avphoto { max-width: 160px; max-height: 160px; border-radius: 10px; margin-top: 6px; display: block; }
+.avfoot { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.qrcard { display: inline-block; max-width: 220px; margin: 6px 0; } .qrcard svg { width: 100%; height: auto; }
