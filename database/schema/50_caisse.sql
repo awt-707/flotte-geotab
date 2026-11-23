@@ -261,14 +261,17 @@ begin
     end if;
     if v_ckey is not null then v_key := v_ckey; v_ag := v_cag; v_plate := coalesce(v_cplate, v_plate); end if;
     -- un contrat = un seul compte Uber : la ligne d'un autre compte pour ce contrat est remplacée
-    if v_ckey is not null then delete from uber_perf where period = p_period and driver_id <> d; end if;
+    if v_ckey is not null then delete from uber_perf where period = p_period and driver_id <> d
+      and coalesce((data->>'to')::numeric, 0) <= coalesce((it->>'to')::numeric, 0); end if;
     insert into uber_perf (driver_id, period, period_from, driver_name, plate, vehicle_key, agency_id, data, updated_at)
       values (d, p_period, p_from, nullif(left(it->>'n', 80), ''), v_plate, v_key, v_ag,
         coalesce((select jsonb_object_agg(e.key, e.value) from jsonb_each(it) e
           where e.key in ('e', 'cash', 'h', 't', 'a', 'c', 'hot', 'hto', 'hav', 'first', 'last', 'to', 'f') and jsonb_typeof(e.value) = 'number'), '{}'::jsonb), now())
       on conflict (driver_id, period) do update set period_from = excluded.period_from, driver_name = coalesce(excluded.driver_name, uber_perf.driver_name),
         plate = coalesce(excluded.plate, uber_perf.plate), vehicle_key = coalesce(excluded.vehicle_key, uber_perf.vehicle_key),
-        agency_id = coalesce(excluded.agency_id, uber_perf.agency_id), data = excluded.data, updated_at = now();
+        agency_id = coalesce(excluded.agency_id, uber_perf.agency_id), data = excluded.data, updated_at = now()
+      -- jamais en arrière : un lecteur en retard (liste figée, deux ordinateurs) n'écrase pas une période lue plus loin
+      where coalesce((excluded.data->>'to')::numeric, 0) >= coalesce((uber_perf.data->>'to')::numeric, 0);
     n := n + 1;
   end loop;
   if random() < 0.02 then delete from uber_perf where updated_at < now() - interval '62 days'; end if;
