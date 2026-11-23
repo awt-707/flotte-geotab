@@ -665,7 +665,7 @@ CREATE TABLE public.uber_suspects (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT uber_suspects_level_check CHECK ((level = ANY (ARRAY['Suspect'::text, 'Info'::text]))),
     CONSTRAINT uber_suspects_status_check CHECK ((status = ANY (ARRAY['À vérifier'::text, 'Justifié'::text, 'Confirmé'::text]))),
-    CONSTRAINT uber_suspects_verdict_check CHECK ((verdict = ANY (ARRAY['roulé'::text, 'sur place'::text, 'non mesuré'::text])))
+    CONSTRAINT uber_suspects_verdict_check CHECK (((verdict IS NULL) OR (verdict = ANY (ARRAY['roulé'::text, 'sur place'::text, 'non mesuré'::text, 'course réalisée'::text]))))
 );
 
 ALTER TABLE public.uber_suspects ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (

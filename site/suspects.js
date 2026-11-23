@@ -17,10 +17,13 @@ function psKmTxt(r) {
 }
 function psVerdict(r) {
   if (r.verdict === 'roulé') return '<span class="badge crit">A roulé sans course Uber</span>';
+  if (r.verdict === 'course réalisée') return '<span class="badge ok">Course Uber réalisée</span>';
   if (r.verdict === 'sur place') return '<span class="badge ok">Resté sur place</span>';
   if (r.verdict === 'non mesuré') return '<span class="badge">Non mesuré</span>';
   return '<span class="badge info">Mesure en cours</span>';
 }
+/** Un cas encore ouvert (mesure en cours ou confirmé « a roulé ») : affiché sur En direct ; course réalisée / sur place / non mesuré = classé, masqué */
+function psOpen(r) { return r.level === 'Suspect' && (!r.verdict || r.verdict === 'roulé'); }
 function psSeen(k) { try { return !!JSON.parse(localStorage.getItem('psSeen') || '{}')[k]; } catch (e) { return false; } }
 function psMark(k) { try { const o = JSON.parse(localStorage.getItem('psSeen') || '{}'); o[k] = Date.now(); Object.keys(o).forEach(x => { if (Date.now() - o[x] > 2 * 86400000) delete o[x]; }); localStorage.setItem('psSeen', JSON.stringify(o)); } catch (e) { } }
 async function psLoad(sinceMs) {
@@ -53,7 +56,8 @@ function psOnRow(r, quiet) {
   const i = PS.rows.findIndex(x => x.id === r.id); if (i >= 0) PS.rows[i] = r; else PS.rows.unshift(r);
   if (!ok) return;
   const old = !PS.primed && Date.now() - new Date(r.next_at).getTime() > 10 * 60000;
-  if (r.level === 'Suspect' && !psSeen('n' + r.id)) { if (old || quiet && !PS.primed) psMark('n' + r.id); else psToast(r, 'new'); }
+  // 23/11/2026 : plus de notification à la création (beaucoup de cas sont de vraies courses, « Course en cours » ratée en direct) ;
+  // l'alerte part seulement au verdict « a roulé sans course Uber » confirmé par le collecteur (km Geotab, croisé avec le rapport Uber).
   if (r.verdict === 'roulé' && !psSeen('r' + r.id)) { if (old && !PS.primed) psMark('r' + r.id); else psToast(r, 'roule'); }
   if (pageOf() === 'suspects' && typeof window.__psRepaint === 'function') window.__psRepaint();
 }
@@ -84,12 +88,12 @@ async function psToast(r, kind) {
 }
 /** Fiche véhicule d'En direct : cas des 3 dernières heures */
 function psVehLine(key) {
-  const r = PS.rows.find(x => x.vehicle_key === key && x.level === 'Suspect' && Date.now() - new Date(x.next_at).getTime() < 3 * 3600000); if (!r) return '';
+  const r = PS.rows.find(x => x.vehicle_key === key && psOpen(x) && Date.now() - new Date(x.next_at).getTime() < 3 * 3600000); if (!r) return '';
   return `<span class="vc-susp${r.verdict === 'roulé' ? ' crit' : ''}">🚩 Course suspecte ${esc(localHM(new Date(r.next_at)))} · ${esc(psNext(r.next_status))} après ${esc(psDur(r.route_from, r.route_to))} en route · ${esc(psKmTxt(r))}</span>`;
 }
 /** En direct : bloc des cas du moment (3 h) */
 function psDirectHtml() {
-  const ok = inAgency(), L = PS.rows.filter(r => r.level === 'Suspect' && Date.now() - new Date(r.next_at).getTime() < 3 * 3600000 && (ok(r.vehicle_key) || !r.vehicle_key));
+  const ok = inAgency(), L = PS.rows.filter(r => psOpen(r) && Date.now() - new Date(r.next_at).getTime() < 3 * 3600000 && (ok(r.vehicle_key) || !r.vehicle_key));
   if (!L.length) return '';
   return `<details class="pfdet" open><summary>🚩 Courses suspectes (3 dernières heures) : ${L.length}</summary><div class="pslist">${L.map(r => `<div class="pscard${r.verdict === 'roulé' ? ' crit' : ''}">${psBody(r)}</div>`).join('')}
     <p class="small"><a href="#/suspects">Tableau complet, classement et PDF</a></p></div></details>`;
