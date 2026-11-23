@@ -2,7 +2,7 @@
 -- Courses privées, grilles tarifaires et manifestes (clés étrangères et droits : RLS, règles, GRANT)
 -- Courses et devis (missions, validation par l'administrateur, double réservation refusée), grilles par ville de départ,
 -- manifestes et sociétés émettrices (manifest_config).
--- Tables : manifest_config, manifests, missions, pricing_grid
+-- Tables : client_feedback, manifest_config, manifests, missions, pricing_grid
 -- Fichier produit par « node database/outils/schema.js build » depuis supabase/migrations/ : ne pas modifier à la main
 -- (ajouter une migration, puis relancer build).
 -- =============================================================================
@@ -24,6 +24,10 @@ CREATE POLICY admin_all ON public.pricing_grid TO authenticated USING (( SELECT 
 CREATE POLICY admin_delete ON public.manifests FOR DELETE TO authenticated USING (( SELECT public.is_admin() AS is_admin));
 
 CREATE POLICY admin_delete ON public.missions FOR DELETE TO authenticated USING (( SELECT public.is_admin() AS is_admin));
+
+CREATE POLICY cf_read ON public.client_feedback FOR SELECT TO authenticated USING ((( SELECT public.is_admin() AS is_admin) OR (agency_id = ANY (( SELECT public.my_agency_ids() AS my_agency_ids)::bigint[])) OR ((( SELECT public.my_role() AS my_role) = 'manager'::text) AND (agency_id IS NULL))));
+
+ALTER TABLE public.client_feedback ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY keep_main ON public.pricing_grid AS RESTRICTIVE FOR DELETE TO authenticated USING ((id <> 1));
 
@@ -53,6 +57,20 @@ CREATE POLICY read_mgr ON public.pricing_grid FOR SELECT TO authenticated USING 
 
 -- ----------------------------------------------------------------------------- Droits et commentaires
 
+REVOKE ALL ON FUNCTION public.create_feedback(p jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.create_feedback(p jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.create_feedback(p jsonb) TO service_role;
+GRANT ALL ON FUNCTION public.create_feedback(p jsonb) TO anon;
+
+REVOKE ALL ON FUNCTION public.create_reservation(p jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.create_reservation(p jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.create_reservation(p jsonb) TO service_role;
+GRANT ALL ON FUNCTION public.create_reservation(p jsonb) TO anon;
+
+REVOKE ALL ON FUNCTION public.feedback_set(p_id bigint, p_status text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.feedback_set(p_id bigint, p_status text) TO authenticated;
+GRANT ALL ON FUNCTION public.feedback_set(p_id bigint, p_status text) TO service_role;
+
 GRANT ALL ON FUNCTION public.manifest_config_keep() TO anon;
 GRANT ALL ON FUNCTION public.manifest_config_keep() TO authenticated;
 GRANT ALL ON FUNCTION public.manifest_config_keep() TO service_role;
@@ -72,6 +90,17 @@ GRANT ALL ON FUNCTION public.mission_number() TO service_role;
 REVOKE ALL ON FUNCTION public.mission_quick_guard() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.mission_quick_guard() TO authenticated;
 GRANT ALL ON FUNCTION public.mission_quick_guard() TO service_role;
+
+REVOKE ALL ON FUNCTION public.reservation_tariff(v text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.reservation_tariff(v text) TO authenticated;
+GRANT ALL ON FUNCTION public.reservation_tariff(v text) TO service_role;
+GRANT ALL ON FUNCTION public.reservation_tariff(v text) TO anon;
+
+GRANT ALL ON TABLE public.client_feedback TO service_role;
+GRANT SELECT ON TABLE public.client_feedback TO authenticated;
+
+GRANT ALL ON SEQUENCE public.client_feedback_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.client_feedback_id_seq TO service_role;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.manifest_config TO authenticated;
 GRANT ALL ON TABLE public.manifest_config TO service_role;

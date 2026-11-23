@@ -232,6 +232,8 @@ function collect() {
     try { const m = suspectKmStep_(); if (m) msg.push(m); } catch (e) { msg.push('Courses suspectes : ' + e.message); }
     // Véhicules encore sans boîtier Geotab (boîtier installé ou renommé après l'ajout au parc, VIN lu par le boîtier…) : nouvel essai toutes les 30 min
     try { const m = geoLinkStep_(); if (m) msg.push(m); } catch (e) { msg.push('Association Geotab : ' + e.message); }
+    // Avis clients (QR) : messages traduits en français (LanguageApp)
+    try { const m = feedbackStep_(); if (m) msg.push(m); } catch (e) { msg.push('Avis clients : ' + e.message); }
     // Demandes du site (contrats importés, plaques, synchro immédiate, recalcul)
     try { const j = processJobs_(t0); if (j) msg.push(j); } catch (e) { msg.push('Demandes du site : ' + e.message); }
     // Caisse recopiée dans le classeur de sauvegarde (onglets « … Ludy ») : avant le journal, qui peut prendre tout le passage
