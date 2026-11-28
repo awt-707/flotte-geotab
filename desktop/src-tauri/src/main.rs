@@ -25,7 +25,7 @@ use tauri::{webview::WebviewBuilder, window::WindowBuilder, LogicalPosition, Log
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl};
 use tauri_plugin_opener::OpenerExt;
 
-const HOME: &str = "https://ludy-flotte.pages.dev/";
+const HOME: &str = "https://ludy-preprod.clicar.ma/";
 const UBER: &str = "https://fleethub.uber.com/orgs/692d0268-9766-4061-9c0e-85d7c124d10e/livemap?tab=4";
 const TITLE: &str = "Ludy · Supervision de flotte";
 /// Volets externes dans leur propre fenêtre (Windows) plutôt qu'à droite du menu Ludy
